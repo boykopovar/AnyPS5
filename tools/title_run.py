@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -361,10 +362,22 @@ def render_compare(compared):
         ]
         for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
             diff = title[key]
-            measures.append((label, title[key + "Count"]))
+            omitted = title[key + "Truncated"]
+            partial = any(isinstance(value, int) and value > 0 for value in omitted.values())
+            measures.append((label + " (retained)" if partial else label, title[key + "Count"]))
+            if partial:
+                measures.append((label + " omitted", omitted))
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: lists are partial; "
+                               "only before and only now describe retained entries, not proof of absence from the other run.")
             if diff and (diff["onlyBefore"] or diff["onlyNow"] or diff["both"]):
                 details.append(f"{title['name']} ({title_id}), {label.lower()}: only before: {names(diff['onlyBefore']) or 'none'}; "
                                f"only now: {names(diff['onlyNow']) or 'none'}; in both: {len(diff['both'])}")
+                field, unit = ("calls", "calls") if key == "missingFunctions" else ("count", "occurrences")
+                before = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyBefore"]) or "none"
+                now = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyNow"]) or "none"
+                both = ", ".join(f"{names([entry])}: {entry['before']} -> {entry['now']}" for entry in diff["both"]) or "none"
+                details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
+                               f"only before: {before}; only now: {now}; in both: {both}")
         for label, values in measures:
             lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
     return lines + [""] + details
@@ -380,7 +393,9 @@ def render_markdown(summary, previous=None):
     parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
-    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
+    lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
+    length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
+    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
     lines = [header, ""]
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
@@ -793,10 +808,11 @@ if os.name == "nt":
 
 
 class Session:
-    def __init__(self, command, cwd, env, stdout, stderr, owned=None):
+    def __init__(self, command, cwd, env, stdout, stderr, owned=None, interactive=False):
         self.owned = os.path.normcase(os.path.realpath(owned or Path(command[0]).parent))
         if os.name == "nt":
-            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
+                                            creationflags=0 if interactive else subprocess.CREATE_NO_WINDOW)
             self.handles, self.images = {}, {}
             self.job = kernel32.CreateJobObjectW(None, None)
             if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
@@ -804,9 +820,11 @@ class Session:
                 self.process.kill()
                 raise ctypes.WinError(error)
             self.placed = set()
-            ready = threading.Event()
-            threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
-            ready.wait()
+            self.watcher = None
+            if not interactive:
+                ready = threading.Event()
+                threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
+                ready.wait()
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
@@ -899,7 +917,8 @@ class Session:
     def kill(self):
         if os.name == "nt":
             kernel32.TerminateJobObject(self.job, 1)
-            user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
+            if self.watcher is not None:
+                user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
         else:
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)
@@ -972,6 +991,147 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
+def performance_phase(executable, work, env, console, seconds, pad=None, capture=None):
+    import performance_capture
+
+    pad_file, queued = work / "pad-input.txt", None
+    if pad:
+        pad_file.unlink(missing_ok=True)
+        env = dict(env, APS5_PAD_INPUT_FILE=str(pad_file))
+    session = Session([str(executable)], work, env, console.stdout, console.stderr, owned=work, interactive=True)
+    started = time.monotonic()
+    result = {"state": "pending", "reason": "capture window has not completed", "warnings": []}
+    requested_close, forced, exit_code = False, False, None
+    elapsed = 0
+    observed_processes = {session.process.pid}
+    try:
+        while session.alive() and time.monotonic() - started < seconds:
+            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+                pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
+                queued = round(time.monotonic() - started, 1)
+            if capture:
+                result = performance_capture.inspect_capture(*capture, metadata_only=True)
+                if result["state"] != "pending":
+                    if result["state"] == "ready":
+                        captured = result["process_id"]
+                        if os.name == "nt":
+                            session.process_ids()
+                            for process, image in session.images.items():
+                                if image and image.startswith(session.owned + os.sep):
+                                    observed_processes.add(process)
+                        else:
+                            try:
+                                if os.getpgid(captured) == session.process.pid:
+                                    observed_processes.add(captured)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                    break
+            time.sleep(0.25)
+        alive = session.alive()
+        elapsed = round(time.monotonic() - started, 3)
+        exit_code = None if alive else session.exit_code()
+        if alive:
+            requested_close = True
+            session.close()
+            deadline = time.monotonic() + CLOSE_SECONDS
+            while session.alive() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            forced = session.alive()
+            if not forced:
+                exit_code = session.exit_code()
+    finally:
+        session.kill()
+    if capture:
+        if os.name == "nt":
+            for process, image in session.images.items():
+                if image and image.startswith(session.owned + os.sep):
+                    observed_processes.add(process)
+        result = performance_capture.inspect_capture(*capture)
+        if result["state"] == "pending":
+            result = dict(result, state="incomplete")
+        elif result["state"] == "complete":
+            if result["process_id"] not in observed_processes:
+                result = dict(result, state="invalid", reason="native trace process was not verified as an owned process")
+            else:
+                result["process_ownership"] = "verified"
+            if exit_code not in (None, 0):
+                result = dict(result, state="incomplete", reason="native process exited with a failure; trace evidence retained")
+            if forced:
+                result["warnings"].append("The owned native process required forced termination after capture.")
+    else:
+        result = {"state": "completed" if exit_code == 0 and not forced else "failed"}
+    return dict(result, seconds=elapsed, exit_code=exit_code,
+                cleanup={"close_requested": requested_close, "forced": forced}, pad_queued_s=queued)
+
+
+def run_performance_title(executable, work, run_dir, seconds, extra_env, window_kind, window,
+                          scene, warmup_seconds, title_id, content_version=None, pad=None, console=None):
+    import performance_capture
+    from performance_console import InteractiveConsole
+
+    run_dir.mkdir(parents=True)
+    warmup = run_dir / "warmup"
+    warmup.mkdir()
+    cache = work / "driver-cache"
+    settings = {"MESA_SHADER_CACHE_DIR": str(cache), "__GL_SHADER_DISK_CACHE_PATH": str(cache), **extra_env}
+    env, removed = performance_capture.clean_environment(os.environ, settings, run_dir, window_kind, window)
+    cache_settings = {name.upper(): value for name, value in env.items()}
+    if (cache_settings.get("ANYPS5_NO_SHADER_CACHE", "") not in ("", "0") or
+            cache_settings.get("MESA_SHADER_CACHE_DISABLE", "").lower() in ("1", "true") or
+            cache_settings.get("__GL_SHADER_DISK_CACHE") == "0"):
+        raise ValueError("clean performance capture requires enabled shader caches; remove cache-disabling settings")
+    warmup_env = dict(env, APS5_TRACE_DIR=str(warmup))
+    warmup_env.pop("APS5_TRACE_FRAMES", None)
+    warmup_env.pop("APS5_TRACE_SECONDS", None)
+    restarted = False
+    try:
+        with contextlib.ExitStack() as resources:
+            if console is None:
+                console = resources.enter_context(InteractiveConsole())
+            warmed = performance_phase(executable, work, warmup_env, console, warmup_seconds, pad)
+            if warmed["state"] == "failed":
+                result = {"state": "incomplete", "reason": "warm-up failed", "warnings": []}
+            else:
+                restarted = True
+                result = performance_phase(executable, work, env, console, seconds, pad,
+                                           (run_dir, window_kind, window, title_id, content_version))
+            result.update(console=console.provenance, warmup=warmed)
+    except BaseException as error:
+        result = {"state": "incomplete", "reason": "interrupted" if isinstance(error, KeyboardInterrupt)
+                  else "capture failed: " + type(error).__name__}
+        (run_dir / "capture.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        raise
+    result.update(scene={"description": scene, "source": "operator", "verified": False},
+                  removed_instrumentation=removed, cache={"directory": str(cache), "retained_across_restart": restarted,
+                                                        "scene_warmed_verified": False})
+    (run_dir / "capture.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    return result
+
+
+def validate_performance_args(parser, args):
+    import performance_capture
+
+    window = args.trace_frames or args.trace_seconds
+    if args.profile != "performance":
+        if window or args.scene is not None or args.warmup_seconds is not None:
+            parser.error("capture windows, --scene and --warmup-seconds require --profile performance")
+        return
+    if not window:
+        parser.error("--profile performance requires --trace-frames or --trace-seconds")
+    if len(args.ids) != 1:
+        parser.error("--profile performance requires exactly one title ID")
+    if not args.scene or not args.scene.strip() or len(args.scene) > 1024:
+        parser.error("--profile performance requires a nonempty --scene of at most 1024 characters")
+    if args.compare or args.json or args.smoke:
+        parser.error("--profile performance cannot be combined with --compare, --json or --smoke")
+    try:
+        args.capture_window = performance_capture.parse_window(window)
+    except ValueError as error:
+        parser.error(str(error))
+    args.capture_kind = "frames" if args.trace_frames else "seconds"
+    args.warmup_seconds = args.warmup_seconds or 60
+
+
 def source_root(build):
     cache = Path(build) / "CMakeCache.txt"
     if cache.is_file():
@@ -1009,7 +1169,7 @@ def write_summary(output, summary):
     (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
 
-def main(argv=None):
+def run_cli(argv, capture_resources):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -1018,7 +1178,7 @@ def main(argv=None):
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--runs", type=positive, default=2)
+    parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
     parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
@@ -1026,10 +1186,18 @@ def main(argv=None):
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
     parser.add_argument("--smoke", action="store_true", help="run the titles marked \"smoke\" in titles.json")
+    parser.add_argument("--profile", choices=("smoke", "performance"), default="smoke")
+    windows = parser.add_mutually_exclusive_group()
+    windows.add_argument("--trace-frames", metavar="START:COUNT")
+    windows.add_argument("--trace-seconds", metavar="START:LENGTH")
+    parser.add_argument("--scene", help="operator description of the scene used for warm-up and capture")
+    parser.add_argument("--warmup-seconds", type=positive, help="warm-up duration before each capture (default: 60)")
     args = parser.parse_args(argv)
+    validate_performance_args(parser, args)
+    args.runs = args.runs or (1 if args.profile == "performance" else 2)
     if args.smoke and args.ids:
         parser.error("--smoke takes no title IDs")
-    args.out = args.out or args.build / "title-runs"
+    args.out = args.out or args.build / ("performance-runs" if args.profile == "performance" else "title-runs")
     if args.json and not args.compare:
         parser.error("--json needs --compare")
     try:
@@ -1067,7 +1235,11 @@ def main(argv=None):
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
+    if args.profile == "performance":
+        summary.update(profile="performance", format="anyps5-performance-capture/1", scene=args.scene,
+                       window={"kind": args.capture_kind, "spec": list(args.capture_window)})
     progress = sys.stderr if args.json else sys.stdout
+    capture_console = None
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
@@ -1090,11 +1262,38 @@ def main(argv=None):
         shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
         for number in range(1, args.runs + 1):
+            if args.profile == "performance" and executable is None:
+                failed = {"state": "incomplete", "reason": "title conversion failed", "warnings": [],
+                          "relink_log": "../relink.log"}
+                destination = output / title_id / f"run{number}"
+                destination.mkdir()
+                (destination / "capture.json").write_text(json.dumps(failed, indent=2) + "\n", encoding="utf-8")
+                runs.append({"run": number, **failed})
+                print(f"{title_id} capture{number}: incomplete", file=progress, flush=True)
+                continue
             if executable is None:
                 log = (work / "relink.log").read_text(encoding="utf-8", errors="replace")
                 result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
                           "first_error": first_error(log) or last_line(log),
                           "warnings": {}, "frames": [], "report": None}
+            elif args.profile == "performance":
+                try:
+                    if capture_console is None:
+                        from performance_console import InteractiveConsole
+                        capture_console = capture_resources.enter_context(InteractiveConsole())
+                    result = run_performance_title(executable, work, output / title_id / f"run{number}", seconds,
+                        entry.get("env", {}), args.capture_kind, args.capture_window, args.scene,
+                        args.warmup_seconds, title_id, found[title_id]["version"], entry.get("pad"), console=capture_console)
+                except (OSError, RuntimeError, ValueError) as error:
+                    result = {"state": "invalid", "reason": str(error), "warnings": []}
+                    destination = output / title_id / f"run{number}"
+                    destination.mkdir(exist_ok=True)
+                    report = destination / "capture.json"
+                    if not report.exists():
+                        report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                runs.append({"run": number, **result})
+                print(f"{title_id} capture{number}: {result['state']}", file=progress, flush=True)
+                continue
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
                 for key in ("os", "gpu", "driver", "cpu"):
@@ -1105,6 +1304,10 @@ def main(argv=None):
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
+    if args.profile == "performance":
+        print(f"written to {output}", file=progress)
+        return 0 if all(run.get("state") == "complete" for title in summary["titles"].values()
+                        for run in title["runs"]) else 1
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")
     if args.json:
@@ -1113,6 +1316,11 @@ def main(argv=None):
         print(report)
     print(f"written to {output}", file=progress)
     return 0
+
+
+def main(argv=None):
+    with contextlib.ExitStack() as resources:
+        return run_cli(argv, resources)
 
 
 if __name__ == "__main__":

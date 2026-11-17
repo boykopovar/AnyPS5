@@ -117,6 +117,237 @@ class FoldTests(unittest.TestCase):
         self.assertEqual(self.debt(), BASE)
         self.assertTrue((self.root / "docs/dev/debt/changes/a.md").is_file())
 
+    def test_folds_index_and_dotted_hyphen_and_underscore_libraries(self):
+        index = (
+            "# Project technical debt\n\n### Functional\n\n"
+            "- [generalItem](core/example.cpp) - original gap\n"
+        )
+        dotted = (
+            "# libSceAjm.native technical debt\n\n### Silent stubs\n\n"
+            "- [sceAjmA](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjm.native) - returns 0\n"
+        )
+        multi_dot = (
+            "# libReactNative.Modules.Vsh.WebAppLauncher technical debt\n\n### Silent stubs\n\n"
+            "- [rnA](../../../core/libs/prx/libReactNative.Modules.Vsh.WebAppLauncher/Export.cpp) "
+            "(libReactNative.Modules.Vsh.WebAppLauncher) - returns 0\n"
+        )
+        hyphen = (
+            "# libSceFont-module technical debt\n\n### Silent stubs\n\n"
+            "- [sceFontA](../../../core/libs/prx/libSceFont-module/Export.cpp) (libSceFont-module) - returns 0\n"
+        )
+        underscore = (
+            "# libkernel_sys technical debt\n\n### Silent stubs\n\n"
+            "- [sceKernelA](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - returns 0\n"
+        )
+        self.write("docs/dev/TechnicalDebt.md", index)
+        self.write("docs/dev/debt/libSceAjm.native.md", dotted)
+        self.write("docs/dev/debt/libReactNative.Modules.Vsh.WebAppLauncher.md", multi_dot)
+        self.write("docs/dev/debt/libSceFont-module.md", hyphen)
+        self.write("docs/dev/debt/libkernel_sys.md", underscore)
+        self.fragment(
+            "valid",
+            "# TechnicalDebt\n\n## change [generalItem]\n\n- [generalItem](core/example.cpp) - updated gap\n\n"
+            "# libSceAjm.native\n\n## add Silent stubs\n\n"
+            "- [sceAjmB](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjm.native) - returns 1\n\n"
+            "# libReactNative.Modules.Vsh.WebAppLauncher\n\n## remove [rnA]\n\n"
+            "# libSceFont-module\n\n## add Silent stubs\n\n"
+            "- [sceFontB](../../../core/libs/prx/libSceFont-module/Export.cpp) (libSceFont-module) - returns 1\n\n"
+            "# libkernel_sys\n\n## add Silent stubs\n\n"
+            "- [sceKernelB](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - returns 1\n",
+        )
+        code, shown_index, error = self.run_fold("--show", "TechnicalDebt")
+        self.assertEqual(code, 0, error)
+        self.assertIn("updated gap", shown_index)
+        code, shown_multi, error = self.run_fold("--show", "libReactNative.Modules.Vsh.WebAppLauncher")
+        self.assertEqual(code, 0, error)
+        self.assertNotIn("rnA", shown_multi)
+        self.assertEqual((self.root / "docs/dev/TechnicalDebt.md").read_text(encoding="utf-8"), index)
+        self.assertEqual(self.run_fold()[0], 0)
+        self.assertIn("updated gap", (self.root / "docs/dev/TechnicalDebt.md").read_text(encoding="utf-8"))
+        self.assertIn("sceAjmB", (self.root / "docs/dev/debt/libSceAjm.native.md").read_text(encoding="utf-8"))
+        self.assertNotIn("rnA", (self.root / "docs/dev/debt/libReactNative.Modules.Vsh.WebAppLauncher.md").read_text(encoding="utf-8"))
+        self.assertIn("sceFontB", (self.root / "docs/dev/debt/libSceFont-module.md").read_text(encoding="utf-8"))
+        self.assertIn("sceKernelB", (self.root / "docs/dev/debt/libkernel_sys.md").read_text(encoding="utf-8"))
+
+    def test_refuses_traversal_outside_debt_dir_and_leaves_victim_untouched(self):
+        readme = "# Example\n\n### Notes\n\n- [victim](core/example.cpp) - original\n"
+        sub = "# Sub\n\n### Notes\n\n- [subVictim](core/example.cpp) - original\n"
+        dot = "# Dot\n\n### Notes\n\n- [dotVictim](core/example.cpp) - original\n"
+        victims = {
+            "README.md": readme,
+            "docs/dev/debt/sub/target.md": sub,
+            "docs/dev/debt/.md": dot,
+            "docs/dev/debt/..md": dot,
+            "docs/dev/debt/...md": dot,
+        }
+        cases = [
+            ("../../../README", "victim"),
+            ("..\\..\\..\\README", "victim"),
+            ("sub/target", "subVictim"),
+            ("sub\\target", "subVictim"),
+            ("", "dotVictim"),
+            (".", "dotVictim"),
+            ("..", "dotVictim"),
+        ]
+        for target_name, entry in cases:
+            with self.subTest(target=target_name):
+                for rel_path, content in victims.items():
+                    self.write(rel_path, content)
+                fragment_path = self.root / "docs/dev/debt/changes/escape.md"
+                fragment_text = (
+                    f"# {target_name}\n\n## change {entry}\n\n"
+                    f"- [{entry}](core/example.cpp) - hijacked\n"
+                )
+                self.fragment("escape", fragment_text)
+                with self.assertRaises(debt_fold.FoldError):
+                    debt_fold.fold(self.root, write=True)
+                code, stdout, stderr = self.run_fold()
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn("invalid library", stderr)
+                self.assertTrue(fragment_path.is_file())
+                self.assertEqual(fragment_path.read_text(encoding="utf-8"), fragment_text)
+                self.assertEqual(self.debt(), BASE)
+                for rel_path, content in victims.items():
+                    self.assertEqual((self.root / rel_path).read_text(encoding="utf-8"), content)
+                fragment_path.unlink()
+
+    def test_refuses_cross_platform_malformed_library_names(self):
+        readme = "# Example\n\n### Notes\n\n- [victim](core/example.cpp) - original\n"
+        self.write("README.md", readme)
+        malformed = [
+            "../../../README",
+            "../README",
+            "a/b",
+            "./libSceExample",
+            "..\\..\\..\\README",
+            "..\\README",
+            "a\\b",
+            ".\\libSceExample",
+            "/etc/passwd",
+            "/README",
+            "\\Windows\\win.ini",
+            "\\README",
+            "//server/share/README",
+            "\\\\server\\share\\README",
+            "C:README",
+            "C:/README",
+            "C:\\README",
+            "C:",
+            "libSceExample:stream",
+            "README:$DATA",
+            ":stream",
+            "",
+            ".",
+            "..",
+            "...",
+            ".hidden",
+            "libSceExample.",
+            "lib\x00SceExample",
+            "lib\nSceExample",
+            "lib\rSceExample",
+            "lib\tSceExample",
+            "lib\x1fSceExample",
+            "lib\x7fSceExample",
+        ]
+        for bad in malformed:
+            with self.subTest(library=bad):
+                with self.assertRaises(debt_fold.FoldError) as ctx:
+                    debt_fold.debt_file(bad)
+                self.assertIn("invalid library", str(ctx.exception))
+                if "\n" not in bad and "\r" not in bad:
+                    fragment_text = f"# {bad}\n\n## remove [sceExampleA]\n"
+                    self.fragment("bad", fragment_text)
+                    code, stdout, stderr = self.run_fold()
+                    self.assertEqual(code, 1)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("docs/dev/debt/changes/bad.md:1:", stderr)
+                    self.assertIn("invalid library", stderr)
+                    self.assertEqual(self.debt(), BASE)
+                    self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), readme)
+                    self.assertTrue((self.root / "docs/dev/debt/changes/bad.md").is_file())
+                    (self.root / "docs/dev/debt/changes/bad.md").unlink()
+
+    def test_refuses_invalid_show_targets_without_traceback_or_mutation(self):
+        readme = "# Example\n\n- [victim](core/example.cpp) - secret\n"
+        self.write("README.md", readme)
+        self.write("docs/dev/debt/sub/target.md", "# Sub\n")
+        self.write("docs/dev/debt/.md", "# Empty\n")
+        self.write("docs/dev/debt/..md", "# Dot\n")
+        self.write("docs/dev/debt/...md", "# DotDot\n")
+        pending = f"# libSceExample\n\n## add Silent stubs\n\n- [sceExampleD]({LINK}) (libSceExample) - returns 0\n"
+        self.fragment("pending", pending)
+        bad_targets = [
+            "../../../README",
+            "..\\..\\..\\README",
+            "sub/target",
+            "sub\\target",
+            "/README",
+            "\\README",
+            "//server/share/README",
+            "\\\\server\\share\\README",
+            "C:README",
+            "C:\\README",
+            "libSceExample:stream",
+            "README:$DATA",
+            "",
+            ".",
+            "..",
+            "lib\x00SceExample",
+            "lib\nSceExample",
+            "lib\tSceExample",
+            "lib\x7fSceExample",
+        ]
+        for bad in bad_targets:
+            with self.subTest(show=bad):
+                code, stdout, stderr = self.run_fold("--show", bad)
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn("invalid library", stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertNotIn("no debt file", stderr)
+                self.assertEqual(self.debt(), BASE)
+                self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), readme)
+                self.assertEqual((self.root / "docs/dev/debt/changes/pending.md").read_text(encoding="utf-8"), pending)
+        code, stdout, stderr = self.run_fold("--show", "libSceMissing")
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("no debt file for libSceMissing", stderr)
+
+    def test_refuses_mixed_valid_and_malformed_fragments_atomically(self):
+        readme = "# Example\n\n### Notes\n\n- [victim](core/example.cpp) - original\n"
+        index = "# Project technical debt\n\n### Functional\n\n- [generalItem](core/example.cpp) - original\n"
+        self.write("README.md", readme)
+        self.write("docs/dev/TechnicalDebt.md", index)
+        valid_frag = (
+            f"# libSceExample\n\n## change [sceExampleA]\n\n"
+            f"- [sceExampleA]({LINK}) (libSceExample) - updated\n\n"
+            f"# TechnicalDebt\n\n## change [generalItem]\n\n"
+            f"- [generalItem](core/example.cpp) - updated\n"
+        )
+        malformed_frag = "# ../../../README\n\n## change victim\n\n- [victim](core/example.cpp) - hijacked\n"
+        self.fragment("a", valid_frag)
+        self.fragment("b", malformed_frag)
+        code, _, stderr = self.run_fold()
+        self.assertEqual(code, 1)
+        self.assertIn("invalid library", stderr)
+        self.assertEqual(self.debt(), BASE)
+        self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), readme)
+        self.assertEqual((self.root / "docs/dev/TechnicalDebt.md").read_text(encoding="utf-8"), index)
+        self.assertEqual((self.root / "docs/dev/debt/changes/a.md").read_text(encoding="utf-8"), valid_frag)
+        self.assertEqual((self.root / "docs/dev/debt/changes/b.md").read_text(encoding="utf-8"), malformed_frag)
+        (self.root / "docs/dev/debt/changes/a.md").unlink()
+        (self.root / "docs/dev/debt/changes/b.md").unlink()
+        mixed_frag = f"{valid_frag}\n{malformed_frag}"
+        self.fragment("mixed", mixed_frag)
+        code, _, stderr = self.run_fold()
+        self.assertEqual(code, 1)
+        self.assertIn("invalid library", stderr)
+        self.assertEqual(self.debt(), BASE)
+        self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), readme)
+        self.assertEqual((self.root / "docs/dev/TechnicalDebt.md").read_text(encoding="utf-8"), index)
+        self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
+
 
 if __name__ == "__main__":
     unittest.main()

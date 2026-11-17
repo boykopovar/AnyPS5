@@ -1034,7 +1034,14 @@ int APS5_VABI scePadParseUniqueDataLeonardo(std::int32_t handle, const PadLeonar
     (void)handle;
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (data == nullptr || uniqueData == nullptr) return PAD_ERROR_INVALID_ARG;
-    std::memset(static_cast<void*>(uniqueData), 0, PAD_LEONARDO_UNIQUE_DATA_SIZE);
+    const std::uint8_t zeroData[PAD_LEONARDO_UNIQUE_DATA_SIZE]{};
+    const int savedErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(uniqueData, zeroData, sizeof(zeroData));
+    errno = savedErrno;
+    std::uint8_t probe = 0;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&probe, data, 1);
+    errno = savedErrno;
+    if (!copiedOut || !copiedIn) return PAD_ERROR_INVALID_ARG;
     return PAD_ERROR_INVALID_HANDLE;
 }
 
