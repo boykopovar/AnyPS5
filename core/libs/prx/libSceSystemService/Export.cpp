@@ -786,6 +786,7 @@ int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* ca
 }
 
 int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ if (categoryType != nullptr && appId != SYSTEM_SERVICE_RUNNING_APP_ID) return LNC_UTIL_ERROR_GAME_PROCESS;
  return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 
