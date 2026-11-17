@@ -1,6 +1,7 @@
 #include "prx/libSceBluetoothHid/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -31,6 +32,9 @@ int main() {
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x81540001u);
     constexpr auto noCallback = static_cast<std::int32_t>(0x81540006u);
     Require(sceBluetoothHidRegisterCallback(nullptr, nullptr, nullptr) == notInitialized, "initialization check order");
+    errno = 71;
+    Require(sceBluetoothHidRegisterCallback(nullptr, nullptr, reinterpret_cast<const BluetoothHidParam*>(0x10)) == notInitialized, "register callback unmapped before initialization");
+    Require(errno == 71, "errno preserved before initialization");
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == notInitialized, "non-null callback before initialization");
     Require(sceBluetoothHidRegisterDevice(1, 2) == notInitialized, "registration before initialization");
     Require(sceBluetoothHidUnregisterDevice(1, 2) == notInitialized, "unregistration before initialization");
@@ -54,6 +58,14 @@ int main() {
     Require(sceBluetoothHidRegisterDevice(0x44f, 0x1000) == 0, "device registration failed");
     Require(callbackCalls == 0, "a device connection was reported");
     Require(sceBluetoothHidRegisterCallback(nullptr, nullptr, &param) == invalidArgument, "null callback validation");
+    errno = 71;
+    Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, reinterpret_cast<const BluetoothHidParam*>(0x10)) == invalidArgument, "unmapped param validation");
+    Require(errno == 71, "errno preserved for unmapped param");
+    BluetoothHidParam badThreadParam{};
+    badThreadParam.threadParam = reinterpret_cast<const BluetoothHidThreadParam*>(0x10);
+    errno = 71;
+    Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &badThreadParam) == invalidArgument, "unmapped threadParam validation");
+    Require(errno == 71, "errno preserved for unmapped threadParam");
     param.reserved = 1;
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "reserved field validation");
     param.reserved = 0;
@@ -129,6 +141,9 @@ int main() {
     Require(sceBluetoothHidParamInitialize(reinterpret_cast<BluetoothHidParam*>(0x10), &thread) == invalidArgument, "unwritable parameter block was not refused");
     Require(errno == 71, "errno modified by invalid pointer check");
     Require(sceBluetoothHidParamInitialize(nullptr, nullptr) == invalidArgument, "null parameter and null thread parameter were not refused");
+    errno = 71;
+    Require(sceBluetoothHidParamInitialize(reinterpret_cast<BluetoothHidParam*>(0x10), &thread) == invalidArgument, "unmapped param block was not refused");
+    Require(errno == 71, "errno preserved on unmapped param block");
     BluetoothHidThreadParam built;
     std::memset(&built, 0x5a, sizeof(built));
     Require(sceBluetoothHidThreadParamInitialize(&built, 700, 0x3f) == 0, "thread parameter initialization did not return 0");
@@ -141,6 +156,9 @@ int main() {
     Require(std::memcmp(threadBytes + 16, expected + 16, 4) == 0, "the word at offset 16 was not cleared");
     Require(sceBluetoothHidThreadParamInitialize(nullptr, 700, 0x3f) == invalidArgument, "a null thread parameter block was not refused");
     Require(sceBluetoothHidThreadParamInitialize(nullptr, 0, 0) == invalidArgument, "a null thread parameter block with zero values was not refused");
+    errno = 71;
+    Require(sceBluetoothHidThreadParamInitialize(reinterpret_cast<BluetoothHidThreadParam*>(0x10), 700, 0x3f) == invalidArgument, "unmapped thread parameter block was not refused");
+    Require(errno == 71, "errno preserved on unmapped thread parameter block");
     std::puts("BluetoothHid tests passed");
     return 0;
 }

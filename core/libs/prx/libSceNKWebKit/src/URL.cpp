@@ -307,17 +307,7 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
 
 namespace {
 
-class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::SecurityOrigin> {
-public:
-    SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
-
-    std::u16string protocol;
-    std::u16string host;
-    std::optional<std::uint16_t> port;
-    bool protocolNull;
-    bool hostNull;
-};
+using NKWebKit::SecurityOrigin;
 
 const void* CopyOriginString(std::u16string text) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::move(text)));

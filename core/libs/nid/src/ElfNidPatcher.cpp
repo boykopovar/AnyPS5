@@ -381,6 +381,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     std::size_t dynSymOffset = 0u, dynSymSize = 0u;
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
+    std::uint32_t gnuHashLink = 0u;
     std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
     std::uint32_t sysvHashLink = 0u;
     std::size_t versymOffset = 0u, versymSize = 0u;
@@ -407,6 +408,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtGnuHash) {
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
+            gnuHashLink = shdr.sh_link;
         }
         if (shdr.sh_type == kShtHash) {
             sysvHashOffset = static_cast<std::size_t>(shdr.sh_offset);
@@ -448,6 +450,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         ValidateSysvHash(elf, sysvHashOffset, sysvHashSize, symCount);
     }
     if (gnuHashOffset != 0u) {
+        if (gnuHashLink != dynSymSectionIndex) throw std::runtime_error("invalid gnu.hash symbol table link");
         ValidateGnuHash(elf, gnuHashOffset, gnuHashSize, symCount);
         gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
     }

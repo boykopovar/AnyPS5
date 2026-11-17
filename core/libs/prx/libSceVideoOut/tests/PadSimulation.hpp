@@ -63,6 +63,14 @@ inline SDL_Event WheelEvent(int direction) {
     return event;
 }
 
+inline SDL_Event TiltEvent(int tilt, bool flipped = false) {
+    SDL_Event event{};
+    event.type = SDL_MOUSEWHEEL;
+    event.wheel.x = tilt;
+    event.wheel.direction = flipped ? SDL_MOUSEWHEEL_FLIPPED : SDL_MOUSEWHEEL_NORMAL;
+    return event;
+}
+
 inline TimedEvent At(double ms, const SDL_Event& event) {
     return {ms, event, false, false, false};
 }

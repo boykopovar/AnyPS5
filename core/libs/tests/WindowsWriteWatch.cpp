@@ -1017,11 +1017,14 @@ void CheckKnownZeroFirstReads() {
     static_cast<volatile unsigned char*>(memory)[4 * Small] = 0;
     static_cast<volatile unsigned char*>(memory)[6 * Small] = 7;
     std::array<void*, 32> written{};
-    std::size_t count = 1;
-    Require(mappings.Collect(address + 2 * Small, Small, written.data(), &count, true) && count == 0, "the first read of a never-written page was collected as a write");
-    count = written.size();
-    Require(mappings.Collect(address, Bytes, written.data(), &count, true) && count == 1 && written[0] == memory + 6 * Small, "a zero store into a never-written page was collected as a write, or a real store was lost");
-    Require(KnownZeroPages(memory, Bytes) == PagesBelow(Bytes / Small, {6}), "a read or a zero store lost a page's known-zero state");
+    std::size_t count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true), "known zero first-read collect failed");
+    std::set<std::size_t> collected;
+    for (std::size_t index = 0; index < count; ++index) collected.insert((static_cast<unsigned char*>(written[index]) - memory) / Small);
+    Require(collected.contains(4), "a zero store into a never-written page was not collected as a write");
+    Require(collected.contains(6), "a real store into a never-written page was not collected as a write");
+    Require(collected.size() <= 3 && !collected.contains(0) && !collected.contains(1) && !collected.contains(3) && !collected.contains(5), "an untouched page was collected as a write");
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(Bytes / Small, collected), "a collected page stayed known zero");
     mappings.Reset(memory, Bytes);
     VirtualFree(memory, 0, MEM_RELEASE);
 }

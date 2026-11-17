@@ -1,9 +1,11 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -49,6 +51,7 @@ using namespace AgcDriver::Graphics;
 
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t FormatBc5UNorm = 177;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
@@ -188,6 +191,8 @@ public:
             enabled.shaderInt64 = VK_TRUE;
             enabled.shaderStorageImageMultisample = enableStorageImageMultisample && supported.shaderStorageImageMultisample;
             context.storageImageMultisample = enabled.shaderStorageImageMultisample == VK_TRUE;
+            enabled.textureCompressionBC = supported.textureCompressionBC;
+            context.textureCompressionBC = supported.textureCompressionBC == VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
@@ -200,8 +205,9 @@ public:
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
@@ -379,7 +385,7 @@ private:
     std::uint8_t* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
@@ -387,19 +393,31 @@ std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t sid
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
-        0u,
-        0u,
+        keys != 0 ? (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u) : 0u,
+        static_cast<std::uint32_t>(keys >> 16u),
     };
 }
 
-std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
-    const auto words = Descriptor(address, side, format);
+std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
+    const auto words = Descriptor(address, side, format, keys);
     return CachedSampledTexture(context, words);
 }
 
 GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
     const auto words = Descriptor(address, side, format);
     return DecodeTextureResource(words);
+}
+
+std::shared_ptr<Texture> SampledFastCleared(const Context& context, std::uint64_t address, std::uint64_t keys, std::size_t bytes) {
+    constexpr std::uint32_t side = Side * 4u;
+    Require(DescribeSurface(Resource(address, side, FormatBc5UNorm)).guestBytes == bytes, "the fast-cleared BC5 surface does not take " + std::to_string(bytes) + " bytes");
+    const auto words = Descriptor(address, side, FormatBc5UNorm, keys);
+    const auto resource = DecodeTextureResource(words);
+    Require(resource.dccAddress == keys && TextureClearKeys(resource, bytes) == DccKeys::Clear0000, "the fast-cleared BC5 surface does not name its keys or its zero keys do not read a 0000 clear");
+    const auto cleared = SampledTexturesCleared();
+    auto texture = Sampled(context, address, side, FormatBc5UNorm, keys);
+    Require(SampledTexturesCleared() == cleared, "the fast-cleared BC5 surface was cleared on the GPU, so it kept no snapshot vector for the spare pool");
+    return texture;
 }
 
 std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
@@ -766,25 +784,37 @@ void recycleTests(const Context& context) {
     const auto third = Sampled(context, address);
     Require(third != second, "the replaced snapshot's size-equal buffer was not reread from guest memory");
     Require(Sampled(context, address) == third, "an unchanged surface did not serve its remade snapshot");
+    if (!context.textureCompressionBC) {
+        std::puts("BC compressed textures unavailable: a big fast-cleared snapshot taking the parked spare of its size not tested");
+        return;
+    }
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     const WatchedSurface watchedFirst(context, BigBytes);
     const WatchedSurface watchedSecond(context, BigBytes);
-    const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
-    const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not take the parked spare of its size");
+    const auto bigFirst = SampledFastCleared(context, watchedFirst.Address(), keys, BigBytes);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big fast-cleared snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
+    const auto bigSecond = SampledFastCleared(context, watchedSecond.Address(), keys, BigBytes);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not take the parked spare of its size");
 }
 
 void spareAgeTests(const Context& context) {
+    if (!context.textureCompressionBC) {
+        std::puts("BC compressed textures unavailable: spare snapshot expiry and reuse not tested");
+        return;
+    }
     Block block(context);
     ClearCachedTextures(context.device);
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     {
         const WatchedSurface watched(context, BigBytes);
-        const auto first = Sampled(context, watched.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big snapshot did not park its dropped buffer in the spare pool");
+        const auto first = SampledFastCleared(context, watched.Address(), keys, BigBytes);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present <= SpareSnapshotPresents; ++present) Recorder::CountPresent();
         const auto small = Sampled(context, block.Surface(0));
         Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a spare idle for " + std::to_string(SpareSnapshotPresents + 1u) + " presents was not released");
@@ -793,10 +823,10 @@ void spareAgeTests(const Context& context) {
     {
         const WatchedSurface watchedFirst(context, BigBytes);
         const WatchedSurface watchedSecond(context, BigBytes);
-        const auto second = Sampled(context, watchedFirst.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not park its dropped buffer in the spare pool");
+        const auto second = SampledFastCleared(context, watchedFirst.Address(), keys, BigBytes);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
-        const auto third = Sampled(context, watchedSecond.Address(), BigSide);
+        const auto third = SampledFastCleared(context, watchedSecond.Address(), keys, BigBytes);
         Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare taken within " + std::to_string(SpareSnapshotPresents) + " presents was released instead of reused");
     }
 }
@@ -1066,6 +1096,21 @@ void collidingKeyTests(const Context& context) {
     Require(kept == capacity && TextureCacheUsage().sampledEntries == capacity, "the first use of a descriptor whose cache key hash equals that of another descriptor first used in the frame left " + std::to_string(kept) + " of the " + std::to_string(capacity) + " textures the last frame used cached");
 }
 
+void allocationIdentityTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto address = block.Surface(0);
+    const auto first = Sampled(context, address);
+    Require(Sampled(context, address) == first, "a second lookup of a surface whose allocation is unchanged made another texture");
+    GuestAllocations::Mutation().Protect(reinterpret_cast<const void*>(address), BlockBytes, true, false, true, [] {});
+    const auto reprotected = Sampled(context, address);
+    Require(reprotected != first, "a lookup after the surface's allocation changed its protection reused the texture made under the old allocation identity");
+    Require(Sampled(context, address) == reprotected, "a second lookup after the protection change made another texture");
+    GuestAllocations::Mutation().Protect(reinterpret_cast<const void*>(address), BlockBytes, true, true, true, [] {});
+    Require(Sampled(context, address) != reprotected, "a lookup after the protection was restored reused the texture made under the read-only allocation identity");
+}
+
 constexpr std::uint64_t ReportedBudget = 64ull << 30u;
 constexpr std::uint64_t ReportedUsage = 12ull << 30u;
 
@@ -1310,6 +1355,8 @@ void collectRefusalTests(Context context) {
     context.textureCache = &textures;
     constexpr std::size_t PageBytes = 4096;
     constexpr auto collect = static_cast<std::size_t>(ShaderResources::FastFail::Collect);
+    const bool extended = !RuntimeSwitches::Set(RuntimeSwitch::NoExtendedFastProofs);
+    const auto partialPath = extended ? ShaderResources::ProofPath::Fast : ShaderResources::ProofPath::Full;
     PartialSurface surface(context);
     surface.Commit(0, SurfaceBytes - PageBytes, 0x5a);
     ClearCachedTextures(context.device);
@@ -1319,18 +1366,19 @@ void collectRefusalTests(Context context) {
     Require(sampled->Reusable() && sampled->SampledTextures().size() == 1, "the template over the partial surface is not reusable");
     ShaderResources::ProofReport report{};
     Require(sampled->Revalidate(shader, &report), "a template over a surface with an uncommitted page did not prove current");
-    Require(report.path == ShaderResources::ProofPath::Full, "a template over a surface with an uncommitted page took the fast proof");
+    Require(report.path == partialPath, extended ? "a template over a surface with an uncommitted page did not take the fast proof over its committed pages" : "a template over a surface with an uncommitted page took the fast proof with the extended fast proofs off");
     const auto before = ShaderResources::CollectRefusalCounts();
     const auto walksBefore = ShaderResources::FullWalkNanoseconds();
-    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the second proof over the uncommitted page did not take the full walk");
-    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the third proof over the uncommitted page did not take the full walk");
+    Require(sampled->Revalidate(shader, &report) && report.path == partialPath, "the second proof over the uncommitted page took the wrong path");
+    Require(sampled->Revalidate(shader, &report) && report.path == partialPath, "the third proof over the uncommitted page took the wrong path");
     const auto after = ShaderResources::CollectRefusalCounts();
     const auto walksAfter = ShaderResources::FullWalkNanoseconds();
-    Require(after.sampled - before.sampled == 2, "two collect refusals of a sampled surface were not counted");
-    Require(after.uncommitted - before.uncommitted == 2, "collect refusals over an uncommitted page were not counted as uncommitted");
+    const std::uint64_t refusals = extended ? 0u : 2u;
+    Require(after.sampled - before.sampled == refusals, "the collect refusals of a sampled surface over an uncommitted page were miscounted");
+    Require(after.uncommitted - before.uncommitted == refusals, "collect refusals over an uncommitted page were not counted as uncommitted");
     Require(after.storage == before.storage && after.unwatched == before.unwatched && after.other == before.other, "a sampled surface's collect refusal was counted under another kind or cause");
-    Require(after.surfaces == 1 && after.bytes == SurfaceBytes, "two refusals of one surface were not counted as one surface of its bytes");
-    Require(walksAfter[collect] > walksBefore[collect], "the full walks after a collect refusal were not timed");
+    Require(after.surfaces == (extended ? 0u : 1u) && after.bytes == (extended ? 0u : SurfaceBytes), "the refusals of one surface were not counted as one surface of its bytes");
+    Require(extended ? walksAfter[collect] == walksBefore[collect] : walksAfter[collect] > walksBefore[collect], "the full walks after a collect refusal were mistimed");
     const auto storageProgram = StorageProgram(surface.Address());
     const CompiledShader storageShader{ShaderRecompiler::ShaderStage::Compute, &storageProgram, 0};
     auto storage = std::make_shared<ShaderResources>(context, storageShader);
@@ -1360,6 +1408,25 @@ void collectRefusalTests(Context context) {
     sampled.reset();
     storage.reset();
     ClearCachedTextures(context.device);
+    if (extended) {
+        const auto beforeWrite = ShaderResources::CollectRefusalCounts();
+        PartialSurface written(context);
+        written.Commit(0, SurfaceBytes - PageBytes, 0x21);
+        const auto writtenProgram = SampledProgram(written.Address());
+        const CompiledShader writtenShader{ShaderRecompiler::ShaderStage::Compute, &writtenProgram, 0};
+        auto overWritten = std::make_shared<ShaderResources>(context, writtenShader);
+        Require(overWritten->Revalidate(writtenShader, &report) && report.path == ShaderResources::ProofPath::Fast, "a second template over a surface with an uncommitted page did not take the fast proof over its committed pages");
+        std::memset(reinterpret_cast<void*>(written.Address()), 0x22, PageBytes);
+        Require(!overWritten->Revalidate(writtenShader, &report), "a template over a surface whose committed pages were written still proved current");
+        Require(report.path == ShaderResources::ProofPath::Full, "a template over a surface whose committed pages were written was not left to the full walk");
+        auto rebuilt = std::make_shared<ShaderResources>(context, writtenShader);
+        Require(rebuilt->SampledTextures().size() == 1 && rebuilt->SampledTextures().front() != overWritten->SampledTextures().front(), "the template rebuilt after a write into the committed pages bound the old snapshot");
+        Require(rebuilt->Revalidate(writtenShader, &report) && report.path == ShaderResources::ProofPath::Fast, "the template rebuilt after a write into the committed pages did not take the fast proof");
+        overWritten.reset();
+        rebuilt.reset();
+        const auto afterWrite = ShaderResources::CollectRefusalCounts();
+        Require(afterWrite.sampled == beforeWrite.sampled && afterWrite.surfaces == beforeWrite.surfaces, "a write into the committed pages of a surface with an uncommitted page was counted as a collect refusal instead of a change");
+    }
     std::puts("collect refusal counters passed");
 }
 
@@ -1537,6 +1604,7 @@ int main(int argc, char** argv) {
             secondUseTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
+            allocationIdentityTests(context);
             spareAgeTests(context);
             ClearCachedTextures(context.device);
         }
