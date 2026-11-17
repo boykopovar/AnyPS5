@@ -130,5 +130,40 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "API unavailable")
 
+class DependencyProbeFailureTests(unittest.TestCase):
+    def test_fatal_closed_dependency_probe_is_not_an_unresolved_dependency(self):
+        pulls = {1: {"depends": {99}, "sha": "head"}}
+        with patch.object(progress_prs, "closed_dependency_status", return_value="merged"), \
+                patch.object(progress_prs, "git", return_value=subprocess.CompletedProcess([], 128, "", "fatal: fixture read failed")):
+            with self.assertRaisesRegex(RuntimeError, "fixture read failed"):
+                progress_prs.dependency_order(pulls, Path("fixture"), "base", "fixture/repo")
+
+    def test_fatal_open_head_probe_is_not_a_non_ancestor(self):
+        pulls = {1: {"depends": set(), "sha": "head"}}
+        with patch.object(progress_prs, "git", return_value=subprocess.CompletedProcess([], 128, "", "fatal: fixture read failed")):
+            with self.assertRaisesRegex(RuntimeError, "fixture read failed"):
+                progress_prs.dependency_order(pulls, Path("fixture"), "base", "fixture/repo")
+
+    def test_normal_non_ancestor_status_keeps_dependency_exclusion(self):
+        pulls = {1: {"depends": {99}, "sha": "head"}}
+        with patch.object(progress_prs, "closed_dependency_status", return_value="merged"), \
+                patch.object(progress_prs, "git", return_value=subprocess.CompletedProcess([], 1, "", "")):
+            self.assertEqual(progress_prs.dependency_order(pulls, Path("fixture"), "base", "fixture/repo"),
+                             ([], {1: "unresolved_dependency"}))
+
+    def test_ancestry_read_failure_makes_estimate_unavailable(self):
+        pulls = {1: {"depends": {99}, "sha": "head"}}
+        def git(root, *args, **kwargs):
+            return subprocess.CompletedProcess([], 128 if args[0] == "merge-base" else 0, "",
+                                               "fatal: fixture read failed" if args[0] == "merge-base" else "")
+        with patch.object(progress_prs, "collect_open_prs", return_value=(pulls, "base")), \
+                patch.object(progress_prs, "closed_dependency_status", return_value="merged"), \
+                patch.object(progress_prs, "measure", return_value={"done": 0, "total": 1, "percent": 0}) as measure, \
+                patch.object(progress_prs, "git", side_effect=git):
+            result = progress_prs.estimate("fixture/repo", Path("fixture"))
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "fatal: fixture read failed")
+        self.assertEqual(measure.call_count, 1)
+
 if __name__ == "__main__":
     unittest.main()

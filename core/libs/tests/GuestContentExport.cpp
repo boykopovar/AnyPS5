@@ -146,6 +146,9 @@ int main() {
     std::filesystem::current_path(testDirectory);
     ContentExportInitParam initParam{&MockMalloc, &MockFree, nullptr};
     Require(Throws([] { sceContentExportInit(nullptr); }));
+    errno = 71;
+    Require(Throws([] { sceContentExportInit(reinterpret_cast<const ContentExportInitParam*>(0x10)); }));
+    Require(errno == 71);
     ContentExportInitParam missingMalloc = initParam;
     missingMalloc.mallocFunc = nullptr;
     Require(Throws([&] { sceContentExportInit(&missingMalloc); }));
@@ -215,6 +218,10 @@ int main() {
     Require(exportedContents == "hello world");
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
+    chunks = DataChunks{};
+    errno = 71;
+    Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, reinterpret_cast<char*>(0x10), sizeof(exported)) == static_cast<int>(0x809D3016u));
+    Require(errno == 71);
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 10, ProvideChunks, &chunks, exported, sizeof(exported)) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(first, &fromData, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));

@@ -144,3 +144,11 @@ debt entry, never in code or test names.
   exists ([libSceIme](debt/libSceIme.md) rebuilds its codepage checks from Unicode's tables).
 - The goal is interoperability: what a title needs from a system library to run. Nothing here is for bypassing
   licence, entitlement or online checks.
+
+## Export and NID tools
+
+- `tools/export_gap.py --module <name> --export-table <file> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide.
+- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <dir>` writes an `Export.cpp` skeleton and the matching technical-debt lines for the exports it is given.
+- `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
+- `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
+- `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.

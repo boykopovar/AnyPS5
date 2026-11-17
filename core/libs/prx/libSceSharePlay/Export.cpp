@@ -130,10 +130,10 @@ int APS5_VABI sceSharePlaySetMode(void) {
     return 0;
 }
 
-int APS5_VABI sceSharePlaySetProhibition(void) {
+int APS5_VABI sceSharePlaySetProhibition(std::int32_t mode) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+    if (mode < 0 || mode > 2) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
 

@@ -129,9 +129,9 @@ int main() {
     Require(Set(fresh, TcpLevel, 0x400, 3) && Get(fresh, TcpLevel, 0x400) == 3);
     Require(Set(fresh, TcpLevel, 0x400, -1) && Get(fresh, TcpLevel, 0x400) == -1);
     Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, sizeof(one)), NoProtocolOption));
-    Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, static_cast<std::uint32_t>(-1)), NoProtocolOption));
+    Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, static_cast<std::uint32_t>(-1)), Invalid));
     Require(Fails(setsockopt_nid_postfix(fresh, SocketLevel, 0x7777, &one, sizeof(one)), NoProtocolOption));
-    Require(Fails(setsockopt_nid_postfix(fresh, SocketLevel, 0x7777, &one, static_cast<std::uint32_t>(-1)), NoProtocolOption));
+    Require(Fails(setsockopt_nid_postfix(fresh, SocketLevel, 0x7777, &one, static_cast<std::uint32_t>(-1)), Invalid));
     for (const auto& [option, bit] : {std::pair{4, 0x1000}, std::pair{8, 0x8}, std::pair{0x80, 0x10000}}) {
         Require(Get(fresh, TcpLevel, option) == 0);
         Require(Set(fresh, TcpLevel, option, 5) && Get(fresh, TcpLevel, option) == bit);
@@ -191,7 +191,7 @@ int main() {
     Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6Only, &one, static_cast<std::uint32_t>(-1)), Invalid));
     Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6Only, &one, static_cast<std::uint32_t>(-4)), Invalid));
     Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &one, sizeof(one)), NoProtocolOption));
-    Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &one, static_cast<std::uint32_t>(-1)), NoProtocolOption));
+    Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &one, static_cast<std::uint32_t>(-1)), Invalid));
     length = sizeof(value);
     Require(Fails(getsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &value, &length), NoProtocolOption));
     std::array<std::uint8_t, 28> unspecified6{28, 28};

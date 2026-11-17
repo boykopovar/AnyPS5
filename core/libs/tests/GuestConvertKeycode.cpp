@@ -118,6 +118,49 @@ void RequireImeKeyboardTypeMapping() {
     }
 }
 
+char16_t Abnt2Character(std::uint32_t keycode, std::uint32_t state) {
+    char16_t character = u'?';
+    Require(sceConvertKeycodeGetCharacter(keycode, state, 17, &character) == 0);
+    return character;
+}
+
+void RequireAbnt2Layout() {
+    constexpr std::uint32_t leftShift = 0x200u;
+    constexpr std::uint32_t rightShift = 0x2000u;
+    constexpr std::uint32_t altGr = 0x4000u;
+    constexpr std::uint32_t numLock = 0x10000u;
+    constexpr std::uint32_t capsLock = 0x20000u;
+    struct Row {
+        std::uint32_t keycode;
+        char16_t normal;
+        char16_t shifted;
+        char16_t thirdLevel;
+    };
+    constexpr Row rows[] = {
+        {0x04, u'a', u'A', 0}, {0x08, u'e', u'E', 0x00B0}, {0x14, u'q', u'Q', u'/'}, {0x1a, u'w', u'W', u'?'},
+        {0x1e, u'1', u'!', 0x00B9}, {0x1f, u'2', u'@', 0x00B2}, {0x20, u'3', u'#', 0x00B3}, {0x21, u'4', u'$', 0x00A3},
+        {0x22, u'5', u'%', 0x00A2}, {0x23, u'6', 0x00A8, 0x00AC}, {0x24, u'7', u'&', 0}, {0x27, u'0', u')', 0},
+        {0x2d, u'-', u'_', 0}, {0x2e, u'=', u'+', 0x00A7}, {0x2f, 0x00B4, u'`', 0}, {0x30, u'[', u'{', 0x00AA},
+        {0x32, u']', u'}', 0x00BA}, {0x33, 0x00E7, 0x00C7, 0}, {0x34, u'~', u'^', 0}, {0x35, u'\'', u'"', 0},
+        {0x36, u',', u'<', 0}, {0x37, u'.', u'>', 0}, {0x38, u';', u':', 0}, {0x64, u'\\', u'|', 0},
+        {0x87, u'/', u'?', 0x00B0}};
+    for (const auto& row : rows) {
+        Require(Abnt2Character(row.keycode, 0) == row.normal);
+        Require(Abnt2Character(row.keycode, leftShift) == row.shifted);
+        Require(Abnt2Character(row.keycode, rightShift) == row.shifted);
+        if (row.thirdLevel != 0) Require(Abnt2Character(row.keycode, altGr) == row.thirdLevel);
+    }
+    Require(Abnt2Character(0x31, 0) == 0);
+    Require(Abnt2Character(0x33, capsLock) == 0x00C7 && Abnt2Character(0x33, capsLock | leftShift) == 0x00E7);
+    Require(Abnt2Character(0x04, capsLock) == u'A' && Abnt2Character(0x1e, capsLock) == u'1');
+    Require(Abnt2Character(0x87, capsLock) == u'/' && Abnt2Character(0x34, capsLock) == u'~');
+    Require(Abnt2Character(0x14, altGr | capsLock) == u'/');
+    Require(Abnt2Character(0x85, 0) == u',' && Abnt2Character(0x85, numLock) == u',');
+    Require(Abnt2Character(0x63, 0) == 0 && Abnt2Character(0x63, numLock) == u'.');
+    Require(Abnt2Character(0x59, 0) == 0 && Abnt2Character(0x59, numLock) == u'1');
+    Require(Abnt2Character(0x54, 0) == u'/' && Abnt2Character(0x58, 0) == char16_t{0x0a});
+}
+
 }  // namespace
 
 int main() {
@@ -226,6 +269,7 @@ int main() {
     Require(!ImeKeyboardType::IsPs4TitleId("HOMEBREW1"));
 
     RequireImeKeyboardTypeMapping();
+    RequireAbnt2Layout();
     Require(sceConvertKeycodeGetCharacter(4, 0, 0, nullptr) == invalidAddress);
     errno = 71;
     Require(sceConvertKeycodeGetCharacter(4, 0, 4, reinterpret_cast<char16_t*>(0x10)) == invalidAddress);
@@ -239,6 +283,32 @@ int main() {
         Require(sceConvertKeycodeGetCharacter(30, state, 4, &character) == 0 && character == u'1');
         Require(sceConvertKeycodeGetCharacter(58, state, 4, &character) == 0 && character == 0);
         Require(sceConvertKeycodeGetCharacter(65535, state, 4, &character) == 0 && character == 0);
+    }
+    constexpr std::uint32_t consoleStates[] = {0u, 0x1u, 0x2u, 0x4u, 0x80u, 0x1c000000u};
+    constexpr std::uint32_t layoutZeroStates[] = {0u, 0x1u, 0x2u, 0x80u, 0x1c000000u};
+    for (std::uint32_t type = 1; type <= 10; ++type) {
+        character = u'?';
+        Require(sceConvertKeycodeGetCharacter(4, 0, type, &character) == 0 && character == (type >= 9 ? u'q' : u'a'));
+    }
+    struct ConsoleRow {
+        std::uint32_t keycode;
+        char16_t firstLayout;
+        char16_t ninthLayout;
+    };
+    constexpr ConsoleRow consoleRows[] = {{0x04, u'a', u'q'}, {0x05, u'b', u'b'}, {0x1d, u'z', u'w'}, {0x1e, u'1', u'&'}, {0x28, char16_t{0x0a}, char16_t{0x0a}}, {0x2c, u' ', u' '}};
+    for (const std::uint32_t state : consoleStates) {
+        for (const auto& row : consoleRows) {
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(row.keycode, state, 1, &character) == 0 && character == row.firstLayout);
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(row.keycode, state, 9, &character) == 0 && character == row.ninthLayout);
+        }
+    }
+    for (const std::uint32_t state : layoutZeroStates) {
+        for (const std::uint32_t keycode : {0x04u, 0x1eu, 0x28u}) {
+            character = u'?';
+            Require(sceConvertKeycodeGetCharacter(keycode, state, 0, &character) == static_cast<int>(0x80BC001Du) && character == u'?');
+        }
     }
     Require(sceConvertKeycodeGetCharacter(4, 0x200, 4, &character) == 0 && character == u'A');
     Require(sceConvertKeycodeGetCharacter(4, 0x20000, 4, &character) == 0 && character == u'A');
