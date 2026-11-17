@@ -1656,6 +1656,30 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
     }
 }
 
+void materializeDisabledDegamma(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    for (std::uint32_t index = 0; index < plan.info.images.size(); ++index) {
+        auto& descriptor = snapshot.images.at(index);
+        const auto format = (descriptor.dwords[1] >> 20u) & 0x1ffu;
+        IrBufferFormat linear = IrBufferFormat::Invalid;
+        if (format == static_cast<std::uint32_t>(IrBufferFormat::Format8Srgb)) linear = IrBufferFormat::Format8UNorm;
+        else if (format == static_cast<std::uint32_t>(IrBufferFormat::Format8_8Srgb)) linear = IrBufferFormat::Format8_8UNorm;
+        else if (format == static_cast<std::uint32_t>(IrBufferFormat::Format8_8_8_8Srgb)) linear = IrBufferFormat::Format8_8_8_8UNorm;
+        if (linear == IrBufferFormat::Invalid) continue;
+        const auto& image = plan.info.images.at(index);
+        if (image.table != NoTable || image.resourceClass != ImageResourceClass::Sampled || !image.sampledOnly || image.depthCompare) continue;
+        bool paired = false;
+        bool disabled = true;
+        for (const auto& pair : plan.info.sampledPairs) {
+            if (pair.image != index) continue;
+            const auto& sampler = snapshot.samplers.at(pair.sampler);
+            paired = true;
+            disabled = disabled && sampler.dwordCount == 4u && (sampler.dwords[0] & (1u << 31u)) != 0u;
+        }
+        if (!paired || !disabled) continue;
+        descriptor.dwords[1] = (descriptor.dwords[1] & ~(0x1ffu << 20u)) | (static_cast<std::uint32_t>(linear) << 20u);
+    }
+}
+
 void materializeForcedDegamma(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t index = 0; index < plan.info.images.size(); ++index) {
         auto& descriptor = snapshot.images.at(index);
@@ -2982,6 +3006,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeDisabledDegamma(plan, nextSnapshot);
                 materializeForcedDegamma(plan, nextSnapshot);
                 materializeTables(plan, nextSnapshot);
                 materializeSrtGuards(plan, nextSnapshot);
