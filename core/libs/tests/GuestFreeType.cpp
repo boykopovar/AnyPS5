@@ -796,9 +796,9 @@ static void OutlineDecomposition() {
         std::memcpy(tailTags.As<unsigned char>(), tags, sizeof(tags));
         std::vector<GuestVector> manyPoints(65535, GuestVector{0, 0});
         std::vector<unsigned char> manyTags(65535, 1);
-        std::uint16_t far[]{65534};
-        GuestOutline oversizedPoints{1, 65535, tailPoints.As<GuestVector>(), manyTags.data(), far, 0};
-        GuestOutline oversizedTags{1, 65535, manyPoints.data(), tailTags.As<unsigned char>(), far, 0};
+        std::uint16_t farContourEnd[]{65534};
+        GuestOutline oversizedPoints{1, 65535, tailPoints.As<GuestVector>(), manyTags.data(), farContourEnd, 0};
+        GuestOutline oversizedTags{1, 65535, manyPoints.data(), tailTags.As<unsigned char>(), farContourEnd, 0};
         for (GuestOutline* invalid : {&oversizedPoints, &oversizedTags}) {
             Require(FT_Outline_Decompose_nid_postfix(invalid, &callbacks, &events) == FT_Err_Invalid_Outline);
         }
