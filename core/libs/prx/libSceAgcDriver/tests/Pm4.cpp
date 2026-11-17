@@ -885,6 +885,19 @@ void testMemorySynchronization() {
     check(memory.destination == 42, "failed synchronization changed the destination");
 }
 
+void testLabelLoadWidths() {
+    alignas(8) static std::array<std::uint32_t, 2> label{0x15u, 0x2au};
+    const auto address = reinterpret_cast<std::uint64_t>(label.data());
+    check(AgcDriver::Pm4::LoadLabel(address + 4, 8) == 0x0000002a00000015ull, "an 8-byte label load at a 4-byte-aligned address does not read the 8-byte-aligned label below it");
+    check(AgcDriver::Pm4::LoadLabel(address + 6, 4) == 0x2au, "a 4-byte label load at an unaligned address does not read the 4-byte-aligned label below it");
+    for (const std::size_t bytes : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{16}}) {
+        bool rejected = false;
+        try { static_cast<void>(AgcDriver::Pm4::LoadLabel(address, bytes)); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected, "a label load of a width other than 4 or 8 bytes was not rejected");
+    }
+}
+
 void testWrittenLabelPolledAcrossThreads() {
     struct alignas(8) Shared {
         std::uint32_t label = 0;
@@ -2911,6 +2924,7 @@ int main(int argc, char** argv) {
         testCopies();
         testMemoryCopyDecode();
         testMemorySynchronization();
+        testLabelLoadWidths();
         testConditionalValidation();
         testConditionReadSynchronization();
         testEventWrite();
