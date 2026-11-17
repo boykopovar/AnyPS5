@@ -43,6 +43,7 @@ struct PreparedDrawRelease {
 using PreparedDrawPtr = std::unique_ptr<PreparedDraw, PreparedDrawRelease>;
 PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, bool plan);
 struct PreparedDrawCounts {
+    std::uint64_t prepared = 0;
     std::uint64_t planned = 0;
     std::uint64_t failed = 0;
     std::uint64_t planNs = 0;
@@ -52,6 +53,15 @@ struct PreparedDrawCounts {
     std::uint64_t inlinePlanNs = 0;
 };
 PreparedDrawCounts TakePreparedDrawCounts();
+struct DrawPlanVerifyCounts {
+    std::uint64_t selectedPrepared = 0;
+    std::uint64_t selectedInline = 0;
+    std::uint64_t takenPrepared = 0;
+    std::uint64_t takenInline = 0;
+    std::uint64_t afterRecordWorkPrepared = 0;
+    std::uint64_t afterRecordWorkInline = 0;
+};
+DrawPlanVerifyCounts ReadDrawPlanVerifyCounts();
 void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device);
 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const PreparedDraw* prepared = nullptr);

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <initializer_list>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -18,6 +19,8 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Extent = 64u;
 alignas(256) std::array<std::byte, Extent * Extent * 4u> pixels{};
 alignas(256) std::array<std::byte, 256> vertices{};
+alignas(256) std::array<std::uint16_t, 4> indices{0, 1, 2, 0};
+alignas(256) std::array<std::uint32_t, 8> indirectRecords{};
 constexpr std::array<std::array<float, 4>, 3> positions{{{-1.0f, -1.0f, 0.0f, 1.0f}, {3.0f, -1.0f, 0.0f, 1.0f}, {-1.0f, 3.0f, 0.0f, 1.0f}}};
 constexpr std::array<std::uint32_t, 11> vertexCode{0xf4080100u, 0xfa000000u, 0x4a0a0a02u, 0x4a0a0b08u, 0x4a0a0a03u, 0xe00c2000u, 0x80010005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> pixelCode{0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
@@ -86,10 +89,63 @@ std::string Counts(const AgcDriver::Graphics::PreparedDrawCounts& counts) {
     return "planned " + std::to_string(counts.planned) + ", failed " + std::to_string(counts.failed) + ", used " + std::to_string(counts.used) + ", other device " + std::to_string(counts.otherDevice) + ", inline " + std::to_string(counts.inlinePlans);
 }
 
+std::string VerifyCounts(const AgcDriver::Graphics::DrawPlanVerifyCounts& counts) {
+    return "selected " + std::to_string(counts.selectedPrepared) + " prepared / " + std::to_string(counts.selectedInline) + " inline, taken " + std::to_string(counts.takenPrepared) + " / " + std::to_string(counts.takenInline) + ", after record-time work " + std::to_string(counts.afterRecordWorkPrepared) + " / " + std::to_string(counts.afterRecordWorkInline);
+}
+
+AgcDriver::Graphics::DrawPlanVerifyCounts VerifyDelta(const AgcDriver::Graphics::DrawPlanVerifyCounts& before) {
+    auto now = AgcDriver::Graphics::ReadDrawPlanVerifyCounts();
+    now.selectedPrepared -= before.selectedPrepared;
+    now.selectedInline -= before.selectedInline;
+    now.takenPrepared -= before.takenPrepared;
+    now.takenInline -= before.takenInline;
+    now.afterRecordWorkPrepared -= before.afterRecordWorkPrepared;
+    now.afterRecordWorkInline -= before.afterRecordWorkInline;
+    return now;
+}
+
+AgcDriver::Pm4::DrawParameters::IndirectDraw IndirectRecords(std::uint32_t count) {
+    return {reinterpret_cast<std::uintptr_t>(indirectRecords.data()), 0x24u, 16u, 16u, count, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+}
+
+void BadPlansOnEarlyReturnsAreCaught(AgcDriver::VulkanDevice& device, Scene& scene) {
+    auto indexed = scene.draw;
+    indexed.indexed = true;
+    indexed.indexSize = 2u;
+    indexed.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+    indexed.firstVertex = 0u;
+    struct Case {
+        const char* what;
+        std::uint32_t count;
+    };
+    for (const Case& early : {Case{"an indirect draw without records", 0u}, Case{"an indirect draw whose records draw nothing", 1u}}) {
+        auto indirect = scene.draw;
+        indirect.indirect = IndirectRecords(early.count);
+        indirectRecords.fill(0u);
+        static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+        scene.Draw(nullptr, indirect, false, early.what);
+        auto prepared = device.PrepareDraw(scene.state, indexed, scene.shaders, true);
+        Require(prepared != nullptr, std::string("prepared draw: the indexed draw whose plan is given to ") + early.what + " was not prepared");
+        const auto before = AgcDriver::Graphics::ReadDrawPlanVerifyCounts();
+        std::string verifyError;
+        try {
+            scene.Draw(prepared.get(), indirect, false, early.what);
+        } catch (const std::exception& error) {
+            verifyError = error.what();
+        }
+        Require(verifyError.find("APS5_VERIFY_DRAW_PLAN") != std::string::npos && verifyError.find("when it took it") != std::string::npos, std::string("prepared draw: ") + early.what + " given the plan of an indexed draw was not caught when it took the plan (got '" + verifyError + "')");
+        const auto delta = VerifyDelta(before);
+        Require(delta.selectedPrepared == 1 && delta.takenPrepared == 0 && delta.selectedInline == 0 && delta.afterRecordWorkPrepared == 0, std::string("prepared draw: the verifier did not count the wrong plan given to ") + early.what + " as selected and unconfirmed (" + VerifyCounts(delta) + ")");
+    }
+    static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     Scene scene(device);
     static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+    const bool verify = std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr;
 
+    auto verifyBefore = AgcDriver::Graphics::ReadDrawPlanVerifyCounts();
     auto prepared = device.PrepareDraw(scene.state, scene.draw, scene.shaders, true);
     Require(prepared != nullptr, "prepared draw: a valid draw was not prepared");
     scene.Draw(prepared.get(), scene.draw, true, "a draw with its plan");
@@ -99,6 +155,9 @@ void Run(AgcDriver::VulkanDevice& device) {
     scene.Draw(nullptr, scene.draw, true, "a draw that was not prepared");
     counts = AgcDriver::Graphics::TakePreparedDrawCounts();
     Require(counts.inlinePlans == 1 && counts.used == 0 && counts.planned == 0, "prepared draw: a draw that was not prepared was not planned by the committer (" + Counts(counts) + ")");
+    const auto verified = VerifyDelta(verifyBefore);
+    const std::uint64_t expected = verify ? 1u : 0u;
+    Require(verified.selectedPrepared == expected && verified.takenPrepared == expected && verified.afterRecordWorkPrepared == expected && verified.selectedInline == expected && verified.takenInline == expected && verified.afterRecordWorkInline == expected, "prepared draw: the plan verifier did not count one prepared and one inline plan through both checks (" + VerifyCounts(verified) + ")");
 
     prepared = device.PrepareDraw(scene.state, scene.draw, scene.shaders, false);
     Require(prepared != nullptr, "prepared draw: a draw prepared without a plan was not prepared");
@@ -131,6 +190,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         Require(verifyError.find("APS5_VERIFY_DRAW_PLAN") != std::string::npos, "prepared draw: a draw given the empty plan of another draw was not caught by the plan verifier (got '" + verifyError + "')");
         counts = AgcDriver::Graphics::TakePreparedDrawCounts();
         Require(counts.planned == 1 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the wrongly empty plan was not the one the committer took (" + Counts(counts) + ")");
+        BadPlansOnEarlyReturnsAreCaught(device, scene);
     }
 
     auto modified = scene.draw;

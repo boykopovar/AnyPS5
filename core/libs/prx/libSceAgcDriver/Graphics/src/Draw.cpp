@@ -1792,6 +1792,7 @@ void PreparedDrawRelease::operator()(PreparedDraw* prepared) const noexcept {
 namespace {
 
 struct PreparedDrawCounters {
+    AgcDriver::ProfileCounter prepared;
     AgcDriver::ProfileCounter planned;
     AgcDriver::ProfileCounter failed;
     AgcDriver::ProfileCounter planNs;
@@ -1850,6 +1851,7 @@ const DrawPlan& takePlan(const Context& context, const State& state, const Pm4::
 PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, bool plan) {
     PreparedDrawPtr prepared(new PreparedDraw);
     prepared->device = context.device;
+    preparedDrawCounters().prepared.Add();
     if (plan) {
         auto& counters = preparedDrawCounters();
         const bool timed = timePlans();
@@ -1878,6 +1880,7 @@ void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device) {
 PreparedDrawCounts TakePreparedDrawCounts() {
     auto& counters = preparedDrawCounters();
     PreparedDrawCounts counts;
+    counts.prepared = counters.prepared.Take();
     counts.planned = counters.planned.Take();
     counts.failed = counters.failed.Take();
     counts.planNs = counters.planNs.Take();
@@ -1895,7 +1898,39 @@ bool VerifyDrawPlan() {
     return verify;
 }
 
-void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan) {
+enum class PlanSource : std::size_t { Prepared, Inline, Count };
+enum class PlanCheck : std::size_t { Selected, Taken, AfterRecordWork, Count };
+
+struct DrawPlanVerifyCounters {
+    std::array<std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(PlanSource::Count)>, static_cast<std::size_t>(PlanCheck::Count)> counts{};
+    std::atomic<std::int64_t> lastReportNs{0};
+};
+
+DrawPlanVerifyCounters& drawPlanVerifyCounters() {
+    static DrawPlanVerifyCounters counters;
+    return counters;
+}
+
+std::uint64_t drawPlanVerifyCount(PlanCheck check, PlanSource source) {
+    return drawPlanVerifyCounters().counts[static_cast<std::size_t>(check)][static_cast<std::size_t>(source)].load(std::memory_order_relaxed);
+}
+
+void reportDrawPlanVerify() {
+    auto& counters = drawPlanVerifyCounters();
+    const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = counters.lastReportNs.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < 10'000'000'000) return;
+    if (!counters.lastReportNs.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    const auto count = [](PlanCheck check, PlanSource source) { return static_cast<unsigned long long>(drawPlanVerifyCount(check, source)); };
+    AgcDriver::ProfilePrint_nid_no_patch("[verify-draw-plan] since start: plans selected %llu prepared, %llu inline; equal to a plan built when the draw took it %llu prepared, %llu inline; equal to a plan built after the draw's record-time work %llu prepared, %llu inline (draws that return before their record-time work ends get only the first check)\n", count(PlanCheck::Selected, PlanSource::Prepared), count(PlanCheck::Selected, PlanSource::Inline), count(PlanCheck::Taken, PlanSource::Prepared), count(PlanCheck::Taken, PlanSource::Inline), count(PlanCheck::AfterRecordWork, PlanSource::Prepared), count(PlanCheck::AfterRecordWork, PlanSource::Inline));
+}
+
+void notePlanCheck(PlanCheck check, PlanSource source) {
+    drawPlanVerifyCounters().counts[static_cast<std::size_t>(check)][static_cast<std::size_t>(source)].fetch_add(1, std::memory_order_relaxed);
+    if (check != PlanCheck::Selected) reportDrawPlanVerify();
+}
+
+void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, const char* differs) {
     DrawOutcome scratch;
     DrawTimer scratchTimer(false);
     const auto again = planDraw(context, state, draw, shaders, nullptr, scratch, scratchTimer);
@@ -1903,8 +1938,34 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
     const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
     const auto& layout = plan.VertexLayout();
     const auto& repeated = again.VertexLayout();
-    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
+    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), std::string("APS5_VERIFY_DRAW_PLAN: ") + differs);
 }
+
+void requireDrawPlanTaken(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, PlanSource source) {
+    notePlanCheck(PlanCheck::Selected, source);
+    requireDrawPlanRepeats(context, state, draw, shaders, plan, "the plan the draw took differs from a plan built for the draw when it took it");
+    notePlanCheck(PlanCheck::Taken, source);
+}
+
+void requireDrawPlanAfterRecordWork(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, PlanSource source) {
+    requireDrawPlanRepeats(context, state, draw, shaders, plan, "a plan built after the draw's record-time work differs from the plan the draw took, so that work changed what the plan depends on");
+    notePlanCheck(PlanCheck::AfterRecordWork, source);
+}
+
+}
+
+DrawPlanVerifyCounts ReadDrawPlanVerifyCounts() {
+    DrawPlanVerifyCounts counts;
+    counts.selectedPrepared = drawPlanVerifyCount(PlanCheck::Selected, PlanSource::Prepared);
+    counts.selectedInline = drawPlanVerifyCount(PlanCheck::Selected, PlanSource::Inline);
+    counts.takenPrepared = drawPlanVerifyCount(PlanCheck::Taken, PlanSource::Prepared);
+    counts.takenInline = drawPlanVerifyCount(PlanCheck::Taken, PlanSource::Inline);
+    counts.afterRecordWorkPrepared = drawPlanVerifyCount(PlanCheck::AfterRecordWork, PlanSource::Prepared);
+    counts.afterRecordWorkInline = drawPlanVerifyCount(PlanCheck::AfterRecordWork, PlanSource::Inline);
+    return counts;
+}
+
+namespace {
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
     DrawInputs inputs;
@@ -3969,15 +4030,11 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& inputs = prepared.inputs;
     std::optional<DrawPlan> inlinePlan;
     const DrawPlan& plan = takePlan(context, state, draw, shaders, prepared.preparedDraw, inlinePlan, outcome, timer);
-    if (plan.nothing) {
-        if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
-        return false;
-    }
+    const auto planSource = inlinePlan.has_value() ? PlanSource::Inline : PlanSource::Prepared;
+    if (VerifyDrawPlan()) requireDrawPlanTaken(context, state, draw, shaders, plan, planSource);
+    if (plan.nothing) return false;
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
-    if (inputs.nothing) {
-        if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
-        return false;
-    }
+    if (inputs.nothing) return false;
     const auto* args = prepared.args = draw.indirect ? &*draw.indirect : nullptr;
     const auto indexBytes = inputs.indexBytes;
     const int dumpLimit = prepared.dumpLimit = DumpTargetLimit();
@@ -4453,7 +4510,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
-    if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
+    if (VerifyDrawPlan()) requireDrawPlanAfterRecordWork(context, state, draw, shaders, plan, planSource);
     return true;
 }
 
