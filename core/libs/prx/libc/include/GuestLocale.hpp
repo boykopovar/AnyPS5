@@ -429,10 +429,28 @@ extern "C" std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_tra
 extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last);
 extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
 extern "C" std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+extern "C" std::size_t LibcWideTimePutGetcat_nid_no_patch(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];
 extern "C" GuestLocale::String* LibcCopyString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source);
 extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source);
+
+extern "C" char APS5_VABI NumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
+extern "C" const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
+extern "C" char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
+extern "C" const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
+extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self);
+extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
 
 #endif

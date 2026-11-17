@@ -32,17 +32,29 @@ SceSsl::Data Data(const char* text) {
     return {reinterpret_cast<std::uint8_t*>(const_cast<char*>(text)), std::strlen(text)};
 }
 
+void CheckStatsPadding(const SceSsl::MemoryPoolStats& stats) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&stats);
+    Check(bytes[28] == 0 && bytes[29] == 0 && bytes[30] == 0 && bytes[31] == 0, "memory pool stats padding is not zeroed");
+}
+
 SceSsl::MemoryPoolStats Stats(int id) {
     SceSsl::MemoryPoolStats stats{};
+    std::memset(&stats, 0x5a, sizeof(stats));
     Check(sceSslGetMemoryPoolStats(id, &stats) == 0, "stats failed");
     Check(stats.currentInuseSize <= stats.maxInuseSize && stats.maxInuseSize <= stats.poolSize && !stats.reserved,
         "pool accounting bounds failed");
+    CheckStatsPadding(stats);
     return stats;
 }
 
 void CheckRoot(const SceSsl::CaCerts& snapshot) {
     Check(snapshot.num == 1 && snapshot.certs[0].size == RootDer.size(), "CA count or DER size differs");
     Check(std::memcmp(snapshot.certs[0].ptr, RootDer.data(), RootDer.size()) == 0, "CA bytes changed");
+}
+
+void CheckCaListPadding(const SceSsl::CaList& list) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&list);
+    Check(bytes[12] == 0 && bytes[13] == 0 && bytes[14] == 0 && bytes[15] == 0, "CA list padding is not zeroed");
 }
 
 void Lifecycle() {
@@ -57,16 +69,23 @@ void Lifecycle() {
     Check(sceSslGetCaCerts(id, &bytes) == 0, "encoded CA query failed");
     CheckRoot(bytes);
     SceSsl::CaList handles{};
+    std::memset(&handles, 0x5a, sizeof(handles));
     Check(sceSslGetCaList(id, &handles) == 0 && handles.num == 1 && handles.certs[0], "CA handle absent");
+    CheckCaListPadding(handles);
     const int other = sceSslInit_nid_postfix(1024 * 1024);
     SceSsl::CaList empty{};
+    std::memset(&empty, 0x5a, sizeof(empty));
     Check(sceSslGetCaList(other, &empty) == NotFound, "CA escaped its context");
+    CheckCaListPadding(empty);
     auto foreign = handles;
     Throws([&] { sceSslFreeCaList(other, &foreign); });
     Check(sceSslUnloadCert(id) == 0, "unload failed");
     Check(sceSslGetCaList(id, &empty) == NotFound && !empty.certs && !empty.num, "unload retained active CA");
+    CheckCaListPadding(empty);
     CheckRoot(bytes);
+    std::memset(reinterpret_cast<unsigned char*>(&handles) + 12, 0x5a, 4);
     Check(sceSslFreeCaList(id, &handles) == 0 && !handles.certs && !handles.num, "handle snapshot release failed");
+    CheckCaListPadding(handles);
     Check(sceSslFreeCaCerts(id, &bytes) == 0 && !bytes.certs && !bytes.pool && !bytes.num, "encoded snapshot release failed");
     Check(Stats(id).currentInuseSize == 0, "certificate allocation leaked after release");
     Throws([&] { sceSslFreeCaList(id, &foreign); });
@@ -88,7 +107,9 @@ void ConnectionLifetime() {
     SceSsl::CaCerts empty{};
     Check(sceSslGetCaCerts(other, &empty) == NotFound, "CA escaped into another context");
     SceSsl::MemoryPoolStats stats{};
+    std::memset(&stats, 0x5a, sizeof(stats));
     Check(sceSslGetMemoryPoolStats(connection, &stats) == static_cast<int>(0x8095F006), "connection accepted as context");
+    CheckStatsPadding(stats);
     const int retained = sceSslCreateConnection(id, -1, "example.invalid");
     Check(retained > 0 && retained != connection && retained != other, "SSL connection handle was reused");
     Check(sceSslDeleteConnection(connection) == 0, "connection deletion failed");

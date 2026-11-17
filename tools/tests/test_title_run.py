@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -158,6 +159,30 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
+    def test_periodic_presents_are_not_recounted_by_capture_windows(self):
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        first = dict(identity, interval_start_s=0, interval_end_s=10, presents=100, window={"ms": 10000})
+        second = dict(identity, interval_start_s=10, interval_end_s=20, presents=300, window={"ms": 10000})
+        capture = dict(identity, presents=300, window={"ms": 10000}, trace="aps5-trace-window.json.gz")
+        path = self.root / "aps5-summary.jsonl"
+        for rows in ([capture, first, second], [first, capture, second], [first, second, capture]):
+            with self.subTest(capture_position=rows.index(capture)):
+                path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
+
+    def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
+        path = self.root / "aps5-summary.jsonl"
+        interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz"}
+        path.write_text("\n".join(map(json.dumps, [interval, capture])), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 0, "fps": 0.0, "gpu": "", "driver": "", "os": ""})
+
+    def test_capture_only_summary_remains_available(self):
+        path = self.root / "aps5-summary.jsonl"
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz", "gpu": "A", "driver": "1", "os": "W"}
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 300, "fps": 30.0, "gpu": "A", "driver": "1", "os": "W"})
+
     def test_frame_is_uniform(self):
         black = bmp(self.root / "black.bmp", 8, 4, lambda x, y: (0, 0, 0))
         noisy = bmp(self.root / "noisy.bmp", 8, 4, lambda x, y: (3, 2, 1) if x < 7 else (200, 200, 200))
@@ -286,6 +311,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
@@ -388,6 +420,16 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(sorted(found), ["PPSA00001", "PPSA00002"])
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
+
+    def test_overlapping_game_directories_find_each_package_once(self):
+        games = self.root / "games"
+        homebrew = games / "homebrew"
+        package(homebrew / "PPSA00001", "PPSA00001")
+        package(games / "PPSA00002", "PPSA00002")
+        expected = title_run.discover([games])
+        for directories in ([games, homebrew], [homebrew, games], [games, games]):
+            with self.subTest(directories=directories):
+                self.assertEqual(title_run.discover(directories), expected)
 
     def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
@@ -568,6 +610,98 @@ def wait_until(condition, seconds=10):
             return True
         time.sleep(0.1)
     return False
+
+
+class NativeRuntimePreparationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.package = package(self.root / "package", "PPSA00001")
+        self.build = self.root / "build"
+        self.libraries = self.build / "core/libs/libs"
+        self.libraries.mkdir(parents=True)
+        self.compiler = self.root / "configured compiler/bin"
+        self.compiler.mkdir(parents=True)
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (self.compiler / name).write_bytes(b"compiler " + name.encode())
+        for name in ("libc.prx", "libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libmimalloc.dylib",
+                     "libTracyClient.so.0.14.1", "libTracyClient.dll", "libTracyClient.0.14.1.dylib", "unrelated.dll", "libunrelated.so"):
+            (self.libraries / name).write_bytes(name.encode())
+        self.sequence = 0
+
+    def prepare(self, platform, cache="APS5_ENABLE_TRACY:BOOL=OFF\n"):
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (self.compiler / "g++.exe").as_posix() + "\n" + cache, encoding="utf-8")
+        self.sequence += 1
+        work = self.root / f"work{self.sequence}"
+        work.mkdir()
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted fixture")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+            executable = title_run.prepare("PPSA00001", {"package": self.package}, {}, platform, self.build, work)
+        self.assertEqual(executable.read_bytes(), b"converted fixture")
+        return {path.name: path.read_bytes() for path in (work / "libs").iterdir()}
+
+    def test_prepare_stages_only_the_target_allocator_and_compiler_runtimes(self):
+        cases = (("linux", {"libc.prx", "libmimalloc.so"}),
+                 ("windows", {"libc.prx", "mimalloc.dll", "mimalloc-redirect.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"}),
+                 ("macos", {"libc.prx", "libmimalloc.dylib"}))
+        for platform, names in cases:
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform)
+                self.assertEqual(set(staged), names)
+                for name in names:
+                    self.assertEqual(staged[name], (b"compiler " if name.startswith(("libgcc", "libstdc++", "libwinpthread")) else b"") + name.encode())
+
+    def test_prepare_stages_the_enabled_target_tracy_client(self):
+        for platform, name in (("linux", "libTracyClient.so.0.14.1"), ("windows", "libTracyClient.dll"), ("macos", "libTracyClient.0.14.1.dylib")):
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform, "APS5_ENABLE_TRACY:BOOL=ON\n")
+                self.assertEqual(staged.get(name), name.encode())
+                self.assertEqual([candidate for candidate in staged if "Tracy" in candidate], [name])
+
+    def test_prepare_ignores_stale_tracy_when_disabled(self):
+        for value in ("OFF", "TRACY-NOTFOUND", ""):
+            with self.subTest(value=value):
+                self.assertFalse(any("Tracy" in name for name in self.prepare("linux", f"APS5_ENABLE_TRACY:BOOL={value}\n")))
+
+    def test_prepare_refuses_missing_or_ambiguous_enabled_tracy(self):
+        (self.libraries / "libTracyClient.so.0.14.1").unlink()
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        for name in ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1"):
+            (self.libraries / name).write_bytes(name.encode())
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+
+    def test_prepare_does_not_stage_an_allocator_for_linux_sanitizer_builds(self):
+        for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=name):
+                staged = self.prepare("linux", f"{name}:BOOL=ON\n")
+                self.assertEqual(staged, {"libc.prx": b"libc.prx"})
+        staged = self.prepare("linux", "ANYPS5_ENABLE_ASAN:BOOL=OFF\nANYPS5_ENABLE_TSAN:BOOL=FALSE\n")
+        self.assertEqual(staged.get("libmimalloc.so"), b"libmimalloc.so")
+
+    def test_prepare_refuses_a_missing_target_allocator(self):
+        (self.libraries / "libmimalloc.so").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare("linux")
+
+    def test_prepare_accepts_a_tracy_symlink_to_a_regular_file(self):
+        client = self.libraries / "libTracyClient.so.0.14.1"
+        client.unlink()
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        staged = self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        self.assertEqual(staged[client.name], b"linked Tracy client")
 
 
 class PadTests(unittest.TestCase):
@@ -863,6 +997,88 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
 
 
+class DiagnosticComparisonTests(unittest.TestCase):
+    def run_summary(self, functions=(), instructions=(), functions_omitted=0, instructions_omitted=0):
+        report = {"missing": list(functions), "unsupported": list(instructions),
+                  "truncated": {"functions": functions_omitted, "unsupported": instructions_omitted}}
+        return {"titles": {"PPSA00001": {"name": "Example", "runs": [
+            {"outcome": "rendering", "fps": 60.0, "report": report}]}}}
+
+    def missing(self, name, calls, library="libSceExample"):
+        return {"library": library, "name": name, "calls": calls}
+
+    def instruction(self, count):
+        return {"encoding": "VOP3", "opcode": "V_EXAMPLE", "opcodeValue": 4, "modifiers": None, "count": count}
+
+    def render(self, before, now):
+        return "\n".join(title_run.render_compare(title_run.compare_runs(now, before)))
+
+    def test_changed_calls_are_visible_with_the_same_function_identity(self):
+        before = self.run_summary([self.missing("shared", 3)])
+        small = self.run_summary([self.missing("shared", 5)])
+        large = self.run_summary([self.missing("shared", 3000)])
+        first, second = self.render(before, small), self.render(before, large)
+        self.assertNotEqual(first, second)
+        self.assertIn("libSceExample/shared: 3 -> 5", first)
+        self.assertIn("libSceExample/shared: 3 -> 3000", second)
+
+    def test_aggregated_calls_and_each_presence_category_are_preserved(self):
+        before = self.run_summary([self.missing("shared", 2), self.missing("shared", 5), self.missing("old", 11)])
+        now = self.run_summary([self.missing("shared", 3), self.missing("shared", 6), self.missing("new", 13)])
+        text = self.render(before, now)
+        self.assertIn("missing functions calls:", text)
+        self.assertIn("only before: libSceExample/old: 11", text)
+        self.assertIn("only now: libSceExample/new: 13", text)
+        self.assertIn("in both: libSceExample/shared: 7 -> 9", text)
+
+    def test_instruction_occurrence_counts_are_preserved(self):
+        before = self.run_summary(instructions=[self.instruction(2), self.instruction(5)])
+        now = self.run_summary(instructions=[self.instruction(1000)])
+        text = self.render(before, now)
+        self.assertIn("unsupported instructions occurrences:", text)
+        self.assertIn("V_EXAMPLE (VOP3, opcode value 4): 7 -> 1000", text)
+
+    def test_partial_function_lists_show_retained_and_omitted_counts(self):
+        before = self.run_summary([self.missing("old", 1)], functions_omitted=3)
+        now = self.run_summary([self.missing("new", 1)], functions_omitted=7)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Missing functions (retained) | 1 | 1 |", text)
+        self.assertIn("| Example | PPSA00001 | Missing functions omitted | 3 | 7 |", text)
+        self.assertIn("missing functions: lists are partial", text)
+        self.assertIn("not proof of absence from the other run", text)
+
+    def test_one_sided_instruction_truncation_preserves_unknown(self):
+        before = self.run_summary(instructions=[self.instruction(1)])
+        before["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        now = self.run_summary(instructions=[self.instruction(1)], instructions_omitted=2)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Unsupported instructions omitted | not recorded | 2 |", text)
+        self.assertIn("unsupported instructions: lists are partial", text)
+
+    def test_complete_and_legacy_empty_lists_keep_the_existing_output(self):
+        complete = self.run_summary()
+        legacy = copy.deepcopy(complete)
+        legacy["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        for summary in (complete, legacy):
+            text = self.render(summary, summary)
+            self.assertIn("| Example | PPSA00001 | Missing functions | 0 | 0 |", text)
+            self.assertNotIn("omitted", text)
+            self.assertNotIn("partial", text)
+            self.assertNotIn("missing functions calls:", text)
+
+    def test_rendering_does_not_change_the_json_comparison(self):
+        before = self.run_summary([self.missing("shared", 3)], functions_omitted=2)
+        now = self.run_summary([self.missing("shared", 5)])
+        compared = title_run.compare_runs(now, before)
+        saved = copy.deepcopy(compared)
+        title_run.render_compare(compared)
+        self.assertEqual(compared, saved)
+        document = json.loads(title_run.compare_json(now, before))
+        self.assertEqual(document["titles"], saved)
+        self.assertEqual(saved["PPSA00001"]["missingFunctions"]["both"][0]["before"], 3)
+        self.assertEqual(saved["PPSA00001"]["missingFunctionsTruncated"], {"before": 2, "now": 0})
+
+
 class RunReportTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -961,6 +1177,110 @@ class RunReportTests(unittest.TestCase):
         report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
         self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
+
+
+class InsideTests(unittest.TestCase):
+    def test_inside_rejects_absolute_and_traversing_paths(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b"))
+        for path in ("/abs/x", "a/../b", "a\\b", "C:x", ""):
+            self.assertFalse(title_run.inside(path), path)
+
+    def test_inside_requires_a_listed_root_when_given(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b", roots=("a",)))
+        self.assertFalse(title_run.inside("a", roots=("a",)))
+        self.assertFalse(title_run.inside("b/c", roots=("a",)))
+
+
+class SectionTests(unittest.TestCase):
+    def test_section_returns_dict_or_empty(self):
+        import title_run
+        self.assertEqual(title_run.section({"x": {"k": 1}}, "x"), {"k": 1})
+        self.assertEqual(title_run.section({"x": 5}, "x"), {})
+        self.assertEqual(title_run.section({}, "x"), {})
+
+
+class CheckPadTests(unittest.TestCase):
+    def test_check_pad_rejects_missing_events_and_unknown_fields(self):
+        import title_run
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"repeat": 1})
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"events": [], "not_a_field": 1})
+class RunHelperTests(unittest.TestCase):
+    def test_fps_of_hides_frame_rate_from_a_failed_relink(self):
+        self.assertIsNone(title_run.fps_of({"outcome": "relink-failed", "fps": 60}))
+        self.assertEqual(title_run.fps_of({"outcome": "ok", "fps": 60}), 60)
+
+    def test_last_run_returns_the_most_recent_run(self):
+        self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
+
+    def test_report_fields_read_missing_and_truncated_values_as_none(self):
+        run = {"report": {"shaders": {"x": 2}, "missing": ["f"], "truncated": {"functions": 3, "unsupported": 4},
+                          "unsupported": ["op"]}}
+        self.assertEqual(title_run.shader_count(run, "x"), 2)
+        self.assertEqual(title_run.missing_functions(run), ["f"])
+        self.assertEqual(title_run.truncated_functions(run), 3)
+        self.assertEqual(title_run.truncated_unsupported(run), 4)
+        self.assertEqual(title_run.unsupported_instructions(run), ["op"])
+        self.assertIsNone(title_run.report_field({}, "missing"))
+
+    def test_distinct_counts_unique_key_combinations(self):
+        entries = [{"a": 1, "b": 2}, {"a": 1, "b": 3}, {"a": 2}]
+        self.assertEqual(title_run.distinct(entries, ["a"]), 2)
+        self.assertEqual(title_run.distinct(entries, ["a", "b"]), 3)
+        self.assertIsNone(title_run.distinct(None, ["a"]))
+
+    def test_display_formats_values_for_the_report(self):
+        self.assertEqual(title_run.display(None), "not recorded")
+        self.assertEqual(title_run.display(12.34), "12.3")
+        self.assertEqual(title_run.display(7), "7")
+
+    def test_last_line_skips_trailing_blank_lines(self):
+        self.assertEqual(title_run.last_line("a\n\n  b  \n\n"), "b")
+        self.assertEqual(title_run.last_line(""), "")
+class ReportFileTests(unittest.TestCase):
+    def write(self, directory, name, text):
+        path = Path(directory) / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_read_report_returns_the_run_average_from_a_well_formed_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "report.json",
+                              json.dumps({"format": "anyps5-report", "run": {"averageFps": 60}}))
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
+
+    def test_read_report_returns_none_for_other_or_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(title_run.read_report(Path(directory) / "missing.json"))
+            self.assertIsNone(title_run.read_report(self.write(directory, "a.json", '{"format": "other"}')))
+            self.assertIsNone(title_run.read_report(self.write(directory, "b.json", "{not json")))
+            self.assertIsNone(title_run.read_report(self.write(directory, "c.json", "[1]")))
+
+    def test_take_report_moves_the_report_and_reads_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work, run_dir = Path(directory) / "work", Path(directory) / "run"
+            work.mkdir()
+            run_dir.mkdir()
+            self.assertIsNone(title_run.take_report(work, run_dir))
+            (work / title_run.REPORT_FILE).write_text(
+                json.dumps({"format": "anyps5-report", "run": {"averageFps": 30}}), encoding="utf-8")
+            report = title_run.take_report(work, run_dir)
+            self.assertEqual(report["averageFps"], 30)
+            self.assertFalse((work / title_run.REPORT_FILE).exists())
+            self.assertTrue((run_dir / title_run.REPORT_FILE).is_file())
+class ModuleFileTests(unittest.TestCase):
+    def test_is_module_recognises_the_elf_magic_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / 'm.prx'
+            module.write_bytes(b'\x7fELF' + b'0' * 20)
+            text = root / 't.txt'
+            text.write_text('hello', encoding='utf-8')
+            self.assertTrue(title_run.is_module(module))
+            self.assertFalse(title_run.is_module(text))
 
 
 if __name__ == "__main__":

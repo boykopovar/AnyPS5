@@ -55,9 +55,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
-    if (size > 16) NotImplemented_nid_no_patch("cpuset_getaffinity with a size of 17 to 23 bytes");
-    if (!mask) return fail(GuestEfault);
+    if (size < sizeof(KernelCpumask) || size > 16) return fail(GuestErange);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
     switch (which) {
@@ -73,8 +71,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         if (id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_getaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichDomain:
         break;
@@ -96,6 +93,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     default:
         return fail(GuestEinval);
     }
+    if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     std::memcpy(buffer.data(), &affinity, sizeof(affinity));
     if (!GuestCopyOut_nid_no_patch(mask, buffer.data(), size)) return fail(GuestEfault);
@@ -135,8 +133,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
             if (id != -1) NotImplemented_nid_no_patch("cpuset_setaffinity of a numbered cpuset");
             break;
         case WhichJail:
-            NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-            break;
+            return fail(GuestEsrch);
         case WhichIrq:
         case WhichDomain:
         default:
@@ -160,8 +157,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         NotImplemented_nid_no_patch(id == -1 ? "cpuset_setaffinity of the calling thread's base cpuset" : "cpuset_setaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichInterruptHandler:
     case WhichInterruptThread:
@@ -389,9 +385,12 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
 }
 
 int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, const KernelTimespec* abstime) {
-    if (abstime == nullptr || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
+    if (abstime == nullptr) return PosixThread::GUEST_EINVAL;
+    KernelTimespec deadline{};
+    if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return PosixThread::GUEST_EFAULT;
+    if (deadline.tv_sec < 0 || deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000)
         return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, abstime));
+    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, &deadline));
 }
 
 namespace {

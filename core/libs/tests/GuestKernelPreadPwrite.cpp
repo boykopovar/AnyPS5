@@ -27,6 +27,22 @@ void Require(bool condition, const char* message) {
     std::abort();
 }
 
+void CheckRandomDeviceNegativeOffset() {
+    for (const char* device : {"/dev/urandom", "/dev/random"}) {
+        const int random = open_nid_postfix(device, 0, 0);
+        Require(random >= 0, "opening a random device failed");
+        unsigned char buffer[16]{};
+        Require(pread_nid_postfix(random, buffer, sizeof(buffer), -1) == sizeof(buffer), "pread of a random device at offset -1 must read, as FreeBSD passes a character device's offset to its driver");
+        Require(sceKernelPread(random, buffer, sizeof(buffer), std::numeric_limits<std::int64_t>::min()) == sizeof(buffer), "sceKernelPread of a random device at the lowest offset must read");
+        KernelIovec vector{buffer, sizeof(buffer)};
+        Require(sceKernelPreadv(random, &vector, 1, -1) == sizeof(buffer), "sceKernelPreadv of a random device at offset -1 must read");
+        Require(preadv_nid_postfix(random, &vector, 1, -5) == sizeof(buffer), "preadv of a random device at offset -5 must read");
+        Require(pread_nid_postfix(random, nullptr, 1, -1) == -1 && *__error_nid_postfix() == PosixEfault, "pread of a random device into a null buffer must fail with EFAULT");
+        Require(pwrite_nid_disambig1_nid_postfix(random, "A", 1, -1) == -1 && *__error_nid_postfix() == PosixEbadf, "pwrite on a read-only random device must fail with EBADF");
+        Require(close_nid_postfix(random) == 0, "closing a random device failed");
+    }
+}
+
 void AuditNegativeOffsetRejection(int descriptor) {
     char buffer[16]{};
 
@@ -257,6 +273,7 @@ void AuditDirectoryAndLimitBounds(const std::string& directoryPath, int regularF
 } // namespace
 
 int main() {
+    CheckRandomDeviceNegativeOffset();
     const auto root = std::filesystem::path("anyps5-pread-pwrite-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root), "create temporary test root failed");
