@@ -196,7 +196,14 @@ int GetRankingByNpIdPcId(int reqId, const void* idArray, std::uint64_t idArraySi
 int GetGameData(int reqId, const void* npId, void* option) {
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (*static_cast<const char*>(npId) == '\0') return Finish(reqId, SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT);
+    char firstChar = '\0';
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&firstChar, npId, sizeof(firstChar))) {
+        errno = savedErrno;
+        return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
+    if (firstChar == '\0') return Finish(reqId, SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT);
     return Offline(reqId);
 }
 
@@ -300,6 +307,14 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     std::lock_guard lock(scoreMutex);
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (result) {
+        const int savedErrno = errno;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+            errno = savedErrno;
+            return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        }
+        errno = savedErrno;
+    }
     if (!request->second.result) return POLL_RUNNING;
     if (result) {
         const int value = *request->second.result;
@@ -571,6 +586,14 @@ int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout,
 int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
     std::unique_lock lock(scoreMutex);
     if (!requests.contains(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (result) {
+        const int savedErrno = errno;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+            errno = savedErrno;
+            return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        }
+        errno = savedErrno;
+    }
     requestFinished.wait(lock, [reqId] {
         const auto request = requests.find(reqId);
         return request != requests.end() && request->second.result;
