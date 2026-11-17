@@ -117,6 +117,7 @@ struct SrtRuntime {
     SrtImageViewNormalizer normalizeImageView = nullptr;
     SrtImageViewGeneration imageViewGeneration = nullptr;
     SrtSnapshotCurrent snapshotCurrent = nullptr;
+    bool bindlessImages = false;
 };
 
 struct SrtForceSyncScope {

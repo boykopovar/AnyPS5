@@ -55,6 +55,7 @@ struct ImageTableReuseCounts {
     std::uint64_t columns = 0;
     std::uint64_t resolutions = 0;
     std::uint64_t resolutionsShared = 0;
+    std::uint64_t layoutShared = 0;
 };
 
 struct RuntimeImageModeMatch {

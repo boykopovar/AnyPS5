@@ -1794,7 +1794,8 @@ RecompileResult materializeVariant(SourceEntry& source, const RecompileRequest& 
 RecompileResult recompileOnce(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     RequestMemoryView memory(request.context.memory);
-    const auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
+    auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
+    runtime.bindlessImages = BindlessLowering(request);
     ResourceSnapshot snapshot;
     constexpr ResourceMaterializer materializer;
     if (!request.useCache) {
@@ -2374,10 +2375,11 @@ namespace {
 
 // The capture's materialization; with pure flat slots in the plan the walk's read addresses are
 // traced into the capture (ResourceCapture::readTrace).
-void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
+void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime, bool bindlessImages) {
     const auto& plan = *capture.plan;
     SrtRuntime traced = runtime;
     traced.userDataUse = &capture.userDataUse;
+    traced.bindlessImages = bindlessImages;
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
         ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
         return;
@@ -2407,7 +2409,7 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
         capture->plan = makeResourcePlan(request);
     }
     if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
-    materializeCapture(*capture, runtime);
+    materializeCapture(*capture, runtime, BindlessLowering(request));
     return capture;
 }
 
@@ -2492,7 +2494,7 @@ std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const S
     capture->source = handle->source;
     capture->plan = acquirePlan(request, handle->source, true, handle.get());
     trimResourcePlansOverBudget();
-    materializeCapture(*capture, runtime);
+    materializeCapture(*capture, runtime, BindlessLowering(request));
     return capture;
 }
 
@@ -2565,7 +2567,7 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     capture->plan = acquirePlan(request, handle.source, true, &handle);
     trimResourcePlansOverBudget();
     if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
-    materializeCapture(*capture, runtime);
+    materializeCapture(*capture, runtime, BindlessLowering(request));
     return capture;
 }
 

@@ -14,7 +14,13 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_image_table_runtime_address COMMAND agc_driver_image_table_tests --runtime-address)
     set_tests_properties(agc_driver_image_table_runtime_address PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_JOURNAL=1;APS5_BINDLESS_IMAGES=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-|VUID-|was not found but was requested by env var VK_INSTANCE_LAYERS")
+    add_test(NAME agc_driver_image_table_layout_only COMMAND agc_driver_image_table_tests --layout-only)
+    set_tests_properties(agc_driver_image_table_layout_only PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_JOURNAL=1;APS5_BINDLESS_IMAGES=1;APS5_IMAGE_TABLE_KEY_SCAN=0" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-|VUID-|was not found but was requested by env var VK_INSTANCE_LAYERS")
+    add_test(NAME agc_driver_image_table_layout_only_off COMMAND agc_driver_image_table_tests --layout-only)
+    set_tests_properties(agc_driver_image_table_layout_only_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_JOURNAL=1;APS5_BINDLESS_IMAGES=1;APS5_IMAGE_TABLE_KEY_SCAN=0;APS5_NO_BINDLESS_UNREAD_TABLES=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-|VUID-|was not found but was requested by env var VK_INSTANCE_LAYERS")
     if(WIN32)
-        set_tests_properties(agc_driver_image_table_bindless agc_driver_image_table_runtime_address PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_driver_image_table_bindless agc_driver_image_table_runtime_address agc_driver_image_table_layout_only agc_driver_image_table_layout_only_off PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

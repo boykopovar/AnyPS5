@@ -1438,6 +1438,42 @@ void RunPointerTests(AgcDriver::VulkanDevice& device) {
     RequireRed(reads, 4, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "pointer image table read: key 0x1ff masked to entry 255");
 }
 
+void RunLayoutOnlyTests(AgcDriver::VulkanDevice& device) {
+    const char* scan = std::getenv("APS5_IMAGE_TABLE_KEY_SCAN");
+    Require(BindlessHeap() && scan != nullptr && std::string_view(scan) == "0", "layout-only table: needs APS5_BINDLESS_IMAGES=1 and APS5_IMAGE_TABLE_KEY_SCAN=0");
+    const bool layoutOnly = std::getenv("APS5_NO_BINDLESS_UNREAD_TABLES") == nullptr;
+    std::fill(Root.begin(), Root.end(), 0u);
+    SetEntry(0, Image(FloatTexels.data(), Format32Float));
+    SetEntry(1, Image(UintTexels.data(), Format32UInt));
+    SetEntry(2, Image(SintTexels.data(), Format32SInt));
+    Keys = {};
+    Keys[0] = 2;
+    Keys[1] = 0x08000000u;
+    const auto before = ShaderRecompiler::ResourceMaterializer::TableReuse();
+    const auto first = RunPointer(device, UnboundedPointerCode, 2);
+    const auto afterFirst = ShaderRecompiler::ResourceMaterializer::TableReuse();
+    Require(!Faulted(first), "layout-only table: valid entries faulted:\n" + first.log);
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 2> expected{{{0u, 2u}, {1u, 0u}}};
+    for (const auto& [group, entry] : expected) {
+        const auto* words = Root.data() + (PaletteOffset + entry * 32u) / 4u;
+        const auto control = RunDirect(device, PointClamp, {words[0], words[1], words[2], words[3]});
+        Require(Group(first, group) == Group(control, 0), "layout-only table: key " + Hex(Keys[group]) + " differs from the direct binding of entry " + std::to_string(entry));
+    }
+    Require(layoutOnly == (afterFirst.wordsRead == before.wordsRead), layoutOnly ? "layout-only table: the capture read the words of an unbounded bindless pointer column" : "layout-only table: APS5_NO_BINDLESS_UNREAD_TABLES did not read the column words");
+    Require(afterFirst.layoutShared == before.layoutShared, "layout-only table: the first capture reused a layout snapshot");
+    const auto second = RunPointer(device, UnboundedPointerCode, 2);
+    const auto afterSecond = ShaderRecompiler::ResourceMaterializer::TableReuse();
+    Require(layoutOnly == (afterSecond.layoutShared > afterFirst.layoutShared), layoutOnly ? "layout-only table: a second capture of an unchanged column did not reuse its layout" : "layout-only table: APS5_NO_BINDLESS_UNREAD_TABLES reused a layout snapshot");
+    Require(!Faulted(second) && second.words == first.words && second.variantId == first.variantId, "layout-only table: the reused layout read differently:\n" + second.log);
+    Keys[0] = 300;
+    const auto past = RunPointer(device, UnboundedPointerCode, 1);
+    RequireSnapshotFault(past, "unmapped", "layout-only table: an entry past the captured palette did not fault as unmapped", true);
+    Keys[0] = 0x10000u;
+    const auto capped = RunPointer(device, UnboundedPointerCode, 1);
+    RequireSnapshotFault(capped, "outside the snapshot", "layout-only table: a key past the key cap did not fault as outside the snapshot", true);
+    std::puts(layoutOnly ? "layout-only table: an unbounded bindless pointer column keeps its layout, is reused and reads the same entries" : "layout-only table: the column words are read with APS5_NO_BINDLESS_UNREAD_TABLES");
+}
+
 void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -2506,6 +2542,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--nested-budget") == 0) {
             RunNestedRecordTests(*device, NestedCase::Budget);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--layout-only") == 0) {
+            RunLayoutOnlyTests(*device);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--runtime-address") == 0) {
