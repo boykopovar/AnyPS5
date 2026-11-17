@@ -1,14 +1,17 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <link.h>
+#include <sys/mman.h>
 #endif
 
 #if defined(_WIN32)
@@ -83,4 +86,26 @@ int main() {
     bool threw = false;
     try { __tls_get_addr_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+
+#if defined(_WIN32)
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(memory != nullptr);
+#else
+    constexpr std::size_t Page = 0x4000;
+    auto* memory = static_cast<char*>(mmap(nullptr, Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+#endif
+    KernelTlsIndex guest{};
+    std::memcpy(memory, &guest, sizeof(guest));
+#if defined(_WIN32)
+    DWORD old = 0;
+    Require(VirtualProtect(memory, 0x1000, PAGE_NOACCESS, &old) == memory);
+#else
+    Require(mprotect(memory, Page, PROT_NONE) == 0);
+#endif
+    const int savedErrno = errno;
+    bool unreadableThrew = false;
+    try { __tls_get_addr_nid_postfix(reinterpret_cast<const KernelTlsIndex*>(memory)); } catch (const std::invalid_argument&) { unreadableThrew = true; }
+    Require(unreadableThrew);
+    Require(errno == savedErrno);
 }
