@@ -743,7 +743,7 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
    result = sceKernelMunmap(reinterpret_cast<uint64_t>(entry.start), entry.length);
    break;
   case OpProtect:
-   result = DoMprotect(entry.start, entry.length, static_cast<uint8_t>(entry.protection));
+   result = DoMprotect(entry.start, entry.length, static_cast<uint8_t>(entry.protection) & 0x3F7);
    break;
   case OpTypeProtect:
    result = DoMtypeprotect(entry.start, entry.length, static_cast<uint8_t>(entry.type), static_cast<uint8_t>(entry.protection));
