@@ -94,6 +94,7 @@ struct UnitShadow {
     // whether a slab -> import copy was recorded at that generation.
     std::vector<std::uint64_t> generation;
     std::vector<std::uint8_t> published;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> produced;
     // Slab k covers units [k * SlabUnits(), (k + 1) * SlabUnits()), made on demand; a failed
     // allocation is not retried before the noted present.
     std::vector<std::shared_ptr<ShadowSlab>> slabs;
@@ -197,6 +198,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
     const auto units = (import.base + import.bytes - shadow->base + UnitBytes - 1) / UnitBytes;
     shadow->generation.assign(static_cast<std::size_t>(units), 0);
     shadow->published.assign(static_cast<std::size_t>(units), 0);
+    shadow->produced.assign(static_cast<std::size_t>(units), {0u, 0u});
     const auto slabs = (units + SlabUnits() - 1) / SlabUnits();
     shadow->slabs.assign(static_cast<std::size_t>(slabs), nullptr);
     shadow->slabFailedUntil.assign(static_cast<std::size_t>(slabs), 0);
@@ -435,8 +437,14 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
                 ++ended;
                 continue;
             }
-            const auto [begin, end] = shadow->UnitRange(unit);
-            if (end <= begin) continue;
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            const auto begin = std::max(unitBegin, shadow->UnitBegin(unit) + shadow->produced[unit].first);
+            const auto end = std::min(unitEnd, shadow->UnitBegin(unit) + shadow->produced[unit].second);
+            if (end <= begin) {
+                shadow->published[unit] = 1;
+                ++ended;
+                continue;
+            }
             const VkBufferCopy region{(unit - slab->firstUnit) * UnitBytes + (begin - shadow->UnitBegin(unit)), begin - shadow->importBase + shadow->importLead, end - begin};
             if (!copies.empty() && copies.back().slab == slab && copies.back().regions.back().dstOffset + copies.back().regions.back().size == region.dstOffset) {
                 copies.back().regions.back().size += region.size;
@@ -917,9 +925,15 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
+                const auto from = static_cast<std::uint32_t>(std::max(begin, shadow->UnitBegin(unit)) - shadow->UnitBegin(unit));
+                const auto to = static_cast<std::uint32_t>(std::min(end, shadow->UnitBegin(unit + 1)) - shadow->UnitBegin(unit));
+                auto& produced = shadow->produced[unit];
                 if (!shadow->Live(unit)) {
                     ++shadow->liveUnits;
                     turnedLive = true;
+                    produced = {from, to};
+                } else {
+                    produced = {std::min(produced.first, from), std::max(produced.second, to)};
                 }
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;

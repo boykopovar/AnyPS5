@@ -2,7 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,6 +25,7 @@
 #include <iostream>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -56,6 +59,7 @@ constexpr std::size_t FillBytes = 4096u;
 constexpr std::size_t FillPast = 0x10000u;
 constexpr std::size_t ShadowUnitBytes = 0x10000u;
 constexpr std::uint32_t Standard256B = 1u;
+constexpr std::uint32_t SlabWord = 0x5ad0beefu;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Stored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> RestoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Restored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
@@ -213,6 +217,52 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
     Require(flushedWords[FarDword] == Stored, what + "the flushed image's texel was not stored");
 }
 
+void RunPartlyShadowedUnitPublish(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
+    using namespace AgcDriver::Graphics;
+    const std::string what = "storage flush ordering, publish of a unit retiled only in part: ";
+    if (!UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the partly shadowed unit case is skipped");
+        return;
+    }
+    const auto image = StoreImage(device, guest, 0, Standard256B);
+    Require(StorageTexture::FlushPending(image, ImageBytes, nullptr, "test", PublishScope::None), what + "the image's store left no results pending");
+    if (!AnyShadowedOverlaps(image, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the partly shadowed unit case is skipped");
+        return;
+    }
+    device.WaitIdle();
+    const auto unit = guest.Address() + 4u * ShadowUnitBytes;
+    const auto retiled = ShadowUnitBytes / 2u;
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto* import = ExistingHostImportFor(context, unit, ShadowUnitBytes);
+        Require(import != nullptr, what + "the guest block has no host import after the write-back");
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr, what + "no active recorder");
+        AgcDriver::GuestMemory::CollectWritesUncached(unit, ShadowUnitBytes);
+        const auto destination = ShadowDestinationFor(context, *import, unit, unit + retiled);
+        Require(destination.has_value(), what + "the import has no unit shadow for the unit");
+        const auto commands = recorder->Commands();
+        recorder->Keep(destination->slab);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, destination->offset, ShadowUnitBytes, SlabWord);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{unit, unit + retiled, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), AgcDriver::GuestMemory::TrackerGeneration());
+        Require(PublishShadow(unit, ShadowUnitBytes, PublishScope::Whole, PublishReason::Address) == 1, what + "the publish selected no unit");
+        recorder->Sync();
+    }
+    device.WaitIdle();
+    const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(unit));
+    Require(std::count(words, words + retiled / 4u, SlabWord) == static_cast<std::ptrdiff_t>(retiled / 4u), what + "the retiled bytes were not published");
+    const auto kept = std::count(words + retiled / 4u, words + ShadowUnitBytes / 4u, Initial);
+    if (kept != static_cast<std::ptrdiff_t>((ShadowUnitBytes - retiled) / 4u)) {
+        std::cout << what << "FAILED, " << (ShadowUnitBytes - retiled) / 4u - static_cast<std::size_t>(kept) << " dwords past the retiled range hold the slab's bytes, not the guest's\n";
+        throw std::runtime_error(what + "the publish copied slab bytes no retile produced over the guest's");
+    }
+}
+
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
     const auto* words = guest.Words() + offset / 4u;
     const auto image = guest.Address() + offset;
@@ -326,6 +376,8 @@ int main(int argc, char** argv) {
         RunWriterInsideLayer(*device, guest, 3u * BlockBytes / 4u);
         GuestBlock shadowed(watched);
         RunShadowedUnitUnderWriter(*device, shadowed);
+        GuestBlock partly(watched);
+        RunPartlyShadowedUnitPublish(*device, partly);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
