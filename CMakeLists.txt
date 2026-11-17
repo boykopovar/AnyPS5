@@ -384,6 +384,9 @@ if(BUILD_TESTING)
                 endif()
             endforeach()
         endif()
+        add_test(NAME build_mingw_host_only_tests_script COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_mingw_host_only_tests.py)
+        set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
@@ -860,6 +863,9 @@ if(BUILD_TESTING)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
+        add_test(NAME benchmark_compare COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_benchmark_compare.py)
+        set_tests_properties(benchmark_compare PROPERTIES TIMEOUT 30)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
