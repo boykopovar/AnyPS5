@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from functools import cached_property
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,8 +45,14 @@ class GitEvidenceTestCase(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "base")
         self.base = self.git_text("rev-parse", "HEAD")
-        self.local = self.commit(self.base, "local", {"shared.txt": b"local\n"})
-        self.peer = self.commit(self.base, "peer", {"shared.txt": b"peer\n"})
+
+    @cached_property
+    def fixture_local_head(self):
+        return self.commit(self.base, "local", {"shared.txt": b"local\n"})
+
+    @cached_property
+    def fixture_peer_head(self):
+        return self.commit(self.base, "peer", {"shared.txt": b"peer\n"})
 
     def git(self, *arguments, input=None):
         command = ["git", "-c", "user.name=Evidence Test", "-c", "user.email=test@example.invalid", *arguments]
@@ -74,17 +81,21 @@ class GitEvidenceTestCase(unittest.TestCase):
     def states(self, local=None, peer=None, base=None):
         base = base or self.base
         rows = {}
-        for number, head in ((0, local or self.local), (7, peer or self.peer)):
+        for number, head in ((0, local or self.fixture_local_head), (7, peer or self.fixture_peer_head)):
             names = self.git("diff", "--name-only", "--no-renames", "-z", base, head).decode("utf-8", "surrogateescape").split("\0")
             rows[number] = {"ref": head, "sha": head, "tree": head, "files": set(filter(None, names)),
                             "added": set(), "exports": set(), "added_exports": {}, "removed_exports": {},
                             "author": None if number == 0 else "contributor", "title": "Peer title", "depends": set()}
         return rows
 
-    def export(self, destination=None, prs=None, findings=None, base=None, rendered="Pinned review result\n"):
+    def export(self, destination=None, prs=None, findings=None, base=None, rendered="Pinned review result\n",
+               *, local=None, peer=None):
         destination = destination or self.parent / "review"
+        base = base or self.base
+        if prs is None:
+            prs = self.states(local, peer, base)
         result = pr_overlap_evidence.write_review_evidence(
-            destination, self.root, base or self.base, prs or self.states(), findings or {}, {}, rendered,
+            destination, self.root, base, prs, findings or {}, {}, rendered,
             "owner/project", checker_path=Path(pr_overlap.__file__).resolve())
         return destination, result
 
@@ -119,7 +130,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         base = self.commit(self.base, "byte base", {names[0]: b"old \xff\r\nend\n", names[1]: b"\0old\xff"})
         local = self.commit(base, "byte local", {names[0]: b"new \x80\r\nend\n", names[1]: b"\0local\xfe"})
         peer = self.commit(base, "byte peer", {names[0]: b"peer \x81\r\nend\n", names[1]: b"\0peer\xfd"})
-        directory, report = self.export(prs=self.states(local, peer, base), base=base)
+        directory, report = self.export(base=base, local=local, peer=peer)
         self.assertTrue(report["complete"], report["incomplete"])
         for revision, head in ((report["local"], local), (report["peers"][0]["revision"], peer)):
             self.assertEqual(revision["head"], head)
@@ -140,7 +151,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         local = self.commit(base, "path local", {"new.txt": b"same\n", "added.txt": b"added\n", "mode.sh": b"tool\n"},
                             remove=("old.txt", "delete.txt"), executable=("mode.sh",))
         peer = self.commit(base, "path peer", {"old.txt": b"other\n"})
-        directory, report = self.export(prs=self.states(local, peer, base), base=base)
+        directory, report = self.export(base=base, local=local, peer=peer)
         rows = self.changes(self.original(report["local"], base))
         self.assertEqual(set(rows), {b"old.txt", b"new.txt", b"delete.txt", b"added.txt", b"mode.sh"})
         for name in (b"old.txt", b"delete.txt"):
@@ -156,6 +167,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         self.assertIn(b"new mode 100755", patch_bytes)
 
     def test_symlink_blob_and_gitlink_are_recorded_without_materializing_targets(self):
+        peer = self.fixture_peer_head
         self.git("checkout", "-q", "--detach", self.base)
         target = b"../../outside-target"
         blob = self.git("hash-object", "-w", "--stdin", input=target).decode().strip()
@@ -164,7 +176,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         self.git("commit", "-qm", "special entries")
         local = self.git_text("rev-parse", "HEAD")
         self.git("config", "diff.ignoreSubmodules", "all")
-        directory, report = self.export(prs=self.states(local=local))
+        directory, report = self.export(local=local, peer=peer)
         rows = self.changes(self.original(report["local"]))
         self.assertEqual(rows[b"link"]["after"]["mode"], "120000")
         self.assertEqual(self.stored(directory, rows[b"link"]["after"]["artifact"]), target)
@@ -187,7 +199,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         self.git("commit", "-qm", "transition local")
         local = self.git_text("rev-parse", "HEAD")
         peer = self.commit(base, "transition peer", {"swapped": b"peer file\n"})
-        directory, report = self.export(prs=self.states(local, peer, base), base=base)
+        directory, report = self.export(base=base, local=local, peer=peer)
         self.assertTrue(report["complete"], report["incomplete"])
         rows = self.changes(self.original(report["local"], base))
         self.assertEqual(rows[b"swapped"]["after"]["status"], "absent")
@@ -196,6 +208,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
         self.assert_snapshot(directory, rows[b"folder/child.txt"]["before"], base, "folder/child.txt")
 
     def test_raw_path_encoding_is_preserved_when_platform_cannot_represent_the_name(self):
+        peer = self.fixture_peer_head
         self.git("checkout", "-q", "--detach", self.base)
         name = b"raw-\xff.txt"
         blob = self.git("hash-object", "-w", "--stdin", input=b"raw path content\n").strip()
@@ -205,7 +218,7 @@ class ByteEvidenceTests(GitEvidenceTestCase):
             self.skipTest("Git does not accept a raw-byte index name on this platform: " + error.stderr.decode("utf-8", "replace"))
         self.git("commit", "-qm", "raw filename")
         local = self.git_text("rev-parse", "HEAD")
-        directory, report = self.export(prs=self.states(local=local))
+        directory, report = self.export(local=local, peer=peer)
         row = self.changes(self.original(report["local"]))[name]
         self.assertIsNone(row["path"]["utf8"])
         if os.name == "nt":
@@ -282,7 +295,7 @@ class HistoryEvidenceTests(GitEvidenceTestCase):
         peer = self.commit(opposite, "peer after cross", {"shared.txt": b"peer cross\n"})
         bases = sorted(self.git_text("merge-base", "--all", main, local).split())
         self.assertEqual(bases, sorted([left, right]))
-        directory, report = self.export(prs=self.states(local, peer, main), base=main)
+        directory, report = self.export(base=main, local=local, peer=peer)
         for revision in (report["local"], report["peers"][0]["revision"]):
             self.assertEqual(revision["merge_bases"], bases)
             self.assertEqual([view["base"] for view in revision["originals"]], bases)
@@ -302,14 +315,14 @@ class HistoryEvidenceTests(GitEvidenceTestCase):
 
     def test_movable_refs_are_incomplete_and_pinned_heads_ignore_alias_drift(self):
         prs = self.states()
-        self.git("update-ref", "refs/heads/movable", self.peer)
+        self.git("update-ref", "refs/heads/movable", self.fixture_peer_head)
         prs[7]["ref"] = "refs/heads/movable"
         directory, incomplete = self.export(destination=self.parent / "bad", prs=prs)
         self.assertFalse(incomplete["complete"])
         self.assertIn("pinned", incomplete["peers"][0]["revision"]["error"])
-        self.git("update-ref", "refs/heads/movable", self.local)
+        self.git("update-ref", "refs/heads/movable", self.fixture_local_head)
         directory, report = self.export(destination=self.parent / "pinned")
-        self.assertEqual(report["peers"][0]["revision"]["head"], self.peer)
+        self.assertEqual(report["peers"][0]["revision"]["head"], self.fixture_peer_head)
         self.assertTrue((directory / "READY").exists())
 
 
@@ -317,7 +330,7 @@ class HistoryEvidenceTests(GitEvidenceTestCase):
         local = self.commit(self.base, "last shared local", {"zz-shared.txt": b"local\n"})
         peer = self.commit(self.base, "many peer paths", {"aa.txt": b"aa\n", "bb.txt": b"bb\n", "zz-shared.txt": b"peer\n"})
         with patch.object(pr_overlap_evidence, "MAX_PATHS", 2):
-            directory, report = self.export(prs=self.states(local, peer))
+            directory, report = self.export(local=local, peer=peer)
         self.assertTrue(report["complete"], report["incomplete"])
         self.assertEqual(set(self.changes(self.original(report["peers"][0]["revision"]))), {b"zz-shared.txt"})
         self.assertEqual(set(self.changes(report["peers"][0]["revision"]["normalized"])), {b"zz-shared.txt"})
@@ -364,10 +377,11 @@ class PublicationEvidenceTests(GitEvidenceTestCase):
         self.assertEqual(before, {str(path.relative_to(directory)): path.read_bytes() for path in directory.rglob("*") if path.is_file()})
 
     def test_artifact_and_inventory_caps_are_explicit_without_truncated_stored_objects(self):
+        prs = self.states()
         for constant, value in (("MAX_ARTIFACT_BYTES", 64), ("MAX_FILE_RECORDS", 0),
                                 ("MAX_PATHS", 0), ("MAX_PEERS", 0), ("MAX_MERGE_BASES", 0)):
             with self.subTest(constant=constant), patch.object(pr_overlap_evidence, constant, value):
-                directory, report = self.export(destination=self.parent / constant)
+                directory, report = self.export(destination=self.parent / constant, prs=prs)
                 self.assertFalse(report["complete"])
                 self.assertTrue(report["incomplete"])
                 self.assertTrue((directory / "READY").exists())
@@ -377,11 +391,12 @@ class PublicationEvidenceTests(GitEvidenceTestCase):
                         self.assertLessEqual(len(content), value)
 
     def test_packet_and_metadata_caps_never_publish_ready_when_required_metadata_cannot_fit(self):
+        prs = self.states()
         for constant, value in (("MAX_PACKET_BYTES", 32), ("MAX_MANIFEST_BYTES", 32), ("MAX_METADATA_BYTES", 8)):
             directory = self.parent / constant
             with self.subTest(constant=constant), patch.object(pr_overlap_evidence, constant, value):
                 with self.assertRaises((ValueError, OSError)):
-                    self.export(destination=directory)
+                    self.export(destination=directory, prs=prs)
                 self.assertFalse((directory / "READY").exists())
                 if constant == "MAX_PACKET_BYTES" and directory.exists():
                     self.assertLessEqual(sum(path.stat().st_size for path in directory.rglob("*") if path.is_file()), value)
@@ -415,6 +430,7 @@ class PublicationEvidenceTests(GitEvidenceTestCase):
                 self.export(destination=destination)
 
     def test_external_diff_and_textconv_are_disabled_and_worktree_is_unchanged(self):
+        prs = self.states()
         sentinel = self.parent / "EXECUTED"
         command = f'"{sys.executable}" -c "open(r\'{sentinel.as_posix()}\', \'w\').write(\'bad\')"'
         self.git("config", "diff.external", command)
@@ -428,9 +444,9 @@ class PublicationEvidenceTests(GitEvidenceTestCase):
             self.assertFalse(kwargs.get("shell", False))
             return original(command, *args, **kwargs)
         with patch.object(subprocess, "Popen", side_effect=record):
-            directory, report = self.export()
+            directory, report = self.export(prs=prs)
             with patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=0"}):
-                overridden_directory, overridden = self.export(destination=self.parent / "env-override")
+                overridden_directory, overridden = self.export(destination=self.parent / "env-override", prs=prs)
         self.assertTrue(report["complete"], report["incomplete"])
         self.assertTrue(overridden["complete"], overridden["incomplete"])
         original_patches = {item["path"]: self.stored(directory, item) for item in report["objects"] if item["kind"] == "patch"}
@@ -443,14 +459,13 @@ class PublicationEvidenceTests(GitEvidenceTestCase):
             self.assertFalse({"fetch", "checkout", "commit", "merge", "apply", "update-ref"} & set(command))
         self.assertEqual(self.git("status", "--porcelain=v1", "-z"), before)
         self.assertFalse((directory / ".gitattributes").exists())
-        self.assertEqual(self.git_text("rev-parse", "HEAD"), self.peer)
+        self.assertEqual(self.git_text("rev-parse", "HEAD"), self.fixture_peer_head)
 
 
 class CliEvidenceTests(GitEvidenceTestCase):
     def invoke(self, arguments, findings=None, export_failure=None):
         prs = self.states()
         peers = {number: row for number, row in prs.items() if number}
-        found = findings if findings is not None else None
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(pr_overlap, "open_prs", return_value=copy.deepcopy(peers)))
@@ -462,14 +477,14 @@ class CliEvidenceTests(GitEvidenceTestCase):
             stack.enter_context(patch.object(pr_overlap, "scan_all", side_effect=scan))
             stack.enter_context(patch.object(pr_overlap, "base_exports", return_value={}))
             stack.enter_context(patch.object(pr_overlap, "main_export_findings", return_value={}))
-            stack.enter_context(patch.object(pr_overlap, "overlaps", return_value=found))
+            stack.enter_context(patch.object(pr_overlap, "overlaps", return_value=findings))
             stack.enter_context(patch.object(pr_overlap, "report", return_value="checker result\n"))
             if export_failure is not None:
                 stack.enter_context(patch.object(pr_overlap_evidence, "write_review_evidence", side_effect=export_failure))
             stack.enter_context(contextlib.redirect_stdout(stdout))
             stack.enter_context(contextlib.redirect_stderr(stderr))
             try:
-                code = pr_overlap.main(["--repo", "owner/project", "--branch", self.local, *arguments])
+                code = pr_overlap.main(["--repo", "owner/project", "--branch", self.fixture_local_head, *arguments])
             except SystemExit as error:
                 code = error.code
         return code, stdout.getvalue(), stderr.getvalue()
@@ -493,7 +508,7 @@ class CliEvidenceTests(GitEvidenceTestCase):
         destination.mkdir()
         for args in (["--names", "name", "--review-dir", str(self.parent / "review")],
                      ["--out", str(self.parent / "out"), "--review-dir", str(self.parent / "review")],
-                     ["--branch", self.local, "--review-dir", str(destination)]):
+                     ["--branch", self.fixture_local_head, "--review-dir", str(destination)]):
             with self.subTest(args=args), patch.object(pr_overlap, "open_prs") as network, \
                     contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
