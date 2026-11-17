@@ -110,14 +110,15 @@ TextureDetiler::TextureDetiler(const Context& context, Retired) : context(contex
 }
 
 TextureDetiler::~TextureDetiler() {
-    if (recorded && retireToRecorder()) return;
+    if (recordedBy != nullptr && retireToRecorder()) return;
     release();
 }
 
 bool TextureDetiler::retireToRecorder() {
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    auto* recorder = Recorder::Active();
-    if (recorder == nullptr || recorder->Idle()) return false;
+    if (!Recorder::Alive(recordedById)) return false;
+    auto* recorder = recordedBy;
+    if (recorder->Idle()) return false;
     std::shared_ptr<TextureDetiler> retired(new TextureDetiler(context, Retired{}));
     retired->adopt(*this);
     recorder->Keep(std::move(retired));

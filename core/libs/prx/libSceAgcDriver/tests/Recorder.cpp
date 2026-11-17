@@ -10982,6 +10982,24 @@ void detilerRetirementTests(const Device& device, Recorder& previous) {
             Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded by a destroyed detiler did not run with its own descriptors");
             Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded after another detiler was destroyed lost its descriptors");
         }
+        std::memset(destination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler switched(context);
+                switched.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                switched.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+            }
+            Require(probe.Released() == before, "a detiler destroyed while another recorder was active released objects its own recorder's open batch still uses");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded before another recorder was activated did not run with its own descriptors");
     }
     Require(probe.Released() > initial, "the destroyed detilers' pipelines and descriptor pools were not released once their batches completed");
     previous.Activate();

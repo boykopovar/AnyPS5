@@ -14,6 +14,7 @@
 namespace AgcDriver::Graphics {
 
     class Buffer;
+    class Recorder;
 
     // The part of a mip one Dispatch moves: only elements whose tiled offset (relative to the mip's
     // tiled base; the linear offset of a linear surface) lies in [rangeBegin, rangeEnd), with the
@@ -105,7 +106,8 @@ namespace AgcDriver::Graphics {
         std::vector<std::pair<std::uint32_t, VkPipeline>> readbackPipelines;
         DescriptorRing readbackDescriptorSets;
         VkShaderModule multisampleUploadModule = VK_NULL_HANDLE;
-        bool recorded = false;
+        Recorder* recordedBy = nullptr;
+        std::uint64_t recordedById = 0;
     };
 
 }
