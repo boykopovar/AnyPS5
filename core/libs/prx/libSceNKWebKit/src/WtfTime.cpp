@@ -28,6 +28,7 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -268,6 +269,25 @@ TimingTotals& Totals() {
     return *totals;
 }
 
+template <typename T>
+bool loadTime(T& value, const T* source) {
+    return GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+}
+
+WTF::WallTime approximateWallTime(double monotonic) {
+    if (std::isinf(monotonic)) {
+        return WTF::WallTime{monotonic};
+    }
+    return WTF::WallTime{monotonic - WTF::currentMonotonicTimeSeconds() + WTF::currentWallTimeSeconds()};
+}
+
+WTF::MonotonicTime approximateMonotonicTime(double wall) {
+    if (std::isinf(wall)) {
+        return WTF::MonotonicTime{wall};
+    }
+    return WTF::MonotonicTime{wall - WTF::currentWallTimeSeconds() + WTF::currentMonotonicTimeSeconds()};
+}
+
 }  // namespace
 
 extern "C" {
@@ -277,12 +297,14 @@ WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv() {
 
 void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self) {
     if (!self) throw std::invalid_argument("TimingScope::scopeDidEnd: null scope");
-    if (!self->m_name) throw std::invalid_argument("TimingScope::scopeDidEnd: null name");
-    if (!self->m_logIterationInterval) throw std::invalid_argument("TimingScope::scopeDidEnd: zero log iteration interval");
-    const double duration = _ZN3WTF13MonotonicTime3nowEv().m_value - self->m_startTime.m_value;
-    const auto data = Totals().Add(self->m_name, duration);
-    if (!(data.callCount % self->m_logIterationInterval))
-        WTFLogAlways("%s: %u calls, mean duration: %.6fms, total duration: %.6fms, max duration %.6fms", self->m_name, data.callCount,
+    WTF::TimingScope scope;
+    if (!loadTime(scope, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!scope.m_name) throw std::invalid_argument("TimingScope::scopeDidEnd: null name");
+    if (!scope.m_logIterationInterval) throw std::invalid_argument("TimingScope::scopeDidEnd: zero log iteration interval");
+    const double duration = _ZN3WTF13MonotonicTime3nowEv().m_value - scope.m_startTime.m_value;
+    const auto data = Totals().Add(scope.m_name, duration);
+    if (!(data.callCount % scope.m_logIterationInterval))
+        WTFLogAlways("%s: %u calls, mean duration: %.6fms, total duration: %.6fms, max duration %.6fms", scope.m_name, data.callCount,
             data.totalDuration / data.callCount * 1000.0, data.totalDuration * 1000.0, data.maxDuration * 1000.0);
 }
 
@@ -291,17 +313,15 @@ WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv() {
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF13MonotonicTime19approximateWallTimeEv(const WTF::MonotonicTime* self) {
-    if (std::isinf(self->m_value)) {
-        return WTF::WallTime{self->m_value};
-    }
-    return WTF::WallTime{self->m_value - WTF::currentMonotonicTimeSeconds() + WTF::currentWallTimeSeconds()};
+    WTF::MonotonicTime time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return approximateWallTime(time.m_value);
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self) {
-    if (std::isinf(self->m_value)) {
-        return WTF::MonotonicTime{self->m_value};
-    }
-    return WTF::MonotonicTime{self->m_value - WTF::currentWallTimeSeconds() + WTF::currentMonotonicTimeSeconds()};
+    WTF::WallTime time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return approximateMonotonicTime(time.m_value);
 }
 
 WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(WTF::ClockType type) {
@@ -317,88 +337,126 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
-    return WTF::MonotonicTime{self->m_value};
+    WTF::TimeWithDynamicClockType time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::MonotonicTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(const WTF::TimeWithDynamicClockType* self) {
-    return WTF::WallTime{self->m_value};
+    WTF::TimeWithDynamicClockType time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::WallTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(const WTF::TimeWithDynamicClockType* self) {
-    if (self->m_type == WTF::ClockType::Wall) {
-        return WTF::WallTime{self->m_value};
+    WTF::TimeWithDynamicClockType time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (time.m_type == WTF::ClockType::Wall) {
+        return WTF::WallTime{time.m_value};
     }
-    WTF::MonotonicTime mono{self->m_value};
-    return _ZNK3WTF13MonotonicTime19approximateWallTimeEv(&mono);
+    return approximateWallTime(time.m_value);
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
-    if (self->m_type == WTF::ClockType::Monotonic || self->m_type == WTF::ClockType::Approximate) {
-        return WTF::MonotonicTime{self->m_value};
+    WTF::TimeWithDynamicClockType time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (time.m_type == WTF::ClockType::Monotonic || time.m_type == WTF::ClockType::Approximate) {
+        return WTF::MonotonicTime{time.m_value};
     }
-    WTF::WallTime wall{self->m_value};
-    return _ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall);
+    return approximateMonotonicTime(time.m_value);
 }
 
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(const WTF::TimeWithDynamicClockType* self) {
-    return _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(self->m_type);
+    WTF::TimeWithDynamicClockType time;
+    if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
 }
 
 WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other) {
-    return WTF::Seconds{self->m_value - other.m_value};
+    WTF::TimeWithDynamicClockType time;
+    WTF::TimeWithDynamicClockType right;
+    if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::Seconds{time.m_value - right.m_value};
 }
 
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other) {
-    return self->m_value > other.m_value;
+    WTF::TimeWithDynamicClockType time;
+    WTF::TimeWithDynamicClockType right;
+    if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return time.m_value > right.m_value;
 }
 
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other) {
-    return self->m_value >= other.m_value;
+    WTF::TimeWithDynamicClockType time;
+    WTF::TimeWithDynamicClockType right;
+    if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return time.m_value >= right.m_value;
 }
 
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other) {
-    return self->m_value <= other.m_value;
+    WTF::TimeWithDynamicClockType time;
+    WTF::TimeWithDynamicClockType right;
+    if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return time.m_value <= right.m_value;
 }
 
 bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time) {
-    if (std::isinf(time.m_value)) {
+    WTF::TimeWithDynamicClockType deadline;
+    if (!loadTime(deadline, &time)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (std::isinf(deadline.m_value)) {
         return false;
     }
-    WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
-    return time.m_value <= now.m_value;
+    WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(deadline.m_type);
+    return deadline.m_value <= now.m_value;
 }
 
 void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time) {
-    WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
-    double diff = time.m_value - now.m_value;
+    WTF::TimeWithDynamicClockType deadline;
+    if (!loadTime(deadline, &time)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(deadline.m_type);
+    double diff = deadline.m_value - now.m_value;
     if (diff > 0.0) {
         _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds{diff});
     }
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsmiENS_13MonotonicTimeE(const WTF::Seconds* self, WTF::MonotonicTime other) {
-    return WTF::MonotonicTime{self->m_value - other.m_value};
+    WTF::Seconds seconds;
+    if (!loadTime(seconds, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::MonotonicTime{seconds.m_value - other.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsmiENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other) {
-    return WTF::WallTime{self->m_value - other.m_value};
+    WTF::Seconds seconds;
+    if (!loadTime(seconds, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::WallTime{seconds.m_value - other.m_value};
 }
 
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF7SecondsmiERKNS_24TimeWithDynamicClockTypeE(const WTF::Seconds* self, const WTF::TimeWithDynamicClockType& other) {
-    return WTF::TimeWithDynamicClockType{self->m_value - other.m_value, other.m_type};
+    WTF::Seconds seconds;
+    WTF::TimeWithDynamicClockType right;
+    if (!loadTime(seconds, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::TimeWithDynamicClockType{seconds.m_value - right.m_value, right.m_type};
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::Seconds* self, WTF::MonotonicTime other) {
-    return WTF::MonotonicTime{self->m_value + other.m_value};
+    WTF::Seconds seconds;
+    if (!loadTime(seconds, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::MonotonicTime{seconds.m_value + other.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other) {
-    return WTF::WallTime{self->m_value + other.m_value};
+    WTF::Seconds seconds;
+    if (!loadTime(seconds, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WTF::WallTime{seconds.m_value + other.m_value};
 }
 
 double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUTime* self, const WTF::CPUTime& reference) {
-    double cpuUsageDelta = (self->systemTime.m_value + self->userTime.m_value) - (reference.systemTime.m_value + reference.userTime.m_value);
-    double cpuTimeDelta = self->cpuTime.m_value - reference.cpuTime.m_value;
+    WTF::CPUTime current;
+    WTF::CPUTime base;
+    if (!loadTime(current, self) || !loadTime(base, &reference)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    double cpuUsageDelta = (current.systemTime.m_value + current.userTime.m_value) - (base.systemTime.m_value + base.userTime.m_value);
+    double cpuTimeDelta = current.cpuTime.m_value - base.cpuTime.m_value;
     if (cpuTimeDelta <= 0.0) {
         return 0.0;
     }
@@ -411,16 +469,18 @@ void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::Gregoria
     if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
         throw std::overflow_error("setToCurrentLocalTime: localtime_r failed");
     }
-    self->m_year = localTM.tm_year + 1900;
-    self->m_month = localTM.tm_mon;
-    self->m_monthDay = localTM.tm_mday;
-    self->m_yearDay = localTM.tm_yday;
-    self->m_weekDay = localTM.tm_wday;
-    self->m_hour = localTM.tm_hour;
-    self->m_minute = localTM.tm_min;
-    self->m_second = localTM.tm_sec;
-    self->m_isDST = localTM.tm_isdst;
-    self->m_utcOffsetInMinute = static_cast<int>(localTM.tm_gmtoff / 60);
+    WTF::GregorianDateTime date;
+    date.m_year = localTM.tm_year + 1900;
+    date.m_month = localTM.tm_mon;
+    date.m_monthDay = localTM.tm_mday;
+    date.m_yearDay = localTM.tm_yday;
+    date.m_weekDay = localTM.tm_wday;
+    date.m_hour = localTM.tm_hour;
+    date.m_minute = localTM.tm_min;
+    date.m_second = localTM.tm_sec;
+    date.m_isDST = localTM.tm_isdst;
+    date.m_utcOffsetInMinute = static_cast<int>(localTM.tm_gmtoff / 60);
+    if (!GuestCopyOut_nid_no_patch(self, &date, sizeof(date))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 static int32_t calculateUTCOffset() {
