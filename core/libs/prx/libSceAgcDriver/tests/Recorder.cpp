@@ -6922,10 +6922,13 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     recorder.NotePendingWrite(indices, 16);
     Require(recorder.PendingWriteOverlaps(indices, 256), "the pending GPU write over the index range was not noted");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, false);
+    const auto switchedOff = IndexBehindWriterCounts();
     const auto off = attempt(context, indices, 4, false, false, 0);
+    Require(IndexBehindWriterCounts() == switchedOff, "an attempt without APS5_INDEX_IN_PLACE_BEHIND_WRITER was counted");
     Require(off.first == nullptr && off.second == IndexBehindWriter::Off, "an index range behind a pending GPU writer was bound in place without APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(!recorder.PendingReadOverlaps(indices, 256), "an index range left on the copy path was noted as an in-place read");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, true);
+    const auto countsBefore = IndexBehindWriterCounts();
     const auto taken = attempt(context, indices, 4, false, false, 0);
     Require(taken.first != nullptr && taken.second == IndexBehindWriter::Taken && taken.first->base <= indices && indices + 256 <= taken.first->base + taken.first->bytes, "an index range behind a pending GPU writer was not bound in place with APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(recorder.PendingWriteOverlaps(indices, 256), "binding an index range behind a pending GPU writer waited for the writer");
@@ -6956,6 +6959,20 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     Require(!recorder.PendingReadOverlaps(indices, 256), "the read of an index range bound behind a pending GPU writer outlived its batch");
     Require(attempt(context, indices, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
+    const auto countsAfter = IndexBehindWriterCounts();
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> expectedCounts{};
+    const auto expect = [&](IndexBehindWriter outcome, std::uint64_t count) { expectedCounts[static_cast<std::size_t>(outcome)] = count; };
+    expect(IndexBehindWriter::Taken, 2);
+    expect(IndexBehindWriter::Off, 2);
+    expect(IndexBehindWriter::NoWriter, 2);
+    expect(IndexBehindWriter::VertexAttributes, 1);
+    expect(IndexBehindWriter::IndexLimit, 1);
+    expect(IndexBehindWriter::MeshStage, 1);
+    expect(IndexBehindWriter::PrimitiveRestart, 1);
+    expect(IndexBehindWriter::VertexOffset, 2);
+    expect(IndexBehindWriter::LabelOrStore, 1);
+    expect(IndexBehindWriter::NoImport, 1);
+    for (std::size_t index = 0; index < expectedCounts.size(); ++index) Require(countsAfter[index] - countsBefore[index] == expectedCounts[index], "the outcome counter " + std::to_string(index) + " of the index ranges behind a pending GPU writer counted " + std::to_string(countsAfter[index] - countsBefore[index]) + " instead of " + std::to_string(expectedCounts[index]));
     return true;
 }
 

@@ -1579,13 +1579,58 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     return import;
 }
 
+namespace {
+
+constexpr std::array<const char*, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterNames{
+    "taken", "off", "no writer", "vertex attributes", "index limit", "mesh stage", "primitive restart", "vertex offset",
+    "unit shadow", "pending storage", "label or store", "copied writer", "no import", "refused"
+};
+
+std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)>& indexBehindWriterEvents() {
+    static std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)> events;
+    return events;
+}
+
+const bool indexBehindWriterProfiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+
+void reportIndexBehindWriter() {
+    using Clock = std::chrono::steady_clock;
+    static std::atomic<std::int64_t> reported{Clock::now().time_since_epoch().count()};
+    static std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> previous{};
+    const auto now = Clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (Clock::duration(now - last) < std::chrono::seconds(10) || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::string line;
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        const auto total = indexBehindWriterEvents()[index].Sum();
+        const auto count = total - previous[index];
+        previous[index] = total;
+        if (count == 0) continue;
+        line += (line.empty() ? " " : ", ") + std::string(IndexBehindWriterNames[index]) + " " + std::to_string(count);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[index-behind-writer] (10 s, all threads, index ranges behind a pending GPU writer):%s\n", line.empty() ? " none" : line.c_str());
+}
+
+}
+
+std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterCounts() {
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> counts{};
+    for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = indexBehindWriterEvents()[index].Sum();
+    return counts;
+}
+
 const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome) {
+    const bool enabled = RuntimeSwitches::Set(RuntimeSwitch::IndexInPlaceBehindWriter);
     const auto leave = [&](IndexBehindWriter result, const HostImport* import) {
         if (outcome != nullptr) *outcome = result;
+        if (enabled) {
+            indexBehindWriterEvents()[static_cast<std::size_t>(result)].Add(1);
+            if (indexBehindWriterProfiled) reportIndexBehindWriter();
+        }
         return import;
     };
     auto* recorder = context.recorder;
-    if (!RuntimeSwitches::Set(RuntimeSwitch::IndexInPlaceBehindWriter) || recorder == nullptr || (indexSize != 2 && indexSize != 4) || bytes < indexSize) return leave(IndexBehindWriter::Off, nullptr);
+    if (!enabled || recorder == nullptr || (indexSize != 2 && indexSize != 4) || bytes < indexSize) return leave(IndexBehindWriter::Off, nullptr);
     if (!recorder->PendingWriteOverlaps(address, bytes)) return leave(IndexBehindWriter::NoWriter, nullptr);
     if (vertexAttributes) return leave(IndexBehindWriter::VertexAttributes, nullptr);
     if (context.limits.maxDrawIndexedIndexValue != std::numeric_limits<std::uint32_t>::max()) return leave(IndexBehindWriter::IndexLimit, nullptr);
