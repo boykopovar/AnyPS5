@@ -58,6 +58,10 @@ int APS5_VABI sceVideoOutAddStereoBuffer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceVideoOutAddSubExPrivilege() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceVideoOutAdjustColor2_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1013,6 +1017,10 @@ int APS5_VABI sceVideoOutGetFlipStatusNative() {
 }
 
 int APS5_VABI sceVideoOutSysLatencyMeasureGetLatestLatency() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysVAdjust() {
     NotImplemented_nid_no_patch(__func__);
 }
 
