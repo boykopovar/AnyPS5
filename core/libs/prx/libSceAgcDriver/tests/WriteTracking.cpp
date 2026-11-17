@@ -1932,10 +1932,14 @@ void CheckImportWindowTouchIsNotAStore() {
     Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a page an import window resolved without changing its bytes reads as stored");
     Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "pages the import window did not touch read as stored");
     Require(!StoreUnchangedSinceLastCollect(base + Block, 4096, synced), "a store of new bytes within an import window reads as unstored");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a store to another page of its block made an import window touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + 0x2000, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x2010, 1, synced), "a store beside an import window touch reads as unstored");
     bytes[0x200] = 0x11;
     static_cast<void>(CollectWritesUncached(base, 2 * Block));
     Require(!StoreUnchangedSinceLastCollect(base, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a same-value store after an import window touch reads as unstored");
-    Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "a store after the import window marked other pages as stored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x3000, Block - 0x3000, synced), "a store after the import window marked other pages as stored");
 }
 
 #ifdef __APPLE__
