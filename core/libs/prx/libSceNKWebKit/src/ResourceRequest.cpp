@@ -27,6 +27,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
@@ -328,6 +329,10 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(ResourceReque
     auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Origin);
     request.platformRequestUpdated = false;
+}
+
+void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
+    _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(timeoutInterval);
 }
 
 }
