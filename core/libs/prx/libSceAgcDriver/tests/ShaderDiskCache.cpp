@@ -917,6 +917,7 @@ void verifyKeySensitivity() {
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
+    changes("device-atomic workgroup memory barriers", [](SampleRequest& sample) { sample.request.target.deviceAtomicWorkgroupMemoryBarriers = true; });
     changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("mesh function inlining", [](SampleRequest& sample) { sample.request.target.meshInlineFunctions = true; });
     changes("atomic coherent buffer accesses", [](SampleRequest& sample) { sample.request.target.coherentBufferAtomics = true; });
