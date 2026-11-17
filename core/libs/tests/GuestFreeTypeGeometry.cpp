@@ -112,8 +112,22 @@ int main(int argc, char** argv) {
     FT_Matrix_Multiply_nid_postfix(nullptr, nullptr);
     FT_Matrix_Multiply_nid_postfix(&unchanged, nullptr);
     FT_Matrix_Multiply_nid_postfix(nullptr, &unchanged);
+    auto* unmappedVector = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    auto* unmappedMatrix = reinterpret_cast<GuestMatrix*>(std::uintptr_t{0x10});
+    static const GuestMatrix readOnly{131072, 0, 0, 131072};
+    static const GuestVector readOnlyVector{3, 5};
+    FT_Vector_Transform_nid_postfix(unmappedVector, &unchanged);
+    FT_Vector_Transform_nid_postfix(&untouched, unmappedMatrix);
+    FT_Vector_Transform_nid_postfix(const_cast<GuestVector*>(&readOnlyVector), &unchanged);
+    FT_Matrix_Multiply_nid_postfix(unmappedMatrix, &unchanged);
+    FT_Matrix_Multiply_nid_postfix(&unchanged, unmappedMatrix);
+    FT_Matrix_Multiply_nid_postfix(&unchanged, const_cast<GuestMatrix*>(&readOnly));
     if (!Equal(unchanged, original) || untouched.x != 123 || untouched.y != -456 ||
-        FT_Matrix_Invert_nid_postfix(nullptr) != FT_Err_Invalid_Argument) std::abort();
+        readOnlyVector.x != 3 || readOnlyVector.y != 5 || !Equal(readOnly, {131072, 0, 0, 131072}) ||
+        FT_Matrix_Invert_nid_postfix(nullptr) != FT_Err_Invalid_Argument ||
+        FT_Matrix_Invert_nid_postfix(unmappedMatrix) != FT_Err_Invalid_Argument ||
+        FT_Matrix_Invert_nid_postfix(const_cast<GuestMatrix*>(&readOnly)) != FT_Err_Invalid_Argument ||
+        !Equal(readOnly, {131072, 0, 0, 131072})) std::abort();
     constexpr bool nativeReference = sizeof(FT_Long) == 8 && FREETYPE_MAJOR == 2 && FREETYPE_MINOR == 13 && FREETYPE_PATCH == 3;
     std::cout << "FT_GEOMETRY " << sizeof(FT_Long) << ' ' << nativeReference << '\n';
     GuestVector input{};
