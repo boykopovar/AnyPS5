@@ -57,6 +57,7 @@
  * Derived from Source/WTF/wtf/MediaTime.h@c55364d53f971f63a709976f168d932d558b8909
  */
 
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/include/WtfHelperExports.hpp"
 
@@ -206,7 +207,11 @@ extern "C" {
 
 bool APS5_VABI _ZNK3WTF9MediaTimeneERKS0_(const MediaTime* self, const MediaTime* rhs) {
     if (!self || !rhs) throw std::invalid_argument("WTF::MediaTime::operator!=: null object");
-    return Compare(*self, *rhs) != MediaTime::EqualTo;
+    MediaTime lhsTime{};
+    MediaTime rhsTime{};
+    if (!GuestPtr<const MediaTime>(self).CopyIn(lhsTime) || !GuestPtr<const MediaTime>(rhs).CopyIn(rhsTime))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return Compare(lhsTime, rhsTime) != MediaTime::EqualTo;
 }
 
 }
