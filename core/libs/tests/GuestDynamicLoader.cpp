@@ -15,7 +15,9 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __linux__
 #include <link.h>
+#endif
 #endif
 #include <stdexcept>
 #include <source_location>
