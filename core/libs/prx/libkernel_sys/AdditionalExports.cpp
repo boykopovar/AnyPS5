@@ -1692,16 +1692,6 @@ int APS5_VABI sceKernelGetPackageInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
-    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    const int saved = errno;
-    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x14, sizeof(*version));
-    errno = saved;
-    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
-    return 0;
-}
-
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
     return sceKernelGetProsperoCompiledSdkVersion(version);
@@ -1723,10 +1713,6 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* vers
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount2() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelGetToolMemoryRange() {
     NotImplemented_nid_no_patch(__func__);
 }
 
