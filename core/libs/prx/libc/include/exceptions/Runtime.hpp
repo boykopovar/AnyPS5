@@ -20,7 +20,11 @@ struct Header {
     int handlers {};
     int selector {};
     std::uint32_t _pad {};
+#ifdef __APPLE__
+    std::uint32_t hostCatch {};
+#else
     std::uint32_t _pad2 {};
+#endif
     const unsigned char* action {};
     const unsigned char* lsda {};
     std::uintptr_t landing {};
@@ -61,6 +65,9 @@ bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, st
                                    const __cxxabiv1::__class_type_info* destination, const void* object,
                                    const __cxxabiv1::__class_type_info* source, const void* sourceObject,
                                    __cxxabiv1::__class_type_info::__dyncast_result& result);
+#ifdef __APPLE__
+void RecordHostCatch(Header* header);
+#endif
 void Release(void*);
 [[noreturn]] void Terminate();
 }
