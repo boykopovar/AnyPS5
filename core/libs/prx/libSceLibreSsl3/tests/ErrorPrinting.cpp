@@ -17,6 +17,15 @@ void Require(bool condition, int line = __builtin_LINE()) {
     std::abort();
 }
 
+char callbackLine[512];
+
+int APS5_VABI Capture(const char* text, std::size_t length, void*) {
+    Require(length < sizeof(callbackLine));
+    std::memcpy(callbackLine, text, length);
+    callbackLine[length] = '\0';
+    return 1;
+}
+
 }
 
 int main() {
@@ -32,6 +41,9 @@ int main() {
     Require(fgets_nid_postfix(line, static_cast<int>(sizeof(line)), stream) != nullptr);
     Require(std::strstr(line, "error:") != nullptr);
     Require(ERR_peek_error_nid_postfix() == 0);
+    LibreSslPutError_nid_no_patch(20, 0xfff, 67);
+    ERR_print_errors_cb_nid_postfix(Capture, nullptr);
+    Require(std::strcmp(line, callbackLine) == 0);
     Require(fclose_nid_postfix(stream) == 0);
 
     stream = fopen_nid_postfix(path, "w+");
