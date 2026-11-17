@@ -112,6 +112,9 @@ void TestCreateWithoutBlocks() {
     std::size_t index = 0;
     Require(Create(report, buffer.data(), &index, buffer.size(), nullptr, nullptr));
     Require(index == 8 && buffer == std::array<std::uint8_t, 8> {0x80, 201, 0x00, 0x01, 0x12, 0x34, 0x56, 0x78});
+    index = 0;
+    RequireInvalidArgument([&] { Create(report, nullptr, &index, buffer.size(), nullptr, nullptr); });
+    RequireInvalidArgument([&] { Create(report, buffer.data(), nullptr, buffer.size(), nullptr, nullptr); });
     Destroy(report);
 }
 

@@ -95,6 +95,8 @@ std::size_t BlockLength(const WebRtcRtcpReceiverReport* report) {
 }
 
 bool APS5_VABI ReceiverReportCreate_nid_no_patch(const WebRtcRtcpReceiverReport* report, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call) {
+    if (packet == nullptr || index == nullptr)
+        throw std::invalid_argument("ReceiverReport::Create requires a packet buffer and an index");
     const std::size_t count = Count(report);
     if (count > MaxReportBlocks)
         throw std::invalid_argument("ReceiverReport::Create holds more report blocks than the header can count");
