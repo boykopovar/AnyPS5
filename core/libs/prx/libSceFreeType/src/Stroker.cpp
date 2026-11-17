@@ -58,34 +58,47 @@ bool FitsInt32(std::int64_t value) {
     return value >= std::numeric_limits<std::int32_t>::min() && value <= std::numeric_limits<std::int32_t>::max();
 }
 
-void CheckOutlineArrays(const GuestOutline& outline, const char* function) {
-    if (outline.n_contours == 0) return;
-    if (!outline.points || !outline.tags || !outline.contours) NotImplemented_nid_no_patch(function);
-    for (std::size_t contour = 0; contour < outline.n_contours; ++contour) {
-        if (outline.contours[contour] >= outline.n_points) NotImplemented_nid_no_patch(function);
+struct OutlineArrays {
+    std::vector<GuestVector> points;
+    std::vector<unsigned char> tags;
+    std::vector<std::uint16_t> contours;
+};
+
+OutlineArrays ReadOutlineArrays(const GuestOutline& outline, const char* function) {
+    OutlineArrays arrays;
+    if (outline.n_contours == 0) return arrays;
+    arrays.points.resize(outline.n_points);
+    arrays.tags.resize(outline.n_points);
+    arrays.contours.resize(outline.n_contours);
+    if (!outline.points || !outline.tags || !outline.contours ||
+        !GuestCopyIn_nid_no_patch(arrays.points.data(), outline.points, arrays.points.size() * sizeof(GuestVector)) ||
+        !GuestCopyIn_nid_no_patch(arrays.tags.data(), outline.tags, arrays.tags.size()) ||
+        !GuestCopyIn_nid_no_patch(arrays.contours.data(), outline.contours, arrays.contours.size() * sizeof(std::uint16_t))) {
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
+    for (const std::uint16_t last : arrays.contours) {
+        if (last >= outline.n_points) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return arrays;
 }
 
-bool StrokedPointsFitInt32(const GuestOutline& outline) {
+bool StrokedPointsFitInt32(const OutlineArrays& arrays) {
     std::int32_t last = -1;
-    for (std::size_t contour = 0; contour < outline.n_contours; ++contour) {
+    for (const std::uint16_t end : arrays.contours) {
         const std::int32_t first = last + 1;
-        last = outline.contours[contour];
+        last = end;
         if (last <= first) continue;
         for (std::int32_t index = first; index <= last; ++index) {
-            if (!FitsInt32(outline.points[index].x) || !FitsInt32(outline.points[index].y)) return false;
+            if (!FitsInt32(arrays.points[index].x) || !FitsInt32(arrays.points[index].y)) return false;
         }
     }
     return true;
 }
 
-std::vector<FT_Vector> NativePoints(const GuestOutline& outline, const char* function) {
+std::vector<FT_Vector> NativePoints(const OutlineArrays& arrays, const char* function) {
     std::vector<FT_Vector> points;
-    if (outline.n_contours == 0) return points;
-    points.reserve(outline.n_points);
-    for (std::size_t index = 0; index < outline.n_points; ++index) {
-        points.push_back({HostCoordinate(outline.points[index].x, function), HostCoordinate(outline.points[index].y, function)});
-    }
+    points.reserve(arrays.points.size());
+    for (const GuestVector& point : arrays.points) points.push_back({HostCoordinate(point.x, function), HostCoordinate(point.y, function)});
     return points;
 }
 
@@ -173,18 +186,20 @@ int APS5_VABI FT_Stroker_CubicTo_nid_postfix(void* stroker, const GuestVector* c
 }
 
 int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const GuestOutline* outline, std::uint8_t opened) {
-    if (!outline) return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), nullptr, opened);
-    if (stroker) CheckOutlineArrays(*outline, __func__);
+    GuestOutline header{};
+    if (!outline || !GuestCopyIn_nid_no_patch(&header, outline, sizeof(header))) return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), nullptr, opened);
+    OutlineArrays arrays;
+    if (stroker) arrays = ReadOutlineArrays(header, __func__);
     std::vector<FT_Vector> converted;
     FT_Vector* points = nullptr;
     if constexpr (SharedPoints) {
-        if (stroker && !StrokedPointsFitInt32(*outline)) NotImplemented_nid_no_patch(__func__);
-        points = reinterpret_cast<FT_Vector*>(outline->points);
+        if (stroker && !StrokedPointsFitInt32(arrays)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        points = reinterpret_cast<FT_Vector*>(arrays.points.data());
     } else if (stroker) {
-        converted = NativePoints(*outline, __func__);
+        converted = NativePoints(arrays, __func__);
         points = converted.data();
     }
-    FT_Outline native = NativeOutline(*outline, points);
+    FT_Outline native{header.n_contours, header.n_points, points, arrays.tags.data(), arrays.contours.data(), header.flags};
     return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), &native, opened);
 }
 

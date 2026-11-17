@@ -519,6 +519,8 @@ def scan_library(path):
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
                for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
     for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
+        if not definitions:
+            continue
         wrappers = inert_wrappers(text)
         for definition in definitions:
             name = definition.name

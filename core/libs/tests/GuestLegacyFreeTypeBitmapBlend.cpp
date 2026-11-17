@@ -9,6 +9,7 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +24,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using FreeType::GuestBitmap;
@@ -67,6 +70,43 @@ struct Api {
     decltype(&FT_Done_Face_nid_postfix) doneFace;
     decltype(&FT_Bitmap_Done_nid_postfix) doneBitmap;
     decltype(&freetypeLegacyBitmapBlend_nid_no_patch) blend;
+};
+
+class GuardedTail {
+public:
+    explicit GuardedTail(std::size_t bytes) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(memory != MAP_FAILED);
+        Require(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0);
+#endif
+        Require(bytes <= page);
+        data = static_cast<unsigned char*>(memory) + page - bytes;
+    }
+    ~GuardedTail() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    GuardedTail(const GuardedTail&) = delete;
+    GuardedTail& operator=(const GuardedTail&) = delete;
+    template <class T> T* As() const { return static_cast<T*>(data); }
+
+private:
+    void* memory = nullptr;
+    std::size_t page = 0;
+    void* data = nullptr;
 };
 
 struct Source {
@@ -174,6 +214,38 @@ static void CheckErrors(const Api& api, FreeType::GuestLibrary* library, FT_Libr
     Require(api.blend(library, &source.guest, {}, nullptr, &offset, color) == FT_Err_Invalid_Argument);
     Require(api.blend(library, &source.guest, {}, &empty, nullptr, color) == FT_Err_Invalid_Argument);
     Require(empty.buffer == nullptr && empty.pixel_mode == 0 && offset.x == 5 && offset.y == 6);
+    const auto unmapped = std::uintptr_t{0x10};
+    Require(api.blend(library, reinterpret_cast<const GuestBitmap*>(unmapped), {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, reinterpret_cast<GuestBitmap*>(unmapped), &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, &empty, reinterpret_cast<GuestVector*>(unmapped), color) == FT_Err_Invalid_Argument);
+    GuestBitmap unmappedPixels = source.guest;
+    unmappedPixels.buffer = reinterpret_cast<unsigned char*>(unmapped);
+    Require(api.blend(library, &unmappedPixels, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    GuardedTail tailPixels(source.pixels.size());
+    std::memcpy(tailPixels.As<unsigned char>(), source.pixels.data(), source.pixels.size());
+    GuestBitmap oversized = source.guest;
+    oversized.buffer = tailPixels.As<unsigned char>();
+    oversized.rows = 0x40000000u;
+    Require(api.blend(library, &oversized, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    static const GuestBitmap readOnlyTarget{};
+    static const GuestVector readOnlyOffset{5, 6};
+    Require(api.blend(library, &source.guest, {}, const_cast<GuestBitmap*>(&readOnlyTarget), &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, &empty, const_cast<GuestVector*>(&readOnlyOffset), color) == FT_Err_Invalid_Argument);
+    Require(empty.buffer == nullptr && empty.pixel_mode == 0 && offset.x == 5 && offset.y == 6);
+    {
+        GuestBitmap tailSource = source.guest;
+        tailSource.buffer = tailPixels.As<unsigned char>();
+        GuestBitmap guest{};
+        GuestVector guestOffset{};
+        FT_Bitmap native;
+        FT_Bitmap_Init(&native);
+        FT_Vector nativeOffset{};
+        const FT_Bitmap nativeSource = source.Native();
+        Require(api.blend(library, &tailSource, {64, 64}, &guest, &guestOffset, color) == 0);
+        Require(FT_Bitmap_Blend(nativeLibrary, &nativeSource, {64, 64}, &native, &nativeOffset, nativeColor) == 0);
+        CheckSame(guest, native, guestOffset, nativeOffset);
+        Require(api.doneBitmap(library, &guest) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
+    }
 
     GuestBitmap target{};
     FT_Bitmap native;
