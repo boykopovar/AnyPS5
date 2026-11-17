@@ -1072,6 +1072,7 @@ int APS5_VABI LibraryGetFontMetrics(FontObj* obj, std::uint32_t form, FontMetric
     const auto* os2 = static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2));
     if (os2 && os2->version == 0xFFFF) os2 = nullptr;
     FontMetrics localMetrics{};
+    if ((form < 1 || form > 4) && !CopyInGuest(localMetrics, metrics)) return SCE_FONT_ERROR_FATAL;
     if (form == 4) {
         StoreVerticalFontMetrics(face, os2, xShift, yShift, &localMetrics);
     } else {
