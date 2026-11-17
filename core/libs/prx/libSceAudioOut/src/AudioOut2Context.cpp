@@ -148,14 +148,16 @@ struct QueueLevelPublisher {
 
 static void DeviceCallback(void* userdata, Uint8* stream, int length);
 
-static void OpenDevice(AudioOut2Context& context) {
+static constexpr auto DEFAULT_OUTPUT_CHECK = std::chrono::seconds(1);
+
+static SDL_AudioDeviceID OpenDevice(AudioOut2Context& context) {
     if (InitializeSdlAudio_nid_no_patch() < 0) {
         AUDIOOUT2_TRACE("SDL audio init failed: %s\n", SDL_GetError());
-        return;
+        return 0;
     }
     if (SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
         AUDIOOUT2_TRACE("SDL reports no WASAPI output endpoint\n");
-        return;
+        return 0;
     }
     SDL_AudioSpec desired{};
     desired.freq = static_cast<int>(AUDIO_OUT2_SAMPLE_RATE);
@@ -167,17 +169,49 @@ static void OpenDevice(AudioOut2Context& context) {
     SDL_AudioSpec obtained{};
     // No format change is allowed: SDL converts to the device's native format itself, so the callback
     // always writes stereo float at 48 kHz.
-    context.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-    if (context.device == 0) {
+    const auto name = SdlDefaultOutputDeviceName();
+    const auto device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 0, &desired, &obtained, 0);
+    if (device == 0) {
         AUDIOOUT2_TRACE("SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
-        return;
+        return 0;
     }
-    SDL_PauseAudioDevice(context.device, 0);
-    AUDIOOUT2_TRACE("SDL device %u opened: %d Hz, format 0x%x, %u channels, %u samples\n", context.device, obtained.freq, obtained.format, obtained.channels, obtained.samples);
+    context.defaultOutput = name;
+    context.nextDefaultOutputCheck = Clock::now() + DEFAULT_OUTPUT_CHECK;
+    SDL_PauseAudioDevice(device, 0);
+    AUDIOOUT2_TRACE("SDL device %u opened: %d Hz, format 0x%x, %u channels, %u samples\n", device, obtained.freq, obtained.format, obtained.channels, obtained.samples);
+    return device;
 }
 
 static void CloseDevice(SDL_AudioDeviceID device) {
     if (device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) SDL_CloseAudioDevice(device);
+}
+
+static void UpdateMainDevice(AudioOut2Context& context) {
+    if (!context.deviceBacked) return;
+    std::lock_guard deviceLock(context.deviceLock);
+    SDL_AudioDeviceID current = 0;
+    {
+        std::lock_guard lock(context.lock);
+        current = context.device;
+    }
+    if (current == 0) return;
+    bool replace = SDL_GetAudioDeviceStatus(current) == SDL_AUDIO_STOPPED;
+    const auto now = Clock::now();
+    if (!replace && !context.defaultOutput.empty() && now >= context.nextDefaultOutputCheck) {
+        context.nextDefaultOutputCheck = now + DEFAULT_OUTPUT_CHECK;
+        const auto name = SdlDefaultOutputDeviceName();
+        replace = !name.empty() && name != context.defaultOutput;
+    }
+    if (!replace) return;
+    {
+        std::lock_guard lock(context.lock);
+        context.device = 0;
+    }
+    CloseDevice(current);
+    context.defaultOutput.clear();
+    const auto device = OpenDevice(context);
+    std::lock_guard lock(context.lock);
+    context.device = device;
 }
 
 static void OpenPadDevice(AudioOut2Context& context) {
@@ -380,7 +414,7 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
     AUDIOOUT2_TRACE("t=%.3f ContextCreate: max_ports=%u max_object_ports=%u guarantee_object_ports=%u queue_depth=%u num_grains=%u flags=0x%x buffer=%p size=%zu -> ctx %p: %u-sample grains (%.2f ms), %u queued, %u Hz stereo float output\n",
         AudioOut2TraceSeconds(), guestParams.max_ports, guestParams.max_object_ports, guestParams.guarantee_object_ports, guestParams.queue_depth, guestParams.num_grains, guestParams.flags, buffer, buffer_size,
         static_cast<void*>(context.get()), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
-    OpenDevice(*context);
+    context->device = OpenDevice(*context);
     context->deviceBacked = context->device != 0;
     {
         std::lock_guard lock(g_contextsLock);
@@ -406,6 +440,7 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) try {
     AUDIOOUT2_TRACE("t=%.3f ContextDestroy ctx %p after %llu pushes\n", AudioOut2TraceSeconds(), static_cast<void*>(context), static_cast<unsigned long long>(context->pushes));
     SDL_AudioDeviceID device = 0;
     {
+        std::lock_guard deviceLock(context->deviceLock);
         std::lock_guard lock(context->lock);
         device = std::exchange(context->device, 0);
         ClosePadDevice(*context);
@@ -448,6 +483,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     const AudioOutCall call;
     auto* context = AudioOut2FindContext(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    UpdateMainDevice(*context);
     std::unique_lock lock(context->lock);
     const QueueLevelPublisher publication{*context, lock};
     auto now = Now(*context);
