@@ -67,6 +67,10 @@ void registry() {
     Require(RuntimeSwitches::Find("APS5_UNLOCKED_STAMPS") == RuntimeSwitch::UnlockedStamps && !RuntimeSwitches::Set(RuntimeSwitch::UnlockedStamps), "APS5_UNLOCKED_STAMPS is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_WRITE_SNAPSHOT_FRONTS") == RuntimeSwitch::WriteSnapshotFronts && !RuntimeSwitches::Set(RuntimeSwitch::WriteSnapshotFronts), "APS5_WRITE_SNAPSHOT_FRONTS is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_PENDING_FRONTS") == RuntimeSwitch::PendingFronts && !RuntimeSwitches::Set(RuntimeSwitch::PendingFronts), "APS5_PENDING_FRONTS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_LEAN_PREPARE") == RuntimeSwitch::LeanPrepare && !RuntimeSwitches::Set(RuntimeSwitch::LeanPrepare), "APS5_LEAN_PREPARE is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_BUFFER_BLOB_APPEND") == RuntimeSwitch::BufferBlobAppend && !RuntimeSwitches::Set(RuntimeSwitch::BufferBlobAppend), "APS5_BUFFER_BLOB_APPEND is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_PREPARED_CAPACITY") == RuntimeSwitch::PreparedCapacity && !RuntimeSwitches::Set(RuntimeSwitch::PreparedCapacity), "APS5_PREPARED_CAPACITY is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_INVOCATION_SLOTS_WIDE") == RuntimeSwitch::InvocationSlotsWide && !RuntimeSwitches::Set(RuntimeSwitch::InvocationSlotsWide), "APS5_INVOCATION_SLOTS_WIDE is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Set(RuntimeSwitch::LeanFront),"APS5_LEAN_FRONT set in the environment did not start set");
 }
 

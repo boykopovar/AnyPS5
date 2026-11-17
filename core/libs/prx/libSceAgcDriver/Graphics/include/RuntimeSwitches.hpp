@@ -40,6 +40,10 @@ enum class RuntimeSwitch : std::size_t {
     UnlockedStamps,
     WriteSnapshotFronts,
     PendingFronts,
+    LeanPrepare,
+    BufferBlobAppend,
+    PreparedCapacity,
+    InvocationSlotsWide,
     Count,
 };
 

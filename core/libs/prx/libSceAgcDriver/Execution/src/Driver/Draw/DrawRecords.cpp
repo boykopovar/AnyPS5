@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DirectDraws.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/LeanDraw.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -19,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -480,7 +482,7 @@ void NoteDirectBuffers(const DrawRecordCommit& commit, bool prepared) {
     const auto kind = effects.buffers == DrawRecordBuffers::Checked ? 0u : effects.buffers == DrawRecordBuffers::Differs ? 1u : effects.buffers == DrawRecordBuffers::MemoryChanged ? 2u : effects.buffers == DrawRecordBuffers::Unwatched ? 3u : 4u;
     if (kind == 4u) return;
     using Prepared = Graphics::ShaderResources::PreparedBuffers;
-    constexpr std::array<std::pair<std::uint8_t, Counter>, 1> shortcuts{{{Prepared::MergedSettle, Counter::VerifyMergedChecked}}};
+    constexpr std::array<std::pair<std::uint8_t, Counter>, 2> shortcuts{{{Prepared::MergedSettle, Counter::VerifyMergedChecked}, {Prepared::ExactCapacity, Counter::VerifyCapacityChecked}}};
     for (const auto& [bit, first] : shortcuts) {
         if ((effects.bufferShortcuts & bit) == 0) continue;
         DirectDraws::Add(first);
@@ -509,6 +511,9 @@ void NoteDirectInputs(const DrawRecordCommit& commit, bool prepared) {
         break;
     default: break;
     }
+    if (!commit.effects.inputsCapacity || (commit.effects.inputs != DrawRecordInputs::Checked && commit.effects.inputs != DrawRecordInputs::Differs)) return;
+    DirectDraws::Add(Counter::InputsVerifyCapacityChecked);
+    if (commit.effects.inputs == DrawRecordInputs::Differs) DirectDraws::Add(Counter::InputsVerifyCapacityDiffering);
 }
 
 void PublishInputsRecipe(DrawRecordCommit& commit) {
@@ -545,8 +550,9 @@ void Driver::commitRecord(std::shared_ptr<VulkanDevice> localDevice, std::uint32
         }
     } submitDue{*this, localDevice};
     recordLabelsForPacket(localDevice.get(), queue);
-    noteDrawWriters(hit.stages, queue);
     auto& commit = *hit.record->commit;
+    if (commit.writers == 0) commit.writers = StagesMayWriteBuffers(hit.stages) ? 2 : 1;
+    if (commit.writers == 2) noteDrawWriters(hit.stages, queue);
     const auto& record = *hit.record;
     const auto* keyWords = record.contentKey.empty() ? nullptr : &record.contentKey;
     static std::uint64_t ordinal = 0;

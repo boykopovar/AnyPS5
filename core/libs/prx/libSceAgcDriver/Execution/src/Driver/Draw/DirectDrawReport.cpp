@@ -41,6 +41,9 @@ constexpr std::array<const char*, CounterCount> CounterNames{
     "settle ranges before merging", "settle ranges after merging", "merged settles passed", "merged settles refused", "merged refusals settled per range",
     "verified with a merged settle", "differing with a merged settle", "memory changed with a merged settle", "unwatched with a merged settle",
     "merged settles rechecked per range", "merged settles refused per range",
+    "verified with exact capacities", "differing with exact capacities", "memory changed with exact capacities", "unwatched with exact capacities",
+    "inputs verified with exact capacities", "inputs differing with exact capacities",
+    "blobs appended",
 };
 
 constexpr std::array<const char*, StepCount> StepNames{"request", "invocation", "walk", "key", "side", "class", "checks", "buffers", "inputs", "hand-off"};
@@ -291,6 +294,7 @@ void Report(bool force) {
         };
         verified("merged settles", Counter::VerifyMergedChecked);
         if (at(Counter::MergedSettlesRechecked) != 0) shortcuts += "; merged settles rechecked per range " + std::to_string(at(Counter::MergedSettlesRechecked)) + ", " + std::to_string(at(Counter::MergedSettlesRecheckRefused)) + " refused per range";
+        verified("exact capacities", Counter::VerifyCapacityChecked);
         AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] buffers: %llu hits prepared, %llu used, %llu not prepared%s, %llu not used%s; %.1f blob bytes per prepared hit; verify %llu checked, %llu differing, %llu memory changed, %llu differing in unwatched memory%s\n",
             static_cast<unsigned long long>(prepared), static_cast<unsigned long long>(at(Counter::BuffersUsed)),
             static_cast<unsigned long long>(sum(Counter::BuffersNoPlan, Counter::BuffersUnsettled)), reasons(counts, Counter::BuffersNoPlan, Counter::BuffersUnsettled).c_str(),
@@ -304,12 +308,14 @@ void Report(bool force) {
             static_cast<unsigned long long>(at(Counter::MergedSettlesPassed)), static_cast<unsigned long long>(at(Counter::MergedSettlesRefused)), static_cast<unsigned long long>(at(Counter::MergedSettlesRecovered)));
     }
     if (sum(Counter::InputsPrepared, Counter::InputsVerifyDiffering) != 0) {
-        AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] inputs: %llu hits prepared, %llu used (%llu after an import recheck), %llu not prepared%s, %llu not used%s; verify %llu checked, %llu differing\n",
+        const auto capacities = at(Counter::InputsVerifyCapacityChecked) == 0 ? std::string() : "; verify of exact capacities " + std::to_string(at(Counter::InputsVerifyCapacityChecked)) + " checked, " + std::to_string(at(Counter::InputsVerifyCapacityDiffering)) + " differing";
+        AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] inputs: %llu hits prepared, %llu used (%llu after an import recheck), %llu not prepared%s, %llu not used%s; verify %llu checked, %llu differing%s\n",
             static_cast<unsigned long long>(at(Counter::InputsPrepared)), static_cast<unsigned long long>(at(Counter::InputsUsed)), static_cast<unsigned long long>(at(Counter::InputsRechecked)),
             static_cast<unsigned long long>(sum(Counter::InputsNoRecipe, Counter::InputsUnsettled)), reasons(counts, Counter::InputsNoRecipe, Counter::InputsUnsettled).c_str(),
             static_cast<unsigned long long>(sum(Counter::InputsImportChanged, Counter::InputsDropped)), reasons(counts, Counter::InputsImportChanged, Counter::InputsDropped).c_str(),
-            static_cast<unsigned long long>(at(Counter::InputsVerifyChecked)), static_cast<unsigned long long>(at(Counter::InputsVerifyDiffering)));
+            static_cast<unsigned long long>(at(Counter::InputsVerifyChecked)), static_cast<unsigned long long>(at(Counter::InputsVerifyDiffering)), capacities.c_str());
     }
+    if (at(Counter::BlobAppends) != 0) AgcDriver::ProfilePrint_nid_no_patch("[direct-draws] finisher reuse: buffers%s\n", reasons(counts, Counter::BlobAppends, Counter::BlobAppends).c_str());
 }
 
 const char* CounterName(Counter counter) {

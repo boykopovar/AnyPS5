@@ -40,6 +40,7 @@ using Role = ShaderRecompiler::ProgramRole;
 using Stage = ShaderRecompiler::ShaderStage;
 
 constexpr std::size_t InvocationSlots = 1024;
+constexpr std::size_t WideInvocationSlots = 16384;
 constexpr std::uint64_t WalkPageBytes = 0x1000u;
 
 std::size_t mixedSlot(std::uint64_t first, std::uint64_t second, std::size_t slots) {
@@ -82,8 +83,20 @@ struct InvocationSlot {
 struct InvocationCache {
     std::array<InvocationSlot, InvocationSlots> slots;
     std::vector<std::uint64_t> key;
+    std::vector<InvocationSlot> wide;
 
-    InvocationSlot& For(const DrawProgram& program) { return slots[mixedSlot(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program.snapshot.get())), program.codeOffset, InvocationSlots)]; }
+    InvocationSlot& For(const DrawProgram& program) {
+        const auto snapshot = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program.snapshot.get()));
+        if (Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::InvocationSlotsWide)) {
+            if (wide.empty()) wide.resize(WideInvocationSlots);
+            return wide[mixedSlot(snapshot, program.codeOffset, WideInvocationSlots)];
+        }
+        if (!wide.empty()) {
+            wide.clear();
+            wide.shrink_to_fit();
+        }
+        return slots[mixedSlot(snapshot, program.codeOffset, InvocationSlots)];
+    }
 };
 
 struct InvocationCacheStorage {};
@@ -297,6 +310,7 @@ void prepareBuffers(const LeanDrawJob& job, const DirectStages& resolved, DrawRe
     prepared.plan = std::move(plan);
     DirectDraws::Add(Counter::BuffersPrepared);
     DirectDraws::Add(Counter::BuffersBlobBytes, prepared.blob.size());
+    if (Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::BufferBlobAppend)) DirectDraws::Add(Counter::BlobAppends);
 }
 
 Counter InputRefusal(Graphics::PreparedInputs::Refusal refusal) {
@@ -531,7 +545,7 @@ std::uint64_t DirectStores::Follow(std::uint64_t serial) {
     if (seen.epoch == current && seen.generation == generation && seen.deviceSerial == serial) return current;
     std::lock_guard lock(mutex);
     auto live = Graphics::RuntimeSwitches::Snapshot();
-    for (const auto id : {Graphics::RuntimeSwitch::DirectDraws, Graphics::RuntimeSwitch::DirectRetry, Graphics::RuntimeSwitch::PipelineDispatchMisses, Graphics::RuntimeSwitch::DirectPassTargets, Graphics::RuntimeSwitch::DirectBuffers, Graphics::RuntimeSwitch::DirectInputs, Graphics::RuntimeSwitch::FastSettle, Graphics::RuntimeSwitch::PreciseSettle, Graphics::RuntimeSwitch::ImportSnapshots, Graphics::RuntimeSwitch::MergedSettle, Graphics::RuntimeSwitch::UnlockedStamps, Graphics::RuntimeSwitch::WriteSnapshotFronts, Graphics::RuntimeSwitch::PendingFronts}) live.Assign(id, false);
+    for (const auto id : {Graphics::RuntimeSwitch::DirectDraws, Graphics::RuntimeSwitch::DirectRetry, Graphics::RuntimeSwitch::PipelineDispatchMisses, Graphics::RuntimeSwitch::DirectPassTargets, Graphics::RuntimeSwitch::DirectBuffers, Graphics::RuntimeSwitch::DirectInputs, Graphics::RuntimeSwitch::FastSettle, Graphics::RuntimeSwitch::PreciseSettle, Graphics::RuntimeSwitch::ImportSnapshots, Graphics::RuntimeSwitch::MergedSettle, Graphics::RuntimeSwitch::UnlockedStamps, Graphics::RuntimeSwitch::WriteSnapshotFronts, Graphics::RuntimeSwitch::PendingFronts, Graphics::RuntimeSwitch::BufferBlobAppend, Graphics::RuntimeSwitch::PreparedCapacity, Graphics::RuntimeSwitch::InvocationSlotsWide}) live.Assign(id, false);
     if (!tagged || deviceSerial != serial || !(live == switches)) {
         tagged = true;
         deviceSerial = serial;
@@ -558,6 +572,30 @@ void DirectStepClock::Report() const {
     }
 }
 
+namespace {
+
+struct RefreshedDecode {
+    std::shared_ptr<const DrawDecode> source;
+    std::optional<DrawDecode> decode;
+};
+struct RefreshedDecodeStorage {};
+
+std::shared_ptr<const DrawDecode> refreshedDecode(const std::shared_ptr<const DrawDecode>& from, const DrawUserWords& words) {
+    auto& scratch = HostThreadLocal<RefreshedDecode, RefreshedDecodeStorage>();
+    if (scratch.source != from) {
+        if (scratch.decode.has_value()) *scratch.decode = *from;
+        else scratch.decode.emplace(*from);
+        scratch.source = from;
+    }
+    for (auto& program : scratch.decode->programs) {
+        ReadUserWordsFrom(words, program);
+        if (program.merged) InitializeMergedFrom(words, program, program.mergedPointer, program.mergedPointerRequired);
+    }
+    return std::shared_ptr<const DrawDecode>(std::shared_ptr<void>(), &*scratch.decode);
+}
+
+}
+
 std::optional<Counter> Driver::resolveDirectStages(const LeanDrawJob& job, const LeanAnchor& anchor, DirectStages& resolved, DirectStepClock* clock) {
     DrawPipeline::FollowEpoch(job.epoch);
     DrawPipeline::Active() = true;
@@ -571,7 +609,7 @@ std::optional<Counter> Driver::resolveDirectStages(const LeanDrawJob& job, const
     resolved.tag = stores.Follow(job.deviceSerial);
     const auto& shape = *job.shape;
     const auto& device = *anchor.device;
-    resolved.decode = LeanRefreshedDecode(*shape.decode, job.words);
+    resolved.decode = Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::LeanPrepare) ? refreshedDecode(shape.decode, job.words) : LeanRefreshedDecode(*shape.decode, job.words);
     const auto& decode = *resolved.decode;
     const auto& graphics = decode.state;
     const auto& programs = decode.programs;

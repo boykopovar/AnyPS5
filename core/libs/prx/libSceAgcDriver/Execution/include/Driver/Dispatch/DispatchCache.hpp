@@ -26,11 +26,21 @@ namespace AgcDriver::DriverDetail {
 
 inline bool CaptureRegisteredViewsCurrent(std::span<const ShaderRecompiler::RegisteredImageView> views) {
     if (views.empty()) return true;
-    std::vector<std::uintptr_t> addresses;
-    addresses.reserve(views.size());
-    for (const auto& view : views) addresses.push_back(static_cast<std::uintptr_t>(view.address));
-    std::vector<std::shared_ptr<const GuestAllocations::Range>> ranges(views.size());
-    GuestAllocations::GuestAllocationsLookupEach_nid_postfix(addresses.data(), addresses.size(), ranges.data());
+    constexpr std::size_t Few = 8;
+    std::array<std::uintptr_t, Few> fewAddresses;
+    std::array<std::shared_ptr<const GuestAllocations::Range>, Few> fewRanges;
+    std::vector<std::uintptr_t> manyAddresses;
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> manyRanges;
+    auto* addresses = fewAddresses.data();
+    auto* ranges = fewRanges.data();
+    if (views.size() > Few) {
+        manyAddresses.resize(views.size());
+        manyRanges.resize(views.size());
+        addresses = manyAddresses.data();
+        ranges = manyRanges.data();
+    }
+    for (std::size_t index = 0; index < views.size(); ++index) addresses[index] = static_cast<std::uintptr_t>(views[index].address);
+    GuestAllocations::GuestAllocationsLookupEach_nid_postfix(addresses, views.size(), ranges);
     for (std::size_t index = 0; index < views.size(); ++index) {
         const auto& view = views[index];
         const auto& range = ranges[index];

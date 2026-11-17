@@ -7219,9 +7219,21 @@ bool ShaderResources::PrepareDirectBuffers(const BufferPlan& plan, std::span<con
     out.moved.clear();
     out.selected.clear();
     out.blob.clear();
+    if (out.blob.capacity() == 0 && !RuntimeSwitches::Set(RuntimeSwitch::BufferBlobAppend)) out.blob.reserve(8192);
     out.refusal = Refusal::None;
     out.depthGuards = DepthGuardsGeneration_nid_no_patch();
     out.forget = GuestMemory::ForgetSerial();
+    const bool capacity = RuntimeSwitches::Set(RuntimeSwitch::PreparedCapacity);
+    out.shortcuts = static_cast<std::uint8_t>(capacity ? PreparedBuffers::ExactCapacity : 0u);
+    struct FirstMovedStorage {};
+    auto* const firstMoved = capacity ? &HostThreadLocal<std::vector<std::size_t>, FirstMovedStorage>() : nullptr;
+    if (capacity) {
+        out.selected.reserve(plan.allocations.size());
+        firstMoved->assign(plan.allocations.size(), std::numeric_limits<std::size_t>::max());
+    }
+    const auto noteMovedEntry = [&](std::size_t allocation) {
+        if (firstMoved != nullptr && allocation < firstMoved->size() && (*firstMoved)[allocation] == std::numeric_limits<std::size_t>::max()) (*firstMoved)[allocation] = out.moved.size() - 1;
+    };
     const auto refuse = [&](Refusal why) {
         out.refusal = why;
         return false;
@@ -7229,6 +7241,9 @@ bool ShaderResources::PrepareDirectBuffers(const BufferPlan& plan, std::span<con
     if (shaders.size() != plan.stages) return refuse(Refusal::Classification);
     std::size_t next = 0;
     std::size_t movedBytes = 0;
+    const auto reserveMoved = [&] {
+        if (capacity && out.moved.empty()) out.moved.reserve(plan.elements.size() - next + 1);
+    };
     for (std::size_t stage = 0; stage < shaders.size(); ++stage) {
         const auto& shader = shaders[stage];
         if (shader.program == nullptr) return refuse(Refusal::Classification);
@@ -7249,7 +7264,9 @@ bool ShaderResources::PrepareDirectBuffers(const BufferPlan& plan, std::span<con
                 const auto size = plan.allocations[entry.allocation].size;
                 if (size != guestWords.size() * sizeof(std::uint32_t)) return refuse(Refusal::Classification);
                 if (entry.dataWords == guestWords) continue;
+                reserveMoved();
                 out.moved.push_back({entry.allocation, 0, size, guestWords});
+                noteMovedEntry(entry.allocation);
                 continue;
             }
             if (guestWords.size() != static_cast<std::size_t>(binding.count) * 4u) return refuse(Refusal::Classification);
@@ -7273,28 +7290,52 @@ bool ShaderResources::PrepareDirectBuffers(const BufferPlan& plan, std::span<con
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 if (bytes > plan.maxDrawSnapshotBytes - movedBytes) return refuse(Refusal::Budget);
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return refuse(Refusal::Inaccessible);
+                reserveMoved();
                 out.moved.push_back({entry.allocation, address, static_cast<std::size_t>(size)});
+                noteMovedEntry(entry.allocation);
                 movedBytes += bytes;
             }
         }
     }
     if (next != plan.elements.size()) return refuse(Refusal::Classification);
+    struct Part {
+        std::size_t offset;
+        const std::byte* source;
+        std::size_t bytes;
+        std::size_t allocation;
+        bool words;
+    };
+    struct PartsStorage {};
+    auto* const parts = RuntimeSwitches::Set(RuntimeSwitch::BufferBlobAppend) ? &HostThreadLocal<std::vector<Part>, PartsStorage>() : nullptr;
+    if (parts != nullptr) parts->clear();
+    std::size_t total = 0;
     const auto place = [&](std::size_t bytes) {
-        const auto offset = (out.blob.size() + plan.alignment - 1) & ~(plan.alignment - 1);
-        out.blob.resize(offset + bytes);
+        const auto offset = ((parts != nullptr ? total : out.blob.size()) + plan.alignment - 1) & ~(plan.alignment - 1);
+        if (parts != nullptr) total = offset + bytes;
+        else out.blob.resize(offset + bytes);
         return offset;
+    };
+    const auto patchWords = [&](std::size_t index, std::size_t offset, std::size_t bytes) {
+        for (const auto& patch : plan.patches) {
+            if (patch.allocation == index && patch.byte < bytes) out.blob[offset + patch.byte] = static_cast<std::byte>(patch.adjustment);
+        }
+    };
+    const auto copy = [&](std::size_t index, std::size_t offset, const void* source, std::size_t bytes, bool words) {
+        if (parts != nullptr) {
+            parts->push_back({offset, static_cast<const std::byte*>(source), bytes, index, words});
+            return;
+        }
+        std::memcpy(out.blob.data() + offset, source, bytes);
+        if (words) patchWords(index, offset, bytes);
     };
     std::size_t totalSnapshotBytes = 0;
     for (std::size_t index = 0; index < plan.allocations.size(); ++index) {
         const auto& item = plan.allocations[index];
-        const auto override = std::find_if(out.moved.begin(), out.moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
+        const auto override = firstMoved != nullptr ? ((*firstMoved)[index] == std::numeric_limits<std::size_t>::max() ? out.moved.end() : out.moved.begin() + static_cast<std::ptrdiff_t>((*firstMoved)[index])) : std::find_if(out.moved.begin(), out.moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         const bool moved = override != out.moved.end();
         if (moved && !override->words.empty()) {
             const auto offset = place(override->size);
-            std::memcpy(out.blob.data() + offset, override->words.data(), override->size);
-            for (const auto& patch : plan.patches) {
-                if (patch.allocation == index && patch.byte < override->size) out.blob[offset + patch.byte] = static_cast<std::byte>(patch.adjustment);
-            }
+            copy(index, offset, override->words.data(), override->size, true);
             out.selected.push_back({index, 0, override->size, offset, true});
             continue;
         }
@@ -7305,10 +7346,18 @@ bool ShaderResources::PrepareDirectBuffers(const BufferPlan& plan, std::span<con
         if (bytes == 0 || bytes > plan.uploadLimit) return refuse(Refusal::UploadLimit);
         if (!moved && !GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return refuse(Refusal::Inaccessible);
         const auto offset = place(bytes);
-        std::memcpy(out.blob.data() + offset, reinterpret_cast<const void*>(begin), bytes);
+        copy(index, offset, reinterpret_cast<const void*>(begin), bytes, false);
         out.selected.push_back({index, begin, bytes, offset, moved});
         totalSnapshotBytes += bytes;
     }
+    if (parts == nullptr) return true;
+    if (out.blob.capacity() < total) out.blob.reserve(total);
+    for (const auto& part : *parts) {
+        if (out.blob.size() < part.offset) out.blob.resize(part.offset);
+        out.blob.insert(out.blob.end(), part.source, part.source + part.bytes);
+        if (part.words) patchWords(part.allocation, part.offset, part.bytes);
+    }
+    parts->clear();
     return true;
 }
 

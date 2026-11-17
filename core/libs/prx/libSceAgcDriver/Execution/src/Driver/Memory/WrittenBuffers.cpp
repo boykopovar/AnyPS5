@@ -86,6 +86,20 @@ void Driver::noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint
     writtenBuffers.Push({0, begin, end, ++writtenBufferSerial, queue, false});
 }
 
+bool StagesMayWriteBuffers(std::span<const Graphics::CompiledShader> stages) {
+    for (const auto& stage : stages) {
+        if (stage.program == nullptr) return true;
+        for (const auto& binding : stage.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+            if (binding.count > binding.bufferWritten.size()) return true;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                if (binding.bufferWritten[element]) return true;
+            }
+        }
+    }
+    return false;
+}
+
 void Driver::noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue) {
     for (const auto& stage : stages) {
         visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { noteForeignWriter(begin, end, queue); }, stage.side);
@@ -162,6 +176,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> Driver::drawWriteRanges(con
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> stages) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    ranges.reserve(16);
     const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
         if (begin == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - begin) return;
         ranges.emplace_back(begin, begin + bytes);

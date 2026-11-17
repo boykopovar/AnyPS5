@@ -103,6 +103,13 @@ enum class Counter : std::uint8_t {
     VerifyMergedUnwatched,
     MergedSettlesRechecked,
     MergedSettlesRecheckRefused,
+    VerifyCapacityChecked,
+    VerifyCapacityDiffering,
+    VerifyCapacityMemoryChanged,
+    VerifyCapacityUnwatched,
+    InputsVerifyCapacityChecked,
+    InputsVerifyCapacityDiffering,
+    BlobAppends,
     Count,
 };
 

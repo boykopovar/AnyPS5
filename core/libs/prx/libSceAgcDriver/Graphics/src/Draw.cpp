@@ -2315,6 +2315,9 @@ bool PrepareDrawInputs(const Context& context, const State& state, const Pm4::Dr
     if (draw.indexed && (draw.indexAddress % draw.indexSize != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)))) return refuse(Refusal::Inaccessible);
     Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
     const auto& attributes = DrawVertexAttributes(shaders.front());
+    const bool capacity = RuntimeSwitches::Set(RuntimeSwitch::PreparedCapacity);
+    prepared.exactCapacity = capacity;
+    if (capacity) prepared.ranges.reserve((draw.indexed ? 1u : 0u) + attributes.size());
     std::uint32_t maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
     std::uint32_t minIndex = draw.indexed ? 0u : draw.firstVertex;
     if (draw.indexed) {
@@ -2364,6 +2367,7 @@ bool PrepareDrawInputs(const Context& context, const State& state, const Pm4::Dr
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin))) return refuse(Refusal::Inaccessible);
         prepared.ranges.push_back({begin, end, plan.alignments[range]});
     }
+    if (capacity) prepared.inPlaceReads.reserve(prepared.ranges.size());
     for (const auto& range : prepared.ranges) prepared.inPlaceReads.emplace_back(range.begin, range.end);
     std::vector<ExistingHostImport> found(prepared.ranges.size());
     if (!prepared.ranges.empty() && !ExistingHostImportsFor(context, prepared.inPlaceReads, found)) return refuse(Refusal::NotInPlace);
@@ -5444,6 +5448,7 @@ DrawRecipeOutcome DrawWithRecord(const Context& context, const State& state, con
             if (record.verifyInputs) {
                 today();
                 std::string difference;
+                record.effects.inputsCapacity = preparedInputs->exactCapacity;
                 record.effects.inputs = verifyPreparedInputs(context, state, draw, shaders, recipe, *preparedInputs, inputs, timer, timing, difference);
                 if (!difference.empty()) noteInputsDifference(difference);
                 ready = true;

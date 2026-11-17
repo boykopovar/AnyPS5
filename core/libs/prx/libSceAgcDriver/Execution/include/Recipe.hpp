@@ -117,6 +117,7 @@ struct DrawRecordEffects {
     Graphics::ShaderResources::PreparedDifference bufferDifference;
     DrawRecordInputs inputs = DrawRecordInputs::None;
     std::uint8_t bufferShortcuts = 0;
+    bool inputsCapacity = false;
 };
 
 struct DrawCommitView {
@@ -148,6 +149,7 @@ struct DrawRecordCommit {
     DrawRecordEffects effects;
     std::uint64_t touchedPresent = ~std::uint64_t{0};
     std::uint64_t builds = 0;
+    std::uint8_t writers = 0;
     bool verifyBuffers = false;
     AtomicSharedPtr<const Graphics::ShaderResources::BufferPlan> bufferPlan;
     bool bufferPlanAsked = false;
