@@ -27,6 +27,45 @@ class ResolveCliPathTests(unittest.TestCase):
             self.assertIn("symbolic link loop", str(error.exception))
 
 
+class RuntimeEnvironmentTests(unittest.TestCase):
+    def test_library_search_path_has_no_empty_entry(self):
+        for existing in (None, "", "system-libraries"):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                build = root / "build"
+                helper = build / "tests/job_manager_reference.prx"
+                helper.parent.mkdir(parents=True)
+                helper.write_bytes(b"helper")
+                relinker = root / "relinker"
+                relinker.write_bytes(b"relinker")
+                output = root / "output"
+                output.mkdir()
+                args = mock.Mock(build=build, module=None, host=True, relinker=relinker, toolchain=None,
+                                 cases=["memory"], timeout=1, suite="all")
+                calls = []
+
+                def process(command, **kwargs):
+                    calls.append((command, kwargs))
+                    if Path(command[0]) == relinker:
+                        Path(command[-1]).write_bytes(b"reference")
+                    return mock.Mock(returncode=0, stdout=b"", stderr=b"")
+
+                values = {"PATH": "system-path"}
+                if existing is not None:
+                    values["LD_LIBRARY_PATH"] = existing
+                with mock.patch.dict(os.environ, values, clear=True), mock.patch.object(runner.sys, "platform", "linux"), \
+                        mock.patch.object(runner, "executable", return_value=bytearray(0x5000)), \
+                        mock.patch.object(runner, "read_host_imports", return_value=[]), \
+                        mock.patch.object(runner, "stage_libraries"), \
+                        mock.patch.object(runner.subprocess, "run", side_effect=process):
+                    self.assertEqual(runner.run(args, output), 0)
+                environment = calls[-1][1]["env"]
+                libraries = output / "libs"
+                self.assertEqual(environment["PATH"], str(libraries) + os.pathsep + "system-path")
+                self.assertEqual(environment["LD_LIBRARY_PATH"],
+                                 str(libraries) + (os.pathsep + existing if existing else ""))
+
+
 class DependencyStagingTests(unittest.TestCase):
     def test_valid_transitive_dependencies_are_staged(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,6 +91,8 @@ class ReferenceErrorTests(unittest.TestCase):
             if image is not None:
                 (providers / "libc.prx").write_bytes(image)
             artifact = root / "evidence"
+            relinker = root / "relinker"
+            relinker.write_bytes(b"relinker")
 
             def stage(args, output):
                 destination = output / "libs"
@@ -59,7 +100,7 @@ class ReferenceErrorTests(unittest.TestCase):
                 runner.stage_libraries(destination, args.build, args.toolchain, ["libc.prx"])
                 return 0
 
-            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", sys.executable,
+            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", str(relinker),
                          "--toolchain", str(root / "build"), "--output", str(artifact)]
             errors, output = io.StringIO(), io.StringIO()
             with mock.patch.object(sys, "argv", arguments), mock.patch.object(runner, "run", side_effect=stage), \

@@ -110,6 +110,18 @@ void NilActivityIsRefused(const std::string& path) {
 
 }
 
+#ifdef __APPLE__
+void RealRuntimeStartsAndEndsAnActivity() {
+    MacActivity activity;
+    const auto begun = activity.Begin();
+    Require(begun.Result == Outcome::Started, "the real Objective-C runtime must start an activity: " + begun.Detail);
+    const auto again = activity.Begin();
+    Require(again.Result == Outcome::Started, "a second begin must keep the activity already held");
+    activity.End();
+    activity.End();
+}
+#endif
+
 int main(int argc, char** argv) {
     if (argc != 6) {
         std::cerr << "usage: host_performance_mac_activity_tests <fixture> <fixture-no-class> <fixture-nil-activity> <fixture-no-pool> <missing-path>\n";
@@ -123,6 +135,9 @@ int main(int argc, char** argv) {
         MissingPoolFunctionsAreUnavailable(argv[4]);
         MissingClassIsUnavailableAndPoolBalanced(argv[2]);
         NilActivityIsRefused(argv[3]);
+#ifdef __APPLE__
+        RealRuntimeStartsAndEndsAnActivity();
+#endif
     } catch (const std::exception& error) {
         std::cerr << "host performance mac activity: " << error.what() << "\n";
         return 1;

@@ -14,7 +14,8 @@ import audit_dump
 import unwrap_self
 
 SELF = b"\x4f\x15\x3d\x1d" + b"\0" * 60
-ELF = b"\x7fELF" + b"\0" * 60
+ELF = b"\x7fELF" + b"\0" * 12 + b"\x18\xfe" + b"\0" * 46
+EXECUTABLE = b"\x7fELF" + b"\0" * 12 + b"\x10\xfe" + b"\0" * 46
 
 
 def fake_unwrap(source, destination, verbose=False):
@@ -27,6 +28,38 @@ def fake_unwrap(source, destination, verbose=False):
 
 
 class AuditDumpTests(unittest.TestCase):
+    def test_root_module_cannot_replace_the_staged_executable(self):
+        names = ("eboot.elf", "EBOOT.ELF") if os.name == "nt" else ("eboot.elf",)
+        for name in names:
+            for contents in (ELF + b"different executable", SELF + b"different container"):
+                with self.subTest(name=name, contents=contents[:4]):
+                    self.module(name, contents)
+                    source = self.root / "collision-source"
+                    with self.assertRaisesRegex(unwrap_self.Refused, "staged executable"):
+                        audit_dump.prepare(self.dump, source, log=lambda text: None)
+                    self.assertFalse(source.exists())
+                    self.assertEqual((self.dump / name).read_bytes(), contents)
+                    (self.dump / name).unlink()
+
+    def test_colliding_module_stops_before_conversion_or_audit(self):
+        self.module("eboot.elf", ELF + b"different executable")
+        with mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs")
+        self.assertEqual(code, 2)
+        self.assertIn("eboot.elf", errors)
+        self.assertIn("staged executable", errors)
+        convert.assert_not_called()
+        audit.assert_not_called()
+
+    def test_same_name_in_a_module_directory_does_not_replace_the_executable(self):
+        self.module("sce_module/eboot.elf", ELF + b"module")
+        source = self.root / "source"
+        directories, extra = audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "eboot.elf").read_bytes(), ELF + b"eboot.bin")
+        self.assertEqual((source / "sce_module/eboot.elf").read_bytes(), ELF + b"module")
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
@@ -63,6 +96,61 @@ class AuditDumpTests(unittest.TestCase):
         self.assertFalse((source / "Media/Plugins/readme.txt").exists())
         self.assertEqual(extra, ["Media/Modules", "Media/Plugins", "."])
         self.assertEqual(directories, [source / "sce_module", source / "Media/Modules", source / "Media/Plugins", source])
+
+    def test_modules_with_other_names_are_staged_by_magic(self):
+        locations = (*audit_dump.STANDARD_DIRECTORIES, *audit_dump.EXTRA_DIRECTORIES, ".")
+        source = self.root / "source"
+        messages = []
+        for location in locations:
+            self.module(Path(location) / "guest.bin", ELF)
+            self.module(Path(location) / "guest.dat", SELF)
+            self.module(Path(location) / "asset.bin", b"ordinary data")
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        for location in locations:
+            with self.subTest(location=location):
+                self.assertEqual((source / location / "guest.bin").read_bytes(), ELF)
+                self.assertEqual((source / location / "guest.dat").read_bytes(), ELF + b"guest.dat")
+                self.assertFalse((source / location / "asset.bin").exists())
+        self.assertFalse((source / "eboot.bin").exists())
+        self.assertEqual(directories, [source / location for location in locations])
+        self.assertEqual(extra, [*audit_dump.EXTRA_DIRECTORIES, "."])
+        self.assertEqual(messages, ["staged eboot.bin and 12 modules"])
+
+    def test_eboot_alias_is_not_staged_as_an_extra_module(self):
+        alias = self.dump / "eboot-alias.bin"
+        try:
+            os.link(self.dump / "eboot.bin", alias)
+        except OSError:
+            self.skipTest("hard links unavailable")
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / alias.name).exists())
+        self.assertEqual(directories, [])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["staged eboot.bin and 0 modules"])
+
+    def test_executables_found_by_magic_are_skipped_with_a_message(self):
+        self.module("eboot.bin.esbak", EXECUTABLE)
+        self.module("sce_module/libc.prx")
+        self.module("sce_module/launcher.bin", EXECUTABLE)
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / "eboot.bin.esbak").exists())
+        self.assertFalse((source / "sce_module" / "launcher.bin").exists())
+        self.assertTrue((source / "sce_module" / "libc.prx").is_file())
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["skipped launcher.bin: not a shared module (ELF type 0xfe10)",
+                                    "skipped eboot.bin.esbak: not a shared module (ELF type 0xfe10)",
+                                    "staged eboot.bin and 1 modules"])
+
+    def test_an_executable_with_a_module_suffix_still_reaches_the_relinker(self):
+        self.module("sce_module/odd.prx", EXECUTABLE)
+        source = self.root / "source"
+        audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "sce_module" / "odd.prx").read_bytes(), EXECUTABLE)
 
     def test_a_module_that_is_neither_a_self_nor_an_elf_is_refused(self):
         self.module("sce_module/broken.prx", b"MZ" + b"\0" * 62)
@@ -259,6 +347,94 @@ class AuditDumpTests(unittest.TestCase):
         convert.assert_not_called()
         audit.assert_not_called()
 
+    def directory_link(self, target, link):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+
+    def test_work_cleanup_preserves_modules_in_outward_directory_links(self):
+        for generated in ("source", "output"):
+            for relative in audit_dump.STANDARD_DIRECTORIES + audit_dump.EXTRA_DIRECTORIES:
+                with self.subTest(generated=generated, relative=relative):
+                    work = self.root / "work"
+                    target = work / generated / "shared"
+                    target.mkdir(parents=True, exist_ok=True)
+                    module = target / "libc.prx"
+                    module.write_bytes(SELF)
+                    link = self.dump / relative
+                    self.directory_link(target, link)
+                    try:
+                        with mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+                            with self.assertRaises(SystemExit) as error:
+                                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+                        self.assertEqual(error.exception.code, 2)
+                        self.assertEqual(module.read_bytes(), SELF)
+                        convert.assert_not_called()
+                        audit.assert_not_called()
+                    finally:
+                        link.rmdir() if os.name == "nt" else link.unlink()
+
+    def test_work_cleanup_preserves_outward_module_file_links(self):
+        for relative in ("eboot.bin", "original.prx", "sce_module/original.prx"):
+            with self.subTest(relative=relative):
+                work = self.root / "work"
+                target = work / "output" / "original.prx"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(SELF)
+                link = self.dump / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.unlink(missing_ok=True)
+                try:
+                    link.symlink_to(target)
+                except OSError:
+                    self.skipTest("symbolic links unavailable")
+                try:
+                    with self.assertRaises(SystemExit) as error:
+                        self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertEqual(target.read_bytes(), SELF)
+                finally:
+                    link.unlink()
+                    if relative == "eboot.bin":
+                        link.write_bytes(SELF)
+
+    def test_work_cleanup_preserves_nested_contents_of_linked_module_directories(self):
+        shared = self.root / "shared"
+        marker = shared / "work" / "source" / "original.dat"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"original")
+        link = self.dump / "sce_module"
+        self.directory_link(shared, link)
+        try:
+            with self.assertRaises(SystemExit) as error:
+                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", shared / "work")
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(marker.read_bytes(), b"original")
+        finally:
+            link.rmdir() if os.name == "nt" else link.unlink()
+
+    def test_independent_outward_module_directory_links_are_staged(self):
+        shared = self.root / "shared"
+        shared.mkdir()
+        original = shared / "libc.prx"
+        original.write_bytes(SELF)
+        link = self.dump / "sce_module"
+        self.directory_link(shared, link)
+        work = self.root / "work"
+        try:
+            with mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert, \
+                    mock.patch.object(audit_dump.import_audit, "main", return_value=0):
+                code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+            self.assertEqual(code, 0, errors)
+            self.assertEqual(original.read_bytes(), SELF)
+            self.assertEqual((work / "source" / "sce_module" / "libc.prx").read_bytes(), ELF + b"libc.prx")
+            convert.assert_called_once()
+        finally:
+            link.rmdir() if os.name == "nt" else link.unlink()
+
     def test_work_cleanup_refuses_relinker_or_libraries_in_generated_directories(self):
         for generated in ("source", "output"):
             for kind in ("relinker", "libs"):
@@ -349,16 +525,19 @@ class AuditDumpTests(unittest.TestCase):
                 work = dump / "work" if name == "work-in-dump" else root
                 self.assert_overlap_rejected(dump, work)
 
-    def assert_report_rejected(self, report):
+    def assert_report_rejected(self, report, expected_error=None):
         work = self.root / "report-work"
         marker = work / "source" / "preserve"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(b"previous work")
         original = (self.dump / "eboot.bin").read_bytes()
+        errors = io.StringIO()
         with mock.patch.object(audit_dump, "prepare", return_value=([], [])) as prepare, mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert, mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit:
-            with self.assertRaises(SystemExit) as error:
-                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work, "--json", report)
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                audit_dump.main([str(arg) for arg in (self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work, "--json", report)])
         self.assertEqual(error.exception.code, 2)
+        if expected_error is not None:
+            self.assertIn(expected_error, errors.getvalue())
         prepare.assert_not_called()
         convert.assert_not_called()
         audit.assert_not_called()
@@ -368,7 +547,21 @@ class AuditDumpTests(unittest.TestCase):
     def test_json_outputs_inside_the_dump_are_rejected_before_staging(self):
         for relative in (".", "eboot.bin", "report.json", "new/directory/report.json"):
             with self.subTest(relative=relative):
-                self.assert_report_rejected(self.dump / relative)
+                self.assert_report_rejected(self.dump / relative, "JSON output overlaps the input dump")
+
+    def test_json_output_directory_or_missing_parent_is_rejected_before_staging(self):
+        directory = self.root / "report-dir"
+        directory.mkdir()
+        self.assert_report_rejected(directory, "JSON output is a directory")
+        missing_parent = self.root / "no-such-parent" / "report.json"
+        self.assert_report_rejected(missing_parent, "no such directory")
+        dangling_link = self.root / "dangling-report.json"
+        try:
+            os.symlink(self.root / "missing-parent-dir" / "report.json", dangling_link)
+        except OSError:
+            pass
+        else:
+            self.assert_report_rejected(dangling_link, "no such directory")
 
     def test_json_output_symlink_aliases_of_the_dump_are_rejected(self):
         for name, target, directory in (("file", self.dump / "eboot.bin", False), ("directory", self.dump, True), ("missing", self.dump / "not-created.json", False)):
@@ -619,6 +812,34 @@ class AuditDumpTests(unittest.TestCase):
                 audit.assert_not_called()
                 self.assertEqual((self.dump / "eboot.bin").read_bytes(), SELF)
 
+    def test_json_output_relinker_paths_are_rejected_before_staging(self):
+        for report in (self.relinker, self.root / "missing" / ".." / self.relinker.name):
+            with self.subTest(report=report):
+                original = self.relinker.read_bytes()
+                self.assert_report_rejected(report)
+                self.assertEqual(self.relinker.read_bytes(), original)
+
+    def test_json_output_hardlinked_to_the_relinker_is_rejected_before_staging(self):
+        report = self.root / "relinker-report.json"
+        os.link(self.relinker, report)
+        self.assert_report_rejected(report)
+        self.assertTrue(report.samefile(self.relinker))
+
+    def test_actual_cli_rejects_a_relinker_report_before_work_cleanup(self):
+        (self.dump / "eboot.bin").write_bytes(ELF)
+        work = self.root / "cli-work"
+        marker = work / "source" / "preserve"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"preserve work")
+        result = subprocess.run([sys.executable, audit_dump.__file__, str(self.dump),
+                                 "--relinker", str(self.relinker), "--libs", "libs", "--work", str(work),
+                                 "--json", str(self.relinker)], capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("JSON output would overwrite the relinker", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(marker.read_bytes(), b"preserve work")
+        self.assertEqual((self.dump / "eboot.bin").read_bytes(), ELF)
+
     def test_an_invalid_relinker_executable_is_reported_without_a_traceback(self):
         (self.dump / "eboot.bin").write_bytes(ELF)
         result = subprocess.run([sys.executable, audit_dump.__file__, str(self.dump),
@@ -638,6 +859,36 @@ class AuditDumpTests(unittest.TestCase):
         (self.dump / "eboot.bin").write_bytes(SELF)
         with self.assertRaises(SystemExit):
             self.run_main(self.dump, "--relinker", self.root / "missing.exe", "--libs", "libs")
+
+    def test_errors_name_a_non_ascii_dump_on_a_cp1252_console(self):
+        dump = self.root / "日本"
+        dump.mkdir()
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+        result = subprocess.run([sys.executable, "-X", "utf8=0", audit_dump.__file__, str(dump),
+                                 "--relinker", str(self.relinker), "--libs", "libs"], env=env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
+
+
+class ModuleListTests(unittest.TestCase):
+    def test_modules_of_keeps_regular_module_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            (root / 'notes.txt').write_text('x', encoding='utf-8')
+            (root / 'folder.prx').mkdir()
+            self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+class StageRefusalTests(unittest.TestCase):
+    def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
+        import unwrap_self
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'junk.prx'
+            source.write_bytes(b'nope' * 100)
+            destination = root / 'out' / 'junk.prx'
+            with self.assertRaises(unwrap_self.Refused):
+                audit_dump.stage(source, destination)
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

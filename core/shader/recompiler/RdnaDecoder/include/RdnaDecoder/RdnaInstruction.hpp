@@ -12,6 +12,12 @@ namespace ShaderRecompiler {
 class UnsupportedInstructionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+    UnsupportedInstructionError(const std::string& message, const char* encodingName, long long opcode, const char* sourceFile, int sourceLine)
+        : std::runtime_error(message), encoding(encodingName), opcodeValue(opcode), file(sourceFile), line(sourceLine) {}
+    const char* encoding = nullptr;
+    long long opcodeValue = -1;
+    const char* file = nullptr;
+    int line = 0;
 };
 
 enum class RdnaInstructionFamily {
@@ -138,6 +144,7 @@ struct RdnaInstruction {
     std::uint32_t imageDmask = 0;
     RdnaImageDimension imageDimension = RdnaImageDimension::Unknown;
     bool imageR128 = false;
+    bool imageSampler = false;
     bool imageGlc = false;
     bool imageSlc = false;
     bool imageA16 = false;
@@ -167,6 +174,7 @@ struct RdnaInstruction {
     bool slc = false;
     bool idxen = false;
     bool offen = false;
+    bool lds = false;
     std::uint32_t branchTarget = 0;
     bool exportValidMask = false;
     std::string_view unsupportedReason{};

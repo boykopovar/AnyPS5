@@ -1,5 +1,6 @@
 import argparse
 import difflib
+import os
 import posixpath
 import re
 import subprocess
@@ -17,15 +18,17 @@ def parse(text):
     items = []
     section = None
     current = None
+    block = None
     blanks = []
     for line in text.splitlines():
         heading = HEADING.match(line)
         if heading:
             section = heading[2] if len(heading[1]) == 3 else section
-            current = None
+            current = block = None
             items.append(["heading", section, [line]])
         elif line.startswith("- "):
             current = ["entry", section, [line]]
+            block = None
             items.append(current)
             blanks = []
         elif current and (line.startswith(" ") or line.startswith("\t")):
@@ -33,8 +36,12 @@ def parse(text):
             blanks = []
         elif line.strip():
             current = None
-            items.append(["text", section, [line]])
+            if block is None:
+                block = ["text", section, []]
+                items.append(block)
+            block[2].append(line)
         else:
+            block = None
             blanks.append(line)
     return [(kind, section, "\n".join(lines)) for kind, section, lines in items]
 
@@ -138,10 +145,21 @@ def debt_file(name):
     return f"{DEBT_DIR}/{name}.md"
 
 
-def render(title, sections, order):
+def separated(items):
+    out = []
+    for item in items:
+        if out and not (out[-1].startswith("- ") and item.startswith("- ")):
+            out.append("")
+        out.append(item)
+    return out
+
+
+def render(title, sections, order, preamble=()):
     out = [title, ""]
+    if preamble:
+        out += separated(list(preamble)) + [""]
     for section in sorted(sections, key=lambda section: order.index(section) if section in order else len(order)):
-        out += [f"### {section}", ""] + sections[section] + [""]
+        out += [f"### {section}", ""] + separated(sections[section]) + [""]
     return "\n".join(out)
 
 
@@ -154,9 +172,22 @@ def read_debt(root, name):
             if kind == "heading" and item_section and text.startswith("### "):
                 section = item_section
                 sections.setdefault(section, [])
-            elif kind != "heading" and section:
+            elif section and (kind != "heading" or text.startswith("#### ")):
                 sections[section].append(text)
     return sections
+
+
+def read_preamble(root, name):
+    path = root / debt_file(name)
+    lines = []
+    if path.exists():
+        for kind, item_section, text in parse(path.read_text(encoding="utf-8-sig")):
+            if item_section is not None:
+                break
+            if kind == "heading" and text.startswith("# ") and not text.startswith("## "):
+                continue
+            lines.append(text)
+    return lines
 
 
 def write_lf(path, text):
@@ -164,15 +195,15 @@ def write_lf(path, text):
         file.write(text)
 
 
-def write_debt(root, name, sections, order):
+def write_debt(root, name, sections, order, preamble=()):
     path = root / debt_file(name)
     sections = {section: entries for section, entries in sections.items() if entries}
-    if not sections:
+    if not sections and not preamble:
         if path.exists():
             path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_lf(path, render(f"# {name} technical debt", sections, order))
+    write_lf(path, render(f"# {name} technical debt", sections, order, preamble))
 
 
 def sections_of(text):
@@ -212,11 +243,14 @@ def command_split(root):
     index, files, order = split(text)
     if not files:
         sys.exit(f"{INDEX} has no entries to move")
+    above = [item for kind, section, item in parse(text) if section is None and kind == "entry"]
+    if above:
+        sys.exit(f"{INDEX}: an entry is above the first ### section, so there is no section to file it under: {above[0].splitlines()[0][:100]}")
     for name, sections in files.items():
         existing = read_debt(root, name)
         for section, entries in sections.items():
             existing.setdefault(section, []).extend(entries)
-        write_debt(root, name, existing, order)
+        write_debt(root, name, existing, order, read_preamble(root, name))
     if index_note() not in index:
         index.insert(1, index_note())
     write_lf(root / INDEX, render_index(index))
@@ -236,9 +270,11 @@ def apply_change(root, base, new, index_text):
     before = [(kind, section, item, key(kind, item)) for kind, section, item in parse(base) if kind == "entry" and key(kind, item)]
     after = [(kind, section, item, key(kind, item)) for kind, section, item in parse(new) if kind == "entry" and key(kind, item)]
     files = {}
+    preambles = {}
 
     def load(name):
         if name not in files:
+            preambles[name] = read_preamble(root, name)
             files[name] = {section: [Entry(text) for text in entries]
                            for section, entries in read_debt(root, name).items()}
         return files[name]
@@ -302,7 +338,7 @@ def apply_change(root, base, new, index_text):
             insert(j1 + offset, anchor)
     for name, sections in files.items():
         write_debt(root, name, {section: [entry.text for entry in entries]
-                                for section, entries in sections.items()}, order)
+                                for section, entries in sections.items()}, order, preambles[name])
     return sorted(debt_file(name) for name in files)
 
 
@@ -340,6 +376,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        if os.name == "nt" and not root.is_dir():
+            root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     except subprocess.CalledProcessError as error:
         parser.error(f"not a git repository: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)

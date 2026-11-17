@@ -1,14 +1,45 @@
+// Derived from Source/WTF/wtf/TimingScope.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2017 Apple Inc.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <limits>
-#include <thread>
+#include <mutex>
+#include <stdexcept>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,16 +47,19 @@
 #include <time.h>
 #endif
 
+namespace NKWebKit {
+double CurrentWallTime();
+double CurrentMonotonicTime();
+}  // namespace NKWebKit
+
 namespace WTF {
 
 static double currentWallTimeSeconds() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentWallTime();
 }
 
 static double currentMonotonicTimeSeconds() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentMonotonicTime();
 }
 
 static bool isLeapYear(int year) {
@@ -205,9 +239,51 @@ static const char* parseES5TimePortion(const char* currentPosition, long& hours,
 
 }  // namespace WTF
 
+namespace {
+
+struct TimingCallData {
+    double totalDuration{0.0};
+    unsigned callCount{0};
+    double maxDuration{0.0};
+};
+
+class TimingTotals {
+public:
+    TimingCallData Add(const char* name, double duration) {
+        std::lock_guard lock(m_lock);
+        auto& result = m_totals[name];
+        ++result.callCount;
+        result.maxDuration = std::max(result.maxDuration, duration);
+        result.totalDuration += duration;
+        return result;
+    }
+
+private:
+    std::mutex m_lock;
+    std::unordered_map<const char*, TimingCallData> m_totals;
+};
+
+TimingTotals& Totals() {
+    static TimingTotals* totals = new TimingTotals();
+    return *totals;
+}
+
+}  // namespace
+
 extern "C" {
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv() {
     return WTF::MonotonicTime{WTF::currentMonotonicTimeSeconds()};
+}
+
+void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self) {
+    if (!self) throw std::invalid_argument("TimingScope::scopeDidEnd: null scope");
+    if (!self->m_name) throw std::invalid_argument("TimingScope::scopeDidEnd: null name");
+    if (!self->m_logIterationInterval) throw std::invalid_argument("TimingScope::scopeDidEnd: zero log iteration interval");
+    const double duration = _ZN3WTF13MonotonicTime3nowEv().m_value - self->m_startTime.m_value;
+    const auto data = Totals().Add(self->m_name, duration);
+    if (!(data.callCount % self->m_logIterationInterval))
+        WTFLogAlways("%s: %u calls, mean duration: %.6fms, total duration: %.6fms, max duration %.6fms", self->m_name, data.callCount,
+            data.totalDuration / data.callCount * 1000.0, data.totalDuration * 1000.0, data.maxDuration * 1000.0);
 }
 
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv() {
@@ -296,7 +372,7 @@ void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWit
     WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
     double diff = time.m_value - now.m_value;
     if (diff > 0.0) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(diff));
+        _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds{diff});
     }
 }
 
@@ -320,27 +396,6 @@ WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* sel
     return WTF::WallTime{self->m_value + other.m_value};
 }
 
-WTF::Seconds APS5_VABI _ZN3WTF7CPUTime16forCurrentThreadEv() {
-#ifdef _WIN32
-    FILETIME creationTime, exitTime, kernelTime, userTime;
-    if (GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime, &userTime)) {
-        ULARGE_INTEGER k, u;
-        k.LowPart = kernelTime.dwLowDateTime;
-        k.HighPart = kernelTime.dwHighDateTime;
-        u.LowPart = userTime.dwLowDateTime;
-        u.HighPart = userTime.dwHighDateTime;
-        double totalSec = static_cast<double>(k.QuadPart + u.QuadPart) * 1e-7;
-        return WTF::Seconds{totalSec};
-    }
-#elif defined(CLOCK_THREAD_CPUTIME_ID)
-    struct timespec ts;
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
-        return WTF::Seconds{static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9};
-    }
-#endif
-    return WTF::Seconds{0.0};
-}
-
 double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUTime* self, const WTF::CPUTime& reference) {
     double cpuUsageDelta = (self->systemTime.m_value + self->userTime.m_value) - (reference.systemTime.m_value + reference.userTime.m_value);
     double cpuTimeDelta = self->cpuTime.m_value - reference.cpuTime.m_value;
@@ -351,34 +406,11 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
 }
 
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self) {
-#ifdef _WIN32
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    TIME_ZONE_INFORMATION tzi;
-    DWORD tzId = GetTimeZoneInformation(&tzi);
-    LONG bias = 0;
-    if (tzId != TIME_ZONE_ID_INVALID) {
-        bias = tzi.Bias;
-        if (tzId == TIME_ZONE_ID_DAYLIGHT) {
-            bias += tzi.DaylightBias;
-        } else if (tzId == TIME_ZONE_ID_STANDARD || tzId == TIME_ZONE_ID_UNKNOWN) {
-            bias += tzi.StandardBias;
-        }
+    const std::int64_t localTime = time_nid_postfix(nullptr);
+    GuestTm localTM{};
+    if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
+        throw std::overflow_error("setToCurrentLocalTime: localtime_r failed");
     }
-    self->m_year = st.wYear;
-    self->m_month = st.wMonth - 1;
-    self->m_monthDay = st.wDay;
-    self->m_yearDay = WTF::dayInYear(self->m_year, self->m_month, self->m_monthDay);
-    self->m_weekDay = st.wDayOfWeek;
-    self->m_hour = st.wHour;
-    self->m_minute = st.wMinute;
-    self->m_second = st.wSecond;
-    self->m_utcOffsetInMinute = -bias;
-    self->m_isDST = (tzId == TIME_ZONE_ID_DAYLIGHT) ? 1 : 0;
-#else
-    time_t raw = time(nullptr);
-    struct tm localTM;
-    localtime_r(&raw, &localTM);
     self->m_year = localTM.tm_year + 1900;
     self->m_month = localTM.tm_mon;
     self->m_monthDay = localTM.tm_mday;
@@ -388,40 +420,42 @@ void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::Gregoria
     self->m_minute = localTM.tm_min;
     self->m_second = localTM.tm_sec;
     self->m_isDST = localTM.tm_isdst;
-#if defined(HAVE_TM_GMTOFF) || defined(__GLIBC__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
     self->m_utcOffsetInMinute = static_cast<int>(localTM.tm_gmtoff / 60);
-#else
-    self->m_utcOffsetInMinute = 0;
-#endif
-#endif
 }
 
-WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double, WTF::TimeType) {
-#ifdef _WIN32
-    TIME_ZONE_INFORMATION tzi;
-    DWORD tzId = GetTimeZoneInformation(&tzi);
-    LONG bias = 0;
-    bool isDST = false;
-    if (tzId != TIME_ZONE_ID_INVALID) {
-        bias = tzi.Bias;
-        if (tzId == TIME_ZONE_ID_DAYLIGHT) {
-            bias += tzi.DaylightBias;
-            isDST = true;
-        } else if (tzId == TIME_ZONE_ID_STANDARD || tzId == TIME_ZONE_ID_UNKNOWN) {
-            bias += tzi.StandardBias;
-        }
+static int32_t calculateUTCOffset() {
+    GuestTm localt{};
+    localt.tm_mday = 1;
+    localt.tm_year = 119;
+    const std::int64_t localTimestamp = mktime_nid_postfix(&localt);
+    if (localTimestamp == -1) {
+        throw std::runtime_error("calculateUTCOffset: mktime failed");
     }
-    return WTF::LocalTimeOffset{isDST, -static_cast<int>(bias * 60 * 1000)};
-#else
-    time_t now = time(nullptr);
-    struct tm localTM;
-    localtime_r(&now, &localTM);
-#if defined(HAVE_TM_GMTOFF) || defined(__GLIBC__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+    return static_cast<int32_t>((1546300800 - localTimestamp) * 1000);
+}
+
+WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double ms, WTF::TimeType inputTimeType) {
+    if (std::isnan(ms) || std::isinf(ms)) {
+        throw std::invalid_argument("calculateLocalTimeOffset: NaN or Inf timestamp");
+    }
+    double localToUTCTimeOffset = (inputTimeType == WTF::TimeType::LocalTime) ? calculateUTCOffset() : 0.0;
+    double localTimeSeconds = (ms - localToUTCTimeOffset) / 1000.0;
+    constexpr double maxUnixTime = 4102444740.0;
+    if (localTimeSeconds > maxUnixTime) {
+        localTimeSeconds = maxUnixTime;
+    } else if (localTimeSeconds < 0.0) {
+        localTimeSeconds += 86400.0;
+    }
+    constexpr double minRepresentableTimeT = -9223372036854775808.0;
+    if (localTimeSeconds < minRepresentableTimeT) {
+        throw std::overflow_error("calculateLocalTimeOffset: timestamp out of representable time_t range");
+    }
+    const std::int64_t localTime = static_cast<std::int64_t>(localTimeSeconds);
+    GuestTm localTM{};
+    if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
+        throw std::overflow_error("calculateLocalTimeOffset: localtime_r failed");
+    }
     return WTF::LocalTimeOffset{localTM.tm_isdst > 0, static_cast<int>(localTM.tm_gmtoff * 1000)};
-#else
-    return WTF::LocalTimeOffset{localTM.tm_isdst > 0, 0};
-#endif
-#endif
 }
 
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime) {

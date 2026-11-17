@@ -13,14 +13,18 @@ import unwrap_self
 DESCRIPTION = """Audit the imports of an extracted title before it is launched. Unwraps the dump's eboot.bin and the modules
 it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
-registries with the unwrapped modules as --modules. The dump is only read; the source/ and output/ directories of a
-reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
+registries with the unwrapped modules as --modules. A file found by its header rather than a module suffix that is
+not a shared module after unwrapping, such as a dumper's eboot.bin.esbak backup, is skipped with a message. The dump
+is only read; the source/ and output/ directories of a reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
 when unwrapping or conversion fails."""
 
 STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
 EXTRA_DIRECTORIES = ("Media/Modules", "Media/Plugins")
 MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
+MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
+                 unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
+SHARED_MODULE_TYPES = (3, 0xFE18)
 
 
 def stage(source, destination):
@@ -36,33 +40,67 @@ def stage(source, destination):
         return "copied"
 
 
+def elf_type(path):
+    with open(path, "rb") as file:
+        header = file.read(18)
+    return int.from_bytes(header[16:18], "little") if len(header) == 18 else None
+
+
+def stage_modules(modules, source, log):
+    staged = []
+    for module in modules:
+        destination = source / module.name
+        stage(module, destination)
+        if module.suffix.lower() not in MODULE_SUFFIXES:
+            kind = elf_type(destination)
+            if kind not in SHARED_MODULE_TYPES:
+                destination.unlink()
+                described = "unknown" if kind is None else f"0x{kind:x}"
+                log(f"skipped {module.name}: not a shared module (ELF type {described})")
+                continue
+        staged.append(module)
+    return staged
+
+
 def modules_of(directory):
-    return sorted(path for path in directory.iterdir() if (path.is_file() or path.is_symlink()) and path.suffix.lower() in MODULE_SUFFIXES)
+    modules = []
+    for path in directory.iterdir():
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        if path.suffix.lower() in MODULE_SUFFIXES:
+            modules.append(path)
+        elif path.is_file():
+            with path.open("rb") as file:
+                if file.read(4) in MODULE_MAGICS:
+                    modules.append(path)
+    return sorted(modules)
 
 
 def prepare(dump, source, log=print):
+    for module in modules_of(dump):
+        if source / module.name == source / "eboot.elf" and not module.samefile(dump / "eboot.bin"):
+            raise unwrap_self.Refused(f"{module}: module name collides with the staged executable eboot.elf")
     stage(dump / "eboot.bin", source / "eboot.elf")
     module_directories = []
     extra = []
+    count = 0
     for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
         directory = dump / relative
         if not directory.is_dir():
             continue
-        modules = modules_of(directory)
+        modules = stage_modules(modules_of(directory), source / relative, log)
         if not modules:
             continue
-        for module in modules:
-            stage(module, source / relative / module.name)
+        count += len(modules)
         module_directories.append(source / relative)
         if relative in EXTRA_DIRECTORIES:
             extra.append(relative)
-    beside = modules_of(dump)
+    beside = stage_modules([module for module in modules_of(dump) if not module.samefile(dump / "eboot.bin")], source, log)
     if beside:
-        for module in beside:
-            stage(module, source / module.name)
+        count += len(beside)
         module_directories.append(source)
         extra.append(".")
-    log(f"staged eboot.bin and {sum(len(modules_of(directory)) for directory in module_directories)} modules")
+    log(f"staged eboot.bin and {count} modules")
     return module_directories, extra
 
 
@@ -80,7 +118,7 @@ def comparison_path(path, links=frozenset()):
     for prefix in (*reversed(path.parents), path):
         if not prefix.is_symlink():
             continue
-        identity = prefix.parent.resolve() / prefix.name
+        identity = (prefix.parent.resolve() / prefix.name).parts
         if identity in links:
             raise RuntimeError("symbolic link cycle")
         target = prefix.readlink()
@@ -126,14 +164,31 @@ def main(argv=None):
         parser.error(f"{args.relinker}: no such relinker")
     relinker = Path(args.relinker).resolve()
     dump_path = comparison_path(dump)
+    try:
+        dump_inputs = [dump / "eboot.bin", *modules_of(dump)]
+        dump_directories = []
+        for relative in STANDARD_DIRECTORIES + EXTRA_DIRECTORIES:
+            directory = dump / relative
+            if directory.is_dir():
+                dump_directories.append(directory)
+                dump_inputs.extend((directory, *modules_of(directory)))
+    except (OSError, RuntimeError) as error:
+        parser.error(f"{dump}: cannot enumerate dump inputs before cleanup: {error}")
     if args.json:
         report = Path(args.json)
         try:
             overlaps = report_overlaps_dump(report, dump)
+            relinker_alias = comparison_path(report) == comparison_path(relinker) or (report.exists() and report.samefile(relinker))
         except (OSError, RuntimeError) as error:
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
+        if relinker_alias:
+            parser.error(f"{report}: JSON output would overwrite the relinker")
         if overlaps:
             parser.error(f"{report}: JSON output overlaps the input dump")
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.resolve().parent.is_dir():
+            parser.error(f"{report.resolve().parent}: no such directory")
     with tempfile.TemporaryDirectory() as temporary:
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
@@ -144,14 +199,15 @@ def main(argv=None):
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
-            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs)):
+            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs), *dump_inputs):
                 try:
                     resolved = comparison_path(input_path)
                 except (OSError, RuntimeError) as error:
                     parser.error(f"{input_path}: cannot check work directory against input: {error}")
                 supplied = Path(os.path.abspath(input_path))
                 generated_spelling = Path(os.path.abspath(generated))
-                if supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path):
+                if (supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path)
+                        or input_path in dump_directories and generated_path.is_relative_to(resolved)):
                     parser.error(f"{generated}: work directory contains input {input_path}")
         for generated in (source, output):
             try:
@@ -193,6 +249,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     sys.exit(main())

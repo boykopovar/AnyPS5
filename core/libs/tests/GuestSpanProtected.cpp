@@ -89,4 +89,33 @@ int main() {
             Require(std::memcmp(set, members.c_str(), members.size() + 1) == 0);
         }
     }
+    for (std::size_t length : {256, 512, 1024}) {
+        std::string allA(length, 'a');
+        auto* text = reinterpret_cast<char*>(textBuffer.At(length + 1));
+        std::memcpy(text, allA.c_str(), length + 1);
+
+        auto* set = reinterpret_cast<char*>(setBuffer.At(2));
+        set[0] = 'a'; set[1] = 0;
+        Require(strspn_nid_postfix(text, set) == length);
+        Require(strcspn_nid_postfix(text, set) == 0);
+
+        set[0] = 'b'; set[1] = 0;
+        Require(strspn_nid_postfix(text, set) == 0);
+        Require(strcspn_nid_postfix(text, set) == length);
+
+        set = reinterpret_cast<char*>(setBuffer.At(1));
+        set[0] = 0;
+        Require(strspn_nid_postfix(text, set) == 0);
+        Require(strcspn_nid_postfix(text, set) == length);
+
+        allA[length / 2] = 'b';
+        std::memcpy(text, allA.c_str(), length + 1);
+
+        set = reinterpret_cast<char*>(setBuffer.At(2));
+        set[0] = 'a'; set[1] = 0;
+        Require(strspn_nid_postfix(text, set) == length / 2);
+
+        set[0] = 'b'; set[1] = 0;
+        Require(strcspn_nid_postfix(text, set) == length / 2);
+    }
 }

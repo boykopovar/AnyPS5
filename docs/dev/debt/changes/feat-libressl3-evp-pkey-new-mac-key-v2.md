@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Unknown function info
+
+- [EVP_PKEY_new_mac_key](../../../core/libs/prx/libSceLibreSsl3/src/PkeyLifecycle.cpp) and the [HMAC ASN.1 method](../../../core/libs/prx/libSceLibreSsl3/src/PkeyContext.cpp) - not checked on a console. Rejected types return null without queuing `EVP_R_UNSUPPORTED_ALGORITHM` or the not-supported reasons, and a failed octet-string allocation queues no `ERR_R_MALLOC_FAILURE`. The key is built directly, not through an HMAC `EVP_PKEY_CTX` keygen. `pkey_ctrl`, `set_priv_key` and `get_priv_key` are null; no export reaches them, since `EVP_PKEY_CTX_new` has no HMAC pkey method. Otherwise follows LibreSSL 4.0.0 [p_lib.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c) and [hm_ameth.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/hmac/hm_ameth.c). Closes when: the rejected types queue LibreSSL's reasons and HMAC keys get a pkey method.

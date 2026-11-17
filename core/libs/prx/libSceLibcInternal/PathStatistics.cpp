@@ -1,8 +1,10 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <fcntl.h>
+#include <string>
 #include <string_view>
 #include <system_error>
 #ifdef _WIN32
@@ -66,7 +68,7 @@ int PathVolume(const std::filesystem::path& path, bool directory, LibcStatvfs* o
     volume.f_ffree = static_cast<std::int64_t>(host.f_favail);
     volume.f_namemax = static_cast<std::uint32_t>(host.f_namemax);
     const LibcStatvfs result = StatvfsFromStatfs(volume);
-    std::memcpy(output, &result, sizeof(result));
+    if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) return Fail(14);
     return 0;
 }
 #else
@@ -141,12 +143,14 @@ int OpenMetadata(const std::filesystem::path& path, bool directory) {
 
 extern "C" int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output) {
     if (path == nullptr || output == nullptr) return Fail(14);
-    if (*path == '\0') return Fail(2);
+    std::string guestPath;
+    if (const int error = CopyGuestPath_nid_no_patch(path, guestPath)) return Fail(error);
+    if (guestPath.empty()) return Fail(2);
     const int saved = errno;
-    const auto last = std::string_view(path).back();
-    const bool directory = last == '/' || last == '\\' || FinalPathComponentIsDot_nid_no_patch(path);
+    const auto last = guestPath.back();
+    const bool directory = last == '/' || last == '\\' || FinalPathComponentIsDot_nid_no_patch(guestPath.c_str());
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
+    if (const int error = ResolvePathError_nid_no_patch(guestPath.c_str(), native)) return Fail(error);
 #ifdef __APPLE__
     if (PathVolume(native, directory, output) != 0) return -1;
     errno = saved;
