@@ -48,6 +48,7 @@ static constexpr int DEFAULT_PADSPK_MIX_LEVEL = 11626;
 static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
 static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
+static constexpr std::uint64_t DEFAULT_OUTPUT_CHECK_US = 1000000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 static constexpr std::uint64_t DEVICE_RETRY_US = 2000000;
 static constexpr std::uint64_t DEVICE_OPEN_WAIT_US = 100000;
@@ -138,6 +139,8 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    std::string defaultOutput;
+    std::uint64_t nextDefaultOutputCheck = 0;
     HostGainRamp hostGain;
 };
 
@@ -185,7 +188,7 @@ static DeviceSettings deviceSettings(const Port& port) {
     return {port.freq, port.format, port.channels, port.samplesNum};
 }
 
-static SDL_AudioDeviceID openOutputDevice(const DeviceSettings& settings, SDL_AudioSpec& obtained) {
+static SDL_AudioDeviceID openOutputDevice(const DeviceSettings& settings, SDL_AudioSpec& obtained, std::string& defaultOutput) {
     if (SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) return 0;
     SDL_AudioSpec desired{};
     desired.freq = static_cast<int>(settings.freq);
@@ -193,18 +196,21 @@ static SDL_AudioDeviceID openOutputDevice(const DeviceSettings& settings, SDL_Au
     desired.channels = static_cast<Uint8>(settings.channels);
     desired.samples = static_cast<Uint16>(settings.samplesNum);
     desired.callback = nullptr;
-    const auto name = selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE"));
+    const char* requested = std::getenv("ANYPS5_AUDIO_DEVICE");
+    const auto name = selectedOutputDevice(requested);
     const SDL_AudioDeviceID device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 0, &desired, &obtained, 0);
     if (device != 0) SDL_PauseAudioDevice(device, 0);
+    defaultOutput = device != 0 && !(requested != nullptr && name == requested) ? name : std::string();
     return device;
 }
 
 static bool openDevice(Port& port) {
     if (!ensureSdlAudio()) return false;
     SDL_AudioSpec obtained{};
-    port.device = openOutputDevice(deviceSettings(port), obtained);
+    port.device = openOutputDevice(deviceSettings(port), obtained, port.defaultOutput);
     if (port.device == 0) return false;
     port.spec = obtained;
+    port.nextDefaultOutputCheck = sceKernelGetProcessTime() + DEFAULT_OUTPUT_CHECK_US;
     return true;
 }
 
@@ -243,12 +249,23 @@ static void closeDevice(Port& port) {
     closeHostDevice(port.device);
     port.device = 0;
     port.spec = {};
+    port.defaultOutput.clear();
+}
+
+static bool defaultOutputChanged(Port& port) {
+    if (port.defaultOutput.empty()) return false;
+    const auto now = sceKernelGetProcessTime();
+    if (now < port.nextDefaultOutputCheck) return false;
+    port.nextDefaultOutputCheck = now + DEFAULT_OUTPUT_CHECK_US;
+    const auto current = SdlDefaultOutputDeviceName();
+    return !current.empty() && current != port.defaultOutput;
 }
 
 static void replaceDeviceInBackground(std::size_t index, std::uint64_t generation, DeviceSettings settings, SDL_AudioDeviceID stopped) {
     closeHostDevice(stopped);
     SDL_AudioSpec obtained{};
-    const SDL_AudioDeviceID device = openOutputDevice(settings, obtained);
+    std::string defaultOutput;
+    const SDL_AudioDeviceID device = openOutputDevice(settings, obtained, defaultOutput);
     bool installed = false;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -258,6 +275,8 @@ static void replaceDeviceInBackground(std::size_t index, std::uint64_t generatio
             port.device = device;
             port.spec = device != 0 ? obtained : SDL_AudioSpec{};
             port.nextDeviceRetry = device == 0 ? sceKernelGetProcessTime() + DEVICE_RETRY_US : 0;
+            port.defaultOutput = std::move(defaultOutput);
+            port.nextDefaultOutputCheck = sceKernelGetProcessTime() + DEFAULT_OUTPUT_CHECK_US;
             installed = true;
         }
     }
@@ -271,13 +290,14 @@ static void reopenStoppedDevice(Port& port, std::unique_lock<std::mutex>& lock, 
     if (port.device == 0) {
         if (port.nextDeviceRetry == 0 || sceKernelGetProcessTime() < port.nextDeviceRetry) return;
     } else {
-        if (SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+        if (SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED && !defaultOutputChanged(port)) return;
         if (port.type == PORT_TYPE_VIBRATION) {
             closeDevice(port);
         } else {
             stopped = port.device;
             port.device = 0;
             port.spec = {};
+            port.defaultOutput.clear();
         }
     }
     if (port.type == PORT_TYPE_VIBRATION) {
