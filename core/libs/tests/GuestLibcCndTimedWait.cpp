@@ -68,6 +68,10 @@ int main() {
 
     Xtime negativePastTime{nowSec, nowNsec - 2000000000};
     Require(_Cnd_timedwait_nid_postfix(&condition, &mutex, &negativePastTime) == timedout);
+    const auto* unreadableTime = reinterpret_cast<const Xtime*>(std::uintptr_t{0x10});
+    RequireThrows<std::invalid_argument>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, unreadableTime); });
+    RequireThrows<std::invalid_argument>([&] { _Thrd_sleep_nid_postfix(unreadableTime, nullptr); });
+    Require(_Cnd_timedwait_nid_postfix(&condition, &mutex, &pastTime) == timedout);
 
     const auto timeoutDeadline = std::chrono::system_clock::now() + std::chrono::milliseconds(20);
     const auto timeoutSec = std::chrono::duration_cast<std::chrono::seconds>(timeoutDeadline.time_since_epoch()).count();
