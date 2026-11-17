@@ -18,6 +18,7 @@ constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
 constexpr int DirectoryFlag = 0x00020000;
+constexpr int ErrorAddressNotAvailable = 49;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -29,7 +30,10 @@ constexpr std::uint64_t WriteQueueRequest = 0x40046677;
 constexpr std::uint64_t WriteSpaceRequest = 0x40046676;
 constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
 constexpr std::uint64_t ForeignGroupRequest = 0x80047801;
+constexpr std::uint64_t ForeignWideRequest = 0x80087801;
 constexpr std::uint64_t ForeignIntegerRequest = 0xa0047801;
+constexpr std::uint64_t ForeignOutputRequest = 0x40047801;
+constexpr std::uint64_t TerminalInputRequest = 0x80047401;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -418,11 +422,48 @@ void AuditNonblockingModeQueries() {
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
 
+void AuditInputCopiedBeforeDispatch() {
+    void* const unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    constexpr std::size_t Page = 0x4000;
+    auto* const pages = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+    Require(pages != reinterpret_cast<unsigned char*>(static_cast<std::uintptr_t>(-1)) && mprotect_nid_postfix(pages + Page, Page, 0) == 0,
+        "guard page setup failed");
+    for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+        Require(call(9999, NonblockingRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument must fail with EFAULT (14) before the descriptor is looked up, as sys_ioctl copies it in first");
+        Require(call(9999, ForeignWideRequest, pages + Page - 4) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an input argument whose last bytes are unreadable must fail with EFAULT (14), as sys_ioctl copies the whole length in");
+        Require(call(9999, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+            "an output request on a closed descriptor must fail with EBADF (9), as nothing is copied before kern_ioctl");
+        const int queue = kqueue_nid_postfix();
+        Require(queue >= 0, "kqueue creation failed");
+        Require(call(queue, ForeignGroupRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument on a kqueue must fail with EFAULT (14) before ENOTTY");
+        Require(close_nid_postfix(queue) == 0, "close kqueue failed");
+        int pipeFds[2]{-1, -1};
+        Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+        Require(call(pipeFds[0], TerminalInputRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable termios input argument must fail with EFAULT (14) before ENOTTY");
+        Require(close_nid_postfix(pipeFds[0]) == 0 && close_nid_postfix(pipeFds[1]) == 0, "close pipe failed");
+        const int sock = socket_nid_postfix(2, Datagram, 0);
+        Require(sock >= 0, "socket creation failed");
+        Require(call(sock, ForeignGroupRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument on a socket must fail with EFAULT (14) before the request is refused");
+        Require(call(sock, ForeignOutputRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorAddressNotAvailable,
+            "an output request in_control refuses must fail with EADDRNOTAVAIL (49) with a null argument, as nothing is copied out on an error");
+        Require(call(sock, ForeignIntegerRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorAddressNotAvailable,
+            "an IOC_VOID request passes its argument by value, so a null argument gets the EADDRNOTAVAIL (49) of in_control");
+        Require(close_nid_postfix(sock) == 0, "close socket failed");
+    }
+    Require(munmap_nid_postfix(pages, 2 * Page) == 0, "guard page release failed");
+}
+
 } // namespace
 
 int main() {
     AuditInvalidDescriptors();
     AuditNullAndFaultPointers();
+    AuditInputCopiedBeforeDispatch();
     AuditInvalidRequestCodes();
     AuditEmptySocketReadableQuery();
     AuditEmptyPipeReadableQuery();
