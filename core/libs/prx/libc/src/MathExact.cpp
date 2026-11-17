@@ -1,7 +1,34 @@
+/*-
+ * Copyright (c) 2005-2011 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cerrno>
+#include <cfenv>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +36,7 @@
 #include <emmintrin.h>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 #include "prx/libc/include/General.hpp"
 
@@ -39,6 +67,15 @@ ExtendedBits Bits(const long double& value) {
     return bits;
 }
 
+long double JoinExtended(std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)]{};
+    std::memcpy(bytes, &mantissa, sizeof(mantissa));
+    std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    long double value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return value;
+}
+
 constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
 
 short TestExtended(const ExtendedBits& bits) {
@@ -49,20 +86,212 @@ short TestExtended(const ExtendedBits& bits) {
     return exponent != 0 || bits.mantissa != 0 ? Denormal : Zero;
 }
 
-template<typename TFloat>
-short TestFloat(TFloat value) {
-    switch (std::fpclassify(value)) {
-    case FP_NAN:
-        return NotANumber;
-    case FP_INFINITE:
-        return Infinite;
-    case FP_ZERO:
+void RaiseLibcError(int exceptions) {
+    if ((exceptions & (FE_OVERFLOW | FE_UNDERFLOW)) != 0) exceptions |= FE_INEXACT;
+    std::feraiseexcept(exceptions);
+    const bool range = (exceptions & FE_INVALID) == 0 &&
+        (exceptions & (FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW)) != 0;
+    errno = range ? ERANGE : EDOM;
+}
+
+bool OverflowToInfinity(bool negative) {
+    const int mode = std::fegetround();
+    return mode == FE_UPWARD ? !negative : mode == FE_DOWNWARD ? negative : mode == FE_TOWARDZERO ? false : true;
+}
+
+short OverflowScaled(long double& value, long double multiplier) {
+    const bool toInfinity = OverflowToInfinity(std::signbit(multiplier));
+    value = std::copysign(toInfinity ? std::numeric_limits<long double>::infinity() : std::numeric_limits<long double>::max(), multiplier);
+    RaiseLibcError(FE_OVERFLOW);
+    return toInfinity ? Infinite : Finite;
+}
+
+short ScaleExtended(long double& value, long long exponent) {
+    const ExtendedBits parts = Bits(value);
+    const std::uint16_t sign = parts.signExponent & 0x8000;
+    if ((parts.signExponent & 0x7fff) == 0x7fff) {
+        return (parts.mantissa << 1) == 0 ? Infinite : NotANumber;
+    }
+    if (parts.mantissa == 0) {
+        value = JoinExtended(0, sign);
         return Zero;
-    case FP_SUBNORMAL:
-        return Denormal;
-    default:
+    }
+    long long biased = std::max<long long>(parts.signExponent & 0x7fff, 1);
+    const int shift = std::countl_zero(parts.mantissa);
+    const std::uint64_t mantissa = parts.mantissa << shift;
+    biased += exponent - shift;
+    if (biased >= 0x7fff) {
+        value = JoinExtended(1ull << 63, static_cast<std::uint16_t>(sign | 0x7fff));
+        return Infinite;
+    }
+    if (biased > 0) {
+        value = JoinExtended(mantissa, static_cast<std::uint16_t>(sign | biased));
         return Finite;
     }
+    const long long rightShift = 1 - biased;
+    if (rightShift >= 65) {
+        value = 0.0L;
+        return Zero;
+    }
+    std::uint64_t kept = rightShift == 64 ? 0 : mantissa >> rightShift;
+    const std::uint64_t lost = rightShift == 64 ? mantissa : mantissa << (64 - rightShift);
+    bool roundUp = false;
+    switch (std::fegetround()) {
+    case FE_UPWARD:
+        roundUp = lost != 0 && sign == 0;
+        break;
+    case FE_DOWNWARD:
+        roundUp = lost != 0 && sign != 0;
+        break;
+    case FE_TOWARDZERO:
+        break;
+    default:
+        roundUp = lost > 1ull << 63 || (lost == 1ull << 63 && (kept & 1) != 0);
+        break;
+    }
+    if (roundUp) ++kept;
+    value = JoinExtended(kept, static_cast<std::uint16_t>(sign | (kept >> 63)));
+    return TestExtended(Bits(value));
+}
+
+short FinishExpScale(long double& value, long long exponent) {
+    const short result = ScaleExtended(value, exponent);
+    if (result == Infinite) RaiseLibcError(FE_OVERFLOW);
+    if (result == Zero || result == Denormal) RaiseLibcError(FE_UNDERFLOW);
+    return result;
+}
+
+short UnderflowScaled(long double& value, long double multiplier) {
+    value = std::copysign(0.0L, multiplier);
+    return Zero;
+}
+
+short ExpScaled(long double& x, long long scale, long double multiplier) {
+    std::fexcept_t entryFlags;
+    std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+    const int entryErrno = errno;
+    auto finalize = [&](long double value, short kind) -> short {
+        x = value;
+        return kind;
+    };
+    constexpr long double inverseLn2 = 0xb.8aa3b295c17f0bcp-3L;
+    constexpr long double ln2Low = -0xe.8e7bcd5e4f1d9ccp-35L;
+    constexpr long double tiny = 0x1p-66L;
+    constexpr double ln2High = -0x1.62e42fecp-1;
+    constexpr long double p0 = 0xc.99bcb9bdeb30f49p-23L;
+    constexpr long double p1 = 0xa.578826a9b3aafa0p-13L;
+    constexpr long double p2 = 0xe.8b94728735d9363p-7L;
+    constexpr long double q0 = 0x8.45a5963c196b530p-17L;
+    constexpr long double q1 = 0xf.83a71f722cba3c4p-10L;
+    constexpr long double inputLimit = 29490.0L;
+    if (std::isinf(x)) {
+        if (x > 0.0L) {
+            if (multiplier == 0.0L) {
+                x = std::numeric_limits<long double>::quiet_NaN();
+                RaiseLibcError(FE_INVALID);
+                return NotANumber;
+            }
+            if (std::isinf(multiplier)) x = multiplier;
+            else x = std::copysign(std::numeric_limits<long double>::infinity(), multiplier);
+            return Infinite;
+        }
+        if (std::isinf(multiplier)) {
+            x = std::numeric_limits<long double>::quiet_NaN();
+            RaiseLibcError(FE_INVALID);
+            return NotANumber;
+        }
+        return finalize(std::copysign(0.0L, multiplier), Zero);
+    }
+    if (std::isinf(multiplier)) {
+        x = multiplier;
+        return Infinite;
+    }
+    if (x == 0.0L) {
+        if (scale == 0) return finalize(multiplier, Finite);
+        long double result = multiplier;
+        std::fexcept_t productFlags;
+        std::fegetexceptflag(&productFlags, FE_ALL_EXCEPT);
+        const short resultKind = ScaleExtended(result, scale);
+        x = result;
+        if (resultKind == Infinite) {
+            RaiseLibcError(FE_OVERFLOW);
+            return Infinite;
+        }
+        if (resultKind == Zero) {
+            RaiseLibcError(FE_UNDERFLOW);
+            return Zero;
+        }
+        if (resultKind == Denormal) {
+            std::fesetexceptflag(&productFlags, FE_ALL_EXCEPT);
+            errno = entryErrno;
+            return Finite;
+        }
+        return resultKind;
+    }
+    if (scale == 0 && x == 1.0L && multiplier == 1.0L) {
+        x = 0xa.df85458a2bb4a9bp-2L;
+        return Finite;
+    }
+    if (x < -inputLimit) return finalize(std::copysign(0.0L, multiplier), Zero);
+    if (x > inputLimit) {
+        x = std::copysign(std::numeric_limits<long double>::infinity(), multiplier);
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    const long double g = x * inverseLn2;
+    if (std::isnan(g)) {
+        x = g;
+        return NotANumber;
+    }
+    const long long n = static_cast<long long>(g + (g < 0.0L ? -0.5L : 0.5L));
+    const long double nn = static_cast<long double>(n);
+    x += nn * static_cast<long double>(ln2High);
+    x += nn * ln2Low;
+    if (x > -tiny && x < tiny) {
+        x = 1.0L;
+    } else {
+        const long double w = x * x;
+        const long double even = ((p0 * w + p1) * w + p2) * w;
+        const long double odd = x * ((q0 * w + q1) * w + 0.5L);
+        x = ((even + odd) + 1.0L) / ((even - odd) + 1.0L);
+    }
+    x *= multiplier;
+    if (std::isinf(x)) {
+        x = std::copysign(std::numeric_limits<long double>::infinity(), multiplier);
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    const short result = ScaleExtended(x, n + scale);
+    if (result == Infinite) {
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    if (result == Zero) {
+        RaiseLibcError(FE_UNDERFLOW);
+        return Zero;
+    }
+    if (result == Denormal) {
+        const int raised = std::fetestexcept(FE_ALL_EXCEPT);
+        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+        errno = entryErrno;
+        if ((raised & FE_INEXACT) != 0) std::feraiseexcept(FE_INEXACT);
+        return Finite;
+    }
+    return result;
+}
+
+template<typename TFloat>
+short TestFloat(TFloat value) {
+    using TBits = std::conditional_t<sizeof(TFloat) == sizeof(std::uint32_t), std::uint32_t, std::uint64_t>;
+    static_assert(sizeof(TFloat) == sizeof(TBits) && std::numeric_limits<TFloat>::is_iec559);
+    constexpr TBits infinity = std::bit_cast<TBits>(std::numeric_limits<TFloat>::infinity());
+    constexpr TBits smallestNormal = std::bit_cast<TBits>(std::numeric_limits<TFloat>::min());
+    const TBits magnitude = std::bit_cast<TBits>(value) & (~TBits{0} >> 1);
+    if (magnitude > infinity) return NotANumber;
+    if (magnitude == infinity) return Infinite;
+    if (magnitude == 0) return Zero;
+    if (magnitude < smallestNormal) return Denormal;
+    return Finite;
 }
 
 template <typename T>
@@ -91,6 +320,31 @@ void StoreExtended(long double* value, const ExtendedBits& bits) {
 
 bool ExtendedNan(const ExtendedBits& bits) {
     return (bits.signExponent & 0x7fff) == 0x7fff && (bits.mantissa & 0x7fffffffffffffffull) != 0;
+}
+
+constexpr std::size_t ExtendedBytes = 10;
+
+long double LoadGuestExtended(const long double* value, const char* message) {
+    long double host = 0.0L;
+    if (!GuestCopyIn_nid_no_patch(&host, value, ExtendedBytes)) throw std::invalid_argument(message);
+    return host;
+}
+
+void StoreGuestExtended(long double* value, const long double& host, const char* message) {
+    if (!GuestCopyOut_nid_no_patch(value, &host, ExtendedBytes)) throw std::invalid_argument(message);
+}
+
+template<typename T, typename Step>
+T EvaluateGuestPolynomial(const T* table, int degree, const char* message, Step step) {
+    std::array<T, 32> chunk;
+    const std::size_t count = static_cast<std::size_t>(std::max(degree, 0)) + 1;
+    T result{};
+    for (std::size_t start = 0; start < count; start += chunk.size()) {
+        const std::size_t size = std::min(chunk.size(), count - start);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), table + start, size * sizeof(T))) throw std::invalid_argument(message);
+        for (std::size_t index = 0; index < size; ++index) result = start + index == 0 ? chunk[0] : step(result, chunk[index]);
+    }
+    return result;
 }
 
 long double ExtendedValue(const ExtendedBits& bits) {
@@ -280,6 +534,10 @@ TFloat ExpProduct(TFloat y, TFloat ratio) {
     constexpr Bits magnitude = std::numeric_limits<Bits>::max() >> 1;
     constexpr Bits infinity = std::bit_cast<Bits>(std::numeric_limits<TFloat>::infinity());
     constexpr Bits quiet = Bits{1} << (std::numeric_limits<TFloat>::digits - 2);
+    if constexpr (sizeof(TFloat) == sizeof(float)) {
+        const Bits ratioBits = std::bit_cast<Bits>(ratio);
+        if ((ratioBits & magnitude) > infinity) return std::bit_cast<TFloat>(static_cast<Bits>(ratioBits | quiet));
+    }
     const TFloat product = y * ratio;
     const Bits bits = std::bit_cast<Bits>(y);
     if ((bits & magnitude) > infinity) return std::bit_cast<TFloat>(static_cast<Bits>(bits | quiet));
@@ -393,6 +651,94 @@ TFloat LanczosLogGamma(TFloat x, TLogarithm logarithm, TCoefficient series, TCoe
     return logarithm(sum * root / x) - rest;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_fmal.c */
+struct ExtendedPair {
+    long double hi;
+    long double lo;
+};
+
+ExtendedPair AddExact(long double a, long double b) {
+    ExtendedPair result;
+    result.hi = a + b;
+    const long double shift = result.hi - a;
+    result.lo = (a - (result.hi - shift)) + (b - shift);
+    return result;
+}
+
+long double AddAdjusted(long double a, long double b) {
+    ExtendedPair sum = AddExact(a, b);
+    if (sum.lo != 0 && (Bits(sum.hi).mantissa & 1) == 0)
+        sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
+    return sum.hi;
+}
+
+long double AddAndDenormalize(long double a, long double b, int scale) {
+    ExtendedPair sum = AddExact(a, b);
+    if (sum.lo != 0) {
+        const ExtendedBits bits = Bits(sum.hi);
+        const int bitsLost = -(bits.signExponent & 0x7fff) - scale + 1;
+        if ((bitsLost != 1) != ((bits.mantissa & 1) != 0))
+            sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
+    }
+    return std::ldexp(sum.hi, scale);
+}
+
+ExtendedPair MultiplyExact(long double a, long double b) {
+    constexpr long double Split = 0x1p32L + 1.0L;
+    long double p = a * Split;
+    long double ha = a - p;
+    ha += p;
+    const long double la = a - ha;
+    p = b * Split;
+    long double hb = b - p;
+    hb += p;
+    const long double lb = b - hb;
+    p = ha * hb;
+    const long double q = ha * lb + la * hb;
+    ExtendedPair result;
+    result.hi = p + q;
+    result.lo = p - result.hi + q + la * lb;
+    return result;
+}
+
+long double FmaFarApart(long double x, long double y, long double z, int rounding) {
+    std::feraiseexcept(FE_INEXACT);
+    if (!std::isnormal(z)) std::feraiseexcept(FE_UNDERFLOW);
+    constexpr long double Infinity = std::numeric_limits<long double>::infinity();
+    const bool productPositive = (x > 0.0L) == (y > 0.0L);
+    switch (rounding) {
+    case FE_TONEAREST:
+        return z;
+    case FE_TOWARDZERO:
+        return productPositive == (z > 0.0L) ? z : std::nextafter(z, 0.0L);
+    case FE_DOWNWARD:
+        return productPositive ? z : std::nextafter(z, -Infinity);
+    default:
+        return productPositive ? std::nextafter(z, Infinity) : z;
+    }
+}
+
+long double FmaScaled(long double xs, long double ys, long double zs, int spread, int rounding) {
+    std::fesetround(FE_TONEAREST);
+    volatile long double vxs = xs;
+    const ExtendedPair xy = MultiplyExact(vxs, ys);
+    const ExtendedPair r = AddExact(xy.hi, zs);
+    if (r.hi == 0.0L) {
+        std::fesetround(rounding);
+        volatile long double vzs = zs;
+        return xy.hi + vzs + std::ldexp(xy.lo, spread);
+    }
+    if (rounding != FE_TONEAREST) {
+        std::fesetround(rounding);
+        volatile long double vrlo = r.lo;
+        const long double adj = vrlo + xy.lo;
+        return std::ldexp(r.hi + adj, spread);
+    }
+    const long double adj = AddAdjusted(r.lo, xy.lo);
+    if (spread + std::ilogb(r.hi) > -16383) return std::ldexp(r.hi + adj, spread);
+    return AddAndDenormalize(r.hi, adj, spread);
+}
+
 }
 
 extern "C" {
@@ -426,7 +772,10 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         result = std::remquo(x, y, &bits);
     }
     if (domain) errno = EDOM;
-    if (!std::isnan(result)) *quotient = bits < 0 ? -(-bits & 7) : (bits & 7);
+    if (!std::isnan(result)) {
+        const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
+        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+    }
     return result;
 }
 
@@ -464,11 +813,10 @@ long double APS5_VABI sqrtl_nid_postfix(long double x) {
 }
 
 long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
-    if (std::isnan(x)) {
-        *integral = x;
-        return x;
-    }
-    return std::modf(x, integral);
+    long double whole = x;
+    const long double fraction = std::isnan(x) ? x : std::modf(x, &whole);
+    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
 
@@ -482,13 +830,17 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     if (z == 0.0L) return x * y;
     if (!std::isfinite(x) || !std::isfinite(y)) return x * y + z;
     if (!std::isfinite(z)) return z;
-    int xExponent = 0, yExponent = 0, zExponent = 0;
-    std::frexp(x, &xExponent);
-    std::frexp(y, &yExponent);
-    std::frexp(z, &zExponent);
-    if (xExponent + yExponent - zExponent > 2 * std::numeric_limits<long double>::digits) return x * y;
     ErrnoGuard guard;
-    return std::fma(x, y, z);
+    int xExponent = 0, yExponent = 0, zExponent = 0;
+    const long double xs = std::frexp(x, &xExponent);
+    const long double ys = std::frexp(y, &yExponent);
+    long double zs = std::frexp(z, &zExponent);
+    const int rounding = std::fegetround();
+    const int spread = xExponent + yExponent - zExponent;
+    if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
+    if (spread <= std::numeric_limits<long double>::digits * 2) zs = std::ldexp(zs, -spread);
+    else zs = std::copysign(std::numeric_limits<long double>::min(), zs);
+    return FmaScaled(xs, ys, zs, xExponent + yExponent, rounding);
 }
 
 double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
@@ -561,7 +913,100 @@ int APS5_VABI __isnormall_nid_postfix(long double x) {
     return exponent != 0 && exponent != 0x7fff ? 1 : 0;
 }
 
-short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExtended(Bits(*value)); }
+short APS5_VABI _LDtest_nid_postfix(const long double* value) {
+    return TestExtended(Bits(LoadGuestExtended(value, "_LDtest: unreadable value")));
+}
+
+}
+
+namespace {
+
+short ExtendedExp(long double* value, long double y, short offset) {
+    const long double x = *value;
+    const short xKind = TestExtended(Bits(x));
+    const short yKind = (std::isnan(y) ? NotANumber : std::isinf(y) ? Infinite : (y == 0.0L ? Zero : TestExtended(Bits(y))));
+    if (xKind == NotANumber) return NotANumber;
+    if (yKind == NotANumber) {
+        *value = y;
+        return NotANumber;
+    }
+    if (xKind == Infinite) {
+        if (x > 0.0L) {
+            if (yKind == Zero) {
+                *value = std::numeric_limits<long double>::quiet_NaN();
+                RaiseLibcError(FE_INVALID);
+                return NotANumber;
+            }
+            if (yKind == Infinite) *value = y;
+            else *value = std::copysign(std::numeric_limits<long double>::infinity(), y);
+            return Infinite;
+        }
+        if (yKind == Infinite) {
+            *value = std::numeric_limits<long double>::quiet_NaN();
+            RaiseLibcError(FE_INVALID);
+            return NotANumber;
+        }
+        *value = std::copysign(0.0L, y);
+        return Zero;
+    }
+    if (yKind == Zero) {
+        *value = y;
+        return Zero;
+    }
+    if (yKind == Infinite) {
+        *value = y;
+        return Infinite;
+    }
+    if (xKind == Zero) {
+        if (offset == 0) {
+            *value = y;
+            return Finite;
+        }
+        long double result = y;
+        std::fexcept_t entryFlags;
+        std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+        const int entryErrno = errno;
+        const short resultKind = ScaleExtended(result, offset);
+        *value = result;
+        if (resultKind == Infinite) {
+            RaiseLibcError(FE_OVERFLOW);
+            return Infinite;
+        }
+        if (resultKind == Zero) {
+            RaiseLibcError(FE_UNDERFLOW);
+            return Zero;
+        }
+        if (resultKind == Denormal) {
+            const int raised = std::fetestexcept(FE_ALL_EXCEPT);
+            std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+            errno = entryErrno;
+            if ((raised & FE_INEXACT) != 0) std::feraiseexcept(FE_INEXACT);
+            return Finite;
+        }
+        return resultKind;
+    }
+    if (offset == 0 && x == 1.0L && y == 1.0L) {
+        *value = 0xa.df85458a2bb4a9bp-2L;
+        return Finite;
+    }
+    long double result = x;
+    const short resultKind = ExpScaled(result, offset, y);
+    *value = result;
+    return resultKind;
+}
+
+}
+
+extern "C" {
+
+short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offset) {
+    if (value == nullptr) throw std::invalid_argument("_LExp: null value");
+    long double host = LoadGuestExtended(value, "_LExp: unreadable value");
+    const bool stores = TestExtended(Bits(host)) != NotANumber;
+    const short kind = ExtendedExp(&host, y, offset);
+    if (stores) StoreGuestExtended(value, host, "_LExp: unwritable value");
+    return kind;
+}
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
@@ -571,20 +1016,23 @@ short APS5_VABI _Dint_nid_postfix(double* value, short scale) { return DropFract
 short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFraction<std::uint32_t, 23, 8>(value, scale); }
 
 short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
-    ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDint: unreadable value");
+    ExtendedBits bits = Bits(host);
     const int field = bits.signExponent & 0x7fff;
     if (field == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
     if (bits.mantissa == 0) return Zero;
     const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
     if (drop <= 0) return Zero;
     if (drop >= 64) {
-        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreExtended(&host, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreGuestExtended(value, host, "_LDint: unwritable value");
         return Finite;
     }
     const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
     const std::uint64_t lost = bits.mantissa & mask;
     bits.mantissa &= ~mask;
-    StoreExtended(value, bits);
+    StoreExtended(&host, bits);
+    StoreGuestExtended(value, host, "_LDint: unwritable value");
     return lost != 0 ? Finite : Zero;
 }
 
@@ -592,15 +1040,18 @@ short APS5_VABI _Dscale_nid_postfix(double* value, std::int64_t exponent) { retu
 short APS5_VABI _FDscale_nid_postfix(float* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
 
 short APS5_VABI _LDscale_nid_postfix(long double* value, std::int64_t exponent) {
-    const ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDscale: unreadable value");
+    const ExtendedBits bits = Bits(host);
     if ((bits.signExponent & 0x7fff) == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
     if (bits.mantissa == 0) {
-        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreExtended(&host, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreGuestExtended(value, host, "_LDscale: unwritable value");
         return Zero;
     }
-    *value = ExtendedValue(bits);
-    const short code = ScaleBinary(value, exponent);
-    if (code == Zero) *value = 0.0L;
+    host = ExtendedValue(bits);
+    const short code = ScaleBinary(&host, exponent);
+    if (code == Zero) host = 0.0L;
+    StoreGuestExtended(value, host, "_LDscale: unwritable value");
     return code;
 }
 
@@ -608,17 +1059,25 @@ short APS5_VABI _Dunscale_nid_postfix(short* exponent, double* value) { return U
 short APS5_VABI _FDunscale_nid_postfix(short* exponent, float* value) { return UnscaleBinary(exponent, value); }
 
 short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
-    const ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDunscale: unreadable value");
+    const ExtendedBits bits = Bits(host);
+    short scaled = 0;
+    const auto storeExponent = [&] {
+        if (!GuestCopyOut_nid_no_patch(exponent, &scaled, sizeof(scaled))) throw std::invalid_argument("_LDunscale: unwritable exponent");
+    };
     if ((bits.signExponent & 0x7fff) == 0x7fff) {
-        *exponent = 0;
+        storeExponent();
         return ExtendedNan(bits) ? NotANumber : Infinite;
     }
     if (bits.mantissa == 0) {
-        *exponent = 0;
+        storeExponent();
         return Zero;
     }
-    *value = ExtendedValue(bits);
-    return UnscaleBinary(exponent, value);
+    host = ExtendedValue(bits);
+    const short code = UnscaleBinary(&scaled, &host);
+    storeExponent();
+    StoreGuestExtended(value, host, "_LDunscale: unwritable value");
+    return code;
 }
 
 short APS5_VABI _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
@@ -639,11 +1098,11 @@ short APS5_VABI _FDnorm_nid_postfix(std::uint16_t* words) { return NormalizeFrac
 
 short APS5_VABI _LDnorm_nid_postfix(std::uint16_t* words) {
     std::uint64_t mantissa;
-    std::memcpy(&mantissa, words, sizeof(mantissa));
+    if (!GuestCopyIn_nid_no_patch(&mantissa, words, sizeof(mantissa))) throw std::invalid_argument("_LDnorm: unreadable significand");
     if (mantissa == 0) throw std::invalid_argument("_LDnorm: a zero significand never returns on the console");
     const int shift = std::countl_zero(mantissa);
     mantissa <<= shift;
-    std::memcpy(words, &mantissa, sizeof(mantissa));
+    if (!GuestCopyOut_nid_no_patch(words, &mantissa, sizeof(mantissa))) throw std::invalid_argument("_LDnorm: unwritable significand");
     return static_cast<short>(-shift);
 }
 
@@ -667,18 +1126,17 @@ double APS5_VABI _Poly_nid_postfix(double x, const double* table, int degree) { 
 float APS5_VABI _FPoly_nid_postfix(float x, const float* table, int degree) { return FusedPolynomial(x, table, degree); }
 
 long double APS5_VABI _LPoly_nid_postfix(long double x, const long double* table, int degree) {
-    long double result = table[0];
-    for (int index = 1; index <= degree; ++index) {
+    return EvaluateGuestPolynomial(table, degree, "_LPoly: unreadable coefficient table", [x](long double result, long double coefficient) {
         result *= x;
-        result += table[index];
-    }
-    return result;
+        result += coefficient;
+        return result;
+    });
 }
 
 double APS5_VABI _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(double x, const double* table, int degree) {
-    double result = table[0];
-    for (int index = 1; index <= degree; ++index) result = OperandOrderFma(result, x, table[index]);
-    return result;
+    return EvaluateGuestPolynomial(table, degree, "_Poly: unreadable coefficient table", [x](double result, double coefficient) {
+        return OperandOrderFma(result, x, coefficient);
+    });
 }
 float APS5_VABI _ZNSt8__sce_v28_XLgammaEf_nid_postfix(float x) { return LanczosLogGamma<float, float>(x, logf_nid_postfix, 1.0f, 2.5066282746310007f); }
 double APS5_VABI _ZNSt8__sce_v28_XLgammaEd_nid_postfix(double x) { return LanczosLogGamma<double, double>(x, log_nid_postfix, 1.000000000190015, 2.5066282746310007); }

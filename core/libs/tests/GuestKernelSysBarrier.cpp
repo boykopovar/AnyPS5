@@ -76,6 +76,10 @@ int main() {
     Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 0) == 22);
     Require(scePthreadBarrierInit(&context.barrier, &attr, 0x80000000u, "over") == SCE_KERNEL_ERROR_EINVAL && context.barrier == nullptr);
     Require(scePthreadBarrierInit(nullptr, &attr, WAITERS, "null") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT
+        && context.barrier == nullptr);
+    Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "01234567890123456789012345678901") == SCE_KERNEL_ERROR_ENAMETOOLONG
+        && context.barrier == nullptr);
     Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "barrier") == 0 && context.barrier != nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == 0 && attr == nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
