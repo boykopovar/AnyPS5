@@ -319,7 +319,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         dumpIr("ssa");
 
         constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
         deadCodeEliminator.RemoveIdentities(program);
         deadCodeEliminator.Eliminate(program);
         dumpIr("fold");
@@ -327,7 +326,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         const auto readLaneStats = readLaneEliminator.Eliminate(program, translateOptions.waveSize);
         if (readLaneStats.rewrittenReads != 0u) {
             constantFolder.Fold(program);
-            ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
             deadCodeEliminator.Eliminate(program);
         }
@@ -349,7 +347,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             });
             if (liveAncillary) {
                 constantFolder.Fold(program);
-                ResolveControlFlowIdentities(program);
                 deadCodeEliminator.RemoveIdentities(program);
                 deadCodeEliminator.Eliminate(program);
             }
@@ -799,7 +796,6 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     constexpr ConstantFolder constantFolder;
     if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) {
         constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
     }
 
     deadCodeEliminator.RemoveIdentities(program);
