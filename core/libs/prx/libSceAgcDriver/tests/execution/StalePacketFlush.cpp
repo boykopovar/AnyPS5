@@ -97,8 +97,7 @@ void Check(AgcDriver::VulkanDevice& device, GuestBlock& block, const std::string
     DeferredLabel label{block.Address(256), sizeof(Value), {}};
     std::memcpy(label.bytes.data(), &Value, sizeof(Value));
     deferred.labels.push_back(label);
-    deferred.since = std::chrono::steady_clock::now();
-    if (mode == "queued-overdue") deferred.since -= std::chrono::seconds(120);
+    deferred.since = mode == "queued-overdue" ? std::chrono::steady_clock::now() - std::chrono::seconds(120) : std::chrono::steady_clock::now() + std::chrono::hours(1);
     const auto drains = DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Flush);
     std::binary_semaphore entered{0};
     DrawPipeline::Queue0().Enqueue([&] {
