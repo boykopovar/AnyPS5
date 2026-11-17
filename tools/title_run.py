@@ -1,16 +1,19 @@
 import argparse
+import contextlib
 import datetime
 import json
 import os
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -18,14 +21,19 @@ sys.path.insert(0, str(ROOT / "tools"))
 import pad_input
 import pad_timeline
 import unwrap_self
+from audit_dump import comparison_path
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
-TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict}
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
+REPORT_FILE = "anyps5-report.json"
+FRAME_PERCENTILES = ("p50", "p90", "p99")
+SHADER_COUNTS = ("compiled", "failed", "cacheHits")
+UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
 
 
 def pad_text(pad, sequence):
@@ -79,7 +87,10 @@ def load_titles(path):
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
-            if not isinstance(value, TITLE_FIELDS[key]):
+            if key == "seconds":
+                if type(value) is not int or value < 1:
+                    raise ValueError(f"{path}: {title_id}: seconds must be a positive integer")
+            elif not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
             if key in ("pad", "files"):
                 try:
@@ -105,7 +116,7 @@ def relink_args(entry, platform):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
+ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 
@@ -129,6 +140,9 @@ def read_summary(path):
             continue
         if isinstance(decoded, dict):
             lines.append(decoded)
+    intervals = [line for line in lines if "interval_start_s" in line]
+    if intervals:
+        lines = intervals
     presents = sum(line.get("presents", 0) for line in lines)
     seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
     last = lines[-1] if lines else {}
@@ -136,16 +150,58 @@ def read_summary(path):
             "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
 
 
+def section(document, name):
+    value = document.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def read_report(path):
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict) or document.get("format") != "anyps5-report":
+        return None
+    coverage, run, shaders = section(document, "coverage"), section(document, "run"), section(document, "shaders")
+    missing, truncated = section(document, "missing"), section(document, "truncated")
+    functions, unsupported = missing.get("functions"), shaders.get("unsupported")
+    functions = [entry for entry in functions if isinstance(entry, dict)] if isinstance(functions, list) else functions
+    unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
+    return {"averageFps": run.get("averageFps"),
+            "frameMs": section(run, "frameMs") or None,
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
+            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
+
+
+def take_report(work, run_dir):
+    source = work / REPORT_FILE
+    if not source.is_file():
+        return None
+    shutil.move(str(source), str(run_dir / REPORT_FILE))
+    return read_report(run_dir / REPORT_FILE)
+
+
 def frame_is_uniform(path, tolerance=8):
     data = path.read_bytes()
+    if data[:2] != b"BM":
+        return None
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
+        header_size = struct.unpack_from("<I", data, 14)[0]
         width, height = struct.unpack_from("<ii", data, 18)
-        channels = struct.unpack_from("<H", data, 28)[0] // 8
+        planes = struct.unpack_from("<H", data, 26)[0]
+        bits = struct.unpack_from("<H", data, 28)[0]
+        compression = struct.unpack_from("<I", data, 30)[0]
     except struct.error:
         return None
+    if (header_size < 40 or offset < 14 + header_size or width <= 0 or height == 0 or
+            planes != 1 or compression != 0 or bits not in (24, 32)):
+        return None
+    channels = bits // 8
     stride = (width * channels + 3) & ~3
-    if channels < 3 or len(data) < offset + stride * abs(height) - (stride - width * channels):
+    if len(data) < offset + stride * abs(height) - (stride - width * channels):
         return None
     first = data[offset:offset + 3]
     for row in range(abs(height)):
@@ -196,13 +252,153 @@ def compare(summary, previous):
     return regressions, improvements
 
 
+def last_run(title):
+    return title["runs"][-1]
+
+
+def pair(before, now):
+    return {"before": before, "now": now}
+
+
+def fps_of(run):
+    return None if run.get("outcome") == "relink-failed" else run.get("fps")
+
+
+def report_field(run, name):
+    return (run.get("report") or {}).get(name)
+
+
+def shader_count(run, name):
+    return (report_field(run, "shaders") or {}).get(name)
+
+
+def distinct(entries, keys):
+    return None if entries is None else len({json.dumps([entry.get(name) for name in keys]) for entry in entries})
+
+
+def tally(entries, keys, count):
+    totals = {}
+    for entry in entries:
+        key = json.dumps([entry.get(name) for name in keys])
+        value = entry.get(count)
+        totals[key] = totals.get(key, 0) + (value if isinstance(value, int) else 0)
+    return totals
+
+
+def diff_entries(before, now, keys, count):
+    if before is None or now is None:
+        return None
+    left, right = tally(before, keys, count), tally(now, keys, count)
+
+    def fields(key, **values):
+        return {**dict(zip(keys, json.loads(key))), **values}
+
+    return {"onlyBefore": [fields(key, **{count: left[key]}) for key in sorted(left) if key not in right],
+            "onlyNow": [fields(key, **{count: right[key]}) for key in sorted(right) if key not in left],
+            "both": [fields(key, before=left[key], now=right[key]) for key in sorted(left) if key in right]}
+
+
+def missing_functions(run):
+    return report_field(run, "missing")
+
+
+def truncated_functions(run):
+    return (report_field(run, "truncated") or {}).get("functions")
+
+
+def unsupported_instructions(run):
+    return report_field(run, "unsupported")
+
+
+def truncated_unsupported(run):
+    return (report_field(run, "truncated") or {}).get("unsupported")
+
+
+def compare_runs(summary, previous):
+    compared = {}
+    for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
+        before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
+        before_frames = section(before.get("report") or {}, "frameMs")
+        now_frames = section(now.get("report") or {}, "frameMs")
+        compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
+                              "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
+                              "frameMs": {name: pair(before_frames.get(name), now_frames.get(name)) for name in FRAME_PERCENTILES},
+                              "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
+                              "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
+                              "missingFunctionsCount": pair(distinct(missing_functions(before), ("library", "name")), distinct(missing_functions(now), ("library", "name"))),
+                              "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now)),
+                              "unsupportedInstructions": diff_entries(unsupported_instructions(before), unsupported_instructions(now), UNSUPPORTED_KEYS, "count"),
+                              "unsupportedInstructionsCount": pair(distinct(unsupported_instructions(before), UNSUPPORTED_KEYS),
+                                                                   distinct(unsupported_instructions(now), UNSUPPORTED_KEYS)),
+                              "unsupportedInstructionsTruncated": pair(truncated_unsupported(before), truncated_unsupported(now))}
+    return compared
+
+
+def display(value):
+    if value is None:
+        return "not recorded"
+    return f"{value:.1f}" if isinstance(value, float) else str(value)
+
+
+def label(entry):
+    if "name" in entry:
+        return f"{entry['library']}/{entry['name']}" if entry.get("library") else entry["name"]
+    return f"{entry.get('opcode') or 'unnamed'} ({entry.get('encoding') or 'unknown encoding'}, opcode value {entry.get('opcodeValue')})"
+
+
+def names(entries):
+    return ", ".join(label(entry) for entry in entries)
+
+
+def render_compare(compared):
+    columns = ["Title", "ID", "Measure", "Before", "Now"]
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    details = []
+    for title_id, title in compared.items():
+        measures = [
+            ("FPS", title["fps"]),
+            ("Average FPS (report)", title["averageFps"]),
+            *((f"Frame time {name} (ms)", title["frameMs"][name]) for name in FRAME_PERCENTILES),
+            ("Shaders compiled", title["shaders"]["compiled"]),
+            ("Shaders failed", title["shaders"]["failed"]),
+            ("Shader cache hits", title["shaders"]["cacheHits"]),
+        ]
+        for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
+            diff = title[key]
+            omitted = title[key + "Truncated"]
+            partial = any(isinstance(value, int) and value > 0 for value in omitted.values())
+            measures.append((label + " (retained)" if partial else label, title[key + "Count"]))
+            if partial:
+                measures.append((label + " omitted", omitted))
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: lists are partial; "
+                               "only before and only now describe retained entries, not proof of absence from the other run.")
+            if diff and (diff["onlyBefore"] or diff["onlyNow"] or diff["both"]):
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: only before: {names(diff['onlyBefore']) or 'none'}; "
+                               f"only now: {names(diff['onlyNow']) or 'none'}; in both: {len(diff['both'])}")
+                field, unit = ("calls", "calls") if key == "missingFunctions" else ("count", "occurrences")
+                before = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyBefore"]) or "none"
+                now = ", ".join(f"{names([entry])}: {entry[field]}" for entry in diff["onlyNow"]) or "none"
+                both = ", ".join(f"{names([entry])}: {entry['before']} -> {entry['now']}" for entry in diff["both"]) or "none"
+                details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
+                               f"only before: {before}; only now: {now}; in both: {both}")
+        for label, values in measures:
+            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+    return lines + [""] + details
+
+
+def compare_json(summary, previous):
+    return json.dumps({"format": "title-run-compare", "version": 1, "titles": compare_runs(summary, previous)}, indent=2)
+
+
 def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
     parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
-    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
+    lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
+    length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
+    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
     lines = [header, ""]
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
@@ -228,10 +424,12 @@ def render_markdown(summary, previous=None):
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
+    if previous and (compared := compare_runs(summary, previous)):
+        lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
 
 
-def discover(directories):
+def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
         for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
@@ -244,6 +442,10 @@ def discover(directories):
                 raise ValueError(f"{param}: no titleId")
             if not TITLE_ID.fullmatch(title_id):
                 raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
+            if packages is not None:
+                packages.append(package)
+            if wanted and title_id not in wanted:
+                continue
             if title_id in found:
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
@@ -254,7 +456,9 @@ def discover(directories):
 
 def unwrap_or_copy(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    if source.read_bytes()[:4] == b"\x7fELF":
+    with source.open("rb") as stream:
+        magic = stream.read(4)
+    if magic == b"\x7fELF":
         shutil.copyfile(source, target)
     else:
         unwrap_self.unwrap(source, target)
@@ -296,16 +500,257 @@ def lock_work(path):
     return handle
 
 
-def prepare(title_id, found, entry, platform, build, work):
-    package = found["package"]
-    shutil.rmtree(work, ignore_errors=True)
-    source = work / "input"
+def module_dirs(entry):
+    relink = entry.get("relink", [])
+    return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
+
+
+STANDARD_MODULE_DIRS = ("sce_module", "sce_modules", "prx")
+MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
+
+
+def is_module(path):
+    with path.open("rb") as file:
+        return file.read(4) in MODULE_MAGICS
+
+
+def stage_inputs(package, entry, source):
     (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
-    for module in sorted((package / "sce_module").glob("*.prx")):
-        unwrap_or_copy(module, source / "sce_module" / module.name)
+    executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
+    for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
+        if not (package / directory).is_dir():
+            continue
+        (source / directory).mkdir(parents=True, exist_ok=True)
+        for module in sorted(path for path in (package / directory).iterdir()
+                             if path.is_file() and is_module(path) and not any(path.samefile(executable) for executable in executables)):
+            unwrap_or_copy(module, source / directory / module.name)
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)
+
+
+def path_locations(path):
+    return (Path(os.path.abspath(path)), comparison_path(path))
+
+
+def linked_path(path):
+    return path.is_symlink() or (os.name == "nt" and path.exists() and
+                                 path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+class PathChecks:
+    def __init__(self):
+        self.identities = {}
+        self.ancestors = {}
+        self.directories = {}
+
+    def identity(self, path):
+        key = path.parts
+        if key not in self.identities:
+            try:
+                info = path.stat()
+            except (FileNotFoundError, NotADirectoryError):
+                self.identities[key] = None
+            else:
+                self.identities[key] = (info.st_dev, info.st_ino)
+        return self.identities[key]
+
+    def directory(self, path):
+        key = path.parts
+        if key not in self.directories:
+            try:
+                if sys.platform == "linux":
+                    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                    try:
+                        info = os.fstat(descriptor)
+                        try:
+                            fields = Path(f"/proc/self/fdinfo/{descriptor}").read_text(encoding="ascii").splitlines()
+                        except (OSError, UnicodeError) as error:
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required") from error
+                        mounts = [line.split()[1:] for line in fields if line.startswith("mnt_id:")]
+                        if len(mounts) != 1 or len(mounts[0]) != 1 or not mounts[0][0].isdigit():
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required")
+                        mount = int(mounts[0][0])
+                    finally:
+                        os.close(descriptor)
+                else:
+                    info = path.stat()
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise NotADirectoryError(str(path))
+                    mount = None
+            except (FileNotFoundError, NotADirectoryError):
+                if path.is_dir():
+                    raise ValueError(f"cannot inspect directory {path}; readable /proc/self/fdinfo is required")
+                self.directories[key] = None
+            else:
+                identity = (info.st_dev, info.st_ino)
+                self.identities[key] = identity
+                self.directories[key] = (identity, mount)
+        return self.directories[key]
+
+    def contains(self, directory, path):
+        if path.parts[:len(directory.parts)] == directory.parts:
+            return True
+        identity = self.identity(directory)
+        if identity is None:
+            return False
+        key = path.parts
+        if key not in self.ancestors:
+            self.ancestors[key] = {self.identity(parent) for parent in (path, *path.parents)}
+        return identity in self.ancestors[key]
+
+    def same(self, first, second):
+        identity = self.identity(first)
+        return first.parts == second.parts or (identity is not None and identity == self.identity(second))
+
+
+def check_work_directories(work, output, protected, checks):
+    previous = checks.directory(output)
+    for path in (work.parent, work):
+        current = checks.directory(path)
+        if current is not None and previous is not None and (
+                current[0][0] != previous[0][0] or current[1] != previous[1] or os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if current is not None:
+            previous = current
+    root = checks.directory(work)
+    if root is None:
+        return
+    pending = [work]
+    visited = {}
+    while pending:
+        path = pending.pop()
+        directory = checks.directory(path)
+        if directory is None:
+            continue
+        identity, mount = directory
+        if identity[0] != root[0][0] or mount != root[1] or (path != work and os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if identity in protected:
+            raise ValueError(f"work directory {work} overlaps an input directory at {path}")
+        if directory in visited:
+            if mount is None and comparison_path(path).parts != comparison_path(visited[directory]).parts:
+                raise ValueError(f"ambiguous directory aliases in work directory {work}: {path}")
+            continue
+        visited[directory] = path
+        with os.scandir(path) as entries:
+            for entry in entries:
+                child = path / entry.name
+                if not linked_path(child) and entry.is_dir(follow_symlinks=False):
+                    pending.append(child)
+
+
+def validate_layout(args, found, ids, titles, source, platform, packages=None):
+    checks = PathChecks()
+    package_trees = list(packages) if packages is not None else [title["package"] for title in found.values()]
+    trees = list(package_trees)
+    files = [args.titles, args.build / "CMakeCache.txt"]
+    content = getattr(args, "content", None)
+    if content is not None:
+        files.extend(content / spec["content"] for title_id in ids
+                     for spec in titles.get(title_id, {}).get("files", {}).values() if "content" in spec)
+    if args.compare:
+        files.append(args.compare)
+    for title_id in ids:
+        for directory in module_dirs(titles.get(title_id, {})):
+            relative = PureWindowsPath(directory)
+            if relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe module directory for {title_id}: {directory!r}")
+        for executable in titles.get(title_id, {}).get("executables", []):
+            relative = PureWindowsPath(executable)
+            if not relative.parts or relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe executable path for {title_id}: {executable!r}")
+    for title_id, title in found.items():
+        package = title["package"]
+        files.append(package / "eboot.bin")
+        files.extend((package / "sce_module").glob("*.prx"))
+        files.extend(package / executable for executable in titles.get(title_id, {}).get("executables", []))
+    build_trees = [args.build / "core/relinker", args.build / "core/libs/libs"]
+    pending = [(tree, True) for tree in trees] + [(tree, False) for tree in build_trees]
+    visited = {}
+    protected_directories = set()
+    package_directories = set()
+    while pending:
+        tree, package = pending.pop()
+        directory = checks.directory(tree)
+        if directory is None:
+            continue
+        identity, mount = directory
+        key = (directory, package)
+        if key in visited:
+            if mount is None and comparison_path(tree).parts != comparison_path(visited[key]).parts:
+                raise ValueError(f"ambiguous input directory aliases: {tree}")
+            continue
+        visited[key] = tree
+        protected_directories.add(identity)
+        if package:
+            package_directories.add(identity)
+        with os.scandir(tree) as entries:
+            for entry in entries:
+                path = tree / entry.name
+                directory = entry.is_dir()
+                if linked_path(path):
+                    (trees if directory else files).append(path)
+                    if package and directory:
+                        package_trees.append(path)
+                if directory:
+                    pending.append((path, package))
+    trees.extend(build_trees)
+    if platform == "windows":
+        try:
+            runtime = windows_runtime(args.build)
+        except RuntimeError:
+            pass
+        else:
+            files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
+    directory_inputs = [(path, path_locations(path)) for path in trees]
+    file_inputs = [(path, path_locations(path)) for path in files]
+    containing_inputs = [(path, path_locations(path)) for path in (args.build, source, ROOT)]
+    for path in (args.build, source, ROOT, *(parent for path in files for parent in path.parents)):
+        identity = checks.identity(path)
+        if identity is not None:
+            protected_directories.add(identity)
+    output = path_locations(args.out)
+    if any(checks.identity(parent) in package_directories for destination in output for parent in (destination, *destination.parents)):
+        raise ValueError(f"output directory {args.out} overlaps an input package directory")
+    for path in package_trees:
+        locations = path_locations(path)
+        if any(checks.contains(origin, destination) for destination in output for origin in locations):
+            raise ValueError(f"output directory {args.out} overlaps input {path}")
+    for title_id in ids:
+        work = args.out / "work" / title_id
+        lock = work.with_suffix(".lock")
+        if linked_path(work) or linked_path(lock):
+            raise ValueError(f"unsafe linked work or lock path: {work}")
+        locations = path_locations(work)
+        if any(checks.contains(destination, origin) for destination in locations for origin in output):
+            raise ValueError(f"work directory {work} overlaps output directory {args.out}")
+        for path, origins in directory_inputs:
+            if any(checks.contains(origin, destination) or checks.contains(destination, origin)
+                   for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        for path, origins in [*file_inputs, *containing_inputs]:
+            if any(checks.contains(destination, origin) for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        lock_locations = path_locations(lock)
+        for path, origins in [*directory_inputs, *file_inputs, *containing_inputs]:
+            if any(checks.same(destination, origin) for destination in lock_locations for origin in origins):
+                raise ValueError(f"lock file {lock} overlaps input {path}")
+        check_work_directories(work, args.out, protected_directories, checks)
+
+
+def reset_work(work):
+    if linked_path(work):
+        raise OSError(f"unsafe linked work directory: {work}")
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+
+
+def prepare(title_id, found, entry, platform, build, work):
+    package = found["package"]
+    source = work / "input"
+    stage_inputs(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
@@ -366,10 +811,11 @@ if os.name == "nt":
 
 
 class Session:
-    def __init__(self, command, cwd, env, stdout, stderr, owned=None):
-        self.owned = os.path.normcase(os.path.abspath(owned or Path(command[0]).parent))
+    def __init__(self, command, cwd, env, stdout, stderr, owned=None, interactive=False):
+        self.owned = os.path.normcase(os.path.realpath(owned or Path(command[0]).parent))
         if os.name == "nt":
-            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
+                                            creationflags=0 if interactive else subprocess.CREATE_NO_WINDOW)
             self.handles, self.images = {}, {}
             self.job = kernel32.CreateJobObjectW(None, None)
             if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
@@ -377,9 +823,11 @@ class Session:
                 self.process.kill()
                 raise ctypes.WinError(error)
             self.placed = set()
-            ready = threading.Event()
-            threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
-            ready.wait()
+            self.watcher = None
+            if not interactive:
+                ready = threading.Event()
+                threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
+                ready.wait()
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
@@ -439,7 +887,7 @@ class Session:
     def image_path(self, handle):
         size = wintypes.DWORD(32768)
         buffer = ctypes.create_unicode_buffer(size.value)
-        return os.path.normcase(os.path.abspath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
+        return os.path.normcase(os.path.realpath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
 
     def exit_code(self):
         if os.name == "nt" and not self.process_ids():
@@ -472,7 +920,8 @@ class Session:
     def kill(self):
         if os.name == "nt":
             kernel32.TerminateJobObject(self.job, 1)
-            user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
+            if self.watcher is not None:
+                user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
         else:
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)
@@ -501,10 +950,12 @@ def collect_frames(work, destination):
 
 def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     run_dir.mkdir(parents=True)
+    (work / REPORT_FILE).unlink(missing_ok=True)
     inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE", "APS5_PAD_INPUT_FILE")}
-    env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
+    env = {**inherited, "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    env.setdefault("SDL_AUDIODRIVER", "dummy")
     pad_file, queued = work / "pad-input.txt", None
     if pad:
         pad_file.unlink(missing_ok=True)
@@ -532,14 +983,156 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     text = "".join((run_dir / name).read_text(encoding="utf-8", errors="replace") for name in ("stdout.log", "stderr.log"))
     summary_path = run_dir / "aps5-summary.jsonl"
     summary = read_summary(summary_path)
+    report = take_report(work, run_dir)
     frames = collect_frames(work, run_dir / "frames")
     uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
-            "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
+            "warnings": warning_counts(text), "frames": frames, "report": report, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
+
+
+def performance_phase(executable, work, env, console, seconds, pad=None, capture=None):
+    import performance_capture
+
+    pad_file, queued = work / "pad-input.txt", None
+    if pad:
+        pad_file.unlink(missing_ok=True)
+        env = dict(env, APS5_PAD_INPUT_FILE=str(pad_file))
+    session = Session([str(executable)], work, env, console.stdout, console.stderr, owned=work, interactive=True)
+    started = time.monotonic()
+    result = {"state": "pending", "reason": "capture window has not completed", "warnings": []}
+    requested_close, forced, exit_code = False, False, None
+    elapsed = 0
+    observed_processes = {session.process.pid}
+    try:
+        while session.alive() and time.monotonic() - started < seconds:
+            if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+                pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
+                queued = round(time.monotonic() - started, 1)
+            if capture:
+                result = performance_capture.inspect_capture(*capture, metadata_only=True)
+                if result["state"] != "pending":
+                    if result["state"] == "ready":
+                        captured = result["process_id"]
+                        if os.name == "nt":
+                            session.process_ids()
+                            for process, image in session.images.items():
+                                if image and image.startswith(session.owned + os.sep):
+                                    observed_processes.add(process)
+                        else:
+                            try:
+                                if os.getpgid(captured) == session.process.pid:
+                                    observed_processes.add(captured)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                    break
+            time.sleep(0.25)
+        alive = session.alive()
+        elapsed = round(time.monotonic() - started, 3)
+        exit_code = None if alive else session.exit_code()
+        if alive:
+            requested_close = True
+            session.close()
+            deadline = time.monotonic() + CLOSE_SECONDS
+            while session.alive() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            forced = session.alive()
+            if not forced:
+                exit_code = session.exit_code()
+    finally:
+        session.kill()
+    if capture:
+        if os.name == "nt":
+            for process, image in session.images.items():
+                if image and image.startswith(session.owned + os.sep):
+                    observed_processes.add(process)
+        result = performance_capture.inspect_capture(*capture)
+        if result["state"] == "pending":
+            result = dict(result, state="incomplete")
+        elif result["state"] == "complete":
+            if result["process_id"] not in observed_processes:
+                result = dict(result, state="invalid", reason="native trace process was not verified as an owned process")
+            else:
+                result["process_ownership"] = "verified"
+            if exit_code not in (None, 0):
+                result = dict(result, state="incomplete", reason="native process exited with a failure; trace evidence retained")
+            if forced:
+                result["warnings"].append("The owned native process required forced termination after capture.")
+    else:
+        result = {"state": "completed" if exit_code == 0 and not forced else "failed"}
+    return dict(result, seconds=elapsed, exit_code=exit_code,
+                cleanup={"close_requested": requested_close, "forced": forced}, pad_queued_s=queued)
+
+
+def run_performance_title(executable, work, run_dir, seconds, extra_env, window_kind, window,
+                          scene, warmup_seconds, title_id, content_version=None, pad=None, console=None):
+    import performance_capture
+    from performance_console import InteractiveConsole
+
+    run_dir.mkdir(parents=True)
+    warmup = run_dir / "warmup"
+    warmup.mkdir()
+    cache = work / "driver-cache"
+    settings = {"MESA_SHADER_CACHE_DIR": str(cache), "__GL_SHADER_DISK_CACHE_PATH": str(cache), **extra_env}
+    env, removed = performance_capture.clean_environment(os.environ, settings, run_dir, window_kind, window)
+    cache_settings = {name.upper(): value for name, value in env.items()}
+    if (cache_settings.get("ANYPS5_NO_SHADER_CACHE", "") not in ("", "0") or
+            cache_settings.get("MESA_SHADER_CACHE_DISABLE", "").lower() in ("1", "true") or
+            cache_settings.get("__GL_SHADER_DISK_CACHE") == "0"):
+        raise ValueError("clean performance capture requires enabled shader caches; remove cache-disabling settings")
+    warmup_env = dict(env, APS5_TRACE_DIR=str(warmup))
+    warmup_env.pop("APS5_TRACE_FRAMES", None)
+    warmup_env.pop("APS5_TRACE_SECONDS", None)
+    restarted = False
+    try:
+        with contextlib.ExitStack() as resources:
+            if console is None:
+                console = resources.enter_context(InteractiveConsole())
+            warmed = performance_phase(executable, work, warmup_env, console, warmup_seconds, pad)
+            if warmed["state"] == "failed":
+                result = {"state": "incomplete", "reason": "warm-up failed", "warnings": []}
+            else:
+                restarted = True
+                result = performance_phase(executable, work, env, console, seconds, pad,
+                                           (run_dir, window_kind, window, title_id, content_version))
+            result.update(console=console.provenance, warmup=warmed)
+    except BaseException as error:
+        result = {"state": "incomplete", "reason": "interrupted" if isinstance(error, KeyboardInterrupt)
+                  else "capture failed: " + type(error).__name__}
+        (run_dir / "capture.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        raise
+    result.update(scene={"description": scene, "source": "operator", "verified": False},
+                  removed_instrumentation=removed, cache={"directory": str(cache), "retained_across_restart": restarted,
+                                                        "scene_warmed_verified": False})
+    (run_dir / "capture.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    return result
+
+
+def validate_performance_args(parser, args):
+    import performance_capture
+
+    window = args.trace_frames or args.trace_seconds
+    if args.profile != "performance":
+        if window or args.scene is not None or args.warmup_seconds is not None:
+            parser.error("capture windows, --scene and --warmup-seconds require --profile performance")
+        return
+    if not window:
+        parser.error("--profile performance requires --trace-frames or --trace-seconds")
+    if len(args.ids) != 1:
+        parser.error("--profile performance requires exactly one title ID")
+    if not args.scene or not args.scene.strip() or len(args.scene) > 1024:
+        parser.error("--profile performance requires a nonempty --scene of at most 1024 characters")
+    if args.compare or args.json or args.smoke:
+        parser.error("--profile performance cannot be combined with --compare, --json or --smoke")
+    try:
+        args.capture_window = performance_capture.parse_window(window)
+    except ValueError as error:
+        parser.error(str(error))
+    args.capture_kind = "frames" if args.trace_frames else "seconds"
+    args.warmup_seconds = args.warmup_seconds or 60
 
 
 def source_root(build):
@@ -552,7 +1145,13 @@ def source_root(build):
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
+    try:
+        done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    except OSError as error:
+        raise SystemExit(f"cannot run git {' '.join(args)} in {root}: {error}")
+    if done.returncode:
+        raise SystemExit(f"git {' '.join(args)} failed in {root} (exit {done.returncode}): {done.stderr.strip()}")
+    return done.stdout.strip()
 
 
 def positive(text):
@@ -573,45 +1172,86 @@ def write_summary(output, summary):
     (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
 
-def main(argv=None):
+def run_cli(argv, capture_resources):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--runs", type=positive, default=2)
+    parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
+    parser.add_argument("--smoke", action="store_true", help="run the titles marked \"smoke\" in titles.json")
+    parser.add_argument("--profile", choices=("smoke", "performance"), default="smoke")
+    windows = parser.add_mutually_exclusive_group()
+    windows.add_argument("--trace-frames", metavar="START:COUNT")
+    windows.add_argument("--trace-seconds", metavar="START:LENGTH")
+    parser.add_argument("--scene", help="operator description of the scene used for warm-up and capture")
+    parser.add_argument("--warmup-seconds", type=positive, help="warm-up duration before each capture (default: 60)")
     args = parser.parse_args(argv)
-    args.out = args.out or args.build / "title-runs"
-    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    validate_performance_args(parser, args)
+    args.runs = args.runs or (1 if args.profile == "performance" else 2)
+    if args.smoke and args.ids:
+        parser.error("--smoke takes no title IDs")
+    args.out = args.out or args.build / ("performance-runs" if args.profile == "performance" else "title-runs")
+    if args.json and not args.compare:
+        parser.error("--json needs --compare")
+    try:
+        previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    except (OSError, ValueError) as error:
+        parser.error(f"--compare: {error}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
-    titles = load_titles(args.titles)
-    found = discover(args.games)
+    try:
+        titles = load_titles(args.titles)
+    except (OSError, ValueError) as error:
+        parser.error(f"--titles: {error}")
+    if args.smoke:
+        args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
+        if not args.ids:
+            raise SystemExit(f"no title in {args.titles} is marked smoke")
+    packages = []
+    found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    source = source_root(args.build)
+    try:
+        validate_layout(args, found, ids, titles, source, platform, packages=packages)
+    except (OSError, RuntimeError, ValueError) as error:
+        parser.error(f"unsafe title-run layout: {error}")
     locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
     if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
-    source = source_root(args.build)
     commit = git(source, "rev-parse", "--short", "HEAD")
-    output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    output = Path(tempfile.mkdtemp(prefix=f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}-", dir=args.out.resolve()))
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
+    if args.profile == "performance":
+        summary.update(profile="performance", format="anyps5-performance-capture/1", scene=args.scene,
+                       window={"kind": args.capture_kind, "spec": list(args.capture_window)})
+    progress = sys.stderr if args.json else sys.stdout
+    capture_console = None
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
         work = args.out.resolve() / "work" / title_id
         missing = []
+        try:
+            reset_work(work)
+        except OSError as error:
+            parser.error(f"cannot reset work directory {work}: {error}")
         try:
             executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
             missing = stage_files(entry.get("files", {}), work, args.content) if executable else []
@@ -620,31 +1260,70 @@ def main(argv=None):
             (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             executable = None
         if missing:
-            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", flush=True)
+            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", file=progress, flush=True)
         (output / title_id).mkdir(parents=True, exist_ok=True)
         shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
         for number in range(1, args.runs + 1):
+            if args.profile == "performance" and executable is None:
+                failed = {"state": "incomplete", "reason": "title conversion failed", "warnings": [],
+                          "relink_log": "../relink.log"}
+                destination = output / title_id / f"run{number}"
+                destination.mkdir()
+                (destination / "capture.json").write_text(json.dumps(failed, indent=2) + "\n", encoding="utf-8")
+                runs.append({"run": number, **failed})
+                print(f"{title_id} capture{number}: incomplete", file=progress, flush=True)
+                continue
             if executable is None:
                 log = (work / "relink.log").read_text(encoding="utf-8", errors="replace")
                 result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
                           "first_error": first_error(log) or last_line(log),
-                          "warnings": {}, "frames": []}
+                          "warnings": {}, "frames": [], "report": None}
+            elif args.profile == "performance":
+                try:
+                    if capture_console is None:
+                        from performance_console import InteractiveConsole
+                        capture_console = capture_resources.enter_context(InteractiveConsole())
+                    result = run_performance_title(executable, work, output / title_id / f"run{number}", seconds,
+                        entry.get("env", {}), args.capture_kind, args.capture_window, args.scene,
+                        args.warmup_seconds, title_id, found[title_id]["version"], entry.get("pad"), console=capture_console)
+                except (OSError, RuntimeError, ValueError) as error:
+                    result = {"state": "invalid", "reason": str(error), "warnings": []}
+                    destination = output / title_id / f"run{number}"
+                    destination.mkdir(exist_ok=True)
+                    report = destination / "capture.json"
+                    if not report.exists():
+                        report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                runs.append({"run": number, **result})
+                print(f"{title_id} capture{number}: {result['state']}", file=progress, flush=True)
+                continue
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
                 for key in ("os", "gpu", "driver", "cpu"):
                     value = result.pop(key)
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
-            print(f"{title_id} run{number}: {result['outcome']}", flush=True)
+            print(f"{title_id} run{number}: {result['outcome']}", file=progress, flush=True)
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
+    if args.profile == "performance":
+        print(f"written to {output}", file=progress)
+        return 0 if all(run.get("state") == "complete" for title in summary["titles"].values()
+                        for run in title["runs"]) else 1
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")
-    print(report)
-    print(f"written to {output}")
+    if args.json:
+        print(compare_json(summary, previous))
+    else:
+        print(report)
+    print(f"written to {output}", file=progress)
     return 0
+
+
+def main(argv=None):
+    with contextlib.ExitStack() as resources:
+        return run_cli(argv, resources)
 
 
 if __name__ == "__main__":

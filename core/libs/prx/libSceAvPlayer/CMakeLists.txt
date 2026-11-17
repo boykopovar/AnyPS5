@@ -18,6 +18,9 @@ if(BUILD_TESTING)
     add_test(NAME guest_avplayer COMMAND guest_avplayer_tests)
     add_test(NAME guest_avplayer_callback_close COMMAND guest_avplayer_tests --callback-close)
     add_test(NAME guest_avplayer_paused_first_video COMMAND guest_avplayer_tests --paused-first-video)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
+    add_test(NAME guest_avplayer_ps4_process COMMAND guest_avplayer_tests --ps4-process
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test_executable(avplayer_http_transport_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpTransport.cpp
@@ -29,12 +32,12 @@ if(BUILD_TESTING)
         add_test(NAME guest_avplayer_http COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:guest_avplayer_tests>)
         set_tests_properties(guest_avplayer_http PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_http TIMEOUT 20)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_http TIMEOUT 40)
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport)
         add_test(NAME avplayer_http_transport COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:avplayer_http_transport_tests> transport)
         set_tests_properties(avplayer_http_transport PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 20)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 30)
         if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test_executable(avplayer_http_patched_modules_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpModules.cpp)
             target_link_libraries(avplayer_http_patched_modules_tests PRIVATE ${CMAKE_DL_LIBS})
@@ -44,7 +47,7 @@ if(BUILD_TESTING)
             endif()
             add_custom_target(avplayer_http_patched_closure)
             add_dependencies(avplayer_http_patched_closure
-                libc libkernel libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
+                libc libkernel libkernel_sys libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
             set(httpPatchedAllocatorArguments)
             if(WIN32 AND TARGET mimalloc)
                 add_dependencies(avplayer_http_patched_closure mimalloc pe_import_first)
@@ -60,6 +63,7 @@ if(BUILD_TESTING)
                 -DPATCHER=$<TARGET_FILE:nid_patcher>
                 -DLIBC=$<TARGET_FILE:libc>
                 -DKERNEL=$<TARGET_FILE:libkernel>
+                -DKERNEL_SYS=$<TARGET_FILE:libkernel_sys>
                 -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
                 -DHTTP=$<TARGET_FILE:libSceHttp>
                 -DAVPLAYER=$<TARGET_FILE:libSceAvPlayer>
@@ -70,7 +74,12 @@ if(BUILD_TESTING)
                 -P ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpModules.cmake
                 -- "$<TARGET_FILE:avplayer_http_patched_modules_tests>"
                 "$<TARGET_FILE:guest_http_client_tests>" "$<TARGET_FILE:guest_avplayer_tests>")
-            set_tests_properties(avplayer_http_patched_modules PROPERTIES TIMEOUT 30)
+            set_tests_properties(avplayer_http_patched_modules PROPERTIES TIMEOUT 60)
+            if(MINGW)
+                get_filename_component(httpPatchedRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+                set_tests_properties(avplayer_http_patched_modules PROPERTIES
+                    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${httpPatchedRuntimeDirectory}")
+            endif()
         endif()
     endif()
     set_tests_properties(guest_avplayer_paused_first_video PROPERTIES

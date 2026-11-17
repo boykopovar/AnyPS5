@@ -1,0 +1,15 @@
+add_library(libSceGifParser SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceGifParser PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceGifParser)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gif_parser_tests ${LIBS_INCLUDE_DIR}/tests/GuestGifParser.cpp)
+    target_include_directories(guest_gif_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gif_parser_tests PRIVATE libSceGifParser libc)
+    configure_windows_unwind(guest_gif_parser_tests)
+    add_test(NAME guest_gif_parser COMMAND guest_gif_parser_tests)
+    if(WIN32)
+        set_tests_properties(guest_gif_parser PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGifParser>")
+    endif()
+endif()
