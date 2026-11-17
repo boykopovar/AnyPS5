@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #ifdef __linux__
 #include <sys/uio.h>
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #elif defined(__APPLE__)
 #include <mach/mach.h>
@@ -97,6 +98,9 @@ bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bo
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
     const int saved = errno;
@@ -883,6 +887,9 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     std::memcpy(destination, source, bytes);
     return true;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
     const int saved = errno;
@@ -961,6 +968,12 @@ extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t des
     for (std::size_t row = 0; row < rows; ++row)
         if (!GuestCopyOut_nid_no_patch(target + row * destinationPitch, from + row * sourcePitch, rowBytes)) return false;
     return true;
+#endif
+}
+
+extern "C" void GuestFaultCopyReinstall_nid_no_patch() {
+#if defined(__linux__) && defined(__x86_64__)
+    GuestFaultCopy::Reinstall();
 #endif
 }
 
