@@ -103,6 +103,9 @@ int main() {
     memory.free = Release;
     void* block = nullptr;
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, &block) == 0);
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, reinterpret_cast<void**>(std::uintptr_t{0x10})) == 6);
+    REQUIRE(errno == 71);
     REQUIRE(block != nullptr);
     sceFreeTypeOlFree_nid_postfix(&memory, &block);
     REQUIRE(block == nullptr);
