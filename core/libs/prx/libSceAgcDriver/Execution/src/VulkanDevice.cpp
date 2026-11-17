@@ -4711,6 +4711,7 @@ void VulkanDevice::PrimeBindlessDraw(std::span<const std::shared_ptr<const Shade
 
 void VulkanDevice::BindlessPresentWait() {
     if (!state->textureService || !state->recorder) return;
+    if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("bindless present wait under the GPU lock");
     PerformanceTimer timing("Vulkan.BindlessPresentWait");
     const auto started = std::chrono::steady_clock::now();
     std::uint64_t serial = 0;
