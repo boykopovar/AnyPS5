@@ -15,17 +15,7 @@ constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
-}
-
-extern "C" {
-
-int APS5_VABI sceNpFriendListDialogInitialize(void) {
-    int expected = COMMON_DIALOG_STATUS_NONE;
-    if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_INITIALIZED)) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
-    return 0;
-}
-
-int APS5_VABI sceNpFriendListDialogOpenA(const void* param) {
+int OpenDialog(const void* param) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
@@ -40,15 +30,7 @@ int APS5_VABI sceNpFriendListDialogOpenA(const void* param) {
     return 0;
 }
 
-int APS5_VABI sceNpFriendListDialogUpdateStatus(void) {
-    return g_status.load();
-}
-
-int APS5_VABI sceNpFriendListDialogGetStatus(void) {
-    return g_status.load();
-}
-
-int APS5_VABI sceNpFriendListDialogGetResultA(void* result) {
+int ReadResult(void* result) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
@@ -59,6 +41,32 @@ int APS5_VABI sceNpFriendListDialogGetResultA(void* result) {
     errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceNpFriendListDialogInitialize(void) {
+    int expected = COMMON_DIALOG_STATUS_NONE;
+    if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_INITIALIZED)) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    return 0;
+}
+
+int APS5_VABI sceNpFriendListDialogOpenA(const void* param) {
+    return OpenDialog(param);
+}
+
+int APS5_VABI sceNpFriendListDialogUpdateStatus(void) {
+    return g_status.load();
+}
+
+int APS5_VABI sceNpFriendListDialogGetStatus(void) {
+    return g_status.load();
+}
+
+int APS5_VABI sceNpFriendListDialogGetResultA(void* result) {
+    return ReadResult(result);
 }
 
 int APS5_VABI sceNpFriendListDialogClose(void) {
@@ -72,14 +80,12 @@ int APS5_VABI sceNpFriendListDialogTerminate(void) {
     return 0;
 }
 
-int APS5_VABI sceNpFriendListDialogGetResult() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpFriendListDialogGetResult(void* result) {
+    return ReadResult(result);
 }
 
-int APS5_VABI sceNpFriendListDialogOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpFriendListDialogOpen(const void* param) {
+    return OpenDialog(param);
 }
 
 }
