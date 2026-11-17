@@ -349,5 +349,29 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
 
 
+    def test_refuses_malformed_fragment_structure(self):
+        entry = f"- [sceExampleD]({LINK}) (libSceExample) - returns 0"
+        cases = [
+            ("## remove [sceExampleC]\n", "changes/a.md:1: operation before a '# <library>' line"),
+            ("# libSceExample\n\nstray text\n", "changes/a.md:3: text outside an operation"),
+            ("# libSceExample\n\n### Silent stubs\n", "changes/a.md:3: expected '# <library>' or '## add|change|remove ...'"),
+            ("# libSceExample\n\n## add Silent stubs\n", "changes/a.md:3: 'add' takes one or more entries"),
+            (f"# libSceExample\n\n## change [sceExampleC]\n\n{entry}\n{entry}\n", "changes/a.md:3: 'change' takes one entry"),
+            (f"# libSceExample\n\n## remove [sceExampleC]\n\n{entry}\n", "changes/a.md:3: 'remove' takes no entry"),
+        ]
+        for text, message in cases:
+            with self.subTest(message=message):
+                self.fragment("a", text)
+                code, stdout, stderr = self.run_fold()
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn(message, stderr)
+                self.assertEqual(self.debt(), BASE)
+
+    def test_units_finds_bullet_entries_and_table_rows_but_not_headers(self):
+        text = "| Name | Note |\n| --- | --- |\n| a | one |\n\n- [x](y) - gap\n"
+        self.assertEqual(debt_fold.units(text), {3: "| a | one |", 5: "- [x](y) - gap"})
+
+
 if __name__ == "__main__":
     unittest.main()
