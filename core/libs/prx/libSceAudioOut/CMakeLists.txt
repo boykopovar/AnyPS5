@@ -307,6 +307,17 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out2_port_buffers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+    add_test_executable(audio_out2_mastering_state_tests tests/GuestAudioOut2MasteringState.cpp)
+    target_include_directories(audio_out2_mastering_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out2_mastering_state_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out2_mastering_state_tests)
+    add_test(NAME audio_out2_mastering_state COMMAND audio_out2_mastering_state_tests)
+    set_tests_properties(audio_out2_mastering_state PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(audio_out2_mastering_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out2_device_state_tests tests/AudioOut2DeviceState.cpp)
     target_include_directories(audio_out2_device_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out2_device_state_tests PRIVATE libSceAudioOut libc)

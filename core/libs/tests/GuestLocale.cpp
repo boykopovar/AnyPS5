@@ -628,12 +628,39 @@ static void CheckWideCtypeVtableObject() {
 }
 
 static void CheckCtypeVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt5ctypeIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    const auto& slots = _ZTVSt5ctypeIcE_nid_postfix;
+    Require(sizeof(slots) == 112 && slots[0] == 0 && slots[1] == 0);
+    for (std::size_t index = 2; index < std::size(slots); ++index) Require(slots[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::CtypeVtable*>(&slots[2]);
+    GuestLocale::CtypeFacet facet{};
+    facet.base = {&vtable->facet, 0, 0};
+    facet.classification = _Getpctype_nid_postfix();
+    facet.lower = _Getptolower_nid_postfix();
+    facet.upper = _Getptoupper_nid_postfix();
+    vtable->facet.retain(&facet.base);
+    Require(facet.base.references == 1);
+    Require(vtable->facet.release(&facet.base) == &facet.base && facet.base.references == 0);
+    using Scalar = char (APS5_VABI *)(const GuestLocale::CtypeFacet*, char);
+    using Range = const char* (APS5_VABI *)(const GuestLocale::CtypeFacet*, char*, const char*);
+    const auto tolower = reinterpret_cast<Scalar>(slots[6]);
+    const auto tolowerRange = reinterpret_cast<Range>(slots[7]);
+    const auto toupper = reinterpret_cast<Scalar>(slots[8]);
+    const auto toupperRange = reinterpret_cast<Range>(slots[9]);
+    Require(tolower(&facet, 'Q') == 'q' && tolower(&facet, '[') == '[' && toupper(&facet, 'q') == 'Q' && toupper(&facet, '7') == '7');
+    char text[] = "Mixed Case 42!";
+    const char* end = text + std::strlen(text);
+    Require(tolowerRange(&facet, text, end) == end && std::strcmp(text, "mixed case 42!") == 0);
+    Require(toupperRange(&facet, text, end) == end && std::strcmp(text, "MIXED CASE 42!") == 0);
+    Require(vtable->widen(&facet.base, 'x') == 'x' && vtable->narrow(&facet.base, '\xe4', '?') == '\xe4');
+    char copy[4] = {'#', '#', '#', '#'};
+    Require(vtable->widenRange(&facet.base, text, text + 3, copy) == text + 3 && std::memcmp(copy, "MIX#", 4) == 0);
+    Require(vtable->narrowRange(&facet.base, text + 1, text + 3, '?', copy) == text + 3 && std::memcmp(copy, "IXX#", 4) == 0);
+    vtable->facet.destroy(&facet.base);
+    Require(facet.classification == _Getpctype_nid_postfix());
+    auto* owned = static_cast<GuestLocale::CtypeFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CtypeFacet)));
+    *owned = facet;
+    vtable->facet.deleteObject(&owned->base);
+    RequireException([&] { vtable->facet.destroy(nullptr); });
 }
 
 static void CheckTimePutVtableObject() {

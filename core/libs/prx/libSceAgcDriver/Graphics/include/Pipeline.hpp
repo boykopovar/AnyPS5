@@ -82,6 +82,7 @@ private:
     void release() noexcept;
     void setLibraryState(CommandState& recording, const State& state) const;
     void setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const;
+    void setViewports(CommandState& recording, const State& state) const;
     Context context;
     std::vector<VkShaderModule> _modules;
     std::vector<ShaderRecompiler::StagePushPlacement> pushPlacements;
