@@ -339,6 +339,7 @@ public:
     static void FlushAllPending(const char* reason, VkDevice device = VK_NULL_HANDLE);
     static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device = VK_NULL_HANDLE);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
+    static void InstallUnwatchHook();
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
@@ -371,6 +372,9 @@ public:
     // it was then.
     static std::uint64_t PendingSerial();
     static bool PendingClearOnThread(std::uint64_t address, std::size_t bytes);
+    static std::uint64_t OwnPendingMoves();
+    static std::uint64_t OwnRefreshWork();
+    static void NoteRefreshWork();
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);
@@ -431,6 +435,10 @@ public:
     static bool OrderedFlushArmedForTest();
     // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
+    void NoteUsed() const {
+        if (!usedUnlisted.load(std::memory_order_relaxed)) usedUnlisted.store(true, std::memory_order_relaxed);
+    }
+    bool TakeUsed() const { return usedUnlisted.load(std::memory_order_relaxed) && usedUnlisted.exchange(false, std::memory_order_relaxed); }
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the
     // clear before the eviction's flush): what a lookup of its surface would return.
     bool Cached() const { return cached.load(std::memory_order_acquire); }
@@ -535,6 +543,7 @@ public:
     static std::uint64_t PaddingSeedCopies();
     static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
+    const char* RefreshObligation(std::uint32_t first = 0, std::uint32_t count = 0) const;
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
@@ -723,6 +732,7 @@ private:
     std::uint64_t advanceUnchanged(std::uint32_t unit, std::uint64_t to);
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
+    std::pair<std::uint32_t, std::uint32_t> refreshUnits(std::uint32_t first, std::uint32_t count) const;
     bool keysReplacedByClear() const;
     void takeRefreshProof(bool aliased);
     bool otherPendingOverlaps() const;
@@ -915,6 +925,7 @@ private:
     std::atomic<bool> cached{false};
     // The present a consumer last proved the image current at (NoteProved).
     mutable std::atomic<std::uint64_t> provedPresent{0};
+    mutable std::atomic<bool> usedUnlisted{false};
     // Hook skips of this image since FlushPending last listed it (AccessKeptByCpu), the read site
     // of the last one (a GuestMemory::ReadSite), and the first pending layer under its access with
     // the version and layer generation seen: a listing counts a flush after a skip only while that

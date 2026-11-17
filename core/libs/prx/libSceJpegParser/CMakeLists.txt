@@ -1,0 +1,15 @@
+add_library(libSceJpegParser SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceJpegParser PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceJpegParser)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_jpeg_parser_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegParser.cpp)
+    target_include_directories(guest_jpeg_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_parser_tests PRIVATE libSceJpegParser libc)
+    configure_windows_unwind(guest_jpeg_parser_tests)
+    add_test(NAME guest_jpeg_parser COMMAND guest_jpeg_parser_tests)
+    if(WIN32)
+        set_tests_properties(guest_jpeg_parser PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegParser>")
+    endif()
+endif()

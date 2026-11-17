@@ -159,6 +159,17 @@
  * written by Steven G. Kargl with input from Bruce D. Evans
  * and David A. Schultz.
  */
+/* Derived from FreeBSD lib/msun/src/e_hypotl.c (release/11.4.0) */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
 #include <array>
@@ -1112,7 +1123,13 @@ double APS5_VABI exp2_nid_postfix(double x) {
     }
     return r * std::bit_cast<double>(static_cast<std::uint64_t>(static_cast<std::uint32_t>(0x3ff00000 + k + (1000 << 20))) << 32) * twom1000;
 }
-double APS5_VABI ldexp_nid_postfix(double x, int exponent) { return std::ldexp(x, exponent); }
+double APS5_VABI ldexp_nid_postfix(double x, int exponent) {
+    if (!std::isfinite(x) || x == 0.0) return x;
+    const int saved_errno = errno;
+    const double result = std::scalbn(x, exponent);
+    errno = !std::isfinite(result) || result == 0.0 ? ERANGE : saved_errno;
+    return result;
+}
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
     const int saved_errno = errno;
     const double result = std::scalbn(x, exponent);
@@ -1171,10 +1188,21 @@ std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return RoundToInt64(x); }
 std::int64_t APS5_VABI llround_nid_postfix(double x) { return RoundToInt64(x); }
 std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return RoundToInt64(x); }
 std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
-int APS5_VABI __isfinitef_nid_postfix(float x) { return std::isfinite(x) ? 1 : 0; }
-int APS5_VABI __isnormal_nid_postfix(double x) { return std::isnormal(x) ? 1 : 0; }
-int APS5_VABI __isnormalf_nid_postfix(float x) { return std::isnormal(x) ? 1 : 0; }
-int APS5_VABI __isinff_nid_postfix(float x) { return std::isinf(x) ? 1 : 0; }
+int APS5_VABI __isfinitef_nid_postfix(float x) {
+    const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
+    return exponent != 0x7f800000u ? 1 : 0;
+}
+int APS5_VABI __isnormal_nid_postfix(double x) {
+    const auto exponent = std::bit_cast<std::uint64_t>(x) & 0x7ff0000000000000ull;
+    return exponent != 0 && exponent != 0x7ff0000000000000ull ? 1 : 0;
+}
+int APS5_VABI __isnormalf_nid_postfix(float x) {
+    const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
+    return exponent != 0 && exponent != 0x7f800000u ? 1 : 0;
+}
+int APS5_VABI __isinff_nid_postfix(float x) {
+    return (std::bit_cast<std::uint32_t>(x) & 0x7fffffffu) == 0x7f800000u ? 1 : 0;
+}
 long double APS5_VABI nearbyintl_nid_postfix(long double x) { return std::nearbyint(x); }
 
 double APS5_VABI cbrt_nid_postfix(double x) {
@@ -1393,9 +1421,51 @@ long double APS5_VABI acosl_nid_postfix(long double x) {
     const long double r = AsinNumerator(z) / AsinDenominator(z);
     return 2.0L * (high + (r * s + correction));
 }
-long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
-long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
-long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
+long double APS5_VABI acoshl_nid_postfix(long double x) {
+    constexpr long double Huge = 0x1p67L;
+    constexpr long double Ln2 = 0xb.17217f7d1cf79acp-4L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 2 || (kind == 1 && !std::signbit(x))) return x;
+    if (x < 1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (x == 1.0L) return 0.0L;
+    if (!(x < Huge)) return _LLog_nid_postfix(x, 0) + Ln2;
+    const long double t = -1.0L + x;
+    return log1pl_nid_postfix(sqrtl_nid_postfix(x * t + t) + t);
+}
+long double APS5_VABI asinhl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-66L;
+    constexpr long double Huge = 0x1p67L;
+    constexpr long double Ln2 = 0xb.17217f7d1cf79acp-4L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 1 || kind == 2) return x;
+    const long double a = x < 0.0L ? -x : x;
+    long double result;
+    if (a < Tiny) result = a;
+    else if (!(a < Huge)) result = _LLog_nid_postfix(a, 0) + Ln2;
+    else result = log1pl_nid_postfix(a / (sqrtl_nid_postfix(a * a + 1.0L) + 1.0L) * a + a);
+    return x < 0.0L ? -result : result;
+}
+long double APS5_VABI atanhl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-33L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 2) return x;
+    const long double a = x < 0.0L ? -x : x;
+    if (a > 1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (a == 1.0L) {
+        _Feraise_nid_postfix(0x04);
+        return x < 0.0L ? -std::numeric_limits<long double>::infinity() : std::numeric_limits<long double>::infinity();
+    }
+    if (-Tiny < a && a < Tiny) return x;
+    const long double q = a / (1.0L - a);
+    const long double result = log1pl_nid_postfix(q + q) * 0.5L;
+    return x < 0.0L ? -result : result;
+}
 long double APS5_VABI cbrtl_nid_postfix(long double x) {
     constexpr std::uint32_t B1 = 709958130;
     constexpr int Bias = 0x3fff;
@@ -1439,8 +1509,23 @@ long double APS5_VABI cbrtl_nid_postfix(long double x) {
     t = t + t * r;
     return t * scale;
 }
-long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
-long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
+long double APS5_VABI log1pl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-66L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 2 || (kind == 1 && !std::signbit(x))) return x;
+    if (x < -1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (x == -1.0L) {
+        _Feraise_nid_postfix(0x04);
+        return -std::numeric_limits<long double>::infinity();
+    }
+    if (-Tiny <= x && x < Tiny) return x;
+    const long double u = 1.0L + x;
+    const long double correction = ((u + -1.0L) - x) * (-1.0L / u);
+    return _LLog_nid_postfix(u, 0) + correction;
+}
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
@@ -1454,8 +1539,66 @@ double APS5_VABI tgamma_nid_postfix(double x) {
     return std::copysign(0.0, negative ? -1.0 : 1.0);
 }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
-    if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
-    return std::hypot(x, y);
+    constexpr int Scale = 0x2058;
+    constexpr std::uint64_t IntegerBit = 0x8000000000000000ull;
+    int ha = SplitExtended(x).signExponent & 0x7fff;
+    int hb = SplitExtended(y).signExponent & 0x7fff;
+    long double a = x;
+    long double b = y;
+    if (hb > ha) {
+        a = y;
+        b = x;
+        const int exponent = ha;
+        ha = hb;
+        hb = exponent;
+    }
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 71) return a + b;
+    int k = 0;
+    if (ha > 0x5ff3) {
+        if (ha == 0x7fff) {
+            const volatile long double difference = std::fabs(x + 0.0L) - std::fabs(y + 0.0L);
+            long double w = difference;
+            if (SplitExtended(a).mantissa == IntegerBit) w = a;
+            if (hb == 0x7fff && SplitExtended(b).mantissa == IntegerBit) w = b;
+            return w;
+        }
+        ha -= Scale;
+        hb -= Scale;
+        k += Scale;
+        a = JoinExtended(SplitExtended(a).mantissa, static_cast<std::uint16_t>(ha));
+        b = JoinExtended(SplitExtended(b).mantissa, static_cast<std::uint16_t>(hb));
+    }
+    if (hb < 0x200b) {
+        if (hb <= 0) {
+            if (SplitExtended(b).mantissa == 0) return a;
+            const volatile std::uint64_t scaleMantissa = 0x4000000000000000ull;
+            const long double t1 = JoinExtended(scaleMantissa, 0x7fff);
+            return t1 + t1;
+        } else {
+            ha += Scale;
+            hb += Scale;
+            k -= Scale;
+            a = JoinExtended(SplitExtended(a).mantissa, static_cast<std::uint16_t>(ha));
+            b = JoinExtended(SplitExtended(b).mantissa, static_cast<std::uint16_t>(hb));
+        }
+    }
+    long double w = a - b;
+    if (w > b) {
+        const long double t1 = ClearLowMantissaWord(a);
+        const long double t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const long double y1 = ClearLowMantissaWord(b);
+        const long double y2 = b - y1;
+        const long double t1 = ClearLowMantissaWord(a);
+        const long double t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k == 0) return w;
+    return JoinExtended(IntegerBit, static_cast<std::uint16_t>(0x3fff + k)) * w;
 }
 float APS5_VABI hypot3f_nid_postfix(float x, float y, float z) { return Hypot3(x, y, z, hypotf_nid_postfix); }
 double APS5_VABI hypot3_nid_postfix(double x, double y, double z) { return Hypot3(x, y, z, hypot_nid_postfix); }
@@ -4414,6 +4557,69 @@ static long double ExplMsun(long double x) {
     }
     return t * ExplPowerOfTwo(reduced.k + 10000) * ExplTwoPowerMinus10000;
 }
+static constexpr int Expm1lMantissaDigits = 64;
+static constexpr double Expm1lSeriesBound = 0.1659;
+static constexpr long double Expm1lB3 = 0xAAAAAAAAAAAAAAABp-66L;
+static constexpr long double Expm1lB4 = 0xAAAAAAAAAAAAAAACp-68L;
+static constexpr double Expm1lB5 = 8.3333333333333245e-3;
+static constexpr double Expm1lB6 = 1.3888888888888861e-3;
+static constexpr double Expm1lB7 = 1.9841269841532042e-4;
+static constexpr double Expm1lB8 = 2.4801587302069236e-5;
+static constexpr double Expm1lB9 = 2.7557316558468562e-6;
+static constexpr double Expm1lB10 = 2.7557315829785151e-7;
+static constexpr double Expm1lB11 = 2.5063168199779829e-8;
+static constexpr double Expm1lB12 = 2.0887164654459567e-9;
+
+static long double Expm1lSeries(long double x, int exponent) {
+    if (exponent < ExplBias - 74) return x == 0 ? x : (0x1p100 * x + std::fabs(x)) * 0x1p-100;
+    const long double x2 = x * x;
+    const long double x4 = x2 * x2;
+    const long double q = x4 * (x2 * (x4 * (x2 * Expm1lB12 + (x * Expm1lB11 + Expm1lB10)) + (x2 * (x * Expm1lB9 + Expm1lB8) + (x * Expm1lB7 + Expm1lB6))) + (x * Expm1lB5 + Expm1lB4)) + x2 * x * Expm1lB3;
+    const long double xHigh = static_cast<float>(x);
+    const long double xLow = x - xHigh;
+    const long double halfSquareHigh = xHigh * xHigh / 2;
+    const long double halfSquareLow = xLow * (x + xHigh) / 2;
+    if (exponent >= ExplBias - 7) return (halfSquareHigh + xHigh) + (halfSquareLow + xLow + q);
+    return x + (halfSquareLow + q + halfSquareHigh);
+}
+
+static long double Expm1lScaled(double hi, double lo, int k, long double q, long double r1) {
+    const long double t = static_cast<long double>(lo) + hi;
+    if (k == 0) return (hi - 1) + (lo * (r1 + 1) + t * q + hi * r1);
+    if (k == -1) return ((hi - 2) + (lo * (r1 + 1) + t * q + hi * r1)) / 2;
+    if (k < -7) return (hi + (lo + t * (q + r1))) * ExplPowerOfTwo(k) - 1;
+    if (k > 2 * Expm1lMantissaDigits - 1) {
+        const long double sum = hi + (lo + t * (q + r1));
+        return (k == 16384 ? sum * 2 * 0x1p16383L : sum * ExplPowerOfTwo(k)) - 1;
+    }
+    const long double twoPowerMinusK = ExplPowerOfTwo(-k);
+    if (k > Expm1lMantissaDigits - 1) return (hi + (lo - twoPowerMinusK + t * (q + r1))) * ExplPowerOfTwo(k);
+    return ((hi - twoPowerMinusK) + (lo + t * (q + r1))) * ExplPowerOfTwo(k);
+}
+
+static long double Expm1lGeneral(long double x) {
+    const long double fn = x * ExplInvL + 0x1.8p63 - 0x1.8p63;
+    const int n = static_cast<int>(fn);
+    const long double r1 = x - fn * ExplL1;
+    const long double r2 = fn * -ExplL2;
+    const long double r = r1 + r2;
+    const long double z = r * r;
+    const long double q = r2 + z * (ExplA2 + r * ExplA3) + z * z * (ExplA4 + r * ExplA5) + z * z * z * ExplA6;
+    const auto& entry = ExplTable[static_cast<unsigned>(n) % ExplIntervals];
+    return Expm1lScaled(entry.hi, entry.lo, n >> ExplLog2Intervals, q, r1);
+}
+
+static long double Expm1lMsun(long double x) {
+    const std::uint16_t signExponent = SplitExtended(x).signExponent;
+    const int exponent = signExponent & 0x7fff;
+    if (exponent >= ExplBias + 6) {
+        if (exponent == ExplBias + 16384) return (signExponent & 0x8000) != 0 ? -1 / x - 1 : x + x;
+        if (x > ExplOverflowThreshold) return ExplHuge * ExplHuge;
+        if ((signExponent & 0x8000) != 0) return ExplTiny + -1;
+    }
+    if (-Expm1lSeriesBound < x && x < Expm1lSeriesBound) return Expm1lSeries(x, exponent);
+    return Expm1lGeneral(x);
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinhl.c */
 static constexpr long double SinhlS3 = 1.66666666666666666658e-1L;
 static constexpr double SinhlS5 = 8.3333333333333332e-3;
@@ -4793,9 +4999,16 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
-int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
-int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
-int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }
+int APS5_VABI __isfinite_nid_postfix(double x) {
+    const auto exponent = std::bit_cast<std::uint64_t>(x) & 0x7ff0000000000000ull;
+    return exponent != 0x7ff0000000000000ull ? 1 : 0;
+}
+int APS5_VABI __isnan_nid_postfix(double x) {
+    return (std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull) > 0x7ff0000000000000ull ? 1 : 0;
+}
+int APS5_VABI __isinf_nid_postfix(double x) {
+    return (std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull) == 0x7ff0000000000000ull ? 1 : 0;
+}
 int APS5_VABI __signbit_nid_postfix(double x) { return std::signbit(x) ? 0x8000 : 0; }
 float APS5_VABI nanf_nid_postfix(const char* tagp) {
     (void)tagp;
@@ -5042,6 +5255,7 @@ long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
 long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
+long double APS5_VABI expm1l_nid_postfix(long double x) { return Expm1lMsun(x); }
 long double APS5_VABI erfl_nid_postfix(long double x) { return ErflMsun(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return ErfclMsun(x); }
 /*-
@@ -5257,7 +5471,9 @@ short APS5_VABI _Dsign_nid_postfix(double value) {
     return static_cast<short>((bits >> 48) & 0x8000u);
 }
 
-int APS5_VABI __isnanf_nid_postfix(float x) { return std::isnan(x) ? 1 : 0; }
+int APS5_VABI __isnanf_nid_postfix(float x) {
+    return (std::bit_cast<std::uint32_t>(x) & 0x7fffffffu) > 0x7f800000u ? 1 : 0;
+}
 int APS5_VABI isnanf_nid_postfix(float x) { return __isnanf_nid_postfix(x); }
 int APS5_VABI isnan_nid_postfix(double x) { return __isnan_nid_postfix(x); }
 int APS5_VABI isinf_nid_postfix(double x) { return __isinf_nid_postfix(x); }
@@ -5334,23 +5550,13 @@ double APS5_VABI _Sinh_nid_postfix(double x, double y) {
 }
 
 static double CoshProduct(double x, double y) {
-    if (!std::isfinite(x) || !std::isfinite(y)) return y * std::cosh(x);
-    if (y == 0.0) return std::copysign(0.0, y);
-    constexpr double Ln2High = 0x1.62e42fefa0000p-1;
-    constexpr double Ln2Low = 0x1.cf79abc9e3b3ap-40;
-    constexpr double InverseLn2 = 0x1.71547652b82fep+0;
-    const double magnitude = std::abs(x);
-    if (magnitude <= (std::numeric_limits<double>::max_exponent - 1) * (Ln2High + Ln2Low))
-        return y * std::cosh(x);
-    int scaleExponent;
-    const double scale = std::frexp(y, &scaleExponent);
-    constexpr int MaximumExponentSpan = std::numeric_limits<double>::max_exponent -
-        std::numeric_limits<double>::min_exponent + std::numeric_limits<double>::digits + 4;
-    if (magnitude > MaximumExponentSpan * (Ln2High + Ln2Low))
-        return std::scalbn(scale, INT_MAX);
-    const int exponent = static_cast<int>(magnitude * InverseLn2);
-    const double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
-    return std::scalbn(scale * (0.5 * std::exp(reduced)), scaleExponent + exponent);
+    if (std::isnan(x)) return x;
+    if (std::isnan(y)) return y;
+    if (y == 0.0 && std::isfinite(x)) return y;
+    double value = std::fabs(x);
+    const bool exponential = value >= 18.738;
+    _Exp_nid_postfix(&value, exponential ? y : 1.0, -1);
+    return exponential ? value : y * (value + 0.25 / value);
 }
 
 double APS5_VABI _Cosh_nid_postfix(double x, double y) {

@@ -236,8 +236,15 @@ def open_prs(base):
 
 
 def fetch(base, prs):
+    return fetch_heads(base_commit(base), prs)
+
+
+def base_commit(base):
+    return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
+
+
+def fetch_heads(base_sha, prs):
     remote = f"https://github.com/{REPO}.git"
-    base_sha = git("ls-remote", "--exit-code", remote, f"refs/heads/{base}").split()[0]
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
     for start in range(0, len(commits), FETCH_REFS):
         git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
@@ -620,7 +627,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed:
+        if confirmed or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -799,7 +806,8 @@ def main_status(names, ref):
         aliases = {canonical(item) for item in defined}
         for name in wanted & (aliases | ({nids[nid]} if nid in nids else set())):
             declared[name].setdefault(library, set()).update(aliases | {name})
-    scanned = {library: library_status(ref, library) for libraries in declared.values() for library in libraries if library}
+    libraries = {library for exports in declared.values() for library in exports if library}
+    scanned = {library: library_status(ref, library) for library in sorted(libraries)}
     status = {}
     for name, libraries in declared.items():
         status[name] = {}
@@ -833,6 +841,13 @@ def describe_failure(error):
     return f"pr_overlap: {command} failed with exit code {error.returncode}: {message}"
 
 
+def resolve_branch(name):
+    try:
+        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+    except subprocess.CalledProcessError:
+        raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
+
+
 def main(argv=None):
     global BASE_REF
     if hasattr(sys.stdout, "reconfigure"):
@@ -849,7 +864,7 @@ def main(argv=None):
     parser.add_argument("--names", nargs="+", metavar="NAME",
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
-    parser.add_argument("--jobs", type=int, default=4, help="number of pull request comparisons to run at once")
+    parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
@@ -859,7 +874,9 @@ def main(argv=None):
     try:
         REPO = args.repo or upstream()
         prs = open_prs(args.base)
-        BASE_REF = fetch(args.base, prs)
+        BASE_REF = base_commit(args.base)
+        branch_sha = resolve_branch(args.branch) if args.branch else None
+        fetch_heads(BASE_REF, prs)
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
             status = main_status(args.names, BASE_REF)
@@ -867,7 +884,7 @@ def main(argv=None):
             print(lookup_report(args.names, found, status, prs, blob), end="")
             return 0
         if args.branch:
-            sha = git("rev-parse", args.branch).strip()
+            sha = branch_sha
             prs = own(prs, sha)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
