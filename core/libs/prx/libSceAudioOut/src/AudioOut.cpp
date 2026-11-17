@@ -159,8 +159,8 @@ static bool ensureSdlAudio() {
     return true;
 }
 
-static const char* selectedOutputDevice(const char* requested) {
-    if (requested == nullptr || *requested == '\0') return nullptr;
+static std::string selectedOutputDevice(const char* requested) {
+    if (requested == nullptr || *requested == '\0') return SdlDefaultOutputDeviceName();
     const int count = SDL_GetNumAudioDevices(0);
     std::vector<std::string> names;
     for (int index = 0; index < count; ++index) {
@@ -171,7 +171,7 @@ static const char* selectedOutputDevice(const char* requested) {
     std::string listed;
     for (const auto& name : names) listed += "\n  " + name;
     APS5_LOG_OUT("AudioOut: ANYPS5_AUDIO_DEVICE '%s' is not an output device; using the default. Output devices:%s\n", requested, listed.c_str());
-    return nullptr;
+    return SdlDefaultOutputDeviceName();
 }
 
 struct DeviceSettings {
@@ -193,7 +193,8 @@ static SDL_AudioDeviceID openOutputDevice(const DeviceSettings& settings, SDL_Au
     desired.channels = static_cast<Uint8>(settings.channels);
     desired.samples = static_cast<Uint16>(settings.samplesNum);
     desired.callback = nullptr;
-    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE")), 0, &desired, &obtained, 0);
+    const auto name = selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE"));
+    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 0, &desired, &obtained, 0);
     if (device != 0) SDL_PauseAudioDevice(device, 0);
     return device;
 }
