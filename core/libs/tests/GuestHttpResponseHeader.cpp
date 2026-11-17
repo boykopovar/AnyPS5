@@ -1,5 +1,6 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -61,8 +62,39 @@ static void CheckGuardPage() {
     Require(sceHttpParseResponseHeader(header, text.size(), "not-present", &value, &length) == static_cast<int>(0x80432025));
     Require(value == header && length == 123);
     Require(sceHttpParseResponseHeader(pages + pageSize, 0, "x", &value, &length) == static_cast<int>(0x80432025));
+    errno = 71;
+    Require(sceHttpParseResponseHeader(header, text.size() + 1, "x", &value, &length) == static_cast<int>(0x80432060));
+    Require(errno == 71);
+    const auto* const unreadableField = pages + pageSize - 1;
+    Require(sceHttpParseResponseHeader("X: yes", 6, unreadableField, &value, &length) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
+    Require(sceHttpParseResponseHeader(header, text.size(), "x", reinterpret_cast<const char**>(pages + pageSize), &length) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
+    Require(sceHttpParseResponseHeader(header, text.size(), "x", &value, reinterpret_cast<std::size_t*>(pages + pageSize)) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
+    Require(sceHttpParseResponseHeader("X:\r\nY: z", 9, "x", reinterpret_cast<const char**>(pages + pageSize), &length) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
+    Require(sceHttpParseResponseHeader("X:\r\nY: z", 9, "x", &value, reinterpret_cast<std::size_t*>(pages + pageSize)) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
     pages[pageSize - 1] = 'X';
     Require(sceHttpParseResponseHeader(pages + pageSize - 1, 1, "x", &value, &length) == static_cast<int>(0x80432025));
+    pages[pageSize - 2] = 'X';
+    pages[pageSize - 1] = '\0';
+    Check("X: yes", pages + pageSize - 2, 3, "yes", 6);
+    const std::string longField(0xfff, 'A');
+    std::memcpy(pages + pageSize - longField.size(), longField.data(), longField.size());
+    const std::string longHeader = longField + ": yes";
+    Check(longHeader, pages + pageSize - longField.size(), 0x1001, "yes", static_cast<int>(longHeader.size()));
+#ifdef _WIN32
+    Require(VirtualProtect(pages, pageSize, PAGE_READONLY, &oldProtection) != 0);
+#else
+    Require(mprotect(pages, pageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceHttpParseResponseHeader("X: yes", 6, "x", reinterpret_cast<const char**>(pages), &length) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
+    Require(sceHttpParseResponseHeader("X: yes", 6, "x", &value, reinterpret_cast<std::size_t*>(pages)) == static_cast<int>(0x804321FE));
+    Require(errno == 71);
 #ifdef _WIN32
     Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
 #else
@@ -107,6 +139,15 @@ int main() {
     Require(sceHttpParseResponseHeader("X: yes", 6, "Longer-Field", &value, &length) == notFound);
     Require(sceHttpParseResponseHeader("X: yes", 6, "X:", &value, &length) == notFound);
     Require(value == marker && length == 456);
+
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(sceHttpParseResponseHeader(unreadable, 6, "X", &value, &length) == invalidResponse);
+    Require(value == marker && length == 456 && errno == 71);
+    Require(sceHttpParseResponseHeader("X: yes", 6, unreadable, &value, &length) == invalidValue);
+    Require(value == marker && length == 456 && errno == 71);
+    Require(sceHttpParseResponseHeader("Y: yes", 6, "X", reinterpret_cast<const char**>(0x10), reinterpret_cast<std::size_t*>(0x10)) == notFound);
+    Require(errno == 71);
 
     std::string field(0xfff, 'A');
     std::string header = field + ": value\n";
