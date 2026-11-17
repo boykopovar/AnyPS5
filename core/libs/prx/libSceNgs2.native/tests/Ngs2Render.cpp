@@ -1746,12 +1746,70 @@ static void TestMasteringEffectParams() {
     }
     for (const std::uint32_t enable : {1u, 2u, 0xffffffffu}) {
         Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LFE, enable, 40));
-        Require(EffectNotImplemented(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, enable, 0x3f800000));
+        Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 24, enable, 0x3f800000) == SCE_NGS2_OK);
     }
     Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
     Require(ControlMasteringEffect(master, SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER, 16, 0, 0x3f800000) == SCE_NGS2_OK);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
     Require(RenderMasteringEffects(true) == RenderMasteringEffects(false));
+}
+
+static void TestMasteringLimiter() {
+    constexpr auto limiter = SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER;
+    constexpr float threshold = 0.25f;
+    constexpr std::size_t numGrains = 4;
+    constexpr std::size_t channels = 2;
+    std::vector<std::int16_t> pcm(Grain * numGrains, 4096);
+    std::fill_n(pcm.begin(), Grain, 24576);
+    for (std::uint32_t i = 0; i < Grain; i++) {
+        pcm[Grain + i] = static_cast<std::int16_t>(24576.0 * std::sin(i * std::numbers::pi / 16.0));
+    }
+
+    const auto render = [&](bool enabled) {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, channels);
+        const auto source = Sampler(system, pcm, 0);
+        const std::array levels{1.0f, 0.125f};
+        Control(source, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, levels.size(), levels.data()});
+        Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+        Patch(source, master);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        if (enabled) Require(ControlMasteringEffect(master, limiter, 16, 1, std::bit_cast<std::uint32_t>(threshold)) == SCE_NGS2_OK);
+
+        std::vector<float> output(pcm.size() * channels);
+        for (std::size_t grain = 0; grain < numGrains; grain++) {
+            if (enabled && grain == 2) Require(ControlMasteringEffect(master, limiter, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
+            if (enabled && grain == 3) Require(ControlMasteringEffect(master, limiter, 16, 0, 0) == SCE_NGS2_OK);
+            const Ngs2RenderBufferInfo info{output.data() + grain * Grain * channels, Grain * channels * sizeof(float),
+                SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+            Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        }
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+        return output;
+    };
+
+    const auto dry = render(false);
+    const auto wet = render(true);
+    double gain = 1.0;
+    const std::size_t activeSamples = (numGrains - 1) * Grain;
+    for (std::size_t start = 0; start < activeSamples; start += 32) {
+        double peak = 0.0;
+        for (std::size_t i = 0; i < 32 * channels; i++) {
+            peak = std::max(peak, std::abs(static_cast<double>(dry[start * channels + i])));
+        }
+        const double target = peak > threshold ? threshold / peak : 1.0;
+        const double timeSamples = target < gain ? 480.0 : 4800.0;
+        const double initialGain = gain;
+        for (std::size_t i = 0; i < 32; i++) {
+            gain = target + (initialGain - target) * std::exp(-static_cast<double>(i + 1) / timeSamples);
+            for (std::size_t channel = 0; channel < channels; channel++) {
+                const auto index = (start + i) * channels + channel;
+                Require(std::abs(wet[index] - dry[index] * gain) < 0.00003);
+            }
+        }
+        if (std::abs(gain - target) <= 0.01) gain = target;
+    }
+    Require(std::equal(wet.begin() + activeSamples * channels, wet.end(), dry.begin() + activeSamples * channels));
 }
 
 static void TestMasteringGainClampedLikePs5() {
@@ -3692,7 +3750,10 @@ int main() {
     TestMutedPatchCycleRenders();
 
     TestMasteringGain();
-    if (!Ps4Library) TestMasteringEffectParams();
+    if (!Ps4Library) {
+        TestMasteringEffectParams();
+        TestMasteringLimiter();
+    }
     TestMatrixLevelClamp();
 
     if (!Ps4Library) TestPortVolumeClampedLikePs5();
