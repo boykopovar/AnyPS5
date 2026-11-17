@@ -555,8 +555,13 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                 const auto tailBytes = end - address;
                 bool tailHasFsPrefix = false;
                 for (auto probe = address; probe < end; ++probe) {
-                    if (bytes[offset + probe - begin] == 0x64) {
+                    const auto b = bytes[offset + probe - begin];
+                    if (b == 0x64) {
                         tailHasFsPrefix = true;
+                        break;
+                    }
+                    if (b != 0x66 && b != 0x67 && b != 0xf0 && b != 0xf2 && b != 0xf3 &&
+                        b != 0x2e && b != 0x36 && b != 0x3e && b != 0x26 && (b < 0x40 || b > 0x4f)) {
                         break;
                     }
                 }
@@ -740,12 +745,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             bool spanHasFsPrefix = false;
             if (const auto* header = findCodeHeader(address)) {
                 const auto base = header->Offset + address - header->MappedAddress;
-                for (auto probe = base; probe < base + (spanEnd - address) && probe < bytes.size(); ++probe) {
-                    if (bytes[probe] == 0x64) {
-                        spanHasFsPrefix = true;
-                        break;
-                    }
-                }
+                try {
+                    const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                    if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                } catch (const Codegen::CodegenException&) {}
             }
             if (!spanHasFsPrefix) {
                 const auto previous = std::lower_bound(instructions.begin(), instructions.end(), address);
@@ -753,7 +756,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     const auto previousStart = *std::prev(previous);
                     if (const auto* header = findCodeHeader(previousStart)) {
                         const auto base = header->Offset + previousStart - header->MappedAddress;
-                        if (decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base).SegmentPrefix == 0x64) spanHasFsPrefix = true;
+                        try {
+                            const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                            if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                        } catch (const Codegen::CodegenException&) {}
                     }
                 }
             }
