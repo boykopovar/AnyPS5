@@ -179,6 +179,10 @@ int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string
             return -1;
         }
         char answer = '\0';
+        std::string accepted;
+        std::string cancelled;
+        bool haveAccepted = false;
+        bool haveCancelled = false;
         for (const char character : text) {
             if (!haveAccepted) {
                 accepted = GuestText(Characters(entry.data.booleanData.okCharacters, __func__), __func__, "characters");
