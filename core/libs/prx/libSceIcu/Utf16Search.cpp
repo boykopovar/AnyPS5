@@ -89,23 +89,46 @@ std::int32_t Compare(const char16_t* first, const char16_t* second, std::int32_t
 
 } // namespace
 
+namespace Icu {
+
+void MoveGuestUnits(char16_t* destination, const char16_t* source, std::size_t count, const char* function) {
+    const auto to = reinterpret_cast<std::uintptr_t>(destination);
+    const auto from = reinterpret_cast<std::uintptr_t>(source);
+    if (count > (UINTPTR_MAX - (std::max)(to, from)) / sizeof(char16_t)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const bool backward = to > from && to - from < count * sizeof(char16_t);
+    char16_t chunk[GuestChunkUnits];
+    for (std::size_t done = 0; done < count;) {
+        const auto units = (std::min)(count - done, GuestChunkUnits);
+        const auto offset = backward ? count - done - units : done;
+        if (!GuestCopyIn_nid_no_patch(chunk, source + offset, units * sizeof(char16_t)) ||
+            !GuestCopyOut_nid_no_patch(destination + offset, chunk, units * sizeof(char16_t)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        done += units;
+    }
+}
+
+} // namespace Icu
+
 extern "C" {
 
 char16_t* APS5_VABI u_memmove_nid_postfix(char16_t* destination, const char16_t* source, std::int32_t count) {
     if (count <= 0) return destination;
     if (!destination || !source) NotImplemented_nid_no_patch(__func__);
-    std::u16string units(static_cast<std::size_t>(count), 0);
-    const auto bytes = units.size() * sizeof(char16_t);
-    if (!GuestCopyIn_nid_no_patch(units.data(), source, bytes) || !GuestCopyOut_nid_no_patch(destination, units.data(), bytes))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    Icu::MoveGuestUnits(destination, source, static_cast<std::size_t>(count), __func__);
     return destination;
 }
 
 char16_t* APS5_VABI u_memset_nid_postfix(char16_t* destination, char16_t value, std::int32_t count) {
     if (count <= 0) return destination;
     if (!destination) NotImplemented_nid_no_patch(__func__);
-    const std::u16string units(static_cast<std::size_t>(count), value);
-    if (!GuestCopyOut_nid_no_patch(destination, units.data(), units.size() * sizeof(char16_t))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto total = static_cast<std::size_t>(count);
+    char16_t chunk[Icu::GuestChunkUnits];
+    std::fill_n(chunk, (std::min)(total, Icu::GuestChunkUnits), value);
+    for (std::size_t done = 0; done < total;) {
+        const auto units = (std::min)(total - done, Icu::GuestChunkUnits);
+        if (!GuestCopyOut_nid_no_patch(destination + done, chunk, units * sizeof(char16_t))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        done += units;
+    }
     return destination;
 }
 

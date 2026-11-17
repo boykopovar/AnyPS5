@@ -80,10 +80,7 @@ char16_t* APS5_VABI u_strncat_nid_postfix(char16_t* destination, const char16_t*
 char16_t* APS5_VABI u_memcpy_nid_postfix(char16_t* destination, const char16_t* source, std::int32_t count) {
     if (count > 0) {
         if (!destination || !source) NotImplemented_nid_no_patch(__func__);
-        std::u16string units(static_cast<std::size_t>(count), 0);
-        const auto bytes = units.size() * sizeof(char16_t);
-        if (!GuestCopyIn_nid_no_patch(units.data(), source, bytes) || !GuestCopyOut_nid_no_patch(destination, units.data(), bytes))
-            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        Icu::MoveGuestUnits(destination, source, static_cast<std::size_t>(count), __func__);
     }
     return destination;
 }
