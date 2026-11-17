@@ -447,7 +447,18 @@ private:
         std::atomic<std::uint64_t> reference{0};
         std::atomic<std::uint64_t> mask{0};
         std::atomic<std::uint64_t> shape{0};
+        std::atomic<std::uint64_t> generation{0};
     };
+    struct AwaitedFields {
+        std::uint64_t address;
+        std::uint64_t reference;
+        std::uint64_t mask;
+        std::uint64_t shape;
+        std::uint64_t generation;
+    };
+    static std::optional<AwaitedFields> readAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    static bool awaitedUnchanged(const AwaitedSlot& slot, const AwaitedFields& fields);
+    static bool awaitedSatisfied(const AwaitedFields& fields);
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
     std::atomic<bool> tracksTails{false};
     std::mutex tailsMutex;
@@ -455,6 +466,7 @@ private:
     void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
+    void noteRewindWaitFields(std::uint32_t queue);
     std::atomic<bool> captureHold{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
