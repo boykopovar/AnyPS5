@@ -2,6 +2,8 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "tests/FontFixture.hpp"
 #include <array>
 #include <cerrno>
@@ -959,6 +961,105 @@ int main() {
     FontHandle fileHandle = nullptr;
     Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, &fileHandle) == SCE_FONT_OK && fileHandle != nullptr);
     Require(sceFontCloseFont(fileHandle) == SCE_FONT_OK);
+    errno = EBUSY;
+    Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, reinterpret_cast<FontHandle*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+    errno = EBUSY;
+    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, reinterpret_cast<FontHandle*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+    {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        const std::size_t page = info.dwPageSize;
+        auto* roSlot = static_cast<FontHandle*>(VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(roSlot != nullptr);
+        *roSlot = nullptr;
+        DWORD previous = 0;
+        Require(VirtualProtect(roSlot, page, PAGE_READONLY, &previous) != 0);
+#else
+        const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        auto* roSlot = static_cast<FontHandle*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(roSlot != MAP_FAILED);
+        *roSlot = nullptr;
+        Require(mprotect(roSlot, page, PROT_READ) == 0);
+#endif
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            errno = EBUSY;
+            Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, roSlot) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+        }
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            errno = EBUSY;
+            Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, roSlot) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+        }
+        fileHandle = nullptr;
+        Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, &fileHandle) == SCE_FONT_OK && fileHandle != nullptr);
+        Require(sceFontCloseFont(fileHandle) == SCE_FONT_OK);
+#ifdef _WIN32
+        Require(VirtualFree(roSlot, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(roSlot, page) == 0);
+#endif
+    }
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const mapped = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        Require(mapped != nullptr);
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr);
+        GuestArena::GuestArenaMap_nid_postfix(mapped, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watched = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(mapped, kArenaBytes, 0x04, kArenaBytes);
+        const bool watched = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, kArenaBytes);
+#endif
+        auto* const watchedHandle = reinterpret_cast<FontHandle*>(mapped);
+        const auto collectDirty = [&]() -> bool {
+            if (!watched) return true;
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, pages.data(), &count, true));
+            return count != 0;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty));
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&]() {
+            if (!watched) return;
+            Require(collectDirty());
+            Require(!collectDirty());
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(watchedHandle, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY);
+#endif
+        };
+        *watchedHandle = nullptr;
+        armWatch();
+        errno = EBUSY;
+        Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, watchedHandle) == SCE_FONT_OK && *watchedHandle != nullptr && errno == EBUSY);
+        Require(collectDirty());
+        Require(sceFontCloseFont(*watchedHandle) == SCE_FONT_OK);
+        {
+            const GuestArena::HostWrite access(watchedHandle, sizeof(*watchedHandle));
+            Require(access.Open());
+            *watchedHandle = nullptr;
+        }
+        armWatch();
+        errno = EBUSY;
+        Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, watchedHandle) == SCE_FONT_OK && *watchedHandle != nullptr && errno == EBUSY);
+        Require(collectDirty());
+        Require(sceFontCloseFont(*watchedHandle) == SCE_FONT_OK);
+#ifndef _WIN32
+        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, kArenaBytes);
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(mapped, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(mapped, kArenaBytes);
+    }
     RemovePathAlias_nid_no_patch("/font-test");
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
     Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
