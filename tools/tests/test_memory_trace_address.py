@@ -34,6 +34,32 @@ class ParseTests(FeatureRequired):
             (6, "map anon", 0x140000000, 0x1000),
         ])
 
+    def test_parses_every_operation_and_strips_line_endings(self):
+        events = trace.parse_events([
+            "[memory] remap fixed 0x10+0x20 prot=0x3
+",
+            "[memory] map direct 0x30+0x10
+",
+            "[memory] map file 0x40+0x10
+",
+            "[memory] map shared 0x50+0x10
+",
+            "[memory] reserve 0x60+0x10
+",
+            "[memory] unmap 0x70+0x10
+",
+        ])
+        self.assertEqual([event.operation for event in events],
+                         ["remap fixed", "map direct", "map file", "map shared", "reserve", "unmap"])
+        self.assertEqual(events[0].detail, "remap fixed 0x10+0x20 prot=0x3")
+
+    def test_ignores_unknown_operations_and_lines_without_the_prefix(self):
+        self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1
+", "map anon 0x1+0x1
+",
+                                             "[memory]map anon 0x1+0x1
+"]), [])
+
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
             trace.parse_events(["[memory] protect with a truncated record\n"])
@@ -50,6 +76,15 @@ class RangeTests(FeatureRequired):
                               ("0xffffffffffffffff", "2")):
             with self.subTest(address=address, size=size), self.assertRaises(ValueError):
                 trace.parse_range(address, size)
+
+
+class RangeErrorTests(FeatureRequired):
+    def test_reports_the_integer_format_error_for_non_numeric_input(self):
+        with self.assertRaisesRegex(ValueError, "decimal or 0x-prefixed integers"):
+            trace.parse_range("0x10", "zz")
+
+    def test_accepts_a_range_ending_exactly_at_the_64_bit_limit(self):
+        self.assertEqual(trace.parse_range("0xfffffffffffffff0", "0x10"), (0xfffffffffffffff0, 0x10))
 
 
 class SelectionTests(FeatureRequired):
@@ -91,6 +126,16 @@ class CliTests(FeatureRequired):
             self.assertIn("line 1: map anon", result.stdout)
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
+
+    def test_cli_rejects_a_non_positive_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] map anon 0x1000+0x1000
+", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000", "--limit", "0"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--limit must be positive", result.stderr)
 
     def test_cli_reports_bad_ranges_and_missing_files_without_tracebacks(self):
         for path, address, length in (("missing.log", "0x1000", "1"),
