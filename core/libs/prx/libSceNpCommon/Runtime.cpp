@@ -912,7 +912,15 @@ void APS5_VABI _ZN3sce2np6ObjectdaEPv(void* object) {
 int APS5_VABI sceNpAllocateKernelMemoryNoAlignment(std::uint64_t size, const char* name, void** address, NpKernelMemory* memory) {
     if (memory == nullptr) return NP_ERROR_NULL_OBJECT;
     const int result = MapKernelMemory(memory, size, name);
-    if (result >= 0 && address != nullptr) *address = memory->address;
+    if (result >= 0 && address != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(address, &memory->address, sizeof(memory->address));
+        errno = savedErrno;
+        if (!copied) {
+            sceNpFreeKernelMemory(memory);
+            return NP_ERROR_INVALID_ARGUMENT;
+        }
+    }
     return result;
 }
 

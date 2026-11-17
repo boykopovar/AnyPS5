@@ -247,6 +247,10 @@ void TestHeaps() {
     Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", nullptr, &memory) == 0 && memory.address != nullptr,
         "kernel memory allocation accepts a null address output");
     Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+    errno = 71;
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", reinterpret_cast<void**>(std::uintptr_t{0x10}), &memory) == NpInvalidArgument && errno == 71,
+        "kernel memory allocation fails on unwritable address pointer");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
 
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
