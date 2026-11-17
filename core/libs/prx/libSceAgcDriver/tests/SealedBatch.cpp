@@ -1,3 +1,4 @@
+#include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include <array>
@@ -25,6 +26,8 @@ namespace {
 using AgcDriver::Graphics::BatchCancelled;
 using AgcDriver::Graphics::CommandBufferPool;
 using AgcDriver::Graphics::CommandStream;
+using AgcDriver::Graphics::CreateReplayPool;
+using AgcDriver::Graphics::ReplayEntryPoints;
 using AgcDriver::Graphics::CommandFunctions;
 using AgcDriver::Graphics::FailureLatch;
 using AgcDriver::Graphics::InlineExecutor;
@@ -405,6 +408,31 @@ void RetirementOutlivesTheStream() {
     Require(budget.OutstandingBytes() == 0 && budget.Outstanding() == 0, "retirement after the stream was freed did not return the batch's charge");
 }
 
+std::atomic<int> createdPools{0};
+std::atomic<int> destroyedPools{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL countedCreatePool(VkDevice, const VkCommandPoolCreateInfo*, const VkAllocationCallbacks*, VkCommandPool* pool) {
+    *pool = reinterpret_cast<VkCommandPool>(static_cast<std::uintptr_t>(++createdPools) << 4);
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL countedDestroyPool(VkDevice, VkCommandPool, const VkAllocationCallbacks*) {
+    ++destroyedPools;
+}
+
+void ReplayPoolCreationDoesNotLeak() {
+    ReplayEntryPoints entry;
+    entry.createPool = countedCreatePool;
+    entry.destroyPool = countedDestroyPool;
+    CreateReplayPool(entry, 0).reset();
+    Require(createdPools.load() == 1 && destroyedPools.load() == 1, "an owned replay pool was not destroyed with its owner");
+    AgcDriver::Tests::SetAllocationFailureCountdown(0);
+    const bool threw = Throws<std::bad_alloc>([&] { static_cast<void>(CreateReplayPool(entry, 0)); });
+    AgcDriver::Tests::SetAllocationFailureCountdown(-1);
+    Require(threw, "the injected allocation failure did not surface");
+    Require(createdPools.load() == destroyedPools.load(), "a replay pool created before its owner failed to allocate was leaked: " + std::to_string(createdPools.load()) + " created, " + std::to_string(destroyedPools.load()) + " destroyed");
+}
+
 void SingleExecutorOwnsItsPoolAndThread() {
     FailureLatch latch;
     auto shared = std::make_shared<FakePool::Shared>();
@@ -567,6 +595,7 @@ int main(int argc, char** argv) {
         FenceBeforeReturnStaysHeld();
         BudgetBoundsWorkThroughRetirement();
         RetirementOutlivesTheStream();
+        ReplayPoolCreationDoesNotLeak();
         AdmissionOpensDirectInsteadOfWaiting();
         SingleExecutorOwnsItsPoolAndThread();
         ShutdownCancelsQueuedBatches();

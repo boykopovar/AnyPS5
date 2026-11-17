@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -316,5 +317,62 @@ void SingleExecutor::run(PoolFactory makePool) noexcept {
     }
     pool.reset();
 }
+
+namespace {
+
+class ReplayBufferPool final : public CommandBufferPool {
+public:
+    ReplayBufferPool(const ReplayEntryPoints& entry, VkCommandPool pool, bool owned) : entry(entry), pool(pool), owned(owned) {}
+    void Create(std::uint32_t queueFamily) {
+        VkCommandPoolCreateInfo info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        info.queueFamilyIndex = queueFamily;
+        Check(entry.createPool(entry.device, &info, nullptr, &pool), "vkCreateCommandPool replay");
+    }
+    ~ReplayBufferPool() override {
+        if (owned && pool != VK_NULL_HANDLE) entry.destroyPool(entry.device, pool, nullptr);
+    }
+    ReplayBufferPool(const ReplayBufferPool&) = delete;
+    ReplayBufferPool& operator=(const ReplayBufferPool&) = delete;
+    VkCommandBuffer Begin() override {
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool = pool;
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocation.commandBufferCount = 1;
+        VkCommandBuffer commands = VK_NULL_HANDLE;
+        Check(entry.allocate(entry.device, &allocation, &commands), "vkAllocateCommandBuffers replay");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        const auto result = entry.begin(commands, &begin);
+        if (result != VK_SUCCESS) {
+            Recycle(commands);
+            Check(result, "vkBeginCommandBuffer replay");
+        }
+        return commands;
+    }
+    void End(VkCommandBuffer commands) override {
+        Check(entry.end(commands), "vkEndCommandBuffer replay");
+    }
+    void Recycle(VkCommandBuffer commands) noexcept override {
+        if (commands != VK_NULL_HANDLE) entry.free(entry.device, pool, 1, &commands);
+    }
+
+private:
+    ReplayEntryPoints entry;
+    VkCommandPool pool;
+    bool owned;
+};
+
+}
+
+std::unique_ptr<CommandBufferPool> BorrowReplayPool(const ReplayEntryPoints& entry, VkCommandPool pool) {
+    return std::make_unique<ReplayBufferPool>(entry, pool, false);
+}
+
+std::unique_ptr<CommandBufferPool> CreateReplayPool(const ReplayEntryPoints& entry, std::uint32_t queueFamily) {
+    auto owner = std::make_unique<ReplayBufferPool>(entry, VK_NULL_HANDLE, true);
+    owner->Create(queueFamily);
+    return owner;
+}
+
 
 }

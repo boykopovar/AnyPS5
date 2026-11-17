@@ -2256,57 +2256,6 @@ void Recorder::poisonOpen() noexcept {
     open->stream->Poison(std::make_exception_ptr(std::runtime_error("AGC graphics: a draw threw while recording into a deferred batch, so the batch holds part of it")));
 }
 
-namespace {
-
-struct ReplayEntryPoints {
-    VkDevice device = VK_NULL_HANDLE;
-    PFN_vkCreateCommandPool createPool = nullptr;
-    PFN_vkDestroyCommandPool destroyPool = nullptr;
-    PFN_vkAllocateCommandBuffers allocate = nullptr;
-    PFN_vkFreeCommandBuffers free = nullptr;
-    PFN_vkBeginCommandBuffer begin = nullptr;
-    PFN_vkEndCommandBuffer end = nullptr;
-};
-
-class ReplayBufferPool final : public CommandBufferPool {
-public:
-    ReplayBufferPool(const ReplayEntryPoints& entry, VkCommandPool pool, bool owned) : entry(entry), pool(pool), owned(owned) {}
-    ~ReplayBufferPool() override {
-        if (owned && pool != VK_NULL_HANDLE) entry.destroyPool(entry.device, pool, nullptr);
-    }
-    ReplayBufferPool(const ReplayBufferPool&) = delete;
-    ReplayBufferPool& operator=(const ReplayBufferPool&) = delete;
-    VkCommandBuffer Begin() override {
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = pool;
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocation.commandBufferCount = 1;
-        VkCommandBuffer commands = VK_NULL_HANDLE;
-        Check(entry.allocate(entry.device, &allocation, &commands), "vkAllocateCommandBuffers replay");
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        const auto result = entry.begin(commands, &begin);
-        if (result != VK_SUCCESS) {
-            Recycle(commands);
-            Check(result, "vkBeginCommandBuffer replay");
-        }
-        return commands;
-    }
-    void End(VkCommandBuffer commands) override {
-        Check(entry.end(commands), "vkEndCommandBuffer replay");
-    }
-    void Recycle(VkCommandBuffer commands) noexcept override {
-        if (commands != VK_NULL_HANDLE) entry.free(entry.device, pool, 1, &commands);
-    }
-
-private:
-    ReplayEntryPoints entry;
-    VkCommandPool pool;
-    bool owned;
-};
-
-}
-
 std::unique_ptr<ReplayExecutor> Recorder::makeExecutor() {
     ReplayEntryPoints entry;
     entry.device = context.device;
@@ -2320,15 +2269,9 @@ std::unique_ptr<ReplayExecutor> Recorder::makeExecutor() {
         const char* value = std::getenv("APS5_ENCODE_THREAD");
         return value != nullptr && std::strcmp(value, "0") != 0;
     }();
-    if (!thread) return std::make_unique<InlineExecutor>(std::make_unique<ReplayBufferPool>(entry, context.pool, false));
+    if (!thread) return std::make_unique<InlineExecutor>(BorrowReplayPool(entry, context.pool));
     const auto family = queueFamily;
-    return std::make_unique<SingleExecutor>([entry, family]() -> std::unique_ptr<CommandBufferPool> {
-        VkCommandPoolCreateInfo info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        info.queueFamilyIndex = family;
-        VkCommandPool pool = VK_NULL_HANDLE;
-        Check(entry.createPool(entry.device, &info, nullptr, &pool), "vkCreateCommandPool replay");
-        return std::make_unique<ReplayBufferPool>(entry, pool, true);
-    });
+    return std::make_unique<SingleExecutor>([entry, family] { return CreateReplayPool(entry, family); });
 }
 
 Recorder::StreamStatistics Recorder::StreamCounts() const {

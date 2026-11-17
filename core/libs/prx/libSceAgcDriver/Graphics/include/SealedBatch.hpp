@@ -151,6 +151,19 @@ public:
     virtual ~CommandBufferPool() = default;
 };
 
+struct ReplayEntryPoints {
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkCreateCommandPool createPool = nullptr;
+    PFN_vkDestroyCommandPool destroyPool = nullptr;
+    PFN_vkAllocateCommandBuffers allocate = nullptr;
+    PFN_vkFreeCommandBuffers free = nullptr;
+    PFN_vkBeginCommandBuffer begin = nullptr;
+    PFN_vkEndCommandBuffer end = nullptr;
+};
+
+std::unique_ptr<CommandBufferPool> BorrowReplayPool(const ReplayEntryPoints& entry, VkCommandPool pool);
+std::unique_ptr<CommandBufferPool> CreateReplayPool(const ReplayEntryPoints& entry, std::uint32_t queueFamily);
+
 class ReplayExecutor {
 public:
     virtual void Execute(std::shared_ptr<SealedBatch> batch) noexcept = 0;

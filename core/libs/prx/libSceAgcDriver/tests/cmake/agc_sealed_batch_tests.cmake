@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    add_test_executable(agc_sealed_batch_tests tests/SealedBatch.cpp Graphics/src/CommandStream.cpp Graphics/src/SealedBatch.cpp Graphics/src/CommandThunks.cpp)
+    add_test_executable(agc_sealed_batch_tests tests/SealedBatch.cpp Graphics/src/CommandStream.cpp Graphics/src/SealedBatch.cpp Graphics/src/CommandThunks.cpp tests/AllocationFailure.cpp)
     target_include_directories(agc_sealed_batch_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
     target_link_libraries(agc_sealed_batch_tests PRIVATE libc)
     configure_windows_unwind(agc_sealed_batch_tests)
