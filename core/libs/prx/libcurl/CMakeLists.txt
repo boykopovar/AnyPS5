@@ -88,6 +88,7 @@ add_library(libcurl SHARED EXCLUDE_FROM_ALL
     Export.cpp
     src/CurlSockets.cpp
     src/FormFree.cpp
+    src/CurlFormat.cpp
 )
 if(WIN32)
     target_compile_definitions(libcurl PRIVATE FD_SETSIZE=1024)
@@ -123,7 +124,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators Sockets)
+    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators Sockets Format FormatStreams)
     foreach(test_topic IN LISTS curlTestTopics)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
