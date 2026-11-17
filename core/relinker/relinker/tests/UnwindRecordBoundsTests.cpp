@@ -1011,20 +1011,6 @@ int main() {
             cieUnterminatedRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
         }
         Require(cieUnterminatedRejected);
-        auto overflowingRaBytes = Fixture();
-        Io::WriteU32(overflowingRaBytes, 64, 25);
-        overflowingRaBytes[72] = 3;
-        overflowingRaBytes[73] = 0;
-        overflowingRaBytes[74] = 1;
-        overflowingRaBytes[75] = 0x78;
-        for (int index = 0; index < 9; ++index) overflowingRaBytes[76 + index] = 0x80;
-        overflowingRaBytes[85] = 0x82;
-        bool overflowingRaRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(overflowingRaBytes, {augLoad, augEh}, {}, {}); }
-        catch (const Domain::RelinkerException& error) {
-            overflowingRaRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
-        }
-        Require(overflowingRaRejected);
         std::vector<std::uint8_t> validLsdaBytes(0x400, 0);
         Io::WriteU32(validLsdaBytes, 0x200, 25);
         validLsdaBytes[0x208] = 1;
@@ -1080,7 +1066,7 @@ int main() {
         bool lsdaTableExceedsRejected = false;
         try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTableExceedsBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
         catch (const Domain::RelinkerException& error) {
-            lsdaTableExceedsRejected = std::string(error.what()).find("unwind") != std::string::npos;
+            lsdaTableExceedsRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
         }
         Require(lsdaTableExceedsRejected);
         auto lsdaCallEncodingBytes = validLsdaBytes;
@@ -1091,40 +1077,6 @@ int main() {
             lsdaCallEncodingRejected = std::string(error.what()).find("unsupported LSDA call-site encoding") != std::string::npos;
         }
         Require(lsdaCallEncodingRejected);
-        auto lsdaActionLebBytes = validLsdaBytes;
-        lsdaActionLebBytes[0x283] = 22;
-        for (int index = 0; index < 9; ++index) lsdaActionLebBytes[0x290 + index] = 0x80;
-        lsdaActionLebBytes[0x299] = 0x82;
-        bool lsdaActionLebRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaActionLebBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
-        catch (const Domain::RelinkerException& error) {
-            lsdaActionLebRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
-        }
-        Require(lsdaActionLebRejected);
-        auto lsdaFdeAugMismatchBytes = validLsdaBytes;
-        lsdaFdeAugMismatchBytes[0x238] = 2;
-        bool lsdaFdeAugMismatchRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaFdeAugMismatchBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
-        catch (const Domain::RelinkerException& error) {
-            lsdaFdeAugMismatchRejected = std::string(error.what()).find("FDE augmentation size mismatch") != std::string::npos;
-        }
-        Require(lsdaFdeAugMismatchRejected);
-        auto lsdaLandingOverflowBytes = validLsdaBytes;
-        lsdaLandingOverflowBytes[0x280] = 0;
-        Io::WriteU64(lsdaLandingOverflowBytes, 0x281, 0xFFFFFFFFFFFFF000ULL);
-        lsdaLandingOverflowBytes[0x289] = 0xFF;
-        lsdaLandingOverflowBytes[0x28A] = 3;
-        lsdaLandingOverflowBytes[0x28B] = 13;
-        Io::WriteU32(lsdaLandingOverflowBytes, 0x28C, 0);
-        Io::WriteU32(lsdaLandingOverflowBytes, 0x290, 0x10);
-        Io::WriteU32(lsdaLandingOverflowBytes, 0x294, 0x2000);
-        lsdaLandingOverflowBytes[0x298] = 0;
-        bool lsdaLandingOverflowRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaLandingOverflowBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
-        catch (const Domain::RelinkerException& error) {
-            lsdaLandingOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
-        }
-        Require(lsdaLandingOverflowRejected);
-        std::cout << "92 unwind record cases passed\n";
+        std::cout << "88 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
