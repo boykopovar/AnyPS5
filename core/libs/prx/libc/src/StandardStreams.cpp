@@ -258,8 +258,10 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;
+    const bool wasLive = stream->PushbackLive();
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
+    if (result != EOF && stream->IsRegularFile()) stream->NotePushedBackByte(static_cast<char>(result), wasLive);
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
