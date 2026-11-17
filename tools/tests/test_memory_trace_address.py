@@ -36,29 +36,20 @@ class ParseTests(FeatureRequired):
 
     def test_parses_every_operation_and_strips_line_endings(self):
         events = trace.parse_events([
-            "[memory] remap fixed 0x10+0x20 prot=0x3
-",
-            "[memory] map direct 0x30+0x10
-",
-            "[memory] map file 0x40+0x10
-",
-            "[memory] map shared 0x50+0x10
-",
-            "[memory] reserve 0x60+0x10
-",
-            "[memory] unmap 0x70+0x10
-",
+            "[memory] remap fixed 0x10+0x20 prot=0x3\r\n",
+            "[memory] map direct 0x30+0x10\n",
+            "[memory] map file 0x40+0x10\n",
+            "[memory] map shared 0x50+0x10\n",
+            "[memory] reserve 0x60+0x10\n",
+            "[memory] unmap 0x70+0x10\n",
         ])
         self.assertEqual([event.operation for event in events],
                          ["remap fixed", "map direct", "map file", "map shared", "reserve", "unmap"])
         self.assertEqual(events[0].detail, "remap fixed 0x10+0x20 prot=0x3")
 
     def test_ignores_unknown_operations_and_lines_without_the_prefix(self):
-        self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1
-", "map anon 0x1+0x1
-",
-                                             "[memory]map anon 0x1+0x1
-"]), [])
+        self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1\n", "map anon 0x1+0x1\n",
+                                             "[memory]map anon 0x1+0x1\n"]), [])
 
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
@@ -130,8 +121,7 @@ class CliTests(FeatureRequired):
     def test_cli_rejects_a_non_positive_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
-            path.write_text("[memory] map anon 0x1000+0x1000
-", encoding="utf-8")
+            path.write_text("[memory] map anon 0x1000+0x1000\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000", "--limit", "0"],
                                     capture_output=True, text=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 2)
