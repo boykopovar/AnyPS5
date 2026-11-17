@@ -25,6 +25,7 @@
  */
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <mutex>
