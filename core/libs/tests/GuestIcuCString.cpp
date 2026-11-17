@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
@@ -81,7 +82,9 @@ void InvalidFormatting() {
         Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == '@'; }), "invalid radix leaves the buffer unchanged");
     }
     Require(Rejects([] { T_CString_integerToString_nid_postfix(nullptr, 42, 10); }), "null 32-bit format buffer throws");
+    Require(Rejects([] { T_CString_integerToString_nid_postfix(reinterpret_cast<char*>(0x10), 42, 10); }), "unwritable 32-bit format buffer throws");
     Require(Rejects([] { T_CString_int64ToString_nid_postfix(nullptr, 42, 10); }), "null 64-bit format buffer throws");
+    Require(Rejects([] { T_CString_int64ToString_nid_postfix(reinterpret_cast<char*>(0x10), 42, 10); }), "unwritable 64-bit format buffer throws");
 }
 
 void Parsing() {
@@ -133,6 +136,19 @@ void Parsing() {
         const int error = *__error_nid_postfix();
         Require(actual == test.value, "parser preserves LP64 strtoul results before narrowing");
         Require(error == test.error, "parser preserves strtoul error behavior");
+    }
+    constexpr Case staleErrors[] = {
+        {"-18446744073709551615", 10, 1, ERANGE},
+        {"42", 10, 42, ERANGE},
+        {"0", 10, 0, ERANGE},
+        {"", 10, 0, ERANGE},
+        {"words", 10, 0, ERANGE},
+        {" +", 10, 0, ERANGE}
+    };
+    for (const auto& test : staleErrors) {
+        *__error_nid_postfix() = test.error;
+        Require(T_CString_stringToInteger_nid_postfix(test.text, test.radix) == test.value, "incoming ERANGE does not saturate valid or absent integers");
+        Require(*__error_nid_postfix() == test.error, "valid and absent integers preserve incoming ERANGE");
     }
     for (int radix = 2; radix <= 36; ++radix) {
         for (std::uint64_t value : std::array<std::uint64_t, 8>{0, 1, 35, 431, UINT32_MAX, std::uint64_t{UINT32_MAX} + 1, INT64_MAX, UINT64_MAX}) {

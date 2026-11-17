@@ -2,9 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 namespace {
 
@@ -16,6 +19,14 @@ constexpr int SockStream = 1;
 constexpr int SockDgram = 2;
 
 constexpr int SocketDescriptorLimit = 1024;
+
+constexpr std::int16_t PollIn = 0x1;
+constexpr std::int16_t PollInvalid = 0x20;
+
+struct GuestTimeval {
+    std::int64_t seconds;
+    std::int64_t microseconds;
+};
 
 void Require(bool condition) {
     if (!condition) {
@@ -183,6 +194,107 @@ void AuditSequentialSocketDescriptors() {
     }
 }
 
+int ReuseNumberDuringWait(int previous) {
+    const int replacement = socket_nid_postfix(AfInet, SockDgram, 0);
+    Require(replacement >= 0 && replacement != previous);
+    std::array<std::uint8_t, 16> address{16, AfInet, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(replacement, address.data(), address.size()) == 0);
+    std::uint32_t addressSize = address.size();
+    Require(getsockname_nid_postfix(replacement, address.data(), &addressSize) == 0);
+    const int sender = socket_nid_postfix(AfInet, SockDgram, 0);
+    Require(sender >= 0 && sender != replacement && sender != previous);
+    Require(connect_nid_postfix(sender, address.data(), addressSize) == 0);
+    Require(close_nid_postfix(previous) == 0);
+    Require(dup_nid_postfix(replacement) == previous);
+    const char byte = 'r';
+    Require(send_nid_postfix(sender, &byte, 1, 0) == 1);
+    Require(close_nid_postfix(sender) == 0);
+    return replacement;
+}
+
+void AuditSelectReusesAReopenedSocketDuringWait() {
+    bool reselected = false;
+    for (int attempt = 0; attempt < 40 && !reselected; ++attempt) {
+        const int first = socket_nid_postfix(AfInet, SockDgram, 0);
+        Require(first >= 0 && first < SocketDescriptorLimit);
+        std::array<std::uint64_t, SocketDescriptorLimit / 64> read{};
+        int result = 0;
+        int error = 0;
+        std::atomic<bool> started{false};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread waiter([&] {
+            read[static_cast<std::size_t>(first / 64)] |= std::uint64_t{1} << (first % 64);
+            const GuestTimeval limit{0, 500000};
+            started = true;
+            result = select_nid_postfix(first + 1, read.data(), nullptr, nullptr, &limit);
+            error = *__error_nid_postfix();
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int replacement = ReuseNumberDuringWait(first);
+        waiter.join();
+        const auto waited = std::chrono::steady_clock::now() - start;
+        if (result == 1 && (read[static_cast<std::size_t>(first / 64)] >> (first % 64) & 1) != 0) {
+            reselected = true;
+            Require(waited < std::chrono::milliseconds(400));
+        } else {
+            Require(result == -1 && error == ErrorBadDescriptor);
+        }
+        Require(close_nid_postfix(first) == 0);
+        Require(close_nid_postfix(replacement) == 0);
+    }
+    Require(reselected);
+}
+
+void AuditPollReusesAReopenedSocketDuringWait() {
+    bool repolled = false;
+    for (int attempt = 0; attempt < 40 && !repolled; ++attempt) {
+        const int first = socket_nid_postfix(AfInet, SockDgram, 0);
+        Require(first >= 0 && first < SocketDescriptorLimit);
+        GuestPollDescriptor entry{first, PollIn, -1};
+        int result = 0;
+        std::atomic<bool> started{false};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread waiter([&] {
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 500);
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int replacement = ReuseNumberDuringWait(first);
+        waiter.join();
+        const auto waited = std::chrono::steady_clock::now() - start;
+        if (result == 1 && (entry.revents & PollIn) != 0 && (entry.revents & PollInvalid) == 0) {
+            repolled = true;
+            Require(waited < std::chrono::milliseconds(400));
+        } else {
+            Require(result == 1 && entry.revents == PollInvalid);
+        }
+        Require(close_nid_postfix(first) == 0);
+        Require(close_nid_postfix(replacement) == 0);
+    }
+    Require(repolled);
+}
+
+void AuditPollReportsPollNvalWhenTheNumberIsGone() {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        const int first = socket_nid_postfix(AfInet, SockDgram, 0);
+        Require(first >= 0 && first < SocketDescriptorLimit);
+        GuestPollDescriptor entry{first, PollIn, -1};
+        int result = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 500);
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(close_nid_postfix(first) == 0);
+        waiter.join();
+        Require(result == 1 && entry.revents == PollInvalid);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -191,5 +303,8 @@ int main() {
     AuditNonSocketDescriptors();
     AuditSocketLifecycleAndDescriptorLimits();
     AuditSequentialSocketDescriptors();
+    AuditPollReportsPollNvalWhenTheNumberIsGone();
+    AuditSelectReusesAReopenedSocketDuringWait();
+    AuditPollReusesAReopenedSocketDuringWait();
     return 0;
 }

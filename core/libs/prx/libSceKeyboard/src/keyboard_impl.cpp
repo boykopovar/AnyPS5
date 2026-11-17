@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <mutex>
 
 namespace {
@@ -15,6 +16,7 @@ int count = 0;
 bool initialized = false;
 bool opened = false;
 bool secondPortOpened = false;
+int secondPortUser = 0;
 int openedUser = 0;
 bool connected = true;
 std::uint32_t led = 0;
@@ -135,6 +137,7 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
     if (index == 1) {
         if (secondPortOpened) return KEYBOARD_ERROR_ALREADY_OPENED;
         secondPortOpened = true;
+        secondPortUser = userId;
         return KEYBOARD_SECOND_PORT_HANDLE;
     }
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
@@ -152,6 +155,7 @@ int Close(std::int32_t handle) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (openSecondPort(handle)) {
         secondPortOpened = false;
+        secondPortUser = 0;
         return KEYBOARD_OK;
     }
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
@@ -166,6 +170,7 @@ int Close(std::int32_t handle) {
 int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (type == 0 && index == 1 && secondPortOpened && secondPortUser == userId) return KEYBOARD_SECOND_PORT_HANDLE;
     return opened && openedUser == userId && type == 0 && index == 0 ? KEYBOARD_HANDLE : KEYBOARD_ERROR_NO_HANDLE;
 }
 
@@ -176,10 +181,16 @@ int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
     if (data == nullptr || num <= 0 || num > KEYBOARD_MAX_DATA_NUM) return KEYBOARD_ERROR_INVALID_ARG;
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) return 0;
     const int available = std::min(count, num);
+    if (available == 0) return 0;
+    std::array<KeyboardData, KEYBOARD_MAX_DATA_NUM> output{};
     for (int i = 0; i < available; ++i) {
-        data[i] = history[head];
-        head = (head + 1) % KEYBOARD_MAX_DATA_NUM;
+        output[i] = history[(head + i) % KEYBOARD_MAX_DATA_NUM];
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, output.data(), static_cast<std::size_t>(available) * sizeof(KeyboardData));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
+    head = (head + available) % KEYBOARD_MAX_DATA_NUM;
     count -= available;
     return available;
 }
@@ -189,13 +200,17 @@ int ReadState(std::int32_t handle, KeyboardData* data) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    KeyboardData current{};
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) {
-        *data = {};
-        data->timestamp = sceKernelGetProcessTime();
-        data->length = 1;
-        return KEYBOARD_OK;
+        current.timestamp = sceKernelGetProcessTime();
+        current.length = 1;
+    } else {
+        current = snapshot();
     }
-    *data = snapshot();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 

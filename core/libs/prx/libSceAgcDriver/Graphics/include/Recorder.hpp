@@ -71,6 +71,7 @@ public:
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
+    void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
     void SetDepthBias(const Context& context, float constant, float clamp, float slope);
     void SetDepthBounds(const Context& context, float minimum, float maximum);
     void SetCullMode(const Context& context, VkCullModeFlags mode);
@@ -258,6 +259,7 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
@@ -425,10 +427,13 @@ public:
     // not, before recording): the run is then recorded in place, with a trailing barrier toward
     // the later work, and the next store starts a new run. Within a run a store contiguous with
     // the last queued one joins its vkCmdUpdateBuffer, one inside it replaces its bytes (the
-    // later store wins, as in program order), and one overlapping a store queued earlier gets a
-    // transfer-to-transfer barrier first (WAW). Debug aids: APS5_LABEL_RUNS_INLINE=1 records the
-    // stores at once and closes the run at the next command (Commands()) or at Submit, as
-    // before; APS5_NO_LABEL_RUNS=1 gives every store barriers of its own.
+    // later store wins, as in program order), and every store after the first of its group gets a
+    // transfer-to-transfer barrier first (WAW for one overlapping a store queued earlier, program
+    // order otherwise), so the run's stores land for a polling host in program order too and each
+    // earlier one is available to it. Debug
+    // aids: APS5_LABEL_RUNS_INLINE=1 records the stores at once and closes the run at the next
+    // command (Commands()) or at Submit, as before; APS5_NO_LABEL_RUNS=1 gives every store
+    // barriers of its own.
     void RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address);
     bool HasQueuedStores() const { return open != nullptr && !open->run.queued.empty(); }
     bool QueuedStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
@@ -520,6 +525,7 @@ public:
     // After the calling worker recorded (or dropped) its queued labels: its ranges are cleared and
     // the entries of its dwords still without a batch (stored by the CPU, or dropped) leave the table.
     static void ForgetQueuedLabels();
+    static std::uint64_t ThreadClearAccesses();
     static bool QueuedLabelsPending();
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
