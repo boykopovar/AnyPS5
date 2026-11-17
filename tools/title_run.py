@@ -25,7 +25,7 @@ import title_run_cache
 import unwrap_self
 from audit_dump import comparison_path
 from package_release import native_auxiliary_runtimes, windows_runtime
-OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
+OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering", "incomplete")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
@@ -233,11 +233,13 @@ def frame_is_uniform(path, tolerance=8):
     return True
 
 
-def classify(relinked, exit_code, summary_age, framed, last_frame_uniform):
+def classify(relinked, exit_code, summary_age, framed, last_frame_uniform, elapsed=None):
     if not relinked:
         return "relink-failed"
     if exit_code is not None:
         return "crashed" if exit_code != 0 else "exited"
+    if summary_age is None and elapsed is not None and elapsed < STALL_SECONDS:
+        return "incomplete"
     if summary_age is None or summary_age > STALL_SECONDS or not framed:
         return "stalled"
     if last_frame_uniform is None:
@@ -257,6 +259,8 @@ def cell(runs, cache):
 
 
 def worst(runs):
+    if any(entry["outcome"] == "incomplete" for entry in runs):
+        return "incomplete"
     return min((entry["outcome"] for entry in runs), key=OUTCOMES.index)
 
 
@@ -313,6 +317,8 @@ def compare(summary, previous):
         if title_id not in previous["titles"] or comparison_context(summary, previous, title_id)["status"] != "matched":
             continue
         before, now = worst(previous["titles"][title_id]["runs"]), worst(title["runs"])
+        if "incomplete" in (before, now):
+            continue
         if OUTCOMES.index(now) < OUTCOMES.index(before):
             regressions.append((title_id, before, now))
         elif OUTCOMES.index(now) > OUTCOMES.index(before):
@@ -329,7 +335,7 @@ def pair(before, now):
 
 
 def fps_of(run):
-    return None if run.get("outcome") == "relink-failed" else run.get("fps")
+    return None if run.get("outcome") in ("relink-failed", "incomplete") else run.get("fps")
 
 
 def report_field(run, name):
@@ -528,7 +534,8 @@ def render_markdown(summary, previous=None):
     for title_id, title in sorted(summary["titles"].items()):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
-        row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
+        row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"),
+               "not recorded" if runs[-1]["outcome"] == "incomplete" else f"{runs[-1]['fps']:.1f}",
                error[:120].replace("|", "\\|"),
                "; ".join(title_run_provenance.label(title_run_provenance.qualification(run, build)) for run in runs)]
         if previous:
@@ -544,6 +551,11 @@ def render_markdown(summary, previous=None):
         for index, run in enumerate(title["runs"], 1):
             policy = title_run_cache.cache_policy_label(run.get("cache_policy")).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| {title_id} | {index} | {run.get('cache', 'not recorded')} | {policy} |")
+    incomplete = [f"{title['name']} ({title_id}), run {index}: {run.get('reason', 'insufficient observations')}"
+                  for title_id, title in sorted(summary["titles"].items()) for index, run in enumerate(title["runs"], 1)
+                  if run["outcome"] == "incomplete"]
+    if incomplete:
+        lines += ["", "Incomplete observations: " + "; ".join(incomplete)]
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
@@ -1092,7 +1104,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
                     queued = round(time.monotonic() - started, 1)
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
-            elapsed = round(time.monotonic() - started, 1)
+            elapsed = time.monotonic() - started
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
             if alive:
@@ -1113,7 +1125,9 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     native = {"summary": summary.get("native", [{"commit": None, "dirty": None}] if summary_path.is_file() else []),
               "report": (report or {}).get("native", {"commit": None, "modified": None}) if (run_dir / REPORT_FILE).is_file() else None,
               **({"summary_errors": summary["native_errors"]} if "native_errors" in summary else {})}
-    return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
+    outcome = classify(True, exit_code, age, bool(frames), uniform, elapsed)
+    return {"outcome": outcome, "exit_code": exit_code, "seconds": round(elapsed, 1),
+            **({"reason": "no summary before the stall observation window"} if outcome == "incomplete" else {}),
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
             "warnings": warning_counts(text), "frames": frames, "report": report, "native": native, "cache_policy": policy, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}

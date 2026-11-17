@@ -314,6 +314,25 @@ class AnalysisTests(unittest.TestCase):
         for arguments, outcome in cases:
             self.assertEqual(title_run.classify(*arguments), outcome, arguments)
 
+    def test_stall_requires_a_full_observation_when_no_summary_exists(self):
+        for seconds, expected in ((1, "incomplete"), (3, "incomplete"), (9, "incomplete"),
+                                  (10, "incomplete"), (19.96, "incomplete"), (19.999, "incomplete"),
+                                  (20, "stalled"), (20.001, "stalled"), (21, "stalled")):
+            for framed in (False, True):
+                with self.subTest(seconds=seconds, framed=framed):
+                    self.assertEqual(title_run.classify(True, None, None, framed, False, seconds), expected)
+
+    def test_short_observation_preserves_exit_and_recorded_frame_outcomes(self):
+        for arguments, expected in (((False, None, None, False, None, 1), "relink-failed"),
+                                    ((True, 0, None, False, None, .1), "exited"),
+                                    ((True, 7, None, True, False, .1), "crashed"),
+                                    ((True, None, 1, True, False, 3), "rendering"),
+                                    ((True, None, 1, True, True, 3), "blank"),
+                                    ((True, None, 1, True, None, 3), "frame-unreadable"),
+                                    ((True, None, 25, True, False, 3), "stalled")):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(title_run.classify(*arguments), expected)
+
 
 def run(outcome, cache="cold", fps=0.0, error=""):
     return {"outcome": outcome, "cache": cache, "fps": fps, "first_error": error}
@@ -519,6 +538,44 @@ time.sleep(60)
 
 
 class ReportTests(unittest.TestCase):
+    def test_incomplete_observations_are_visible_without_a_progress_rank(self):
+        incomplete = run("incomplete", fps=0.0)
+        incomplete["reason"] = "no summary before the stall observation window"
+        for other in ("rendering", "stalled", "incomplete", "crashed"):
+            for reverse in (False, True):
+                before = summary({"PPSA00001": {"name": "Fixture", "version": "1.00", "seconds": 3,
+                    "missing_content": [], "runs": [run(other)]}})
+                now = copy.deepcopy(before)
+                for field in ("machine", "cache_policy"):
+                    incomplete[field] = copy.deepcopy(before["titles"]["PPSA00001"]["runs"][0][field])
+                now["titles"]["PPSA00001"]["runs"] = [incomplete]
+                for item in (before, now):
+                    item["driver_cache"] = "isolated"
+                if reverse:
+                    before, now = now, before
+                with self.subTest(other=other, reverse=reverse):
+                    self.assertEqual(title_run.compare(now, before), ([], []))
+                    compared = json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]
+                    side = "before" if reverse else "now"
+                    self.assertEqual(compared["outcomes"][side], "incomplete")
+                    self.assertIsNone(compared["fps"][side])
+                    self.assertEqual(compared["context"]["status"], "matched")
+                    self.assertIn("provenance", compared)
+                    markdown = title_run.render_markdown(now, before)
+                    self.assertNotIn("Regressions", markdown)
+                    self.assertNotIn("Improvements", markdown)
+                    self.assertIn("incomplete", markdown)
+        for other in ("rendering", "crashed"):
+            mixed = [incomplete, run(other, "warm", 60.0)]
+            self.assertEqual(title_run.worst(mixed), "incomplete")
+            self.assertEqual(title_run.worst_recorded(mixed), "incomplete")
+            self.assertIn("incomplete", title_run.cell(mixed, "cold"))
+            self.assertIn("incomplete 1/2", title_run.cell([incomplete, run(other)], "cold"))
+        visible = summary({"PPSA00001": {"name": "Fixture", "version": "1.00", "runs": [incomplete]}})
+        markdown = title_run.render_markdown(visible)
+        self.assertIn("not recorded", markdown)
+        self.assertIn(incomplete["reason"], markdown)
+
     def test_cell(self):
         runs = [run("crashed"), run("rendering", "warm"), run("crashed", "warm")]
         self.assertEqual(title_run.cell(runs, "cold"), "crashed")
