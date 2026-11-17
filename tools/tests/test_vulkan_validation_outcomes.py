@@ -30,6 +30,17 @@ def testcase(name="probe", status=None, kind=None, message=None, detail="", stdo
     return case
 
 
+def write_junit(path, cases):
+    root = ET.Element("testsuite")
+    root.extend(cases)
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+    return path
+
+
+def probe_claims(name="probe", **baseline):
+    return {name: {"baseline": {"state": "passed", **baseline}, "candidate": {"state": "passed"}}}
+
+
 class Fixtures(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -40,10 +51,7 @@ class Fixtures(unittest.TestCase):
     def junit(self, cases, name=None):
         self.sequence += 1
         path = self.directory / (name or f"junit-{self.sequence}.xml")
-        root = ET.Element("testsuite")
-        root.extend(cases)
-        ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
-        return path
+        return write_junit(path, cases)
 
     def expectations(self, tests=None, text=None):
         path = self.directory / "expectations.json"
@@ -52,7 +60,7 @@ class Fixtures(unittest.TestCase):
         return path
 
     def iteration(self, side, number, case, declarations=None, code=0):
-        path = self.junit([case])
+        path = self.junit([] if case is None else [case])
         tests, problems = gate.parse_report(path, {"probe"})
         claims = {name: claim[side] for name, claim in (declarations or {}).items()}
         return {"side": side, "iteration": number, "returncode": code, "tests": tests,
@@ -61,8 +69,7 @@ class Fixtures(unittest.TestCase):
 
 class ExpectationTests(Fixtures):
     def test_valid_claims_retain_input_identity_and_literal_markers(self):
-        tests = {"probe": {"baseline": {"state": "failed", "marker": "word [0] < expected"},
-                           "candidate": {"state": "passed"}}}
+        tests = probe_claims(state="failed", marker="word [0] < expected")
         path = self.expectations(tests)
         result = outcomes.load_expectations(path)
         self.assertEqual(result["tests"], tests)
@@ -215,8 +222,7 @@ class ObservationTests(Fixtures):
 
 class SummaryTests(Fixtures):
     def test_negative_controls_are_evidence_without_strict_gate_waivers(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "wrong answer"},
-                                   "candidate": {"state": "passed"}}}
+        declarations = probe_claims(state="failed", marker="wrong answer")
         runs = [self.iteration("baseline", 1, testcase(kind="failure", detail="wrong answer"), declarations, 8),
                 self.iteration("candidate", 1, testcase(), declarations)]
         strict = gate.compare(runs)
@@ -243,8 +249,7 @@ class SummaryTests(Fixtures):
         self.assertFalse(outcomes.summarize_outcomes(runs, {"probe"}, 1)["cases"]["probe"]["pairs"][0]["details_equal"])
 
     def test_repeat_state_variation_and_each_iteration_marker_are_not_averaged_away(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "specific cause"},
-                                   "candidate": {"state": "passed"}}}
+        declarations = probe_claims(state="failed", marker="specific cause")
         runs = [self.iteration("baseline", 1, testcase(kind="failure", detail="specific cause"), declarations, 8),
                 self.iteration("candidate", 1, testcase(), declarations),
                 self.iteration("baseline", 2, testcase(stdout=INSERTED + "\nspecific cause"), declarations),
@@ -256,8 +261,7 @@ class SummaryTests(Fixtures):
         self.assertEqual(gate.compare(runs)["exit_code"], 1)
 
     def test_expected_marker_on_the_other_side_cannot_satisfy_a_baseline_claim(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "specific cause"},
-                                   "candidate": {"state": "passed"}}}
+        declarations = probe_claims(state="failed", marker="specific cause")
         runs = [self.iteration("baseline", 1, testcase(kind="failure", detail="different cause"), declarations, 8),
                 self.iteration("candidate", 1, testcase(stdout=INSERTED + "\nspecific cause"), declarations)]
         found = outcomes.summarize_outcomes(runs, {"probe"}, 1, declarations)
@@ -277,8 +281,7 @@ class SummaryTests(Fixtures):
         self.assertIn("strict gate exit 0, unchanged", outcomes.format_outcomes(found, 0))
 
     def test_detail_variation_and_marker_mismatch_are_retained_with_missing_repeats(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "expected cause"},
-                                   "candidate": {"state": "passed"}}}
+        declarations = probe_claims(state="failed", marker="expected cause")
         runs = [self.iteration("baseline", 1, testcase(kind="failure", detail="different cause"), declarations, 8),
                 self.iteration("candidate", 1, testcase(), declarations)]
         found = outcomes.summarize_outcomes(runs, {"probe"}, 2, declarations)
@@ -300,10 +303,7 @@ class SummaryTests(Fixtures):
                         if iteration <= recorded:
                             runs.append(self.iteration("baseline", iteration, testcase()))
                         elif missing == "case":
-                            path = self.junit([])
-                            tests, problems = gate.parse_report(path, {"probe"})
-                            runs.append({"side": "baseline", "iteration": iteration, "returncode": 0,
-                                         "tests": tests, "problems": problems, "outcomes": outcomes.read_outcomes(path)})
+                            runs.append(self.iteration("baseline", iteration, None))
                     found = outcomes.summarize_outcomes(runs, {"probe"}, 2)
                     self.assertFalse(found["observations_complete"])
                     self.assertFalse(found["execution_coverage_complete"])
@@ -368,12 +368,15 @@ class SummaryTests(Fixtures):
 
 
 class GateWiringTests(Fixtures):
-    def invoke(self, cases, declarations=None, selected=("probe",), artifact_drift=False, malformed=False,
+    def invoke(self, cases=None, declarations=None, selected=("probe",), artifact_drift=False, malformed=False,
                expectation_text=None):
-        source = {side: self.directory / side for side in ("baseline", "candidate")}
+        directory = Path(tempfile.mkdtemp(prefix="gate-", dir=self.directory))
+        source = {side: directory / side for side in ("baseline", "candidate")}
         for path in source.values():
-            path.mkdir(exist_ok=True)
-        output = self.directory / "output"
+            path.mkdir()
+        if cases is None:
+            cases = {side: [testcase()] for side in source}
+        output = directory / "output"
         arguments = ["--baseline", str(source["baseline"]), "a" * 40,
                      "--candidate", str(source["candidate"]), "b" * 40,
                      "--output", str(output), "--target", "probe", "--tests", ".*", "--gpu", "test GPU",
@@ -397,9 +400,7 @@ class GateWiringTests(Fixtures):
             if malformed and side == "candidate":
                 junit.write_text("<testsuite><testcase", encoding="utf-8")
                 return 8
-            root = ET.Element("testsuite")
-            root.extend(cases[side])
-            ET.ElementTree(root).write(junit, encoding="utf-8", xml_declaration=True)
+            write_junit(junit, cases[side])
             return 8 if any(case.find("failure") is not None or case.find("error") is not None
                             for case in cases[side]) else 0
 
@@ -420,8 +421,7 @@ class GateWiringTests(Fixtures):
         return code, report, commands, stdout.getvalue(), stderr.getvalue(), output
 
     def test_cli_records_claims_and_raw_references_without_changing_failed_strict_result(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "specific regression"},
-                                   "candidate": {"state": "passed"}}}
+        declarations = probe_claims(state="failed", marker="specific regression")
         code, report, commands, text, _, output = self.invoke({
             "baseline": [testcase(kind="failure", detail="specific regression")], "candidate": [testcase()]}, declarations)
         self.assertEqual(code, 1)
@@ -437,32 +437,24 @@ class GateWiringTests(Fixtures):
             self.assertEqual(reference["sha256"], hashlib.sha256(junit.read_bytes()).hexdigest())
 
     def test_claim_mismatches_do_not_change_a_clean_strict_result(self):
-        declarations = {"probe": {"baseline": {"state": "failed", "marker": "marker"},
-                                   "candidate": {"state": "passed"}}}
-        code, report, _, _, _, _ = self.invoke({"baseline": [testcase()], "candidate": [testcase()]}, declarations)
+        declarations = probe_claims(state="failed", marker="marker")
+        code, report, _, _, _, _ = self.invoke(declarations=declarations)
         self.assertEqual(code, 0)
         self.assertEqual(report["outcome_evidence"]["expectations"]["results"], {"mismatched": 1})
 
     def test_matched_passing_claims_cannot_suppress_layer_or_validation_problems(self):
-        declarations = {"probe": {side: {"state": "passed"} for side in ("baseline", "candidate")}}
+        declarations = probe_claims()
         for output in ("no layer", INSERTED + "\nValidation Error: [ VUID-New-1 ] bad state"):
             with self.subTest(output=output):
-                self.sequence += 1
-                original = self.directory
-                self.directory = original / str(self.sequence)
-                self.directory.mkdir()
-                try:
-                    code, report, _, _, _, _ = self.invoke({"baseline": [testcase()],
-                                                          "candidate": [testcase(stdout=output)]}, declarations)
-                finally:
-                    self.directory = original
+                code, report, _, _, _, _ = self.invoke({"baseline": [testcase()],
+                                                       "candidate": [testcase(stdout=output)]}, declarations)
                 self.assertEqual(code, 1)
                 self.assertEqual(report["outcome_evidence"]["expectations"]["results"], {"matched": 1})
                 self.assertTrue(report["new_diagnostics"] or report["problems"])
 
     def test_unselected_expectations_are_rejected_before_any_ctest_run(self):
-        declarations = {"unselected": {side: {"state": "passed"} for side in ("baseline", "candidate")}}
-        code, report, commands, _, _, _ = self.invoke({"baseline": [testcase()], "candidate": [testcase()]}, declarations)
+        declarations = probe_claims("unselected")
+        code, report, commands, _, _, _ = self.invoke(declarations=declarations)
         self.assertEqual(code, 2)
         self.assertIn("unselected", report["error"])
         self.assertFalse(any("--output-junit" in command for command in commands))
@@ -481,17 +473,11 @@ class GateWiringTests(Fixtures):
                 self.assertTrue(error)
 
     def test_artifact_drift_and_malformed_junit_remain_setup_failures_with_claims(self):
-        declarations = {"probe": {side: {"state": "passed"} for side in ("baseline", "candidate")}}
+        declarations = probe_claims()
         for mode in ("artifact", "xml"):
             with self.subTest(mode=mode):
-                original = self.directory
-                self.directory = original / mode
-                self.directory.mkdir()
-                try:
-                    code, report, _, _, _, _ = self.invoke({"baseline": [testcase()], "candidate": [testcase()]},
-                                                          declarations, artifact_drift=mode == "artifact", malformed=mode == "xml")
-                finally:
-                    self.directory = original
+                code, report, _, _, _, _ = self.invoke(declarations=declarations, artifact_drift=mode == "artifact",
+                                                       malformed=mode == "xml")
                 self.assertEqual(code, 2)
                 self.assertEqual(report["status"], "incomplete")
                 self.assertIn("error", report)
