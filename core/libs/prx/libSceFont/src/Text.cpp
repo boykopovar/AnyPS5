@@ -405,10 +405,10 @@ int APS5_VABI sceFontStringGetWritingForm(FontString fontString) {
 FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontString, std::uint32_t* characterCount) {
     auto* data = GetStringData(fontString);
     if (!data || data->textCount == 0) {
-        if (characterCount) *characterCount = 0;
+        if (characterCount) CopyOutGuest(characterCount, std::uint32_t{0});
         return nullptr;
     }
-    if (characterCount) *characterCount = data->textCount;
+    if (characterCount && !CopyOutGuest(characterCount, data->textCount)) return nullptr;
     return TextCharacters(data);
 }
 
