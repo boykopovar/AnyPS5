@@ -408,7 +408,7 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 
 ## Release and seed tools
 
-- `tools/package_release.py --platform {linux,windows,web,headers} --output <dir>` packages a release for one platform from a build directory (`--build`, `--version`, `--revision`, `--docs` are optional).
+- `tools/package_release.py --platform {linux,windows,web,headers} --build <dir> --version <v> --output <dir>` packages a release for one platform from a build directory. `--revision` is required for `web` and rejected for the other platforms, and `headers` takes `--version` but not `--build`. `tools/package_release.py --docs <dir> --output <dir>` collects the docs on its own and cannot be combined with `--platform`, `--build`, `--version` or `--revision`.
 - `tools/prepare_release_notes.py --input <file> --body <file> --full <file>` prepares size-safe GitHub release notes; `--check` is the verification mode.
 - `tools/public_headers_manifest.py [--root <dir>]` inventories the public header package inputs and their content hashes without creating an archive.
 - `tools/relinker_seed_manifest.py <corpus>` describes the files of a flat relinker fuzz corpus as JSON (see the fuzzing section above).
