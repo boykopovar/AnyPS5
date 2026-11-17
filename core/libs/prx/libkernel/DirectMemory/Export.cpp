@@ -730,6 +730,10 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
    result = SCE_KERNEL_ERROR_EINVAL;
    break;
   }
+  if ((entry.operation == OpMapDirect || entry.operation == OpMapFlexible) && UndefinedProtection(static_cast<uint8_t>(entry.protection))) {
+   result = SCE_KERNEL_ERROR_EINVAL;
+   break;
+  }
   switch (entry.operation) {
   case OpMapDirect:
    result = DoMapDirect(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags, static_cast<int64_t>(entry.offset), 0);
