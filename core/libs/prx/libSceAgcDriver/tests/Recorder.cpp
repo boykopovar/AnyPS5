@@ -2034,6 +2034,11 @@ void deferredBatchTests(const Device& device) {
         recordBarrierThrough(context, commands);
         recordBarrierThrough(context, commands);
         Require(recorder.StreamOps() >= 2, "barriers recorded into a deferred batch did not reach its stream");
+        Require(recorder.GraphicsState().FunctionsFor(commands) == &StreamedCommands(), "a deferred batch's draw state did not take the streamed command table");
+        Require(recorder.GraphicsState().FunctionsFor(VK_NULL_HANDLE) == nullptr, "the batch's command table was given for another command buffer");
+        const auto streamedOps = recorder.StreamOps();
+        recorder.GraphicsState().SetViewport(context, VkViewport{0.0f, 0.0f, 16.0f, 16.0f, 0.0f, 1.0f});
+        Require(recorder.StreamOps() == streamedOps + 1, "a viewport set through a deferred batch's draw state did not reach its stream");
         recorder.Submit();
         recorder.Sync();
         const auto counts = recorder.StreamCounts();
@@ -2046,6 +2051,10 @@ void deferredBatchTests(const Device& device) {
         RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
         Require(!recorder.Deferred() && !CommandStream::IsHandle(commands), "APS5_DIRECT_BATCHES opened a deferred batch");
         recordBarrierThrough(context, commands);
+        const auto* direct = recorder.GraphicsState().FunctionsFor(commands);
+        Require(direct != nullptr && direct != &StreamedCommands(), "a direct batch's draw state did not take the driver's command table");
+        Require(direct->CmdSetViewport != nullptr && !IsCommandThunk("vkCmdSetViewport", reinterpret_cast<PFN_vkVoidFunction>(direct->CmdSetViewport)), "a direct batch's draw state records through the thunk");
+        recorder.GraphicsState().SetViewport(context, VkViewport{0.0f, 0.0f, 16.0f, 16.0f, 0.0f, 1.0f});
         recorder.Submit();
         recorder.Sync();
         Require(recorder.StreamCounts().direct == 1 && recorder.StreamCounts().replayed == 0, "a direct batch was replayed");

@@ -99,6 +99,7 @@ std::span<const std::string_view> CommandNames();
 bool IsCommandName(std::string_view name) noexcept;
 CommandId CommandFor(std::string_view name);
 void ResolveCommandFunctions(CommandFunctions& functions, VkDevice device, PFN_vkGetDeviceProcAddr resolve);
+const CommandFunctions& StreamedCommands();
 PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real);
 bool IsCommandThunk(std::string_view name, PFN_vkVoidFunction function) noexcept;
 std::size_t CommandThunkSlots(CommandId id) noexcept;

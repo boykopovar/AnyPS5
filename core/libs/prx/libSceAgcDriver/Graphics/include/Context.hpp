@@ -367,6 +367,18 @@ struct Context {
         return lookup<TFunction>(name.Value());
     }
 
+    template<typename TFunction>
+    TFunction ForBatch(const CommandFunctions* batch, TFunction CommandFunctions::*command, TFunction DeviceFunctions::*member, FunctionName name) const {
+        if (batch != nullptr && batch->*command != nullptr) return batch->*command;
+        return Resolved(member, name);
+    }
+
+    template<typename TFunction>
+    TFunction ForBatch(const CommandFunctions* batch, TFunction CommandFunctions::*command, TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
+        if (batch != nullptr && batch->*command != nullptr) return batch->*command;
+        return tracked(member, name);
+    }
+
     class ComputeBinder {
     public:
         void operator()(VkCommandBuffer commands, VkPipeline pipeline) const {

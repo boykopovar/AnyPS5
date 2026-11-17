@@ -432,6 +432,26 @@ VKAPI_ATTR void VKAPI_CALL thunk(VkCommandBuffer commands, A... arguments) {
     Streamer<Id>::Append(stream, arguments...);
 }
 
+[[noreturn]] void notAStream(const char* command) {
+    throw std::logic_error(std::string(command) + " of a streamed batch was given a command buffer that is not a stream");
+}
+
+template<CommandId Id, typename... A>
+VKAPI_ATTR void VKAPI_CALL streamed(VkCommandBuffer commands, A... arguments) {
+    if (!CommandStream::IsHandle(commands)) [[unlikely]] notAStream(Command<Id>::text);
+    auto& stream = CommandStream::From(commands);
+    if (const auto target = stream.Materialized(); target != VK_NULL_HANDLE) {
+        (stream.Functions().*Command<Id>::member)(target, arguments...);
+        return;
+    }
+    Streamer<Id>::Append(stream, arguments...);
+}
+
+template<CommandId Id, typename... A>
+void setStreamed(CommandFunctions& functions, void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
+    functions.*Command<Id>::member = &streamed<Id, A...>;
+}
+
 template<CommandId Id, std::size_t K, typename... A>
 PFN_vkVoidFunction thunkOf(void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
     return reinterpret_cast<PFN_vkVoidFunction>(&thunk<Id, K, A...>);
@@ -480,6 +500,17 @@ bool IsCommandName(std::string_view name) noexcept {
 CommandId CommandFor(std::string_view name) {
     if (const auto* found = find(name)) return found->second;
     throw std::logic_error("AGC graphics: " + std::string(name) + " is a Vulkan command without a command-stream thunk; add it to APS5_COMMANDS");
+}
+
+const CommandFunctions& StreamedCommands() {
+    static const CommandFunctions functions = [] {
+        CommandFunctions table{};
+#define APS5_COMMAND_STREAMED(name) setStreamed<CommandId::name>(table, typename Command<CommandId::name>::Pfn{});
+        APS5_COMMANDS(APS5_COMMAND_STREAMED)
+#undef APS5_COMMAND_STREAMED
+        return table;
+    }();
+    return functions;
 }
 
 void ResolveCommandFunctions(CommandFunctions& functions, VkDevice device, PFN_vkGetDeviceProcAddr resolve) {

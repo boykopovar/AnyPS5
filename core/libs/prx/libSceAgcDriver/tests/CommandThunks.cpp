@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -949,33 +950,89 @@ void SpecializedStreamersKeepEveryArgument() {
 
 VKAPI_ATTR void VKAPI_CALL emptyDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
-void DirectModeCost() {
-    const auto thunk = thunked("vkCmdDraw", &emptyDraw);
+template<typename Pfn>
+Pfn forBatch(const CommandFunctions* batch, Pfn CommandFunctions::*command, Pfn fallback) {
+    if (batch != nullptr && batch->*command != nullptr) return batch->*command;
+    return fallback;
+}
+
+struct CommandCosts {
+    double raw = 1e9;
+    double thunk = 1e9;
+    double typedDirect = 1e9;
+    double thunkStreamed = 1e9;
+    double typedStreamed = 1e9;
+};
+
+template<typename Body>
+double nanosPerCall(int calls, Body&& body) {
+    const auto start = std::chrono::steady_clock::now();
+    for (int call = 0; call < calls; ++call) body(static_cast<std::uint32_t>(call));
+    return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / calls;
+}
+
+CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds) {
+    CommandFunctions direct{};
+    direct.CmdDraw = &emptyDraw;
     volatile PFN_vkCmdDraw raw = &emptyDraw;
-    volatile PFN_vkCmdDraw through = thunk;
-    constexpr int Calls = 20'000'000;
-    const auto time = [&](volatile PFN_vkCmdDraw& function) {
-        const auto start = std::chrono::steady_clock::now();
-        for (int call = 0; call < Calls; ++call) function(fakeBuffer(1), static_cast<std::uint32_t>(call), 1, 0, 0);
-        return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / Calls;
-    };
-    double rawNs = 1e9;
-    double thunkNs = 1e9;
-    for (int round = 0; round < 5; ++round) {
-        rawNs = std::min(rawNs, time(raw));
-        thunkNs = std::min(thunkNs, time(through));
+    volatile PFN_vkCmdDraw through = thunked("vkCmdDraw", &emptyDraw);
+    const CommandFunctions* volatile directTable = &direct;
+    const CommandFunctions* volatile streamedTable = &AgcDriver::Graphics::StreamedCommands();
+    const auto target = fakeBuffer(1);
+    CommandCosts costs;
+    for (int round = 0; round < rounds; ++round) {
+        costs.raw = std::min(costs.raw, nanosPerCall(directCalls, [&](std::uint32_t call) { raw(target, call, 1, 0, 0); }));
+        costs.typedDirect = std::min(costs.typedDirect, nanosPerCall(directCalls, [&](std::uint32_t call) { forBatch(directTable, &CommandFunctions::CmdDraw, static_cast<PFN_vkCmdDraw>(through))(target, call, 1, 0, 0); }));
+        costs.thunk = std::min(costs.thunk, nanosPerCall(directCalls, [&](std::uint32_t call) { through(target, call, 1, 0, 0); }));
+        {
+            CommandStream stream(direct);
+            const auto handle = stream.Handle();
+            costs.thunkStreamed = std::min(costs.thunkStreamed, nanosPerCall(streamedCalls, [&](std::uint32_t call) { through(handle, call, 1, 0, 0); }));
+        }
+        {
+            CommandStream stream(direct);
+            const auto handle = stream.Handle();
+            costs.typedStreamed = std::min(costs.typedStreamed, nanosPerCall(streamedCalls, [&](std::uint32_t call) { forBatch(streamedTable, &CommandFunctions::CmdDraw, static_cast<PFN_vkCmdDraw>(through))(handle, call, 1, 0, 0); }));
+        }
     }
-    std::printf("direct-mode cost: raw %.2f ns/call, thunk %.2f ns/call, added %.2f ns/call (best of 5 x %d calls)\n", rawNs, thunkNs, thunkNs - rawNs, Calls);
+    return costs;
+}
+
+bool InstrumentedBuild() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    return true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    return true;
+#else
+    return false;
+#endif
+#else
+    return false;
+#endif
+}
+
+int DirectModeCost() {
+    constexpr int DirectCalls = 10'000'000;
+    constexpr int StreamedCalls = 1'000'000;
+    constexpr int Rounds = 7;
+    const auto costs = MeasureCommandCosts(DirectCalls, StreamedCalls, Rounds);
+    std::printf("command cost (min of %d interleaved rounds): direct batch: raw %.2f ns, thunk %.2f ns, typed %.2f ns; streamed batch: thunk %.2f ns, typed %.2f ns\n", Rounds, costs.raw, costs.thunk, costs.typedDirect, costs.thunkStreamed, costs.typedStreamed);
+    const double allowed = costs.raw + std::max(0.15, (costs.thunk - costs.raw) / 2);
+    if (costs.typedDirect <= allowed) return 0;
+    if (InstrumentedBuild()) {
+        std::printf("typed direct %.2f ns exceeds the allowed %.2f ns; not gated in a sanitizer build\n", costs.typedDirect, allowed);
+        return 0;
+    }
+    std::fprintf(stderr, "command thunks: a direct batch's typed command costs %.2f ns, over the allowed %.2f ns (raw %.2f ns, thunk %.2f ns)\n", costs.typedDirect, allowed, costs.raw, costs.thunk);
+    return 1;
 }
 
 }
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string_view(argv[1]) == "--bench") {
-            DirectModeCost();
-            return 0;
-        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bench") return DirectModeCost();
         EveryListedCommandHasAThunk();
         DirectCallsReachTheirOwnEntryPoint();
         StreamReplayRecordsWhatDirectRecords();

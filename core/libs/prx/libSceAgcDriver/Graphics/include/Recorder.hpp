@@ -67,9 +67,10 @@ public:
     CommandState(const CommandState&) = delete;
     CommandState& operator=(const CommandState&) = delete;
 
-    void Begin(VkCommandBuffer commands, bool suppress = true);
+    void Begin(VkCommandBuffer commands, bool suppress = true, const CommandFunctions* functions = nullptr);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
+    const CommandFunctions* FunctionsFor(VkCommandBuffer recording) const noexcept { return recording == commands ? functions : nullptr; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
@@ -110,6 +111,7 @@ private:
     void applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
 
     VkCommandBuffer commands = VK_NULL_HANDLE;
+    const CommandFunctions* functions = nullptr;
     std::uint32_t trackable = 0;
     std::uint32_t valid = 0;
     std::uint32_t overwritten = 0;
@@ -784,6 +786,7 @@ private:
         std::uint64_t sampleBatch = 0;
         std::vector<SampleSegment> foldedSamples;
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        const CommandFunctions* functions = nullptr;
         CommandState graphicsState;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -1105,6 +1108,7 @@ private:
     void noteDemotion(const Demotion& demotion);
     VkCommandBuffer live() { return open->commands; }
     CommandFunctions realCommands;
+    bool realResolved = false;
     FailureLatch latch;
     WorkBudget budget{WorkBudget::Limits{}};
     std::unique_ptr<ReplayExecutor> executor;
