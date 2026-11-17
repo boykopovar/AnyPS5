@@ -65,3 +65,4 @@
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListItemExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListDrawingItemExports.hpp"
+#include "prx/libSceNKWebKit/include/DisplayListColorImageItemExports.hpp"
