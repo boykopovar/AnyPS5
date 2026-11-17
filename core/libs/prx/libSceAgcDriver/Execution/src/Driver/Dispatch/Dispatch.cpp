@@ -90,7 +90,7 @@ bool Driver::capturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> cap
 }
 
 bool Driver::pipelineDispatch() {
-    return DispatchItemsEnabled();
+    return DispatchItemsEnabled() && DrawPipeline::Depth() != 0;
 }
 
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {

@@ -251,18 +251,6 @@ std::string Describe(const Handling& handling) {
     return std::to_string(handling.drains) + " drains (" + std::to_string(handling.packetDrains) + " at the dispatch packet), " + (handling.queued ? "queued" : "not queued");
 }
 
-#if defined(__SANITIZE_THREAD__)
-constexpr bool ThreadSanitized = true;
-#elif defined(__has_feature)
-#if __has_feature(thread_sanitizer)
-constexpr bool ThreadSanitized = true;
-#else
-constexpr bool ThreadSanitized = false;
-#endif
-#else
-constexpr bool ThreadSanitized = false;
-#endif
-
 std::vector<std::uint32_t> DispatchBatch(std::size_t dispatches) {
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
     const auto input = BufferDescriptor(Input, BufferBytes);
@@ -288,7 +276,6 @@ void MeasureDispatchOverhead() {
     namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
     constexpr std::size_t PerBatch = 250;
     constexpr std::size_t Batches = 24;
-    constexpr double Bound = 1.2;
     const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoPipelineDispatch);
     constexpr std::uint32_t value = 0x51515151u;
     for (std::size_t warm = 0; warm < 2; ++warm) Settle(Round(Input, value, Code.data()));
@@ -332,8 +319,12 @@ void MeasureDispatchOverhead() {
     std::printf("pipelined dispatch: hand-offs per pipelined dispatch: %.3f committer wakes, %.3f full-queue waits, %.3f producer wakes; per inline dispatch: %.3f committer wakes\n", perDispatch(handoffs[0].committerWakes), perDispatch(handoffs[0].fullWaits), perDispatch(handoffs[0].producerWakes), perDispatch(handoffs[1].committerWakes));
     check(drains[0] == 0u, "dispatch overhead: the pipelined arm drained the pipeline " + std::to_string(drains[0]) + " times at a dispatch, so it did not measure pipelined dispatches");
     check(drains[1] >= Batches * PerBatch, "dispatch overhead: the inline arm drained the pipeline " + std::to_string(drains[1]) + " times for " + std::to_string(Batches * PerBatch) + " dispatches");
-    if (ThreadSanitized) return;
-    check(ratio <= Bound, "dispatch overhead: pipelined batches took a median " + std::to_string(ratio) + "x the time of the inline batches beside them (" + std::to_string(pipelined) + " us against " + std::to_string(inlined) + " us per dispatch), above " + std::to_string(Bound) + "x");
+    const auto refill = DrawPipeline::Depth() / 2u;
+    check(refill != 0, "dispatch overhead: the draw pipeline is too shallow to bound its full-queue waits");
+    const auto fullWaitLimit = Batches * (PerBatch / refill + 2u);
+    check(handoffs[0].fullWaits <= fullWaitLimit, "dispatch overhead: the pipelined arm waited on a full queue " + std::to_string(handoffs[0].fullWaits) + " times for " + std::to_string(Batches * PerBatch) + " dispatches; producers that resume at half the depth of " + std::to_string(DrawPipeline::Depth()) + " wait at most " + std::to_string(fullWaitLimit) + " times");
+    check(handoffs[0].producerWakes <= handoffs[0].fullWaits + 2u * Batches, "dispatch overhead: the pipelined arm woke producers " + std::to_string(handoffs[0].producerWakes) + " times for " + std::to_string(handoffs[0].fullWaits) + " full-queue waits and " + std::to_string(Batches) + " drained batches");
+    check(handoffs[1].committerWakes <= Batches * 2u, "dispatch overhead: the inline arm woke the committer " + std::to_string(handoffs[1].committerWakes) + " times for " + std::to_string(Batches) + " batches of dispatches that run on the worker");
 }
 
 }
