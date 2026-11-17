@@ -20,6 +20,7 @@
 #include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);
@@ -58,6 +59,11 @@ constexpr uint32_t ValidOptions = 0x00007bff;
 constexpr uint32_t OptionMultiline = 0x00000001;
 constexpr uint32_t OptionUseOver2K = 0x00004000;
 constexpr uint32_t EnterLabelLast = 3;
+constexpr uint32_t ExtendedSetPriority = 0x00000002;
+constexpr uint32_t ExtendedPriorityShift = 0x00000004;
+constexpr uint32_t PrioritySymbol = 2;
+constexpr uint32_t PriorityAccent = 3;
+constexpr uint32_t DisableController = 0x00000001;
 constexpr uint32_t AlignmentLast = 2;
 constexpr uint32_t PanelPriorityLast = 3;
 constexpr uint32_t MaxTextLength = 2048;
@@ -74,6 +80,8 @@ constexpr uint32_t CaretMoveRight = 2;
 struct PendingInput {
     ImeHostInput input;
     std::u16string paste;
+    bool pad = false;
+    bool clear = false;
 };
 
 struct Session {
@@ -84,6 +92,7 @@ struct Session {
     std::deque<ImeEvent> events;
     std::deque<PendingInput> hostInputs;
     ImeComposition composition;
+    ImeDialog::PadKeyboardState keyboard;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -266,7 +275,17 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
         session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
         return std::nullopt;
     }
-    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) {
+        if (pending.pad) ImeDialog::PadKeyboardNoteInsert(session.keyboard, false);
+        return std::nullopt;
+    }
+    if (pending.clear) {
+        if (session.text.empty()) return std::nullopt;
+        const std::u16string oldText = session.text;
+        session.text.clear();
+        session.caret = 0;
+        return CommitEdit(session, oldText, 0, -static_cast<int32_t>(oldText.size()));
+    }
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -313,7 +332,7 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             return std::nullopt;
         }
         case ImeHostInputKind::Enter:
-            if ((session.param.option & OptionMultiline) != 0) {
+            if (!pending.pad && (session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
             }
             QueueText(session, EventPressEnter, session.caret, 0);
@@ -321,12 +340,120 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
-        case ImeHostInputKind::Paste:
-            return Insert(session, pending.paste);
+        case ImeHostInputKind::Paste: {
+            const std::size_t before = session.text.size();
+            std::optional<DeferredFilter> deferred = Insert(session, pending.paste);
+            if (pending.pad) ImeDialog::PadKeyboardNoteInsert(session.keyboard, session.text.size() != before);
+            return deferred;
+        }
         case ImeHostInputKind::Preedit:
             return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
+}
+
+void QueuePad(Session& session, ImeHostInputKind kind, std::u16string text = {}, bool clear = false) {
+    PendingInput pending;
+    pending.input.kind = kind;
+    pending.paste = std::move(text);
+    pending.pad = true;
+    pending.clear = clear;
+    session.hostInputs.push_back(std::move(pending));
+}
+
+void ReceivePad(const ImeHostPad& pad) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return;
+    Session& session = *g_session;
+    ImeDialog::PadKeyboardResult result = ImeDialog::PadKeyboardStep(session.keyboard, {pad.buttons, pad.leftX, pad.leftY, pad.l2}, ImeDialog::PadKeyboardState::Clock::now());
+    switch (result.edit) {
+        case ImeDialog::PadEdit::None:
+            break;
+        case ImeDialog::PadEdit::Insert:
+            QueuePad(session, ImeHostInputKind::Paste, std::move(result.text));
+            break;
+        case ImeDialog::PadEdit::Backspace:
+            QueuePad(session, ImeHostInputKind::Backspace);
+            break;
+        case ImeDialog::PadEdit::Clear:
+            QueuePad(session, ImeHostInputKind::Backspace, {}, true);
+            break;
+        case ImeDialog::PadEdit::CaretLeft:
+            QueuePad(session, ImeHostInputKind::Left);
+            break;
+        case ImeDialog::PadEdit::CaretRight:
+            QueuePad(session, ImeHostInputKind::Right);
+            break;
+        case ImeDialog::PadEdit::CaretHome:
+            QueuePad(session, ImeHostInputKind::Home);
+            break;
+        case ImeDialog::PadEdit::CaretEnd:
+            QueuePad(session, ImeHostInputKind::End);
+            break;
+    }
+    if (result.finish == ImeDialog::PadFinish::Done) QueuePad(session, ImeHostInputKind::Enter);
+    else if (result.finish == ImeDialog::PadFinish::Cancel) QueuePad(session, ImeHostInputKind::Escape);
+}
+
+ImeKeySymbol KeySymbol(const ImeDialog::PadKeyboardState& keyboard, ImeDialog::PadKeyGlyph glyph) {
+    switch (glyph) {
+        case ImeDialog::PadKeyGlyph::Shift:
+            return keyboard.caseState == ImeDialog::PadKeyboardCase::Upper ? ImeKeySymbol::ShiftFilled : keyboard.caseState == ImeDialog::PadKeyboardCase::CapsLock ? ImeKeySymbol::CapsLock : ImeKeySymbol::ShiftOutline;
+        case ImeDialog::PadKeyGlyph::Backspace: return ImeKeySymbol::Backspace;
+        case ImeDialog::PadKeyGlyph::ArrowLeft: return ImeKeySymbol::ArrowLeft;
+        case ImeDialog::PadKeyGlyph::ArrowRight: return ImeKeySymbol::ArrowRight;
+        case ImeDialog::PadKeyGlyph::ArrowUp: return ImeKeySymbol::ArrowUp;
+        case ImeDialog::PadKeyGlyph::ArrowDown: return ImeKeySymbol::ArrowDown;
+        case ImeDialog::PadKeyGlyph::None: break;
+    }
+    return ImeKeySymbol::None;
+}
+
+bool ProvideView(ImeKeyboardView& view) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return false;
+    const Session& session = *g_session;
+    view.text = session.text;
+    view.caret = session.caret;
+    view.preedit = session.composition.text;
+    view.preeditCursor = session.composition.cursor;
+    view.preeditSelection = session.composition.selection;
+    view.rows = ImeDialog::PadKeyboardRows(session.keyboard);
+    view.columns = ImeDialog::PadKeyboardColumns();
+    view.keys.clear();
+    const ImeDialog::PadKey* selected = ImeDialog::PadKeyboardSelected(session.keyboard);
+    for (const auto& key : ImeDialog::PadKeyboardKeys(session.keyboard)) {
+        view.keys.push_back({key.row, key.column, key.columnSpan, key.rowSpan, ImeDialog::PadKeyboardLabel(session.keyboard, key), KeySymbol(session.keyboard, key.glyph), key.badge != nullptr ? std::u16string(key.badge) : std::u16string(), &key == selected});
+    }
+    return true;
+}
+
+ImeDialog::PadKeyboardOptions KeyboardOptions(const Param& param, const ExtendedParam* extended) {
+    ImeDialog::PadKeyboardOptions options;
+    options.multiline = (param.option & OptionMultiline) != 0;
+    options.currency = ImeDialog::PadKeyboardCurrencyFor(param.supported_languages);
+    options.enterLabel = param.enter_label;
+    if (extended != nullptr && (extended->option & ExtendedSetPriority) != 0) {
+        options.family = extended->priority == PrioritySymbol ? ImeDialog::PadKeyboardFamily::Symbols : extended->priority == PriorityAccent ? ImeDialog::PadKeyboardFamily::Specials : ImeDialog::PadKeyboardFamily::Latin;
+        if ((extended->option & ExtendedPriorityShift) != 0 && options.family != ImeDialog::PadKeyboardFamily::Symbols) options.caseState = ImeDialog::PadKeyboardCase::CapsLock;
+    }
+    return options;
+}
+
+void ClaimPanel() {
+    ImeHostPadSink noSink = nullptr;
+    if (!g_padSink.compare_exchange_strong(noSink, &ReceivePad)) return;
+    ImeKeyboardViewProvider noProvider = nullptr;
+    if (g_viewProvider.compare_exchange_strong(noProvider, &ProvideView)) return;
+    ImeHostPadSink sink = &ReceivePad;
+    g_padSink.compare_exchange_strong(sink, nullptr);
+}
+
+void ReleasePanel() {
+    ImeHostPadSink sink = &ReceivePad;
+    g_padSink.compare_exchange_strong(sink, nullptr);
+    ImeKeyboardViewProvider provider = &ProvideView;
+    g_viewProvider.compare_exchange_strong(provider, nullptr);
 }
 
 int ValidateOpen(const Param* param, const ExtendedParam* extended) {
@@ -456,6 +583,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     session.extKeyboardFilter = extended ? extended->ext_keyboard_filter : nullptr;
     session.text.assign(param->input_text_buffer, TextLength(param->input_text_buffer, param->max_text_length));
     session.caret = static_cast<uint32_t>(session.text.size());
+    session.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
     SyncBuffers(session);
     ImeEvent open{};
     open.id = EventOpen;
@@ -464,6 +592,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     PanelSize(*param, &open.param.rect.width, &open.param.rect.height);
     session.events.push_back(open);
     g_session = std::move(session);
+    if (!extended || (extended->disable_device & DisableController) == 0) ClaimPanel();
     return 0;
 }
 
@@ -471,6 +600,7 @@ int APS5_VABI sceImeClose_nid_postfix(void) {
     std::lock_guard lock(g_imeMutex);
     if (!g_session) return ErrorNotOpened;
     g_session.reset();
+    ReleasePanel();
     return 0;
 }
 

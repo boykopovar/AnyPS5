@@ -1,4 +1,4 @@
-add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libSceImeDialog/src/PadKeyboard.cpp)
 target_include_directories(libSceImeBackend PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceImeBackend)
 
