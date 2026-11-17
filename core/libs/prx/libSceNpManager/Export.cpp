@@ -735,7 +735,8 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
 }
 int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
     if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    std::memset(npEnv, 0, 0x18);
+    constexpr std::array<std::uint8_t, 0x18> cleared{};
+    if (!CopyGuestOut(npEnv, cleared.data(), cleared.size())) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
@@ -909,7 +910,8 @@ int APS5_VABI sceNpCheckCallback(void) {
 
 int APS5_VABI sceNpCheckNpAvailability(std::int32_t requestId, const NpOnlineId* onlineId, std::uint8_t* available) {
  if (requestId == 0 || onlineId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
- if (available != nullptr) *available = 0;
+ const std::uint8_t unavailable = 0;
+ if (available != nullptr && !CopyGuestOut(available, &unavailable, sizeof(unavailable))) return SCE_NP_ERROR_INVALID_ARGUMENT;
  return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
