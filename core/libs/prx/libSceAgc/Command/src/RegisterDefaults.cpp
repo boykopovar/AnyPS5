@@ -62,6 +62,7 @@ struct DefaultContext {
     std::array<ShaderRegister, 1024> registers{};
     std::uint32_t count = 0;
     std::uint32_t version = 0;
+    bool used = false;
     bool external = false;
     std::vector<std::uint32_t> resetCommands;
 };
@@ -123,14 +124,14 @@ int InitializeDefaultCxState(std::uint32_t version) {
     Require(version < 14, __func__, "unsupported context defaults version");
     std::lock_guard lock(defaultStateMutex);
     for (std::uint32_t index = 0; index < defaultContexts.size(); ++index) {
-        if (defaultContexts[index].version == version) {
+        if (defaultContexts[index].used && defaultContexts[index].version == version) {
             defaultContexts[index].external = true;
             activeDefaultInstance = index;
             activeDefaultAvailable = true;
             return 0;
         }
     }
-    auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return context.version == 0; });
+    auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return !context.used; });
     if (slot == defaultContexts.end()) return static_cast<int>(0x8a6c0004u);
     DefaultContext next;
     next.registers.fill({0xffffffffu, 0});
@@ -171,6 +172,7 @@ int InitializeDefaultCxState(std::uint32_t version) {
     }
     if (next.resetCommands.size() * sizeof(std::uint32_t) >= 0x180u) return static_cast<int>(0x8a6c0001u);
     next.version = version;
+    next.used = true;
     next.external = true;
     activeDefaultInstance = static_cast<std::uint32_t>(slot - defaultContexts.begin());
     activeDefaultAvailable = true;

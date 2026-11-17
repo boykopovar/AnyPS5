@@ -84,7 +84,7 @@ target_link_libraries(agc_queue_reset_tests PRIVATE libSceAgc libc)
 configure_windows_unwind(agc_queue_reset_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_queue_reset_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(mode IN ITEMS uninitialized initialized growth cache)
+    foreach(mode IN ITEMS uninitialized initialized zero growth cache)
         add_test(NAME agc_queue_reset_${mode} COMMAND agc_queue_reset_tests ${mode})
         if(WIN32)
             set_tests_properties(agc_queue_reset_${mode} PROPERTIES ENVIRONMENT_MODIFICATION

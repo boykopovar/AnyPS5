@@ -116,6 +116,29 @@ void initialized() {
     prefix(reuse, 0xce008000u, 8);
 }
 
+void zeroVersion() {
+    check(sceAgcInit(0) == 0, "version-zero context initialization failed");
+    std::uint32_t viewport = 0xdeadbeefu;
+    check(sceAgcGetDefaultCxStateFlat(&viewport, 0x206, 0x207, 0) == 0 && viewport == 0x43fu, "version-zero context defaults were not built");
+    Storage first;
+    check(sceAgcAcbResetQueue(&first.buffer, 3, 0) == first.words.data(), "version-zero shader defaults were not restored");
+    prefix(first, 0xce000003u, 0);
+    suffix(first, 0xce800000u);
+    check(first.count() > 7, "version-zero restore omitted shader defaults");
+    check(sceAgcInit(13) == 0, "second context initialization failed after version zero");
+    Storage second;
+    check(sceAgcAcbResetQueue(&second.buffer, 3, 1) == second.words.data(), "second context did not occupy the other slot");
+    prefix(second, 0xce000003u, 13);
+    suffix(second, 0xce800000u);
+    check(sceAgcInit(8) == static_cast<int>(0x8a6c0004u), "version zero did not consume its context slot");
+    check(sceAgcInit(0) == 0, "version-zero context could not be reused");
+    Storage active;
+    check(sceAgcAcbResetQueue(&active.buffer, 0x8003, 0xffffffffu) == active.words.data(), "version-zero active context could not be restored");
+    prefix(active, 0xce008003u, 0);
+    suffix(active, 0xce800000u);
+    check(active.count() == first.count() && std::equal(first.words.begin() + 4, first.words.begin() + first.count(), active.words.begin() + 4), "initializing another version changed version-zero defaults");
+}
+
 struct Growth {
     std::uint32_t calls = 0;
     std::uint32_t requested = 0;
@@ -173,6 +196,7 @@ int main(int argc, char** argv) {
         const std::string mode = argv[1];
         if (mode == "uninitialized") { uninitialized(); invalidSelection(); }
         else if (mode == "initialized") initialized();
+        else if (mode == "zero") zeroVersion();
         else if (mode == "growth") growth();
         else if (mode == "cache") cache();
         else throw std::runtime_error("unknown queue-reset test mode");
