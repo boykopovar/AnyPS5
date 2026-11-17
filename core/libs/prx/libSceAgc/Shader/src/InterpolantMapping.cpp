@@ -4,6 +4,7 @@
 #include <array>
 #include <algorithm>
 #include <stdexcept>
+#include <vector>
 #include <prx/libc/include/General.hpp>
 
 #include "SceShaders.hpp"
@@ -137,26 +138,44 @@ int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Sh
     if (ps == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": ps is null");
     }
-    if (ps->num_input_semantics > InterpolantRegisterCount) {
+    Shader pixel{};
+    if (!GuestCopyIn_nid_no_patch(&pixel, ps, sizeof(pixel))) {
+        throw std::runtime_error(std::string(__func__) + ": ps is not readable");
+    }
+    if (pixel.num_input_semantics > InterpolantRegisterCount) {
         throw std::runtime_error(std::string(__func__) + ": input semantic count exceeds 32");
     }
-    if (ps->num_input_semantics == 0) {
+    if (pixel.num_input_semantics == 0) {
         return 0;
     }
-    if (ps->input_semantics == nullptr) {
+    if (pixel.input_semantics == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": ps->input_semantics is null but num_input_semantics != 0");
     }
     if (vs == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": vs is null");
     }
-    if (vs->num_output_semantics != 0 && vs->output_semantics == nullptr) {
+    Shader vertex{};
+    if (!GuestCopyIn_nid_no_patch(&vertex, vs, sizeof(vertex))) {
+        throw std::runtime_error(std::string(__func__) + ": vs is not readable");
+    }
+    if (vertex.num_output_semantics != 0 && vertex.output_semantics == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": vs->output_semantics is null but num_output_semantics != 0");
     }
-    for (std::uint32_t i = 0; i < ps->num_input_semantics; ++i) {
-        const ShaderSemantic& psSemantic = ps->input_semantics[i];
+    std::array<ShaderSemantic, InterpolantRegisterCount> inputs{};
+    std::vector<ShaderSemantic> outputs(vertex.output_semantics != nullptr ? vertex.num_output_semantics : 0u);
+    if (!GuestCopyIn_nid_no_patch(inputs.data(), pixel.input_semantics, pixel.num_input_semantics * sizeof(ShaderSemantic)) || !GuestCopyIn_nid_no_patch(outputs.data(), vertex.output_semantics, outputs.size() * sizeof(ShaderSemantic))) {
+        throw std::runtime_error(std::string(__func__) + ": shader semantics are not readable");
+    }
+    vertex.output_semantics = outputs.data();
+    std::array<ShaderRegister, InterpolantRegisterCount> values{};
+    for (std::uint32_t i = 0; i < pixel.num_input_semantics; ++i) {
+        const ShaderSemantic& psSemantic = inputs[i];
         const std::uint32_t psWord = ShaderSemanticWord(psSemantic);
-        const ShaderSemantic* vsSemantic = FindOutputSemantic(vs, psSemantic.semantic);
-        SetInterpolantRegister(regs, i, ApplyInterpolantDefaultValue0100(CreateInterpolantValue(psWord, vsSemantic), psWord));
+        const ShaderSemantic* vsSemantic = FindOutputSemantic(&vertex, psSemantic.semantic);
+        SetInterpolantRegister(values.data(), i, ApplyInterpolantDefaultValue0100(CreateInterpolantValue(psWord, vsSemantic), psWord));
+    }
+    if (!GuestCopyOut_nid_no_patch(regs, values.data(), pixel.num_input_semantics * sizeof(ShaderRegister))) {
+        throw std::runtime_error(std::string(__func__) + ": regs is not writable");
     }
     return 0;
 }

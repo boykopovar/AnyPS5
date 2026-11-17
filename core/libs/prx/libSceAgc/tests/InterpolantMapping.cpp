@@ -237,6 +237,38 @@ void testUpdate0100Boundary() {
     check(mappings == mappingsBefore && links == linksBefore, "_0100 full mapping resolved an ABI");
 }
 
+void testUpdate0100UnmappedPointers() {
+    const auto* unmappedShader = reinterpret_cast<const Shader*>(std::uintptr_t{0x10});
+    auto* unmappedSemantics = reinterpret_cast<ShaderSemantic*>(std::uintptr_t{0x10});
+    std::array<ShaderSemantic, 1> inputs{semantic(1, 0, 0)};
+    std::array<ShaderSemantic, 1> outputs{semantic(1, 5, 0)};
+    Shader vs{};
+    vs.output_semantics = outputs.data();
+    vs.num_output_semantics = 1;
+    Shader ps{};
+    ps.input_semantics = inputs.data();
+    ps.num_input_semantics = 1;
+    auto regs = filled();
+    const auto untouched = filled();
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, unmappedShader); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), unmappedShader, &ps); });
+    ps.input_semantics = unmappedSemantics;
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps); });
+    ps.input_semantics = inputs.data();
+    vs.output_semantics = unmappedSemantics;
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps); });
+    check(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "_0100 update with an unreadable shader wrote registers");
+    vs.output_semantics = outputs.data();
+    auto* unmappedRegs = reinterpret_cast<ShaderRegister*>(std::uintptr_t{0x10});
+    static const std::array<ShaderRegister, 1> readOnly{};
+    auto* readOnlyRegs = const_cast<ShaderRegister*>(readOnly.data());
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(unmappedRegs, &vs, &ps); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(readOnlyRegs, &vs, &ps); });
+    check(readOnly[0].offset == 0 && readOnly[0].value == 0, "_0100 update wrote a read-only register array");
+    ps.num_input_semantics = 0;
+    check(sceAgcUpdateInterpolantMapping_0100(unmappedRegs, unmappedShader, &ps) == 0, "_0100 update without inputs touched regs or vs");
+}
+
 void testUnversionedMapping() {
     std::array<ShaderSemantic, 5> inputs{
         semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
@@ -325,6 +357,7 @@ int main() {
         testUpdateMapping();
         testUpdate0100Mapping();
         testUpdate0100Boundary();
+        testUpdate0100UnmappedPointers();
         testUnversionedMapping();
         testRejections();
         check(mappings == 10u && links == 8u, "mapping preparation call count changed");
