@@ -579,11 +579,16 @@ struct Replay {
 
     void releaseStaged(const std::vector<StagedWord>& words) {
         for (const auto& word : words) {
+            if (word.address % 4 != 0 || word.value.empty() || word.value.size() % 4 != 0) {
+                throw std::runtime_error("frame replay: a held wait at " + std::to_string(word.address) + " of " + std::to_string(word.value.size()) + " bytes is not whole aligned dwords");
+            }
+        }
+        for (const auto& word : words) {
             const bool settled = AgcDriverHoldSettled_nid_postfix(options.busyTimeout.count());
             const SettledHold hold{true};
             if (!settled) return;
             AgcDriverPrepareCommandWrite_nid_no_patch(word.address, word.value.size());
-            for (std::size_t at = 0; at + 4 <= word.value.size(); at += 4) {
+            for (std::size_t at = 0; at < word.value.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, word.value.data() + at, sizeof(value));
                 std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(word.address + at))).store(value, std::memory_order_release);
