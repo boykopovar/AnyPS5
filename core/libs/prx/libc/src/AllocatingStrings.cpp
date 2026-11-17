@@ -78,6 +78,7 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
         errno = 9;
         return -1;
     }
+    const int savedCallerErrno = errno;
     char* text = nullptr;
     const int count = vasprintf_nid_postfix(&text, format, args);
     if (count < 0) return -1;
@@ -117,6 +118,7 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
         if (writeError != 0) errno = writeError;
         return -1;
     }
+    errno = savedCallerErrno;
     return count;
 }
 

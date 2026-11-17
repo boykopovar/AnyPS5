@@ -372,12 +372,17 @@ constexpr int ErrLibEc = 16;
 constexpr int AnyFunction = 0xfff;
 
 constexpr int ErrRRsaLib = 4;
+constexpr int ErrREcLib = 16;
 constexpr int ErrRNestedAsn1Error = 58;
+constexpr int ErrRAsn1LengthMismatch = 62;
 constexpr int ErrRMallocFailure = 65;
 
 constexpr int Asn1RBadObjectHeader = 102;
+constexpr int Asn1RFieldMissing = 121;
 constexpr int Asn1RHeaderTooLong = 123;
+constexpr int Asn1RIntegerTooLargeForLong = 128;
 constexpr int Asn1RNotEnoughData = 142;
+constexpr int Asn1RTooLarge = 223;
 constexpr int Asn1RSequenceLengthMismatch = 148;
 constexpr int Asn1RSequenceNotConstructed = 149;
 constexpr int Asn1RTooLong = 155;
@@ -394,6 +399,7 @@ constexpr int X509RPublicKeyDecodeError = 125;
 
 constexpr int EcRDecodeError = 142;
 
+constexpr int Asn1TypeInteger = 2;
 constexpr int Asn1TypeNull = 5;
 constexpr int Asn1TypeObject = 6;
 constexpr int Asn1TypeOctetString = 4;
@@ -489,19 +495,76 @@ bool ReadExactSequence(std::span<const unsigned char> input, std::span<const uns
     return true;
 }
 
-bool Integer(std::span<const unsigned char>& input, std::span<const unsigned char>& content) {
-    Tlv value{};
-    if (!Next(input, 0x02, value)) return false;
-    if (value.content.empty() || (value.content[0] & 0x80)) {
+enum class IntegerKind {
+    Asn1Integer,
+    Bignum,
+    Long,
+};
+
+bool PrimitiveTlv(std::span<const unsigned char>& input, unsigned char tag, Tlv& value) {
+    if (!Next(input, tag, value)) {
+        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+        return false;
+    }
+    return true;
+}
+
+bool SequencePrimitiveTlv(std::span<const unsigned char>& body, unsigned char tag, Tlv& value) {
+    if (body.empty()) {
+        PutError(ErrLibAsn1, Asn1RFieldMissing);
+        return false;
+    }
+    if (!PrimitiveTlv(body, tag, value)) {
+        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+        return false;
+    }
+    return true;
+}
+
+bool ValidateUnsignedIntegerContent(std::span<const unsigned char> raw,
+    std::span<const unsigned char>& content, IntegerKind kind) {
+    if (raw.empty()) {
+        if (kind == IntegerKind::Long) {
+            content = raw;
+            return true;
+        }
+        PutError(ErrLibAsn1, ErrRAsn1LengthMismatch);
+        return false;
+    }
+    if (raw[0] & 0x80) {
         PutError(ErrLibAsn1, Asn1RBadObjectHeader);
         return false;
     }
-    content = value.content;
+    content = raw;
     if (content.size() > 1 && content[0] == 0 && (content[1] & 0x80) == 0) {
-        PutError(ErrLibAsn1, Asn1RBadObjectHeader);
+        PutError(ErrLibAsn1, ErrRAsn1LengthMismatch);
         return false;
     }
     while (content.size() > 1 && content[0] == 0) content = content.subspan(1);
+    if (kind == IntegerKind::Long) {
+        if (content.size() > sizeof(std::int64_t)
+            || (content.size() == sizeof(std::int64_t) && (content[0] & 0x80))) {
+            PutError(ErrLibAsn1, Asn1RTooLarge);
+            return false;
+        }
+        std::uint64_t value = 0;
+        for (unsigned char byte : content) value = (value << 8) | byte;
+        if (value == 0x7fffffff) {
+            PutError(ErrLibAsn1, Asn1RIntegerTooLargeForLong);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool SequenceInteger(std::span<const unsigned char>& body, std::span<const unsigned char>& content,
+    IntegerKind kind) {
+    Tlv value{};
+    if (!SequencePrimitiveTlv(body, 0x02, value)) return false;
+    if (!ValidateUnsignedIntegerContent(value.content, content, kind)) {
+        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+        return false;
+    }
     return true;
 }
 
@@ -630,17 +693,13 @@ LibreSsl3EvpPkey* DecodeRsaPkey(std::span<const unsigned char>& input, bool priv
     std::array<LibreSsl3Bignum*, 8> components{};
     if (privateKey) {
         std::span<const unsigned char> version;
-        if (!Integer(body, version) || version.size() != 1 || version[0] != 0) {
-            PutError(ErrLibAsn1, ErrRNestedAsn1Error);
-            return nullptr;
-        }
+        if (!SequenceInteger(body, version, IntegerKind::Long)) return nullptr;
     }
     const std::size_t count = privateKey ? 8 : 2;
     for (std::size_t i = 0; i < count; ++i) {
         std::span<const unsigned char> bytes;
-        if (!Integer(body, bytes)) {
+        if (!SequenceInteger(body, bytes, IntegerKind::Bignum)) {
             for (auto* component : components) BN_clear_free_nid_postfix(component);
-            PutError(ErrLibAsn1, ErrRNestedAsn1Error);
             return nullptr;
         }
         components[i] = DecodeBn(bytes);
@@ -817,11 +876,7 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
     }
     std::span<const unsigned char> version;
     Tlv privOctet{};
-    if (!Integer(body, version) || version.size() != 1 || version[0] != 1
-        || !Next(body, 0x04, privOctet) || privOctet.content.empty()) {
-        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
-        return nullptr;
-    }
+    if (!SequenceInteger(body, version, IntegerKind::Long) || !SequencePrimitiveTlv(body, 0x04, privOctet)) return nullptr;
 
     int curve = expectedCurve;
     if (!body.empty() && body[0] == 0xa0) {
@@ -842,10 +897,6 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
             return nullptr;
         }
         curve = paramCurve;
-    }
-    if (curve == 0) {
-        PutError(ErrLibEc, EcRDecodeError);
-        return nullptr;
     }
 
     std::span<const unsigned char> pubBits{};
@@ -869,6 +920,10 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
         PutError(ErrLibAsn1, ErrRNestedAsn1Error);
         return nullptr;
     }
+    if (curve == 0) {
+        PutError(ErrLibEc, EcRDecodeError);
+        return nullptr;
+    }
 
     EcKey* ec = EC_KEY_new_by_curve_name_nid_postfix(curve);
     if (!ec) return nullptr;
@@ -877,7 +932,8 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
         EC_KEY_free_nid_postfix(ec);
         return nullptr;
     }
-    if (mbedtls_mpi_read_binary(&ec->privateKey->value, privOctet.content.data(), privOctet.content.size()) != 0
+    if (privOctet.content.empty()
+        || mbedtls_mpi_read_binary(&ec->privateKey->value, privOctet.content.data(), privOctet.content.size()) != 0
         || mbedtls_mpi_cmp_int(&ec->privateKey->value, 0) <= 0
         || mbedtls_mpi_cmp_mpi(&ec->privateKey->value, &ec->group->group.N) >= 0) {
         EC_KEY_free_nid_postfix(ec);
@@ -1025,9 +1081,10 @@ LibreSsl3X509Algor* BuildAlgor(
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* NewPkcs8(
-    LibreSsl3X509Algor* algor, std::span<const unsigned char> key,
-    std::span<const unsigned char> attributesContent) {
-    if (key.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
+    LibreSsl3X509Algor* algor, std::span<const unsigned char> version,
+    std::span<const unsigned char> key, std::span<const unsigned char> attributesContent) {
+    if (version.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
+        || key.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
         || attributesContent.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         FreeAlgor(algor);
         return nullptr;
@@ -1042,10 +1099,14 @@ LibreSsl3Pkcs8PrivKeyInfo* NewPkcs8(
     info->algorithm = algor;
     info->version = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
     info->privateKey = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
-    if (!info->version || !info->privateKey
-        || !ASN1_INTEGER_set_nid_postfix(info->version, 0)) {
+    if (!info->version || !info->privateKey) {
         FreePkcs8(info);
         PutError(ErrLibAsn1, ErrRMallocFailure);
+        return nullptr;
+    }
+    info->version->type = Asn1TypeInteger;
+    if (!ASN1_STRING_set_nid_postfix(info->version, version.data(), static_cast<int>(version.size()))) {
+        FreePkcs8(info);
         return nullptr;
     }
     info->privateKey->type = Asn1TypeOctetString;
@@ -1073,10 +1134,7 @@ LibreSsl3Pkcs8PrivKeyInfo* NewPkcs8(
 
 LibreSsl3X509Algor* DecodePkcs8Algor(std::span<const unsigned char> body) {
     Tlv oid{};
-    if (!Next(body, 0x06, oid)) {
-        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
-        return nullptr;
-    }
+    if (!SequencePrimitiveTlv(body, 0x06, oid)) return nullptr;
     int oidNid = 0;
     if (IsOid(oid.content, RsaOid)) oidNid = RsaType;
     else if (IsOid(oid.content, EcPublicKeyOid)) oidNid = EcType;
@@ -1116,31 +1174,34 @@ LibreSsl3Pkcs8PrivKeyInfo* DecodePkcs8(std::span<const unsigned char>& input) {
     Tlv algorithm{};
     Tlv privateKey{};
     if (!ReadOuterSequence(remaining, body)) return nullptr;
-    if (!Integer(body, version) || version.size() != 1 || version[0] != 0
-        || !Next(body, 0x30, algorithm) || !Next(body, 0x04, privateKey)) {
+    if (!SequenceInteger(body, version, IntegerKind::Asn1Integer)) return nullptr;
+    if (!SequencePrimitiveTlv(body, 0x30, algorithm)) return nullptr;
+    auto* algor = DecodePkcs8Algor(algorithm.content);
+    if (!algor) {
         PutError(ErrLibAsn1, ErrRNestedAsn1Error);
+        return nullptr;
+    }
+    if (!SequencePrimitiveTlv(body, 0x04, privateKey)) {
+        FreeAlgor(algor);
         return nullptr;
     }
     std::span<const unsigned char> attrsContent{};
     if (!body.empty() && body[0] == 0xa0) {
         Tlv attributes{};
         if (!Next(body, 0xa0, attributes) || !ValidateTlvSequence(attributes.content)) {
+            FreeAlgor(algor);
             PutError(ErrLibAsn1, ErrRNestedAsn1Error);
             return nullptr;
         }
         attrsContent = attributes.content;
     }
     if (!body.empty()) {
+        FreeAlgor(algor);
         PutError(ErrLibAsn1, Asn1RSequenceLengthMismatch);
         PutError(ErrLibAsn1, ErrRNestedAsn1Error);
         return nullptr;
     }
-    auto* algor = DecodePkcs8Algor(algorithm.content);
-    if (!algor) {
-        PutError(ErrLibAsn1, ErrRNestedAsn1Error);
-        return nullptr;
-    }
-    auto* info = NewPkcs8(algor, privateKey.content, attrsContent);
+    auto* info = NewPkcs8(algor, version, privateKey.content, attrsContent);
     if (!info) return nullptr;
     input = remaining;
     return info;
@@ -1291,6 +1352,44 @@ template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI*
     *output = decoded;
 }
 
+}
+
+LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
+    const unsigned char** input, std::int64_t length) {
+    if (!input || !*input || length < 0) {
+        PutError(ErrLibAsn1, Asn1RBadObjectHeader);
+        return nullptr;
+    }
+    const std::size_t available = static_cast<std::size_t>(length);
+    LibreSsl3EvpPkey* key = nullptr;
+    if (type == RsaType) {
+        std::span<const unsigned char> remaining(*input, available);
+        key = DecodeRsaPkey(remaining, true, true);
+        if (!key) PutError(ErrLibRsa, ErrRRsaLib);
+    } else if (type == EcType) {
+        std::span<const unsigned char> remaining(*input, available);
+        EcKey* ec = DecodeEcPrivateKey(remaining, 0, true);
+        if (!ec) PutError(ErrLibEc, ErrREcLib);
+        if (ec) {
+            key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+            if (!key || !EVP_PKEY_assign_nid_postfix(key, EcType, ec)) {
+                if (key) EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+                EC_KEY_free_nid_postfix(ec);
+                key = nullptr;
+            }
+        }
+    }
+    if (key) {
+        ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
+        return key;
+    }
+    std::span<const unsigned char> pkcs8Remaining(*input, available);
+    auto* info = DecodePkcs8(pkcs8Remaining);
+    if (!info) return nullptr;
+    key = EVP_PKCS82PKEY_nid_postfix(info);
+    FreePkcs8(info);
+    if (key) ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
+    return key;
 }
 
 extern "C" {
@@ -1498,7 +1597,8 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3E
         }
         auto* algor = BuildAlgor(RsaOid, RsaType, true, {}, 0);
         if (!algor) return nullptr;
-        return NewPkcs8(algor, encoded, {});
+        constexpr std::array<unsigned char, 1> version{0};
+        return NewPkcs8(algor, version, encoded, {});
     }
     if (key->type == EcType) {
         int curve = 0;
@@ -1511,7 +1611,8 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3E
             : std::span<const unsigned char>(P384Oid);
         auto* algor = BuildAlgor(EcPublicKeyOid, EcType, false, curveOid, curve);
         if (!algor) return nullptr;
-        return NewPkcs8(algor, encoded, {});
+        constexpr std::array<unsigned char, 1> version{0};
+        return NewPkcs8(algor, version, encoded, {});
     }
     PutError(ErrLibEvp, EvpRUnsupportedPrivateKeyAlgorithm);
     return nullptr;
