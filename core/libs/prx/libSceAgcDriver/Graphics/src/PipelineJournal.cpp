@@ -172,6 +172,7 @@ void encodeTessellation(Writer& writer, const ShaderRecompiler::TessellationConf
     writer.U32(tessellation.instancePatches);
     writer.Bool(tessellation.drawParameters);
     writer.Bool(tessellation.mergedHull);
+    writer.Bool(tessellation.onChip);
 }
 
 void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfiguration& tessellation) {
@@ -180,6 +181,7 @@ void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfigurat
     tessellation.instancePatches = reader.U32();
     tessellation.drawParameters = reader.Bool();
     tessellation.mergedHull = reader.Bool();
+    tessellation.onChip = reader.Bool();
 }
 
 void encodeState(Writer& writer, const State& state) {

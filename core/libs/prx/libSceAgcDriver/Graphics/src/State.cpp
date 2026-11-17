@@ -1376,7 +1376,9 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
-        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        const bool legacy = ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0;
+        if (legacy) validate(path == ShaderPath::Tessellation && (value & ~0x100u) == 0x45u, "GCN tessellation routing other than LS, HS and a domain shader on the VS stage is unsupported");
+        else if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
         else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
         const auto config = read(queue.context, 0x2d6);
         const auto parameters = read(queue.context, 0x2db);
@@ -1384,11 +1386,26 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
         validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
         validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
-        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
+        if ((parameters & ~(legacy ? 0x0001bcffu : 0x000600ffu)) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
         if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
         result.minTessellationLevel = readFloat(queue.context, 0x287);
         result.maxTessellationLevel = readFloat(queue.context, 0x286);
         Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
+        if (legacy) {
+            const auto hull = read(queue.shader, 0x10b, RegisterBank::Shader);
+            const auto domain = read(queue.shader, 0x4b, RegisterBank::Shader);
+            validate((hull & 0x100u) == 0, "SPI_SHADER_PGM_RSRC2_HS.TG_SIZE_EN on a GCN hull shader is not implemented");
+            validate((domain & 0x1f00u) == 0, "stream-out from a GCN domain shader (SPI_SHADER_PGM_RSRC2_VS.SO_EN or SO_BASE*_EN) is not implemented");
+            validate(((hull ^ domain) & 0x80u) == 0, "the GCN hull and domain shaders disagree on SPI_SHADER_PGM_RSRC2.OC_LDS_EN");
+            const auto unitStepRate = [&](std::uint32_t offset) {
+                const auto rate = find(queue.context, offset);
+                return rate == queue.context.end() || rate->second == 1u;
+            };
+            const auto components = (read(queue.shader, 0x14a, RegisterBank::Shader) >> 24u) & 3u;
+            validate(components < 2u || unitStepRate(0x2a8), "GCN local shader instance step rates other than 1 are not implemented");
+            tess.onChip = (hull & 0x80u) == 0;
+            result.legacyTessellation = true;
+        }
         result.tessellation = tess;
         if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
     } else {

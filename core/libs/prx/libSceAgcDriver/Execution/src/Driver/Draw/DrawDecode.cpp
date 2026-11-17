@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -121,7 +122,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
             userDataBase,
-            stage == Stage::Fragment || userDataBase == 0x04cu ? 0u : 8u,
+            stage == Stage::Fragment || userDataBase == 0x04cu || ShaderRecompiler::GcnGuestShaders() ? 0u : 8u,
             {},
             memory,
             program,
@@ -148,7 +149,12 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             roles.push_back(role);
         };
         auto& graphics = product->state;
-        if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+        if (graphics.stages.legacyTessellation) {
+            require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
+            append(0x148, 5, Stage::Local, 0x14b, 0x14c, Role::Local);
+            append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            append(0x048, 2, Stage::TessellationEvaluation, 0x04b, 0x04c, Role::Domain);
+        } else if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
             const auto localAddress = programAddress(0x148);
             const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
             const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;

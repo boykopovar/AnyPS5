@@ -1358,6 +1358,56 @@ void ShaderStageTests() {
     queue.context[0x2db] = 0x40049;
     queue.context[0x286] = 0x42800000;
     queue.context[0x287] = 0x3f800000;
+    {
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        struct Restore {
+            ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+        } restore;
+        auto gcn = queue;
+        gcn.context[0x2d5] = 0x45;
+        gcn.context[0x2db] = 0x1bc49;
+        gcn.shader[0x14a] = 0x030c0048;
+        gcn.shader[0x10b] = 0x10;
+        gcn.shader[0x4b] = 0x18;
+        AgcDriver::Graphics::ShaderStages gcnStages;
+        {
+            std::vector<AgcDriver::Graphics::RegisterRead> gcnLog;
+            {
+                const AgcDriver::Graphics::RegisterReadLogScope logScope(&gcnLog);
+                gcnStages = AgcDriver::Graphics::DecodeShaderStages(gcn);
+            }
+            for (const auto read : gcnLog) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a GCN tessellation register the decoder reads: " + std::to_string(read.offset));
+        }
+        Require(gcnStages.path == AgcDriver::Graphics::ShaderPath::Tessellation && gcnStages.legacyTessellation && !gcnStages.legacyVertex && gcnStages.tessellation && gcnStages.tessellation->onChip && !gcnStages.tessellation->mergedHull && gcnStages.vertexWaveSize == 64u && gcnStages.hullWaveSize == 64u, "the GCN LS, HS and VS-stage domain routing 0x45 with OC_LDS_EN clear did not decode as on-chip GCN tessellation");
+        Require(gcnStages.tessellation->inputControlPoints == 3 && gcnStages.tessellation->outputControlPoints == 3 && gcnStages.tessellation->domain == 1 && gcnStages.tessellation->partitioning == 2 && gcnStages.tessellation->outputTopology == 2 && gcnStages.tessellation->patchesPerGroup == 85, "the GCN triangle-patch configuration decoded differently");
+        gcn.context[0x2d5] = 0x145;
+        gcn.shader[0x10b] = 0x90;
+        gcn.shader[0x4b] = 0x98;
+        const auto offChip = AgcDriver::Graphics::DecodeShaderStages(gcn);
+        Require(offChip.legacyTessellation && !offChip.tessellation->onChip, "GCN routing 0x145 with OC_LDS_EN set did not decode as off-chip GCN tessellation");
+        for (const auto routing : {0x4du, 0x05u, 0x44u, 0x245u, 0x65u}) {
+            gcn.context[0x2d5] = routing;
+            expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "GCN tessellation routing other than LS, HS and a domain shader on the VS stage");
+        }
+        gcn.context[0x2d5] = 0x45;
+        for (const auto parameters : {0x4049u, 0x40049u, 0x149u}) {
+            gcn.context[0x2db] = parameters;
+            expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "VGT_TF_PARAM");
+        }
+        gcn.context[0x2db] = 0x49;
+        gcn.shader[0x4b] = 0x18;
+        expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "disagree on SPI_SHADER_PGM_RSRC2.OC_LDS_EN");
+        gcn.shader[0x4b] = 0x1098;
+        expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "stream-out from a GCN domain shader");
+        gcn.shader[0x4b] = 0x98;
+        gcn.shader[0x10b] = 0x190;
+        expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "TG_SIZE_EN");
+        gcn.shader[0x10b] = 0x90;
+        gcn.context[0x2a8] = 2;
+        expectFailure([&] { AgcDriver::Graphics::DecodeShaderStages(gcn); }, "GCN local shader instance step rates other than 1");
+        gcn.shader[0x14a] = 0x010c0048;
+        Require(AgcDriver::Graphics::DecodeShaderStages(gcn).legacyTessellation, "a GCN local shader that loads no step-rate instance VGPR was refused for its step rate");
+    }
     queue.context[0x2d5] = 0x0260210d;
     {
         const auto wave32 = AgcDriver::Graphics::DecodeState(queue).stages;

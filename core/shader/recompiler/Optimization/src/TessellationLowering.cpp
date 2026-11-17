@@ -1015,6 +1015,10 @@ private:
                         access.kind = TessellationAttribute::GeometryOutput;
                     } else if (stage == IrShaderStage::TessellationControl && !access.write) {
                         access.kind = TessellationAttribute::ControlInput;
+                    } else if (tessellation.onChip && stage == IrShaderStage::TessellationControl) {
+                        Fail("a hull shader that keeps its outputs on chip (SPI_SHADER_PGM_RSRC2_HS.OC_LDS_EN=0) writes them to LDS, which is not implemented", flags.pc);
+                    } else if (tessellation.onChip && stage == IrShaderStage::TessellationEvaluation) {
+                        Fail("a domain shader that reads hull outputs on chip (SPI_SHADER_PGM_RSRC2_VS.OC_LDS_EN=0) reads them from LDS, which is not implemented", flags.pc);
                     } else {
                         Fail("unsupported LDS access in a tessellation stage", flags.pc);
                     }

@@ -237,6 +237,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
             target.mergedHull = tessellation->mergedHull;
+            target.onChip = tessellation->onChip;
             target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
