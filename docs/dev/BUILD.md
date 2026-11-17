@@ -410,3 +410,9 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
 - `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
+
+## Public-header archives
+
+`python3 tools/package_release.py --platform headers --version v1 --output dist` packages the public headers, their project includes and `LICENSE` without a build directory. To reproduce the ZIP and TAR.GZ archives with the same Python and zlib versions, set [`SOURCE_DATE_EPOCH`](https://reproducible-builds.org/specs/source-date-epoch/) to the same ASCII decimal integer from `0` through `4294967295`. Invalid values fail before staging or replacing outputs. Without the variable, archive metadata keeps its existing behavior.
+
+With the variable set, archive members have mode `0644`, TAR ownership is zero with empty owner names, and TAR and gzip timestamps use the selected epoch. ZIP timestamps use UTC, round down to two-second precision and clamp dates before 1980 to 1980-01-01. The gzip header omits the original filename. Source bytes, permissions and modification times remain unchanged. This controls header archive metadata; it does not establish reproducible native binaries or identical compressed bytes across Python or zlib versions.
