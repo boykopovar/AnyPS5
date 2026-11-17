@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -528,6 +529,99 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
         self.assertTrue((self.root / "app0/eboot.bin").is_file())
         self.assertFalse((self.root / "app0/sce_module").exists())
+
+    def test_staged_asset_writes_leave_the_package_unchanged(self):
+        for operation in ("overwrite", "append", "truncate"):
+            with self.subTest(operation=operation):
+                source = self.root / operation / "pkg"
+                original = source / "assets/nested/data.bin"
+                original.parent.mkdir(parents=True)
+                original.write_bytes(b"original package bytes")
+                staged = self.root / operation / "app0"
+                title_run.link_tree(source, staged, set())
+                asset = staged / "assets/nested/data.bin"
+                if operation == "overwrite":
+                    with asset.open("r+b") as stream:
+                        stream.write(b"changed")
+                    expected = b"changedl package bytes"
+                elif operation == "append":
+                    with asset.open("ab") as stream:
+                        stream.write(b" appended")
+                    expected = b"original package bytes appended"
+                else:
+                    with asset.open("r+b") as stream:
+                        stream.truncate(8)
+                    expected = b"original"
+                self.assertEqual(asset.read_bytes(), expected)
+                self.assertEqual(original.read_bytes(), b"original package bytes")
+
+    def test_staged_asset_permissions_leave_the_package_unchanged(self):
+        source = self.root / "pkg"
+        source.mkdir()
+        original = source / "data.bin"
+        original.write_bytes(b"package bytes")
+        original.chmod(0o600)
+        mode = stat.S_IMODE(original.stat().st_mode)
+        title_run.link_tree(source, self.root / "app0", set())
+        staged = self.root / "app0/data.bin"
+        self.addCleanup(staged.chmod, 0o600)
+        self.addCleanup(original.chmod, 0o600)
+        staged.chmod(0o400)
+        self.assertFalse(staged.stat().st_mode & stat.S_IWRITE)
+        self.assertEqual(stat.S_IMODE(original.stat().st_mode), mode)
+        self.assertEqual(original.read_bytes(), b"package bytes")
+
+    def test_staged_symlinked_asset_does_not_write_through_to_its_target(self):
+        source = self.root / "pkg"
+        source.mkdir()
+        original = self.root / "outside.bin"
+        original.write_bytes(b"linked source bytes")
+        alias = source / "alias.bin"
+        try:
+            alias.symlink_to(original)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        title_run.link_tree(source, self.root / "app0", set())
+        staged = self.root / "app0/alias.bin"
+        self.assertEqual(staged.read_bytes(), b"linked source bytes")
+        staged.write_bytes(b"working bytes")
+        self.assertEqual(original.read_bytes(), b"linked source bytes")
+        self.assertTrue(alias.is_symlink())
+        self.assertFalse(staged.is_symlink())
+
+    def test_prepare_isolates_assets_and_keeps_module_inputs(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("sce_module/libc.prx", "sce_modules/helper.prx", "Media/Plugins/plugin.sprx"):
+            module = source / name
+            module.parent.mkdir(parents=True, exist_ok=True)
+            module.write_bytes(elf)
+        asset = source / "Media/Plugins/config.bin"
+        asset.write_bytes(b"source configuration")
+        build = self.root / "build"
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "core/libs/libs/libkernel.prx").write_bytes(b"host runtime")
+        work = self.root / "work"
+        work.mkdir()
+        entry = {"relink": ["--module-dir", "Media/Plugins"]}
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted executable")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+            executable = title_run.prepare("PPSA00001", {"package": source}, entry, "linux", build, work)
+        self.assertEqual(executable.read_bytes(), b"converted executable")
+        self.assertEqual((work / "input/sce_module/libc.prx").read_bytes(), elf)
+        self.assertEqual((work / "input/sce_modules/helper.prx").read_bytes(), elf)
+        self.assertEqual((work / "input/Media/Plugins/plugin.sprx").read_bytes(), elf)
+        self.assertFalse((work / "app0/sce_module").exists())
+        self.assertEqual((work / "libs/libkernel.prx").read_bytes(), b"host runtime")
+        (work / "app0/Media/Plugins/config.bin").write_bytes(b"run configuration")
+        (work / "app0/Media/Plugins/plugin.sprx").write_bytes(b"run module")
+        self.assertEqual(asset.read_bytes(), b"source configuration")
+        self.assertEqual((source / "Media/Plugins/plugin.sprx").read_bytes(), elf)
+        self.assertEqual((work / "input/Media/Plugins/plugin.sprx").read_bytes(), elf)
 
     def test_files_are_staged_without_touching_the_package(self):
         source = package(self.root / "pkg", "PPSA00001")

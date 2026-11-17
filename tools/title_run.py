@@ -480,7 +480,7 @@ def link_tree(source, target, skip):
             (target / relative).mkdir(parents=True, exist_ok=True)
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            link_file(path, target / relative)
+            shutil.copy2(path, target / relative)
 
 
 def lock_work(path):
