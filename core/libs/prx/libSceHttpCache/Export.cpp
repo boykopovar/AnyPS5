@@ -982,7 +982,7 @@ int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const H
     const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
     if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return snapshot.Rollback();
     if (retrieveResult != ResultHit && retrieveResult != ResultRevalidate) return 0;
-    if (retrieveResult == ResultHit && pool != nullptr && response == nullptr) return ErrorInvalidValue;
+    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
     NotImplemented_nid_no_patch("sceHttpCacheRetrieveWithMemoryPool sizing or filling a pool");
 }
 

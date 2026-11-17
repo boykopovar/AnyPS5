@@ -614,14 +614,18 @@ void TestMemoryPool() {
     Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
     exchange.Done();
     Advance(700);
-    Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 2);
+    const int stale = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(stale > 0);
+    const Request queryB{0, 0, "http://pool/b", 0, nullptr};
+    result = -1;
+    Require(sceHttpCacheRetrieveWithMemoryPool(stale, &queryB, nullptr, &next, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 2);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && next.url == nullptr);
     const Header longer[]{{"Cache-Control", "max-age=3600"}};
     const ResponseHeader notModified{304, 0, 1, longer};
     result = -1;
-    Require(sceHttpCacheRevalidateWithMemoryPool(exchange.request, &notModified, nullptr, &result, pool.data(), &size, pool.size()) == InvalidValue &&
-            result == 1);
-    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && ReadAll(exchange.request) == "new");
-    exchange.Done();
+    Require(sceHttpCacheRevalidateWithMemoryPool(stale, &notModified, nullptr, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 1);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && ReadAll(stale) == "new");
+    Require(sceHttpCacheDeleteRequest(stale) == 0);
     Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
     exchange.Done();
     Require(sceHttpCacheTerm(exchange.cache) == 0);
