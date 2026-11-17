@@ -204,6 +204,7 @@ private:
                 if (offset) {
                     const auto value = offset->constant + bytes;
                     if (value < 0 || (value & 3) != 0) Fail("an unaligned GSVS ring store", flags.pc);
+                    if (value / 4 >= static_cast<std::int64_t>(geometry.vertexDwords) * geometry.maxVertices) Fail("a GSVS ring store outside VGT_GS_VERT_ITEMSIZE times VGT_GS_MAX_VERT_OUT dwords", flags.pc);
                     address = &constant(static_cast<std::uint32_t>(value));
                 } else {
                     address = bytes == 0u ? inst.Argument(2) : &insert(block, inst, IrOpcode::IAdd32, IrType::U32, {inst.Argument(2), &constant(bytes)});
@@ -328,6 +329,10 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
     for (const auto& instruction : program.instructions) {
         const auto pc = instruction.programCounter;
         if (instruction.op == RdnaOpcode::SEndpgm) break;
+        if (IsBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) FailCopy("control flow in a copy program", pc);
+        for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
+            if (destination->kind == RdnaOperandKind::ExecLo || destination->kind == RdnaOperandKind::ExecHi) FailCopy("a copy program that writes EXEC", pc);
+        }
         if (const auto folded = FoldScalar(instruction, scalars)) {
             Forget(vectors, scalars, instruction);
             if (instruction.destination.kind == RdnaOperandKind::ScalarRegister) scalars[instruction.destination.reg] = *folded;

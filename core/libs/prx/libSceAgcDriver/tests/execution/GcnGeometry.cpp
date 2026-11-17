@@ -54,6 +54,14 @@ alignas(256) constexpr std::array<std::uint32_t, 15> GcnCopyFolded{
     0x05400301, 0xe0305000, 0x06400401, 0xbf8c0000, 0xf80008cf, 0x02040302, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyBranch{
+    0x34020082, 0xe0305000, 0x80400201, 0xbf880001, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyExec{
+    0x34020082, 0xe0305000, 0x80400201, 0xbefe04c1, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0x060604f2, 0xf80008cf, 0x02020302, 0xbf810000,
 };
@@ -192,6 +200,15 @@ void RequireCopyLayout() {
         refused = std::string(error.what()).find("which is not one of the 5 vertex dwords") != std::string::npos;
     }
     Require(refused, "a copy program read at a slot stride other than VGT_GS_MAX_VERT_OUT times 64 bytes was accepted");
+    for (const auto& [code, reason] : {std::pair{std::span<const std::uint32_t>(GcnCopyBranch), "control flow in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyExec), "a copy program that writes EXEC"}}) {
+        refused = false;
+        try {
+            static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(code, 4u, 5u));
+        } catch (const std::exception& error) {
+            refused = std::string(error.what()).find(reason) != std::string::npos;
+        }
+        Require(refused, std::string("a copy program was accepted that should fail with: ") + reason);
+    }
 }
 
 void Bind(AgcDriver::QueueState& queue, const void* code, std::uint32_t program, std::uint32_t resources, std::span<const std::uint32_t> users) {

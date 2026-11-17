@@ -1115,7 +1115,7 @@ std::uint32_t TessellationOuterFactors(const SpirvEmitterState& state) {
 std::uint32_t GeometryRingElement(SpirvEmitterState& state, std::uint32_t variable, std::uint32_t index) {
     const auto& geometry = state.inputInfo.vertex->geometry;
     const auto clamped = state.module.AllocateId();
-    state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, index, ConstantU32(state, geometry.vertexDwords * geometry.maxVertices - 1u));
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, index, ConstantU32(state, geometry.vertexDwords * geometry.maxVertices));
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), pointer, variable, clamped);
     return pointer;
@@ -1262,7 +1262,7 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             const auto emitted = static_cast<std::uint32_t>(TessellationAttribute::GeometryEmitted);
             if (state.tessVariables.at(ring) == 0u) {
                 const auto& geometry = state.inputInfo.vertex->geometry;
-                const auto ringType = array(TypeU32(state), geometry.vertexDwords * geometry.maxVertices);
+                const auto ringType = array(TypeU32(state), geometry.vertexDwords * geometry.maxVertices + 1u);
                 const auto variable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, ringType), spv::StorageClassPrivate, state.module.Constant(spv::OpConstantNull, ringType));
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(variable);
                 state.tessVariables.at(ring) = variable;
