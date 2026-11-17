@@ -7,10 +7,19 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+
+namespace {
+
+void SyncFileStream(FileStream* stream) {
+    stream->SyncStatus();
+}
+
+} // namespace
 
 extern "C" {
 
@@ -95,15 +104,24 @@ NKWebKit::GuestPslCtx* APS5_VABI psl_latest_nid_postfix(const char* fname) {
 }
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname) {
-    if (!fname || !*fname) return nullptr;
+    if (!fname) return nullptr;
+    char firstChar = '\0';
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&firstChar, fname, sizeof(firstChar));
+    errno = savedErrno;
+    if (!readable || firstChar == '\0') return nullptr;
     std::unique_ptr<FileStream, decltype(&fclose_nid_postfix)> stream(fopen_nid_postfix(fname, "rb"), fclose_nid_postfix);
     return stream ? psl_load_fp_nid_postfix(stream.get()) : nullptr;
 }
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FileStream* fp) {
     if (!fp) return nullptr;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(fp, sizeof(*fp));
+    errno = savedErrno;
+    if (!writable) return nullptr;
     const psl_ctx_t* psl = psl_load_fp(GetNativeStream(fp));
-    fp->SyncStatus();
+    SyncFileStream(fp);
     return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl));
 }
 

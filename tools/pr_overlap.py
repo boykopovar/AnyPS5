@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
@@ -25,20 +26,39 @@ PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
+BASE_REF = "refs/pr/base"
 PROGRESS_EVERY = 100
 MAX_REPORT_CHARS = 60000
 EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
 
 
-def git(*args):
+def _repository_root():
     cwd = Path.cwd()
     root = _REPO_ROOTS.get(cwd)
     if root is None:
-        root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, check=True
+        output = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            check=True,
         ).stdout.decode("utf-8", errors="replace").strip()
+        root = Path(output)
+        if os.name == "nt" and not root.is_dir():
+            relative = subprocess.run(
+                ["git", "rev-parse", "--show-cdup"],
+                cwd=cwd,
+                capture_output=True,
+                check=True,
+            ).stdout.decode("utf-8", errors="replace").strip()
+            root = (cwd / relative).resolve()
         _REPO_ROOTS[cwd] = root
+    return root
+
+
+def git(*args):
+    cwd = Path.cwd()
+    root = _repository_root()
     args = list(args)
     if "--" in args:
         separator = args.index("--")
@@ -77,11 +97,18 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
-def gh(*args):
-    try:
-        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
-    except FileNotFoundError as error:
-        raise ValueError("GitHub CLI 'gh' is required on PATH") from error
+def gh(*args, attempts=3, delay=0.5):
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8")
+        except FileNotFoundError as error:
+            raise ValueError("GitHub CLI 'gh' is required on PATH") from error
+        if result.returncode == 0:
+            return result.stdout
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        if attempt + 1 == attempts or not transient:
+            raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
+        time.sleep(delay * (2 ** attempt))
 
 
 def upstream():
@@ -209,20 +236,26 @@ def open_prs(base):
 
 
 def fetch(base, prs):
-    refspecs = [f"+refs/heads/{base}:refs/pr/base"] + [f"+{pr['sha']}:{pr['ref']}" for pr in prs.values()]
-    for start in range(0, len(refspecs), FETCH_REFS):
-        git("fetch", "--no-tags", "-q", f"https://github.com/{REPO}.git", *refspecs[start:start + FETCH_REFS])
-        progress(f"fetched {min(start + FETCH_REFS, len(refspecs)) - 1}/{len(prs)} pull request heads")
+    return fetch_heads(base_commit(base), prs)
+
+
+def base_commit(base):
+    return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
+
+
+def fetch_heads(base_sha, prs):
+    remote = f"https://github.com/{REPO}.git"
+    commits = [base_sha] + [pr["sha"] for pr in prs.values()]
+    for start in range(0, len(commits), FETCH_REFS):
+        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+    for pr in prs.values():
+        pr["ref"] = pr["sha"]
+    return base_sha
 
 
 def merge(*args):
-    cwd = Path.cwd()
-    root = _REPO_ROOTS.get(cwd)
-    if root is None:
-        root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, check=True
-        ).stdout.decode("utf-8", errors="replace").strip()
-        _REPO_ROOTS[cwd] = root
+    root = _repository_root()
     result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
@@ -240,7 +273,7 @@ def merge(*args):
 
 def commit(tree, ref):
     return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
-               "-p", "refs/pr/base", "-p", ref, "-m", "pr_overlap").strip()
+               "-p", BASE_REF, "-p", ref, "-m", "pr_overlap").strip()
 
 
 def exports(diff, prefix="+"):
@@ -382,8 +415,9 @@ def blob_texts(root, blobs):
 
 
 def base_exports(ref):
-    root = git("rev-parse", "--show-toplevel").strip()
-    cache_path = Path(root, git("rev-parse", "--git-common-dir").strip()) / "pr_overlap-exports.json"
+    root = _repository_root()
+    common_dir = git("rev-parse", "--path-format=relative", "--git-common-dir").strip()
+    cache_path = root / common_dir / "pr_overlap-exports.json"
     version = export_cache_version()
     cached = load_export_cache(cache_path, version)
     sources = base_sources(root, ref)
@@ -405,16 +439,16 @@ def base_exports(ref):
 
 
 def merge_base(ref):
-    bases = git("merge-base", "--all", "refs/pr/base", ref).split()
+    bases = git("merge-base", "--all", BASE_REF, ref).split()
     if len(bases) == 1:
         return bases[0]
     return min(bases, key=lambda base: git("diff", "--name-only", "--no-renames", "-z", base, ref).count("\0"))
 
 
 def scan(pr):
-    tree, conflicted = merge("refs/pr/base", pr["ref"])
+    tree, conflicted = merge(BASE_REF, pr["ref"])
     pr["tree"] = None if conflicted else commit(tree, pr["ref"])
-    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
+    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else (BASE_REF, pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
     for status, path in zip(changes[::2], changes[1::2]):
@@ -445,7 +479,7 @@ def related(prs, executor):
     mine = prs[0]
     scan(mine)
     others = {n: pr for n, pr in prs.items() if n}
-    base_paths = set(git("ls-tree", "-r", "--name-only", "-z", "refs/pr/base").split("\0"))
+    base_paths = set(git("ls-tree", "-r", "--name-only", "-z", BASE_REF).split("\0"))
     chosen = {}
     mine_files = mine["files"]
     mine_exports = mine["exports"]
@@ -470,7 +504,7 @@ def scan_all(prs, jobs):
 
 
 def hunks(pr, path):
-    diff = git("diff", "-U0", "--no-color", "refs/pr/base", pr["tree"], "--", path)
+    diff = git("diff", "-U0", "--no-color", BASE_REF, pr["tree"], "--", path)
     found = []
     for start, count in HUNK.findall(diff):
         start = max(int(start), 1)
@@ -593,7 +627,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed:
+        if confirmed or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -684,12 +718,62 @@ def canonical(name):
     return NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
 
 
+def body_exports(pr, files, names):
+    paths = sorted(path for path in files if path.endswith(".cpp") and library_for_path(path) in names
+                   and not any(part.lower() in {"test", "tests"} for part in Path(path).parts))
+    if not paths:
+        return set()
+    base = merge_base(pr["ref"])
+    found = set()
+    for path in paths:
+        ranges = [(int(start), int(count or 1)) for start, count in HUNK.findall(
+            git("diff", "-U0", "--no-color", "--no-renames", base, pr["ref"], "--", path))]
+        if not ranges:
+            continue
+        source = git("show", f"{base}:{path}")
+        source = nid_names.CPP_TOKEN.sub(
+            lambda match: match.group() if match.group("code") is not None else re.sub(r"[^\n]", " ", match.group()), source)
+        for definition in nid_names.DEFINITION.finditer(source):
+            requested = names[library_for_path(path)].get(canonical(definition.group(1)))
+            if not requested:
+                continue
+            depth = 0
+            end = None
+            for brace in re.finditer(r"[{}]", source[definition.end() - 1:]):
+                depth += 1 if brace.group() == "{" else -1
+                if depth == 0:
+                    end = definition.end() - 1 + brace.end()
+                    if not re.match(r"\s*catch\b", source[end:]):
+                        break
+            if end is None:
+                raise ValueError(f"cannot locate the end of {definition.group(1)} in {path}")
+            first = source.count("\n", 0, definition.start()) + 1
+            last = source.count("\n", 0, end) + 1
+            if any(first <= start < last if count == 0 else start <= last and start + count - 1 >= first
+                   for start, count in ranges):
+                found.update(requested)
+    return found
+
+
 def pull_requests_with(names, prs, jobs):
     wanted = {canonical(name) for name in names}
     nids = {nid_names.compute_nid(name): name for name in wanted}
     found = {name: [] for name in wanted}
+    bodies = {}
+    for (library, nid), defined in base_exports(BASE_REF).items():
+        requested = wanted & {canonical(name) for name in defined}
+        if nid in nids:
+            requested.add(nids[nid])
+        if requested:
+            for name in defined:
+                bodies.setdefault(library, {}).setdefault(canonical(name), set()).update(requested)
+
+    def inspect(pr):
+        files, (exported, added), existing = probe(pr)
+        return files, (exported | body_exports(pr, existing, bodies), added), existing
+
     with ThreadPoolExecutor(max_workers=jobs) as executor:
-        for index, (number, (_files, (exported, added), _existing)) in enumerate(zip(prs, executor.map(probe, prs.values())), 1):
+        for index, (number, (_files, (exported, added), _existing)) in enumerate(zip(prs, executor.map(inspect, prs.values())), 1):
             touched = {canonical(name) for name in exported}
             for (_library, nid), defined in added.items():
                 touched.update(canonical(name) for name in defined)
@@ -722,7 +806,8 @@ def main_status(names, ref):
         aliases = {canonical(item) for item in defined}
         for name in wanted & (aliases | ({nids[nid]} if nid in nids else set())):
             declared[name].setdefault(library, set()).update(aliases | {name})
-    scanned = {library: library_status(ref, library) for libraries in declared.values() for library in libraries if library}
+    libraries = {library for exports in declared.values() for library in exports if library}
+    scanned = {library: library_status(ref, library) for library in sorted(libraries)}
     status = {}
     for name, libraries in declared.items():
         status[name] = {}
@@ -756,7 +841,15 @@ def describe_failure(error):
     return f"pr_overlap: {command} failed with exit code {error.returncode}: {message}"
 
 
+def resolve_branch(name):
+    try:
+        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+    except subprocess.CalledProcessError:
+        raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
+
+
 def main(argv=None):
+    global BASE_REF
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
@@ -769,9 +862,9 @@ def main(argv=None):
     parser.add_argument("--out", type=Path, help="write <number>.md for every open pull request (empty when clean)")
     parser.add_argument("--branch", help="check a local branch against the open pull requests instead")
     parser.add_argument("--names", nargs="+", metavar="NAME",
-                        help="before writing code, show whether each function is implemented on the base and which open pull requests add it")
+                        help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
-    parser.add_argument("--jobs", type=int, default=4, help="number of pull request comparisons to run at once")
+    parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
@@ -781,26 +874,28 @@ def main(argv=None):
     try:
         REPO = args.repo or upstream()
         prs = open_prs(args.base)
-        fetch(args.base, prs)
+        BASE_REF = base_commit(args.base)
+        branch_sha = resolve_branch(args.branch) if args.branch else None
+        fetch_heads(BASE_REF, prs)
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
-            status = main_status(args.names, "refs/pr/base")
-            blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
+            status = main_status(args.names, BASE_REF)
+            blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
             print(lookup_report(args.names, found, status, prs, blob), end="")
             return 0
         if args.branch:
-            sha = git("rev-parse", args.branch).strip()
+            sha = branch_sha
             prs = own(prs, sha)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
-        current_exports = base_exports("refs/pr/base")
+        current_exports = base_exports(BASE_REF)
         rows = {n: {} for n in prs}
         main_exports = main_export_findings(prs, current_exports)
         pairs = [(0, n) for n in prs if n] if args.branch else combinations(prs, 2)
         for a, b in pairs:
             if found := overlaps(prs, a, b):
                 rows[a][b] = rows[b][a] = found
-        blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
+        blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))
     except ValueError as error:

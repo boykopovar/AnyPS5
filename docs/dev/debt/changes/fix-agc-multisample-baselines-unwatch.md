@@ -1,0 +1,9 @@
+# libSceAgcDriver
+
+## change [Native multisampled DCC fast clears]
+
+- [Native multisampled DCC fast clears](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp) - console register-clear results are unmeasured. Supported inputs are uniform 0000/0001/1110/1111 or 0x20 keys, or a whole-range DCC fill of one, for single-layer, level-zero SW_64KB_R_X images of 2, 4 or 8 fragments. Register-clear 0x20 follows [Mesa ac_descriptors.h](https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/418c4cfa6708a0e0b1175e72fb8fd27d3ca1615a/src/amd/common/ac_descriptors.h) (`GFX8_DCC_CLEAR_REG`), using `CB_COLOR_CLEAR_WORD0/1` with exact texel-to-host conversion; formats over 64 bits or without an exact conversion throw. Other initial DCC, register CMASK clears, compressed payloads, color transforms, lossy modes, partial fills, a CMASK changed without a whole fill, guest publication and writes over a live owner throw.
+
+## add Functional
+
+- [Multisampled DCC residency and geometry](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp) - same-value CPU stores are not detected in Linux compared host imports or after unwatch. Initial color and metadata require write watching or a host import the Linux probe compares; initially compared Windows imports throw. A range compared only after import is refused unless a whole fill follows. Resident color, DCC, CMASK and FMASK may leave the watch after a complete baseline copy with generation checks before and after; failed or unproven collections cannot establish it. Changed bytes and tracked writes remain refused. Console metadata geometry is unverified; extent follows [AMD Addrlib](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/imported/addrlib/src/gfx10/gfx10addrlib.cpp#L347-L454) for GFX10.1 with 16 pipes.
