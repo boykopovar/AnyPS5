@@ -825,5 +825,33 @@ class FocusedInputEdgeTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
 
 
+
+
+class GitFailureAndExitTests(unittest.TestCase):
+    def test_git_failure_raises_with_stderr_or_command_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "not a git repository"):
+                performance_bisect.git(directory, "status")
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            with patch.object(performance_bisect.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "git log -1 failed"):
+                    performance_bisect.git(directory, "log", "-1")
+
+    def test_regression_is_inclusive_at_the_exact_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(54, 60, 10))
+        self.assertFalse(performance_bisect.is_regression(54.01, 60, 10))
+
+    def test_main_exits_with_status_2_for_a_missing_recipe_file(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        with tempfile.TemporaryDirectory() as directory:
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                performance_bisect.main(["--good", "good", "--bad", "bad",
+                                         "--recipe", str(Path(directory) / "missing.json")])
+        self.assertEqual(error.exception.code, 2)
+        self.assertTrue(stderr.getvalue().strip())
+
+
 if __name__ == "__main__":
     unittest.main()
