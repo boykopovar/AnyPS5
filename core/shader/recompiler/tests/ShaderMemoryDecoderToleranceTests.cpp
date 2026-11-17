@@ -204,11 +204,74 @@ void Test64BitScalarDescriptorVccLoAndRefusals() {
     ExpectThrows({0xDC308000u, 0x00690001u}, "FLAT scalar address register range overflow");
 }
 
+void TestDsSrc2U64DecoderTolerance() {
+    {
+        const std::uint32_t word0 = (0x36u << 26u) | (0xc0u << 18u) | (0x7cu << 8u);
+        const std::uint32_t word1 = 7u;
+        const std::array<std::uint32_t, 2> words = {word0, word1};
+        const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+
+        EXPECT_EQ(inst.family, RdnaInstructionFamily::DS);
+        EXPECT_EQ(inst.op, RdnaOpcode::DsAddSrc2U64);
+        EXPECT_EQ(inst.dataDwordCount, 2u);
+        EXPECT_EQ(inst.sourceCount, 1u);
+        EXPECT_EQ(inst.source0.kind, RdnaOperandKind::VectorRegister);
+        EXPECT_EQ(inst.source0.reg, 7u);
+
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(inst);
+
+        bool foundLoadShared = false;
+        bool foundAtomic = false;
+        for (const auto* val : block.Instructions()) {
+            if (val->Opcode() == IrOpcode::LoadSharedU32x2) {
+                foundLoadShared = true;
+            }
+            if (val->Opcode() == IrOpcode::SharedAtomicIAdd64) {
+                foundAtomic = true;
+            }
+        }
+        EXPECT_EQ(foundLoadShared, true);
+        EXPECT_EQ(foundAtomic, true);
+    }
+
+    {
+        const std::uint32_t word0 = (0x36u << 26u) | (0xcdu << 18u) | (0x04u << 8u);
+        const std::uint32_t word1 = 7u;
+        const std::array<std::uint32_t, 2> words = {word0, word1};
+        const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+
+        EXPECT_EQ(inst.family, RdnaInstructionFamily::DS);
+        EXPECT_EQ(inst.op, RdnaOpcode::DsWriteSrc2B64);
+        EXPECT_EQ(inst.dataDwordCount, 2u);
+
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(inst);
+
+        bool foundWrite = false;
+        for (const auto* val : block.Instructions()) {
+            if (val->Opcode() == IrOpcode::WriteSharedU32x2) {
+                foundWrite = true;
+            }
+        }
+        EXPECT_EQ(foundWrite, true);
+    }
+
+    ExpectThrows({(0x36u << 26u) | (0xc0u << 18u) | (0x80u << 8u), 0u}, "DS src2 operation with the offset taken from the address is not supported");
+}
+
 }
 
 int main() {
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();
+    TestDsSrc2U64DecoderTolerance();
     return 0;
 }

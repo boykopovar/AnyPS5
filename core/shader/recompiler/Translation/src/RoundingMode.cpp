@@ -243,8 +243,10 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::DsCmpstRtnF64:
     case RdnaOpcode::DsMaxF64:
     case RdnaOpcode::DsMaxRtnF64:
+    case RdnaOpcode::DsMaxSrc2F64:
     case RdnaOpcode::DsMinF64:
     case RdnaOpcode::DsMinRtnF64:
+    case RdnaOpcode::DsMinSrc2F64:
     case RdnaOpcode::BufferAtomicFcmpswapX2:
     case RdnaOpcode::BufferAtomicFmaxX2:
     case RdnaOpcode::BufferAtomicFminX2:
