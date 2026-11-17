@@ -20,7 +20,11 @@ struct Header {
     int handlers {};
     int selector {};
     std::uint32_t _pad {};
+#ifdef __APPLE__
+    std::uint32_t hostCatch {};
+#else
     std::uint32_t _pad2 {};
+#endif
     const unsigned char* action {};
     const unsigned char* lsda {};
     std::uintptr_t landing {};
@@ -51,6 +55,9 @@ inline Header* Primary(Header* header) {
 }
 const char* Kind(const std::type_info*);
 bool Match(const std::type_info* caught, const std::type_info* thrown, void*& object);
+#ifdef __APPLE__
+void RecordHostCatch(Header* header);
+#endif
 void Release(void*);
 [[noreturn]] void Terminate();
 }
