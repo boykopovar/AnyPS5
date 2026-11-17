@@ -392,6 +392,100 @@ void BudgetBoundsWorkThroughRetirement() {
     budget.Retired(0);
 }
 
+class CountingMaterializer final : public AgcDriver::Graphics::StreamMaterializer {
+public:
+    VkCommandBuffer Begin(CommandStream&) override {
+        ++begun;
+        return fakeBuffer(90);
+    }
+    int begun = 0;
+};
+
+void StreamByteCapDemotesTheBatch() {
+    WorkBudget budget(WorkBudget::Limits{4, 4, 16 * CommandStream::ChunkBytes});
+    FailureLatch latch;
+    budget.Open(latch, 1);
+    const auto cap = budget.StreamCap();
+    Require(cap == 4 * CommandStream::ChunkBytes, "the stream cap is not the outstanding bytes shared by the outstanding batches: " + std::to_string(cap));
+    CountingMaterializer materializer;
+    CommandStream stream(Real(), &budget, &materializer);
+    const std::vector<std::uint32_t> array(1000, 5);
+    takeSeen();
+    std::uint32_t appended = 0;
+    while (stream.Materialized() == VK_NULL_HANDLE && appended < 1000) append(stream, appended++, array);
+    Require(stream.Materialized() != VK_NULL_HANDLE, "a stream grew to " + std::to_string(stream.Charged()) + " bytes past its cap of " + std::to_string(cap) + " without demoting");
+    Require(std::string_view(stream.DemotedBy().command) == "stream byte cap" && stream.DemotedBy().chained == VK_STRUCTURE_TYPE_MAX_ENUM, "the cap demotion was not attributed to the cap");
+    Require(stream.Charged() > cap && stream.Charged() <= cap + CommandStream::ChunkBytes, "the stream was charged " + std::to_string(stream.Charged()) + " bytes for a cap of " + std::to_string(cap));
+    Require(materializer.begun == 1, "the cap demotion began " + std::to_string(materializer.begun) + " command buffers");
+    const auto values = takeSeen();
+    Require(values.size() == appended * (array.size() + 1) && values.front() == 0 && values[(appended - 1) * (array.size() + 1)] == appended - 1, "the cap demotion did not replay every record, including the one past the cap");
+    seen().replayThreadCalls.store(0);
+    budget.Retired(stream.Charged());
+    budget.Open(latch, 2);
+    CommandStream undemotable(Real(), &budget);
+    bool refused = false;
+    for (std::uint32_t value = 0; value < 1000 && !refused; ++value) refused = Throws<std::logic_error>([&] { append(undemotable, value, array); });
+    Require(refused && undemotable.Poisoned() && undemotable.Charged() <= cap + CommandStream::ChunkBytes, "a stream with no way to demote grew past its cap instead of ending");
+    budget.Retired(undemotable.Charged());
+    takeSeen();
+}
+
+VKAPI_ATTR void VKAPI_CALL seeMarker(VkCommandBuffer, const void* marker) {
+    std::lock_guard lock(seen().mutex);
+    seen().values.push_back(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(marker)));
+}
+
+void TwoThreadsAppendToTwoStreams() {
+    constexpr std::uint32_t Records = 20000;
+    WorkBudget budget(WorkBudget::Limits{4, 4, 1u << 30});
+    FailureLatch latch;
+    budget.Open(latch, 1);
+    budget.Open(latch, 2);
+    CommandFunctions functions{};
+    functions.CmdSetCheckpointNV = &seeMarker;
+    std::array<std::unique_ptr<CommandStream>, 2> streams{std::make_unique<CommandStream>(functions, &budget), std::make_unique<CommandStream>(functions, &budget)};
+    const auto setCheckpoint = AgcDriver::Graphics::StreamedCommands().CmdSetCheckpointNV;
+    std::atomic<int> ready{0};
+    const auto record = [&](std::size_t which) {
+        auto& stream = *streams[which];
+        const auto tag = static_cast<std::uint32_t>(which + 1) << 24;
+        ready.fetch_add(1);
+        while (ready.load() != 2) std::this_thread::yield();
+        for (std::uint32_t index = 0; index < Records; ++index) {
+            const std::array<std::uint32_t, 2> array{tag | index, tag | (index * 7)};
+            if (index % 3 == 0) setCheckpoint(stream.Handle(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(tag | index)));
+            else append(stream, tag | index, std::span(array.data(), index % 3));
+        }
+    };
+    std::thread other(record, 1);
+    record(0);
+    other.join();
+    Require(budget.OutstandingBytes() == streams[0]->Charged() + streams[1]->Charged(), "two streams charging at once left the budget at " + std::to_string(budget.OutstandingBytes()) + " bytes");
+    takeSeen();
+    for (std::size_t which = 0; which < streams.size(); ++which) {
+        auto& stream = *streams[which];
+        Require(stream.Ops() == Records && stream.Materialized() == VK_NULL_HANDLE && !stream.Poisoned(), "stream " + std::to_string(which) + " counted " + std::to_string(stream.Ops()) + " ops");
+        stream.Seal();
+        AgcDriver::Graphics::Replay(stream, fakeBuffer(80 + which), functions);
+        const auto values = takeSeen();
+        const auto tag = static_cast<std::uint32_t>(which + 1) << 24;
+        std::vector<std::uint32_t> expected;
+        for (std::uint32_t index = 0; index < Records; ++index) {
+            expected.push_back(tag | index);
+            if (index % 3 == 2) {
+                expected.push_back(tag | index);
+                expected.push_back(tag | (index * 7));
+            } else if (index % 3 == 1) {
+                expected.push_back(tag | index);
+            }
+        }
+        Require(values == expected, "stream " + std::to_string(which) + " replayed " + std::to_string(values.size()) + " values that differ from what its thread appended");
+    }
+    seen().replayThreadCalls.store(0);
+    budget.Retired(streams[0]->Charged());
+    budget.Retired(streams[1]->Charged());
+}
+
 void RetirementOutlivesTheStream() {
     WorkBudget budget(WorkBudget::Limits{2, 2, 1u << 30});
     FailureLatch latch;
@@ -595,6 +689,8 @@ int main(int argc, char** argv) {
         FenceBeforeReturnStaysHeld();
         BudgetBoundsWorkThroughRetirement();
         RetirementOutlivesTheStream();
+        StreamByteCapDemotesTheBatch();
+        TwoThreadsAppendToTwoStreams();
         ReplayPoolCreationDoesNotLeak();
         AdmissionOpensDirectInsteadOfWaiting();
         SingleExecutorOwnsItsPoolAndThread();

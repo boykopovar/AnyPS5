@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -402,28 +403,71 @@ void DemotionReplaysThePrefixInOrder() {
     Require(demotedSeeds >= 10, "only " + std::to_string(demotedSeeds) + " of 40 programs demoted");
 }
 
-void PointerCommandsWithoutACopyDemote() {
+void PushDescriptorsDemoteOnlyWhatTheyCannotCopy() {
     const auto target = fakeBuffer(8);
-    FakeMaterializer materializer(target);
-    CommandStream stream(Real(), nullptr, &materializer);
-    log.clear();
-    thunks().draw(stream.Handle(), 3, 1, 0, 0);
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstBinding = 7;
-    Require(log.empty(), "a streamed draw reached the driver");
-    thunks().pushDescriptorSet(stream.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(2), 0, 1, &write);
-    thunks().draw(stream.Handle(), 4, 1, 0, 0);
-    const std::vector<std::string> expected{"begin@8", "draw@8 3 1 0 0", "pushDescriptorSet@8 1 4128 0 1 7", "draw@8 4 1 0 0"};
-    Require(log == expected, "the push descriptor demotion recorded " + firstDifference(expected, log));
-    Require(std::string_view(stream.DemotedBy().command) == "vkCmdPushDescriptorSetKHR" && stream.DemotedBy().chained == VK_STRUCTURE_TYPE_MAX_ENUM, "the push descriptor demotion was not attributed to its command");
+    VkDescriptorImageInfo image{fake<VkSampler>(3), fake<VkImageView>(4), VK_IMAGE_LAYOUT_GENERAL};
+    {
+        FakeMaterializer materializer(target);
+        CommandStream stream(Real(), nullptr, &materializer);
+        log.clear();
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstBinding = 7;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &image;
+        thunks().pushDescriptorSet(stream.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(2), 0, 1, &write);
+        Require(log.empty() && stream.Materialized() == VK_NULL_HANDLE && stream.Ops() == 1, "a copyable push descriptor write did not stream");
+    }
+    VkWriteDescriptorSetInlineUniformBlock inlineBlock{};
+    inlineBlock.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
+    VkWriteDescriptorSetAccelerationStructureKHR structures{};
+    structures.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    struct Case {
+        const char* what;
+        VkDescriptorType type;
+        const void* next;
+        bool switchedOff;
+        VkStructureType chained;
+    };
+    const std::array<Case, 4> cases{{
+        {"an inline uniform block", VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, &inlineBlock, false, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK},
+        {"an acceleration structure", VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, &structures, false, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR},
+        {"a descriptor type with no array to copy", VK_DESCRIPTOR_TYPE_MUTABLE_EXT, nullptr, false, VK_STRUCTURE_TYPE_MAX_ENUM},
+        {"APS5_NO_STREAMED_PUSH_DESCRIPTORS", VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, true, VK_STRUCTURE_TYPE_MAX_ENUM},
+    }};
+    for (const auto& item : cases) {
+        AgcDriver::Graphics::RuntimeSwitches::Assign(AgcDriver::Graphics::RuntimeSwitch::NoStreamedPushDescriptors, item.switchedOff);
+        FakeMaterializer materializer(target);
+        CommandStream stream(Real(), nullptr, &materializer);
+        log.clear();
+        thunks().draw(stream.Handle(), 3, 1, 0, 0);
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.pNext = item.next;
+        write.dstBinding = 7;
+        write.descriptorCount = 1;
+        write.descriptorType = item.type;
+        write.pImageInfo = &image;
+        Require(log.empty(), "a streamed draw reached the driver");
+        thunks().pushDescriptorSet(stream.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(2), 0, 1, &write);
+        thunks().draw(stream.Handle(), 4, 1, 0, 0);
+        AgcDriver::Graphics::RuntimeSwitches::Assign(AgcDriver::Graphics::RuntimeSwitch::NoStreamedPushDescriptors, false);
+        const std::vector<std::string> expected{"begin@8", "draw@8 3 1 0 0", "pushDescriptorSet@8 1 4128 0 1 7", "draw@8 4 1 0 0"};
+        Require(log == expected, std::string(item.what) + ": the push descriptor demotion recorded " + firstDifference(expected, log));
+        Require(std::string_view(stream.DemotedBy().command) == "vkCmdPushDescriptorSetKHR" && stream.DemotedBy().chained == item.chained, std::string(item.what) + ": the push descriptor demotion was not attributed to its command and chain");
+    }
 }
 
 void DemotionWithoutAMaterializerPoisons() {
     CommandStream stream(Real());
     thunks().draw(stream.Handle(), 1, 1, 0, 0);
+    VkWriteDescriptorSetInlineUniformBlock inlineBlock{};
+    inlineBlock.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.pNext = &inlineBlock;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
     Require(Throws<std::logic_error>([&] { thunks().pushDescriptorSet(stream.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(2), 0, 1, &write); }), "a stream with no materializer demoted");
     Require(stream.Poisoned(), "a failed demotion left the stream unpoisoned");
 }
@@ -435,30 +479,93 @@ void DirectCallsReachTheirOwnEntryPoint() {
 }
 
 template<int K>
-VKAPI_ATTR void VKAPI_CALL markerSlot(VkCommandBuffer commands, const void*) {
-    note("marker", commands, K);
+VKAPI_ATTR void VKAPI_CALL stencilSlot(VkCommandBuffer commands, VkStencilFaceFlags, std::uint32_t reference) {
+    note("stencil", commands, K, reference);
 }
 
 template<int... K>
-std::array<PFN_vkCmdSetCheckpointNV, sizeof...(K)> markers(std::integer_sequence<int, K...>) {
-    return {&markerSlot<K>...};
+std::array<PFN_vkCmdSetStencilReference, sizeof...(K)> stencils(std::integer_sequence<int, K...>) {
+    return {&stencilSlot<K>...};
 }
 
-void EntryPointsBeyondTheSlotsAreRefused() {
-    const auto reals = markers(std::make_integer_sequence<int, 9>{});
+struct alignas(16) FakeDispatchable {
+    const void* key;
+};
+
+VkDevice deviceOf(FakeDispatchable& dispatchable) {
+    return reinterpret_cast<VkDevice>(&dispatchable);
+}
+
+VkCommandBuffer commandsOf(FakeDispatchable& dispatchable) {
+    return reinterpret_cast<VkCommandBuffer>(&dispatchable);
+}
+
+void EntryPointsBeyondTheSlotsAreKeyedByDevice() {
+    using AgcDriver::Graphics::CommandThunk;
+    constexpr const char* Name = "vkCmdSetStencilReference";
+    const auto reals = stencils(std::make_integer_sequence<int, 11>{});
+    const auto entry = [&](std::size_t index) { return reinterpret_cast<PFN_vkVoidFunction>(reals[index]); };
+    Require(AgcDriver::Graphics::CommandThunkSlots(CommandId::CmdSetStencilReference) == 0, "another test used the stencil reference slots");
     std::vector<PFN_vkVoidFunction> given;
-    for (std::size_t index = 0; index + 1 < reals.size(); ++index) {
-        const auto thunk = AgcDriver::Graphics::CommandThunk("vkCmdSetCheckpointNV", reinterpret_cast<PFN_vkVoidFunction>(reals[index]));
-        Require(AgcDriver::Graphics::IsCommandThunk("vkCmdSetCheckpointNV", thunk), "a slot's entry point was not a thunk");
+    for (std::size_t index = 0; index < 8; ++index) {
+        const auto thunk = CommandThunk(Name, entry(index));
+        Require(AgcDriver::Graphics::IsCommandThunk(Name, thunk), "a slot's entry point was not a thunk");
         for (const auto earlier : given) Require(earlier != thunk, "two entry points shared a thunk slot");
         given.push_back(thunk);
         log.clear();
-        reinterpret_cast<PFN_vkCmdSetCheckpointNV>(thunk)(fakeBuffer(2), nullptr);
-        Require(log == std::vector<std::string>{"marker@2 " + std::to_string(index)}, "slot " + std::to_string(index) + " reached the wrong entry point");
+        reinterpret_cast<PFN_vkCmdSetStencilReference>(thunk)(fakeBuffer(2), VK_STENCIL_FACE_FRONT_BIT, 9);
+        Require(log == std::vector<std::string>{"stencil@2 " + std::to_string(index) + " 9"}, "slot " + std::to_string(index) + " reached the wrong entry point");
     }
-    Require(AgcDriver::Graphics::CommandThunk("vkCmdSetCheckpointNV", reinterpret_cast<PFN_vkVoidFunction>(reals[0])) == given[0], "the same entry point took a second slot");
-    Require(Throws<std::runtime_error>([&] { AgcDriver::Graphics::CommandThunk("vkCmdSetCheckpointNV", reinterpret_cast<PFN_vkVoidFunction>(reals.back())); }), "a ninth entry point was given a thunk");
-    Require(AgcDriver::Graphics::CommandThunkSlots(AgcDriver::Graphics::CommandId::CmdSetCheckpointNV) == 8, "the slots in use were miscounted");
+    Require(CommandThunk(Name, entry(0)) == given[0], "the same entry point took a second slot");
+    Require(AgcDriver::Graphics::CommandThunkSlots(CommandId::CmdSetStencilReference) == 8, "the slots in use were miscounted");
+    Require(Throws<std::runtime_error>([&] { CommandThunk(Name, entry(8)); }), "a ninth entry point with no device to key it by was given a thunk");
+    static const int keys[3] = {};
+    FakeDispatchable first{&keys[0]};
+    FakeDispatchable second{&keys[1]};
+    FakeDispatchable firstCommands{&keys[0]};
+    FakeDispatchable secondCommands{&keys[1]};
+    FakeDispatchable strangerCommands{&keys[2]};
+    const auto keyed = CommandThunk(Name, entry(8), deviceOf(first));
+    Require(AgcDriver::Graphics::IsCommandThunk(Name, keyed) && std::find(given.begin(), given.end(), keyed) == given.end(), "a ninth entry point on a device was not given the keyed thunk");
+    Require(CommandThunk(Name, entry(9), deviceOf(second)) == keyed, "a second device's entry point was given another thunk");
+    Require(CommandThunk(Name, entry(8), deviceOf(first)) == keyed && AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 2, "a device's repeated entry point was registered twice");
+    Require(CommandThunk(Name, entry(0), deviceOf(first)) == given[0], "an entry point that holds a slot was keyed instead");
+    const auto call = reinterpret_cast<PFN_vkCmdSetStencilReference>(keyed);
+    log.clear();
+    call(commandsOf(firstCommands), VK_STENCIL_FACE_FRONT_BIT, 1);
+    call(commandsOf(secondCommands), VK_STENCIL_FACE_BACK_BIT, 2);
+    const std::vector<std::string> routed{"stencil@" + std::to_string(id(commandsOf(firstCommands))) + " 8 1", "stencil@" + std::to_string(id(commandsOf(secondCommands))) + " 9 2"};
+    Require(log == routed, "the keyed thunk did not route each command buffer to its device's entry point: " + firstDifference(routed, log));
+    Require(Throws<std::logic_error>([&] { call(commandsOf(strangerCommands), VK_STENCIL_FACE_FRONT_BIT, 3); }), "a command buffer of an unregistered device reached an entry point");
+    Require(Throws<std::runtime_error>([&] { CommandThunk(Name, entry(10), deviceOf(first)); }), "one device gave two entry points for one command and both were kept");
+    {
+        CommandFunctions functions{};
+        functions.CmdSetStencilReference = reals[10];
+        CommandStream stream(functions);
+        log.clear();
+        call(stream.Handle(), VK_STENCIL_FACE_FRONT_BIT, 4);
+        Require(log.empty() && stream.Ops() == 1, "the keyed thunk did not stream a stream handle");
+        stream.Seal();
+        AgcDriver::Graphics::Replay(stream, fakeBuffer(3), functions);
+        Require(log == std::vector<std::string>{"stencil@3 10 4"}, "the keyed thunk's streamed call replayed wrongly");
+    }
+    AgcDriver::Graphics::ForgetCommandDevice(deviceOf(first));
+    Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 1, "a forgotten device kept its entry");
+    Require(Throws<std::logic_error>([&] { call(commandsOf(firstCommands), VK_STENCIL_FACE_FRONT_BIT, 5); }), "a forgotten device's command buffer still reached its entry point");
+    Require(CommandThunk(Name, entry(10), deviceOf(first)) == keyed, "a device created where a forgotten one was could not register its entry point");
+    log.clear();
+    call(commandsOf(firstCommands), VK_STENCIL_FACE_FRONT_BIT, 6);
+    call(commandsOf(secondCommands), VK_STENCIL_FACE_FRONT_BIT, 7);
+    Require(log.size() == 2 && log[0].ends_with(" 10 6") && log[1].ends_with(" 9 7"), "the keyed thunk routed wrongly after a device was replaced");
+    AgcDriver::Graphics::ForgetCommandDevice(deviceOf(first));
+    AgcDriver::Graphics::ForgetCommandDevice(deviceOf(second));
+    Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 0, "forgetting every device left entries");
+}
+
+void EveryListedCommandStreams() {
+    for (std::size_t index = 0; index < AgcDriver::Graphics::CommandCount; ++index) {
+        Require(AgcDriver::Graphics::CommandStreams(static_cast<CommandId>(index)), std::string(AgcDriver::Graphics::CommandNames()[index]) + " is listed but has no streamer, so every batch that records it demotes");
+    }
 }
 
 void EveryListedCommandHasAThunk() {
@@ -579,6 +686,7 @@ APS5_EXACT_COUNT(CmdSetViewportWithCount, VkViewport)
 APS5_EXACT_COUNT(CmdSetViewportWithCountEXT, VkViewport)
 APS5_EXACT_COUNT(CmdSetScissorWithCount, VkRect2D)
 APS5_EXACT_COUNT(CmdSetScissorWithCountEXT, VkRect2D)
+APS5_EXACT_COUNT(CmdExecuteCommands, VkCommandBuffer)
 #undef APS5_EXACT_COUNT
 
 template<>
@@ -776,6 +884,88 @@ struct Exact<CommandId::CmdBeginRenderingKHR> {
     }
 };
 
+template<>
+struct Exact<CommandId::CmdSetCheckpointNV> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, const void* marker) {
+        putTag("CmdSetCheckpointNV");
+        put(commands);
+        put(marker);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdSetDepthBias2EXT> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, const VkDepthBiasInfoEXT* info) {
+        putTag("CmdSetDepthBias2EXT");
+        put(commands);
+        put(info->sType);
+        putNext(info->pNext);
+        put(info->depthBiasConstantFactor);
+        put(info->depthBiasClamp);
+        put(info->depthBiasSlopeFactor);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdBindShadersEXT> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, std::uint32_t count, const VkShaderStageFlagBits* stages, const VkShaderEXT* shaders) {
+        putTag("CmdBindShadersEXT");
+        put(commands);
+        putArray(stages, count);
+        put(shaders != nullptr);
+        if (shaders != nullptr) putArray(shaders, count);
+    }
+};
+
+enum class WriteArray { Images, Buffers, Views };
+
+WriteArray writeArray(VkDescriptorType type) {
+    switch (type) {
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+        return WriteArray::Buffers;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        return WriteArray::Views;
+    default:
+        return WriteArray::Images;
+    }
+}
+
+template<>
+struct Exact<CommandId::CmdPushDescriptorSetKHR> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkPipelineBindPoint point, VkPipelineLayout layout, std::uint32_t set, std::uint32_t count, const VkWriteDescriptorSet* writes) {
+        putTag("CmdPushDescriptorSetKHR");
+        put(commands);
+        put(point);
+        put(layout);
+        put(set);
+        put(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const auto& write = writes[index];
+            put(write.sType);
+            putNext(write.pNext);
+            put(write.dstSet);
+            put(write.dstBinding);
+            put(write.dstArrayElement);
+            put(write.descriptorType);
+            switch (writeArray(write.descriptorType)) {
+            case WriteArray::Images:
+                putArray(write.pImageInfo, write.descriptorCount);
+                break;
+            case WriteArray::Buffers:
+                putArray(write.pBufferInfo, write.descriptorCount);
+                break;
+            case WriteArray::Views:
+                putArray(write.pTexelBufferView, write.descriptorCount);
+                break;
+            }
+        }
+    }
+};
+
 CommandFunctions exactFunctions() {
     CommandFunctions functions{};
 #define APS5_EXACT(name) functions.name = &Exact<CommandId::name>::Run;
@@ -801,6 +991,11 @@ CommandFunctions exactFunctions() {
     APS5_EXACT(CmdClearAttachments)
     APS5_EXACT(CmdBeginRenderPass)
     APS5_EXACT(CmdBeginRenderingKHR)
+    APS5_EXACT(CmdExecuteCommands)
+    APS5_EXACT(CmdSetCheckpointNV)
+    APS5_EXACT(CmdSetDepthBias2EXT)
+    APS5_EXACT(CmdBindShadersEXT)
+    APS5_EXACT(CmdPushDescriptorSetKHR)
 #undef APS5_EXACT
     return functions;
 }
@@ -839,6 +1034,14 @@ struct Sources {
     VkRenderingAttachmentInfoKHR stencil;
     VkRenderingInfoKHR rendering;
     VkRenderingInfoKHR renderingWithoutStencil;
+    std::array<VkCommandBuffer, 3> secondaries;
+    VkDepthBiasInfoEXT depthBias;
+    std::array<VkShaderStageFlagBits, 3> stages;
+    std::array<VkShaderEXT, 3> shaders;
+    std::array<VkDescriptorImageInfo, 4> imageInfos;
+    std::array<VkDescriptorBufferInfo, 3> bufferInfos;
+    std::array<VkBufferView, 2> texelViews;
+    std::array<VkWriteDescriptorSet, 5> writes;
 };
 
 template<typename T>
@@ -892,6 +1095,35 @@ void prepare(Sources& sources) {
     sources.rendering.pStencilAttachment = &sources.stencil;
     sources.renderingWithoutStencil = sources.rendering;
     sources.renderingWithoutStencil.pStencilAttachment = nullptr;
+    for (auto& value : sources.secondaries) fill(value, next);
+    structured(sources.depthBias, VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT, next);
+    sources.stages = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
+    for (auto& value : sources.shaders) fill(value, next);
+    for (auto& value : sources.imageInfos) fill(value, next);
+    for (auto& value : sources.bufferInfos) fill(value, next);
+    for (auto& value : sources.texelViews) fill(value, next);
+    for (auto& value : sources.writes) structured(value, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, next);
+    const auto ignored = [](auto& pointer) { pointer = reinterpret_cast<std::remove_reference_t<decltype(pointer)>>(static_cast<std::uintptr_t>(0x40)); };
+    for (auto& write : sources.writes) {
+        ignored(write.pImageInfo);
+        ignored(write.pBufferInfo);
+        ignored(write.pTexelBufferView);
+    }
+    sources.writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sources.writes[0].descriptorCount = 3;
+    sources.writes[0].pImageInfo = sources.imageInfos.data();
+    sources.writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    sources.writes[1].descriptorCount = 2;
+    sources.writes[1].pBufferInfo = sources.bufferInfos.data();
+    sources.writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+    sources.writes[2].descriptorCount = 2;
+    sources.writes[2].pTexelBufferView = sources.texelViews.data();
+    sources.writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    sources.writes[3].descriptorCount = 1;
+    sources.writes[3].pImageInfo = sources.imageInfos.data() + 3;
+    sources.writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    sources.writes[4].descriptorCount = 1;
+    sources.writes[4].pBufferInfo = sources.bufferInfos.data() + 2;
 }
 
 void recordEverySpecializedCommand(VkCommandBuffer commands, const Sources& sources) {
@@ -920,6 +1152,12 @@ void recordEverySpecializedCommand(VkCommandBuffer commands, const Sources& sour
     exactThunk<CommandId::CmdBeginRenderPass>()(commands, &sources.pass, VK_SUBPASS_CONTENTS_INLINE);
     exactThunk<CommandId::CmdBeginRenderingKHR>()(commands, &sources.rendering);
     exactThunk<CommandId::CmdBeginRenderingKHR>()(commands, &sources.renderingWithoutStencil);
+    exactThunk<CommandId::CmdExecuteCommands>()(commands, 3, sources.secondaries.data());
+    exactThunk<CommandId::CmdSetCheckpointNV>()(commands, &sources.secondaries[1]);
+    exactThunk<CommandId::CmdSetDepthBias2EXT>()(commands, &sources.depthBias);
+    exactThunk<CommandId::CmdBindShadersEXT>()(commands, 3, sources.stages.data(), sources.shaders.data());
+    exactThunk<CommandId::CmdBindShadersEXT>()(commands, 2, sources.stages.data(), nullptr);
+    exactThunk<CommandId::CmdPushDescriptorSetKHR>()(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(64), 1, 5, sources.writes.data());
 }
 
 std::string firstByteDifference(const std::string& expected, const std::string& actual, const std::vector<std::pair<std::size_t, std::string>>& commands) {
@@ -945,7 +1183,7 @@ void SpecializedStreamersKeepEveryArgument() {
     const auto commandsAt = capturedCommands;
     Require(expected.size() > 2000, "the direct recording captured only " + std::to_string(expected.size()) + " bytes");
     const auto commands = commandsAt.size();
-    Require(commands == 25, "the direct recording captured " + std::to_string(commands) + " commands");
+    Require(commands == 31, "the direct recording captured " + std::to_string(commands) + " commands");
     CommandStream stream(exact);
     captured.clear();
     recordEverySpecializedCommand(stream.Handle(), sources);
@@ -1025,6 +1263,37 @@ CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds)
     return costs;
 }
 
+VKAPI_ATTR void VKAPI_CALL emptyPush(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, std::uint32_t, std::uint32_t, const VkWriteDescriptorSet*) {}
+
+void PushDescriptorCost(int calls, int rounds) {
+    CommandFunctions direct{};
+    direct.CmdPushDescriptorSetKHR = &emptyPush;
+    const auto streamedPush = AgcDriver::Graphics::StreamedCommands().CmdPushDescriptorSetKHR;
+    std::array<VkDescriptorImageInfo, 2> images{};
+    VkDescriptorBufferInfo buffer{fake<VkBuffer>(1), 0, 256};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (auto& write : writes) write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].descriptorCount = 2;
+    writes[0].pImageInfo = images.data();
+    writes[1].dstBinding = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].descriptorCount = 1;
+    writes[1].pBufferInfo = &buffer;
+    std::vector<double> raw, append, replay;
+    for (int round = 0; round < rounds; ++round) {
+        raw.push_back(nanosPerCall(calls, [&](std::uint32_t call) { direct.CmdPushDescriptorSetKHR(fakeBuffer(1), VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(call & 7), 0, 2, writes.data()); }));
+        CommandStream stream(direct);
+        const auto handle = stream.Handle();
+        append.push_back(nanosPerCall(calls, [&](std::uint32_t call) { streamedPush(handle, VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(call & 7), 0, 2, writes.data()); }));
+        stream.Seal();
+        const auto start = std::chrono::steady_clock::now();
+        AgcDriver::Graphics::Replay(stream, fakeBuffer(1), direct);
+        replay.push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / calls);
+    }
+    std::printf("push descriptors (2 writes, 3 descriptors; medians of %d rounds): direct %.2f ns, streamed append %.2f ns, replay %.2f ns per call\n", rounds, median(raw), median(append), median(replay));
+}
+
 bool InstrumentedBuild() {
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     return true;
@@ -1043,6 +1312,7 @@ int DirectModeCost() {
     constexpr int DirectCalls = 5'000'000;
     constexpr int StreamedCalls = 1'000'000;
     constexpr int Rounds = 21;
+    PushDescriptorCost(StreamedCalls / 4, Rounds);
     const auto costs = MeasureCommandCosts(DirectCalls, StreamedCalls, Rounds);
     const double thunkOver = costs.thunk - costs.raw;
     const double typedOver = costs.typedDirect - costs.raw;
@@ -1066,13 +1336,14 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--bench") return DirectModeCost();
         EveryListedCommandHasAThunk();
+        EveryListedCommandStreams();
         DirectCallsReachTheirOwnEntryPoint();
         StreamReplayRecordsWhatDirectRecords();
         DemotionReplaysThePrefixInOrder();
         SpecializedStreamersKeepEveryArgument();
-        PointerCommandsWithoutACopyDemote();
+        PushDescriptorsDemoteOnlyWhatTheyCannotCopy();
         DemotionWithoutAMaterializerPoisons();
-        EntryPointsBeyondTheSlotsAreRefused();
+        EntryPointsBeyondTheSlotsAreKeyedByDevice();
         std::cout << "command thunks passed\n";
         return 0;
     } catch (const std::exception& error) {

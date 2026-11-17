@@ -1177,7 +1177,7 @@ static bool PrepareCheckpointMarker(const Context& context) {
     if (state.device == context.device && state.buffer != VK_NULL_HANDLE) return state.write != nullptr;
     if (state.device != VK_NULL_HANDLE && state.device != context.device) return false;
     if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return false;
-    auto write = reinterpret_cast<PFN_vkCmdWriteBufferMarkerAMD>(CommandThunk("vkCmdWriteBufferMarkerAMD", context.deviceProc(context.device, "vkCmdWriteBufferMarkerAMD")));
+    auto write = reinterpret_cast<PFN_vkCmdWriteBufferMarkerAMD>(CommandThunk("vkCmdWriteBufferMarkerAMD", context.deviceProc(context.device, "vkCmdWriteBufferMarkerAMD"), context.device));
     if (write == nullptr) return false;
     auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
     auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
@@ -1269,7 +1269,7 @@ void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, st
     if (commands == VK_NULL_HANDLE || token == 0) return;
     try {
         if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return;
-        auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(CommandThunk("vkCmdSetCheckpointNV", context.deviceProc(context.device, "vkCmdSetCheckpointNV")));
+        auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(CommandThunk("vkCmdSetCheckpointNV", context.deviceProc(context.device, "vkCmdSetCheckpointNV"), context.device));
         if (setCheckpoint == nullptr) return;
         EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
     } catch (...) {

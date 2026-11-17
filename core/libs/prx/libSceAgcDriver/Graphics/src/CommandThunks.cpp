@@ -1,8 +1,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <memory>
+#include <cstring>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -30,6 +33,41 @@ constexpr std::size_t indexOf(CommandId id) {
 
 std::array<std::array<std::atomic<PFN_vkVoidFunction>, ThunkSlots>, CommandCount> realSlots{};
 std::mutex slotMutex;
+
+struct DeviceEntry {
+    const void* key;
+    PFN_vkVoidFunction real;
+};
+
+using DeviceEntries = std::vector<DeviceEntry>;
+
+std::array<std::atomic<const DeviceEntries*>, CommandCount> deviceEntries{};
+std::vector<std::unique_ptr<const DeviceEntries>> publishedEntries;
+std::atomic<std::size_t> keyedDevices{0};
+
+const void* dispatchKey(const void* handle) noexcept {
+    const void* key = nullptr;
+    std::memcpy(&key, handle, sizeof(key));
+    return key;
+}
+
+[[noreturn]] void noDeviceEntry(const char* command) {
+    throw std::logic_error(std::string("AGC graphics: ") + command + " was called on a command buffer whose device registered no entry point for it");
+}
+
+PFN_vkVoidFunction deviceReal(std::size_t id, const void* key, const char* command) {
+    if (const auto* entries = deviceEntries[id].load(std::memory_order_acquire); entries != nullptr) {
+        for (const auto& entry : *entries) {
+            if (entry.key == key) return entry.real;
+        }
+    }
+    noDeviceEntry(command);
+}
+
+void publish(std::size_t id, DeviceEntries entries) {
+    const auto& owned = publishedEntries.emplace_back(std::make_unique<const DeviceEntries>(std::move(entries)));
+    deviceEntries[id].store(owned.get(), std::memory_order_release);
+}
 
 template<CommandId Id>
 struct Command;
@@ -89,8 +127,19 @@ void direct(CommandStream& stream, VkStructureType chain, A... arguments) {
     (stream.Functions().*Command<Id>::member)(target, arguments...);
 }
 
+template<typename>
+struct PlainCommand : std::false_type {};
+
+template<typename... A>
+struct PlainCommand<void(VKAPI_PTR*)(VkCommandBuffer, A...)> : std::bool_constant<PlainArguments<A...>> {};
+
+struct Copies {
+    static constexpr bool Streams = true;
+};
+
 template<CommandId Id>
 struct Streamer {
+    static constexpr bool Streams = PlainCommand<typename Command<Id>::Pfn>::value;
     template<typename... A>
     static void Append(CommandStream& stream, A... arguments) {
         if constexpr (PlainArguments<A...>) stream.Emplace(&runPlain<Id, A...>, std::tuple<A...>(arguments...));
@@ -104,7 +153,7 @@ struct RangeHeader {
 };
 
 template<CommandId Id, typename T>
-struct RangeStreamer {
+struct RangeStreamer : Copies {
     static void Append(CommandStream& stream, std::uint32_t first, std::uint32_t count, const T* values) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
@@ -122,7 +171,7 @@ template<>
 struct Streamer<CommandId::CmdSetColorWriteMaskEXT> : RangeStreamer<CommandId::CmdSetColorWriteMaskEXT, VkColorComponentFlags> {};
 
 template<CommandId Id, typename T>
-struct CountStreamer {
+struct CountStreamer : Copies {
     static void Append(CommandStream& stream, std::uint32_t count, const T* values) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
@@ -150,7 +199,7 @@ struct BindSetsHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdBindDescriptorSets> {
+struct Streamer<CommandId::CmdBindDescriptorSets> : Copies {
     static void Append(CommandStream& stream, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t firstSet, std::uint32_t sets, const VkDescriptorSet* descriptorSets, std::uint32_t offsets, const std::uint32_t* dynamicOffsets) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<BindSetsHeader>(payload);
@@ -170,7 +219,7 @@ struct PushHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdPushConstants> {
+struct Streamer<CommandId::CmdPushConstants> : Copies {
     static void Append(CommandStream& stream, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<PushHeader>(payload);
@@ -180,7 +229,7 @@ struct Streamer<CommandId::CmdPushConstants> {
 };
 
 template<>
-struct Streamer<CommandId::CmdBindVertexBuffers> {
+struct Streamer<CommandId::CmdBindVertexBuffers> : Copies {
     static void Append(CommandStream& stream, std::uint32_t first, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize* offsets) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<RangeHeader>(payload);
@@ -202,7 +251,7 @@ struct BarrierHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdPipelineBarrier> {
+struct Streamer<CommandId::CmdPipelineBarrier> : Copies {
     static void Append(CommandStream& stream, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags dependencies, std::uint32_t memory, const VkMemoryBarrier* memoryBarriers, std::uint32_t buffers, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t images, const VkImageMemoryBarrier* imageBarriers) {
         auto chain = chained(memoryBarriers, memory);
         if (chain == Unchained) chain = chained(bufferBarriers, buffers);
@@ -229,7 +278,7 @@ struct CopyBufferHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdCopyBuffer> {
+struct Streamer<CommandId::CmdCopyBuffer> : Copies {
     static void Append(CommandStream& stream, VkBuffer source, VkBuffer destination, std::uint32_t count, const VkBufferCopy* regions) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<CopyBufferHeader>(payload);
@@ -246,7 +295,7 @@ struct UpdateBufferHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdUpdateBuffer> {
+struct Streamer<CommandId::CmdUpdateBuffer> : Copies {
     static void Append(CommandStream& stream, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size, const void* data) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<UpdateBufferHeader>(payload);
@@ -263,7 +312,7 @@ struct BufferImageHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdCopyBufferToImage> {
+struct Streamer<CommandId::CmdCopyBufferToImage> : Copies {
     static void Append(CommandStream& stream, VkBuffer source, VkImage destination, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<BufferImageHeader>(payload);
@@ -274,7 +323,7 @@ struct Streamer<CommandId::CmdCopyBufferToImage> {
 };
 
 template<>
-struct Streamer<CommandId::CmdCopyImageToBuffer> {
+struct Streamer<CommandId::CmdCopyImageToBuffer> : Copies {
     static void Append(CommandStream& stream, VkImage source, VkImageLayout layout, VkBuffer destination, std::uint32_t count, const VkBufferImageCopy* regions) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<BufferImageHeader>(payload);
@@ -294,7 +343,7 @@ struct ImageToImageHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdCopyImage> {
+struct Streamer<CommandId::CmdCopyImage> : Copies {
     static void Append(CommandStream& stream, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageCopy* regions) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<ImageToImageHeader>(payload);
@@ -305,7 +354,7 @@ struct Streamer<CommandId::CmdCopyImage> {
 };
 
 template<>
-struct Streamer<CommandId::CmdBlitImage> {
+struct Streamer<CommandId::CmdBlitImage> : Copies {
     static void Append(CommandStream& stream, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageBlit* regions, VkFilter filter) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<ImageToImageHeader>(payload);
@@ -323,7 +372,7 @@ struct ClearColorHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdClearColorImage> {
+struct Streamer<CommandId::CmdClearColorImage> : Copies {
     static void Append(CommandStream& stream, VkImage image, VkImageLayout layout, const VkClearColorValue* color, std::uint32_t count, const VkImageSubresourceRange* ranges) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto& header = unpack<ClearColorHeader>(payload);
@@ -341,7 +390,7 @@ struct ClearDepthHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdClearDepthStencilImage> {
+struct Streamer<CommandId::CmdClearDepthStencilImage> : Copies {
     static void Append(CommandStream& stream, VkImage image, VkImageLayout layout, const VkClearDepthStencilValue* value, std::uint32_t count, const VkImageSubresourceRange* ranges) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto& header = unpack<ClearDepthHeader>(payload);
@@ -357,7 +406,7 @@ struct ClearAttachmentsHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdClearAttachments> {
+struct Streamer<CommandId::CmdClearAttachments> : Copies {
     static void Append(CommandStream& stream, std::uint32_t attachments, const VkClearAttachment* clears, std::uint32_t rects, const VkClearRect* areas) {
         stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
             const auto header = unpack<ClearAttachmentsHeader>(payload);
@@ -375,7 +424,7 @@ struct BeginPassHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdBeginRenderPass> {
+struct Streamer<CommandId::CmdBeginRenderPass> : Copies {
     static void Append(CommandStream& stream, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
         if (info->pNext != nullptr) {
             direct<CommandId::CmdBeginRenderPass>(stream, chainOf(info->pNext), info, contents);
@@ -397,7 +446,7 @@ struct RenderingHeader {
 };
 
 template<>
-struct Streamer<CommandId::CmdBeginRenderingKHR> {
+struct Streamer<CommandId::CmdBeginRenderingKHR> : Copies {
     static void Append(CommandStream& stream, const VkRenderingInfoKHR* info) {
         auto chain = chainOf(info->pNext);
         if (chain == Unchained && info->pDepthAttachment != nullptr) chain = chainOf(info->pDepthAttachment->pNext);
@@ -418,18 +467,176 @@ struct Streamer<CommandId::CmdBeginRenderingKHR> {
     }
 };
 
-template<CommandId Id, std::size_t K, typename... A>
-VKAPI_ATTR void VKAPI_CALL thunk(VkCommandBuffer commands, A... arguments) {
-    if (!CommandStream::IsHandle(commands)) [[likely]] {
-        reinterpret_cast<typename Command<Id>::Pfn>(realSlots[indexOf(Id)][K].load(std::memory_order_relaxed))(commands, arguments...);
-        return;
+template<>
+struct Streamer<CommandId::CmdExecuteCommands> : CountStreamer<CommandId::CmdExecuteCommands, VkCommandBuffer> {};
+
+template<>
+struct Streamer<CommandId::CmdSetCheckpointNV> : Copies {
+    static void Append(CommandStream& stream, const void* marker) {
+        stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
+            functions.CmdSetCheckpointNV(target, reinterpret_cast<const void*>(unpack<std::uintptr_t>(payload)));
+        }, reinterpret_cast<std::uintptr_t>(marker));
     }
+};
+
+template<>
+struct Streamer<CommandId::CmdSetDepthBias2EXT> : Copies {
+    static void Append(CommandStream& stream, const VkDepthBiasInfoEXT* info) {
+        if (info->pNext != nullptr) {
+            direct<CommandId::CmdSetDepthBias2EXT>(stream, chainOf(info->pNext), info);
+            return;
+        }
+        stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
+            functions.CmdSetDepthBias2EXT(target, &unpack<VkDepthBiasInfoEXT>(payload));
+        }, *info);
+    }
+};
+
+struct BindShadersHeader {
+    std::uint32_t count;
+    std::uint32_t shaders;
+};
+
+template<>
+struct Streamer<CommandId::CmdBindShadersEXT> : Copies {
+    static void Append(CommandStream& stream, std::uint32_t count, const VkShaderStageFlagBits* stages, const VkShaderEXT* shaders) {
+        const std::uint32_t bound = shaders != nullptr ? count : 0;
+        stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
+            const auto header = unpack<BindShadersHeader>(payload);
+            const auto* at = afterHeader<BindShadersHeader>(payload);
+            const auto* stages = arrayAt<VkShaderStageFlagBits>(at, header.count);
+            const auto* shaders = arrayAt<VkShaderEXT>(at, header.shaders);
+            functions.CmdBindShadersEXT(target, header.count, stages, shaders);
+        }, BindShadersHeader{count, bound}, std::span(stages, count), std::span(shaders, bound));
+    }
+};
+
+enum class DescriptorArray : std::uint8_t { Images, Buffers, Views, Unknown };
+
+DescriptorArray arrayFor(VkDescriptorType type) noexcept {
+    switch (type) {
+    case VK_DESCRIPTOR_TYPE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+        return DescriptorArray::Images;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+        return DescriptorArray::Buffers;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        return DescriptorArray::Views;
+    default:
+        return DescriptorArray::Unknown;
+    }
+}
+
+std::size_t descriptorBytes(const VkWriteDescriptorSet& write) noexcept {
+    switch (arrayFor(write.descriptorType)) {
+    case DescriptorArray::Images:
+        return CommandStream::Aligned(sizeof(VkDescriptorImageInfo) * write.descriptorCount);
+    case DescriptorArray::Buffers:
+        return CommandStream::Aligned(sizeof(VkDescriptorBufferInfo) * write.descriptorCount);
+    case DescriptorArray::Views:
+        return CommandStream::Aligned(sizeof(VkBufferView) * write.descriptorCount);
+    case DescriptorArray::Unknown:
+        break;
+    }
+    return 0;
+}
+
+template<typename T>
+const T* copyDescriptors(std::byte*& at, const T* values, std::uint32_t count) noexcept {
+    if (count == 0) return nullptr;
+    std::memcpy(at, values, sizeof(T) * count);
+    const auto* copied = reinterpret_cast<const T*>(at);
+    at += CommandStream::Aligned(sizeof(T) * count);
+    return copied;
+}
+
+struct PushSetHeader {
+    VkPipelineBindPoint bindPoint;
+    VkPipelineLayout layout;
+    std::uint32_t set;
+    std::uint32_t writes;
+};
+
+template<>
+struct Streamer<CommandId::CmdPushDescriptorSetKHR> : Copies {
+    static void Append(CommandStream& stream, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t set, std::uint32_t count, const VkWriteDescriptorSet* writes) {
+        auto chain = chained(writes, count);
+        bool copyable = chain == Unchained && !RuntimeSwitches::Set(RuntimeSwitch::NoStreamedPushDescriptors);
+        std::size_t bytes = CommandStream::Aligned(sizeof(PushSetHeader)) + CommandStream::Aligned(sizeof(VkWriteDescriptorSet) * count);
+        for (std::uint32_t index = 0; copyable && index < count; ++index) {
+            copyable = arrayFor(writes[index].descriptorType) != DescriptorArray::Unknown;
+            bytes += descriptorBytes(writes[index]);
+        }
+        if (!copyable) {
+            direct<CommandId::CmdPushDescriptorSetKHR>(stream, chain, bindPoint, layout, set, count, writes);
+            return;
+        }
+        stream.EmplaceBytes([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
+            const auto header = unpack<PushSetHeader>(payload);
+            const auto* copies = header.writes != 0 ? reinterpret_cast<const VkWriteDescriptorSet*>(afterHeader<PushSetHeader>(payload)) : nullptr;
+            functions.CmdPushDescriptorSetKHR(target, header.bindPoint, header.layout, header.set, header.writes, copies);
+        }, bytes, [&](std::byte* at) noexcept {
+            new (at) PushSetHeader{bindPoint, layout, set, count};
+            auto* copies = reinterpret_cast<VkWriteDescriptorSet*>(at + CommandStream::Aligned(sizeof(PushSetHeader)));
+            if (count != 0) std::memcpy(static_cast<void*>(copies), writes, sizeof(VkWriteDescriptorSet) * count);
+            auto* data = reinterpret_cast<std::byte*>(copies) + CommandStream::Aligned(sizeof(VkWriteDescriptorSet) * count);
+            for (std::uint32_t index = 0; index < count; ++index) {
+                auto& copy = copies[index];
+                const auto& write = writes[index];
+                copy.pImageInfo = nullptr;
+                copy.pBufferInfo = nullptr;
+                copy.pTexelBufferView = nullptr;
+                switch (arrayFor(write.descriptorType)) {
+                case DescriptorArray::Images:
+                    copy.pImageInfo = copyDescriptors(data, write.pImageInfo, write.descriptorCount);
+                    break;
+                case DescriptorArray::Buffers:
+                    copy.pBufferInfo = copyDescriptors(data, write.pBufferInfo, write.descriptorCount);
+                    break;
+                case DescriptorArray::Views:
+                    copy.pTexelBufferView = copyDescriptors(data, write.pTexelBufferView, write.descriptorCount);
+                    break;
+                case DescriptorArray::Unknown:
+                    break;
+                }
+            }
+        });
+    }
+};
+
+template<CommandId Id, typename... A>
+void toStream(VkCommandBuffer commands, A... arguments) {
     auto& stream = CommandStream::From(commands);
     if (const auto target = stream.Materialized(); target != VK_NULL_HANDLE) {
         (stream.Functions().*Command<Id>::member)(target, arguments...);
         return;
     }
     Streamer<Id>::Append(stream, arguments...);
+}
+
+template<CommandId Id, std::size_t K, typename... A>
+VKAPI_ATTR void VKAPI_CALL thunk(VkCommandBuffer commands, A... arguments) {
+    if (!CommandStream::IsHandle(commands)) [[likely]] {
+        reinterpret_cast<typename Command<Id>::Pfn>(realSlots[indexOf(Id)][K].load(std::memory_order_relaxed))(commands, arguments...);
+        return;
+    }
+    toStream<Id>(commands, arguments...);
+}
+
+template<CommandId Id, typename... A>
+VKAPI_ATTR void VKAPI_CALL keyed(VkCommandBuffer commands, A... arguments) {
+    if (!CommandStream::IsHandle(commands)) [[likely]] {
+        reinterpret_cast<typename Command<Id>::Pfn>(deviceReal(indexOf(Id), dispatchKey(commands), Command<Id>::text))(commands, arguments...);
+        return;
+    }
+    toStream<Id>(commands, arguments...);
 }
 
 [[noreturn]] void notAStream(const char* command) {
@@ -439,12 +646,7 @@ VKAPI_ATTR void VKAPI_CALL thunk(VkCommandBuffer commands, A... arguments) {
 template<CommandId Id, typename... A>
 VKAPI_ATTR void VKAPI_CALL streamed(VkCommandBuffer commands, A... arguments) {
     if (!CommandStream::IsHandle(commands)) [[unlikely]] notAStream(Command<Id>::text);
-    auto& stream = CommandStream::From(commands);
-    if (const auto target = stream.Materialized(); target != VK_NULL_HANDLE) {
-        (stream.Functions().*Command<Id>::member)(target, arguments...);
-        return;
-    }
-    Streamer<Id>::Append(stream, arguments...);
+    toStream<Id>(commands, arguments...);
 }
 
 template<CommandId Id, typename... A>
@@ -469,6 +671,36 @@ const std::array<std::array<PFN_vkVoidFunction, ThunkSlots>, CommandCount>& thun
 #undef APS5_COMMAND_THUNKS
     };
     return table;
+}
+
+template<CommandId Id, typename... A>
+PFN_vkVoidFunction keyedOf(void(VKAPI_PTR*)(VkCommandBuffer, A...)) {
+    return reinterpret_cast<PFN_vkVoidFunction>(&keyed<Id, A...>);
+}
+
+const std::array<PFN_vkVoidFunction, CommandCount>& keyedThunks() {
+    static const std::array<PFN_vkVoidFunction, CommandCount> table{
+#define APS5_COMMAND_KEYED(name) keyedOf<CommandId::name>(typename Command<CommandId::name>::Pfn{}),
+        APS5_COMMANDS(APS5_COMMAND_KEYED)
+#undef APS5_COMMAND_KEYED
+    };
+    return table;
+}
+
+PFN_vkVoidFunction deviceThunk(std::size_t id, std::string_view name, PFN_vkVoidFunction real, VkDevice device) {
+    if (device == VK_NULL_HANDLE) throw std::runtime_error("AGC graphics: " + std::string(name) + " has more than " + std::to_string(ThunkSlots) + " distinct driver entry points and no device to key another by");
+    const auto key = dispatchKey(device);
+    const auto* current = deviceEntries[id].load(std::memory_order_relaxed);
+    DeviceEntries entries = current != nullptr ? *current : DeviceEntries{};
+    for (const auto& entry : entries) {
+        if (entry.key != key) continue;
+        if (entry.real == real) return keyedThunks()[id];
+        throw std::runtime_error("AGC graphics: one device gave two different entry points for " + std::string(name));
+    }
+    entries.push_back(DeviceEntry{key, real});
+    publish(id, std::move(entries));
+    keyedDevices.fetch_add(1, std::memory_order_relaxed);
+    return keyedThunks()[id];
 }
 
 const std::vector<std::pair<std::string_view, CommandId>>& sortedNames() {
@@ -519,7 +751,7 @@ void ResolveCommandFunctions(CommandFunctions& functions, VkDevice device, PFN_v
 #undef APS5_COMMAND_RESOLVE
 }
 
-PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real) {
+PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real, VkDevice device) {
     if (real == nullptr) return nullptr;
     const auto id = indexOf(CommandFor(name));
     auto& slots = realSlots[id];
@@ -534,14 +766,46 @@ PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real) 
         slots[slot].store(real, std::memory_order_release);
         return thunks()[id][slot];
     }
-    throw std::runtime_error("AGC graphics: " + std::string(name) + " has more than " + std::to_string(ThunkSlots) + " distinct driver entry points; the command-stream thunks have no slot for another");
+    return deviceThunk(id, name, real, device);
+}
+
+void ForgetCommandDevice(VkDevice device) {
+    if (device == VK_NULL_HANDLE || keyedDevices.load(std::memory_order_relaxed) == 0) return;
+    const auto key = dispatchKey(device);
+    std::lock_guard lock(slotMutex);
+    for (std::size_t id = 0; id < CommandCount; ++id) {
+        const auto* current = deviceEntries[id].load(std::memory_order_relaxed);
+        if (current == nullptr) continue;
+        DeviceEntries kept;
+        for (const auto& entry : *current) {
+            if (entry.key != key) kept.push_back(entry);
+        }
+        if (kept.size() != current->size()) {
+            keyedDevices.fetch_sub(current->size() - kept.size(), std::memory_order_relaxed);
+            publish(id, std::move(kept));
+        }
+    }
+}
+
+std::size_t CommandDeviceEntries(CommandId id) noexcept {
+    const auto* entries = deviceEntries[indexOf(id)].load(std::memory_order_acquire);
+    return entries != nullptr ? entries->size() : 0;
+}
+
+bool CommandStreams(CommandId id) noexcept {
+    static constexpr std::array<bool, CommandCount> streams{
+#define APS5_COMMAND_STREAMS(name) Streamer<CommandId::name>::Streams,
+        APS5_COMMANDS(APS5_COMMAND_STREAMS)
+#undef APS5_COMMAND_STREAMS
+    };
+    return streams[indexOf(id)];
 }
 
 bool IsCommandThunk(std::string_view name, PFN_vkVoidFunction function) noexcept {
     const auto* found = find(name);
     if (found == nullptr || function == nullptr) return false;
     const auto& row = thunks()[indexOf(found->second)];
-    return std::find(row.begin(), row.end(), function) != row.end();
+    return std::find(row.begin(), row.end(), function) != row.end() || keyedThunks()[indexOf(found->second)] == function;
 }
 
 std::size_t CommandThunkSlots(CommandId id) noexcept {

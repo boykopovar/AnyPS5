@@ -2015,7 +2015,15 @@ VKAPI_ATTR void VKAPI_CALL failingPipelineBarrier(VkCommandBuffer commands, VkPi
         failingBarriers.fetch_sub(1);
         throw std::runtime_error("vkCmdPipelineBarrier: injected failure");
     }
-    reinterpret_cast<PFN_vkCmdPipelineBarrier>(passedDeviceProc(commandsDevice, "vkCmdPipelineBarrier"))(commands, source, destination, flags, memoryCount, memory, bufferCount, buffers, imageCount, images);
+    std::vector<VkMemoryBarrier> unchained(memory, memory + memoryCount);
+    for (auto& barrier : unchained) barrier.pNext = nullptr;
+    reinterpret_cast<PFN_vkCmdPipelineBarrier>(passedDeviceProc(commandsDevice, "vkCmdPipelineBarrier"))(commands, source, destination, flags, memoryCount, unchained.data(), bufferCount, buffers, imageCount, images);
+}
+
+void demoteThrough(const Context& context, VkCommandBuffer commands) {
+    const VkMemoryBarrier chain{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, 0, 0};
+    const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, &chain, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL replayFailingDeviceProc(VkDevice device, const char* name) {
@@ -2104,33 +2112,26 @@ void deferredBatchTests(const Device& device) {
         recorder.Sync();
         Require(recorder.StreamCounts().replayed == 1, "the batch after a poisoned one was not replayed");
     }
+    passedDeviceProc = context.deviceProc;
+    passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
+    passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
     {
-        Recorder recorder(context, false, true, context.queueFamily);
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = context.pool;
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-        allocation.commandBufferCount = 1;
-        VkCommandBuffer secondary = VK_NULL_HANDLE;
-        Require(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &secondary) == VK_SUCCESS, "no secondary command buffer");
-        VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.pInheritanceInfo = &inheritance;
-        Require(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(secondary, &begin) == VK_SUCCESS, "the secondary command buffer did not begin");
-        Require(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(secondary) == VK_SUCCESS, "the secondary command buffer did not end");
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        Recorder recorder(failing, false, true, context.queueFamily);
         const auto commands = recorder.Commands();
-        recordBarrierThrough(context, commands);
+        recordBarrierThrough(failing, commands);
         Require(recorder.Deferred(), "the batch opened direct");
         const auto streamed = recorder.StreamOps();
-        reinterpret_cast<PFN_vkCmdExecuteCommands>(CommandThunk("vkCmdExecuteCommands", context.deviceProc(context.device, "vkCmdExecuteCommands")))(commands, 1, &secondary);
-        Require(!recorder.Deferred(), "a command with an uncopied pointer did not demote the batch");
-        recordBarrierThrough(context, commands);
+        demoteThrough(failing, commands);
+        Require(!recorder.Deferred(), "a pNext-chained command did not demote the batch");
+        recordBarrierThrough(failing, commands);
         Require(recorder.StreamOps() == streamed, "a command after the demotion was streamed instead of recorded into the command buffer");
         recorder.Submit();
         recorder.Sync();
         const auto demotions = recorder.Demotions();
         Require(recorder.StreamCounts().demoted == 1 && recorder.StreamCounts().replayed == 0, "the demoted batch was replayed: " + recorder.StreamReport());
-        Require(demotions.size() == 1 && demotions[0].first == "vkCmdExecuteCommands" && demotions[0].second == 1, "the demotion was not counted by command: " + recorder.StreamReport());
-        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
+        Require(demotions.size() == 1 && demotions[0].first == "vkCmdPipelineBarrier/" + std::to_string(VK_STRUCTURE_TYPE_MEMORY_BARRIER) && demotions[0].second == 1, "the demotion was not counted by command: " + recorder.StreamReport());
     }
     {
         Context failing = context;
@@ -2198,20 +2199,9 @@ void deferredBatchTests(const Device& device) {
             lost = true;
         }
         Require(lost && lostSubmits.load() == 0, "the injected device loss did not surface at submit");
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = context.pool;
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-        allocation.commandBufferCount = 1;
-        VkCommandBuffer secondary = VK_NULL_HANDLE;
-        Require(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &secondary) == VK_SUCCESS, "no secondary command buffer");
-        VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.pInheritanceInfo = &inheritance;
-        Require(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(secondary, &begin) == VK_SUCCESS, "the secondary command buffer did not begin");
-        Require(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(secondary) == VK_SUCCESS, "the secondary command buffer did not end");
         const auto commands = recorder.Commands();
-        reinterpret_cast<PFN_vkCmdExecuteCommands>(CommandThunk("vkCmdExecuteCommands", context.deviceProc(context.device, "vkCmdExecuteCommands")))(commands, 1, &secondary);
-        Require(!recorder.Deferred(), "a command with an uncopied pointer did not demote the batch");
+        demoteThrough(failing, commands);
+        Require(!recorder.Deferred(), "a pNext-chained command did not demote the batch");
         const auto submitted = countedSubmits.load();
         bool refused = false;
         try {
@@ -2220,7 +2210,6 @@ void deferredBatchTests(const Device& device) {
             refused = true;
         }
         Require(refused && countedSubmits.load() == submitted, "a direct batch reached vkQueueSubmit after the device was lost");
-        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
     }
     {
         Context failing = context;
@@ -2320,17 +2309,6 @@ void deferredBatchTests(const Device& device) {
     {
         Context failing = context;
         failing.deviceProc = replayFailingDeviceProc;
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = context.pool;
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-        allocation.commandBufferCount = 1;
-        VkCommandBuffer secondary = VK_NULL_HANDLE;
-        Require(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &secondary) == VK_SUCCESS, "no secondary command buffer");
-        VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.pInheritanceInfo = &inheritance;
-        Require(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(secondary, &begin) == VK_SUCCESS, "the secondary command buffer did not begin");
-        Require(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(secondary) == VK_SUCCESS, "the secondary command buffer did not end");
         const auto live = liveCommandBuffers.load();
         {
             Recorder recorder(failing, false, true, context.queueFamily);
@@ -2340,7 +2318,7 @@ void deferredBatchTests(const Device& device) {
             failingBarriers.store(1);
             bool demotionFailed = false;
             try {
-                reinterpret_cast<PFN_vkCmdExecuteCommands>(CommandThunk("vkCmdExecuteCommands", context.deviceProc(context.device, "vkCmdExecuteCommands")))(commands, 1, &secondary);
+                demoteThrough(failing, commands);
             } catch (const std::runtime_error&) {
                 demotionFailed = true;
             }
@@ -2359,7 +2337,6 @@ void deferredBatchTests(const Device& device) {
             Require(countedSubmits.load() == submitted + 1, "the batch after a failed demotion was not submitted");
         }
         Require(liveCommandBuffers.load() == live, "a command buffer allocated for a failed demotion was not freed: " + std::to_string(liveCommandBuffers.load() - live) + " still allocated");
-        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
     }
     if (!device.TimelineSemaphores()) {
         std::cout << "skipped, no timeline semaphores: held teardown and serial waits under a failed replay not tested\n";

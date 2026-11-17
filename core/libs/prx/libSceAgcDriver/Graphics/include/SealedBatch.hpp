@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SEALEDBATCH_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -69,6 +70,7 @@ public:
     void ReplayReleased() noexcept;
     void Charge(std::size_t bytes) noexcept;
     void Retired(std::size_t bytes) noexcept;
+    std::size_t StreamCap() const noexcept { return limits.outstandingBytes / std::max<std::size_t>(limits.outstandingBatches, 1); }
     bool OverBytes() const noexcept { return bytes.load(std::memory_order_relaxed) >= limits.outstandingBytes; }
     std::size_t Encoding() const noexcept { return encoding.load(std::memory_order_relaxed); }
     std::size_t Outstanding() const noexcept { return outstanding.load(std::memory_order_relaxed); }

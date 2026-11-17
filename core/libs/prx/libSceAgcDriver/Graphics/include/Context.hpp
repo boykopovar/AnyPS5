@@ -511,7 +511,7 @@ private:
         ++DeviceProcLookups();
         const auto function = deviceProc(device, name);
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
-        if (IsCommandName(name)) return reinterpret_cast<TFunction>(CommandThunk(name, function));
+        if (IsCommandName(name)) return reinterpret_cast<TFunction>(CommandThunk(name, function, device));
         return reinterpret_cast<TFunction>(function);
     }
 

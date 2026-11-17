@@ -841,7 +841,7 @@ struct VulkanDevice::State {
         if (function == nullptr) {
             throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
-        if (Graphics::IsCommandName(name.Value())) function = Graphics::CommandThunk(name.Value(), function);
+        if (Graphics::IsCommandName(name.Value())) function = Graphics::CommandThunk(name.Value(), function, device);
         return reinterpret_cast<TFunction>(function);
     }
 
@@ -1166,6 +1166,7 @@ struct VulkanDevice::State {
         }
         Graphics::ResetCheckpointSnapshots();
         if (compileOnly && device != VK_NULL_HANDLE) {
+            Graphics::ForgetCommandDevice(device);
             reinterpret_cast<PFN_vkDestroyDevice>(deviceProc(device, "vkDestroyDevice"))(device, nullptr);
             device = VK_NULL_HANDLE;
         }
@@ -1271,6 +1272,7 @@ struct VulkanDevice::State {
             }
             if (settlePool != VK_NULL_HANDLE) destroyPool(device, settlePool, nullptr);
             Graphics::DestroyDeferredObjects(device);
+            Graphics::ForgetCommandDevice(device);
             destroyDevice(device, nullptr);
             Graphics::MemoryAccounting::ForgetDevice(device);
         }

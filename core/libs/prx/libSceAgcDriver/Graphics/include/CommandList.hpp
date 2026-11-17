@@ -100,9 +100,12 @@ bool IsCommandName(std::string_view name) noexcept;
 CommandId CommandFor(std::string_view name);
 void ResolveCommandFunctions(CommandFunctions& functions, VkDevice device, PFN_vkGetDeviceProcAddr resolve);
 const CommandFunctions& StreamedCommands();
-PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real);
+PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real, VkDevice device = VK_NULL_HANDLE);
+void ForgetCommandDevice(VkDevice device);
+std::size_t CommandDeviceEntries(CommandId id) noexcept;
 bool IsCommandThunk(std::string_view name, PFN_vkVoidFunction function) noexcept;
 std::size_t CommandThunkSlots(CommandId id) noexcept;
+bool CommandStreams(CommandId id) noexcept;
 
 }
 

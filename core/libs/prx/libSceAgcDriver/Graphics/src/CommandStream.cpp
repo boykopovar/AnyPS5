@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -37,7 +38,7 @@ ReplayThreadScope::~ReplayThreadScope() {
 
 CommandStream::Chunk::Chunk(std::size_t capacity) : bytes(new std::byte[capacity]), capacity(capacity) {}
 
-CommandStream::CommandStream(const CommandFunctions& functions, WorkBudget* budget, StreamMaterializer* materializer) : functions(functions), budget(budget), materializer(materializer) {}
+CommandStream::CommandStream(const CommandFunctions& functions, WorkBudget* budget, StreamMaterializer* materializer) : functions(functions), budget(budget), materializer(materializer), cap(budget != nullptr ? budget->StreamCap() : SIZE_MAX) {}
 
 CommandStream::~CommandStream() = default;
 
@@ -53,6 +54,7 @@ std::byte* CommandStream::reserve(Run run, std::size_t payloadBytes) {
             chunks.push_back(std::make_unique<Chunk>(capacity));
             charged += capacity;
             if (budget != nullptr) budget->Charge(capacity);
+            capped = charged > cap;
         }
         auto& chunk = *chunks.back();
         auto* at = chunk.bytes.get() + chunk.used;
