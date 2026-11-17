@@ -1418,29 +1418,33 @@ extern "C" {
 
 LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     LibreSsl3EvpPkey** output, const unsigned char** input, std::int64_t length) {
-    if (!input || !*input || length < 0) {
+    const unsigned char* cursor = nullptr;
+    if (!input || !CopyGuestIn(&cursor, input, sizeof(cursor)) || !cursor || length < 0) {
         PutError(ErrLibAsn1, Asn1RBadObjectHeader);
         return nullptr;
     }
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    std::span<const unsigned char> remaining(cursor, static_cast<std::size_t>(length));
     auto* key = DecodeSpki(remaining);
     if (!key) return nullptr;
     ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
-    *input += static_cast<std::size_t>(length) - remaining.size();
+    cursor += static_cast<std::size_t>(length) - remaining.size();
+    CopyGuestOut(input, &cursor, sizeof(cursor));
     return key;
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
     LibreSsl3Pkcs8PrivKeyInfo** output, const unsigned char** input, std::int64_t length) {
-    if (!input || !*input || length < 0) {
+    const unsigned char* cursor = nullptr;
+    if (!input || !CopyGuestIn(&cursor, input, sizeof(cursor)) || !cursor || length < 0) {
         PutError(ErrLibAsn1, Asn1RBadObjectHeader);
         return nullptr;
     }
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    std::span<const unsigned char> remaining(cursor, static_cast<std::size_t>(length));
     auto* info = DecodePkcs8(remaining);
     if (!info) return nullptr;
     ReplaceOutput(output, info, PKCS8_PRIV_KEY_INFO_free_nid_postfix);
-    *input += static_cast<std::size_t>(length) - remaining.size();
+    cursor += static_cast<std::size_t>(length) - remaining.size();
+    CopyGuestOut(input, &cursor, sizeof(cursor));
     return info;
 }
 
