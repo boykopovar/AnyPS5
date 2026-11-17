@@ -239,12 +239,16 @@ void testContextAndBases() {
     AgcDriver::QueueState state;
     check(state.context.at(0x1b6) == 0, "the starting context changed SPI_PS_IN_CONTROL");
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
+    check(state.context.contains(0x282) && state.context.at(0x282) == 8u, "initial PA_SU_LINE_CNTL differs from the SDK default of a one-pixel width");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
+    execute(state, makePacket(0x69, {0x282, 0x10u}));
+    check(state.context.at(0x282) == 0x10u, "an explicit line width was not stored");
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
     execute(state, makePacket(0x12, {0}));
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
+    check(state.context.contains(0x282) && state.context.at(0x282) == 8u, "CLEAR_STATE did not restore the line width");
     check(state.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
@@ -253,7 +257,9 @@ void testContextAndBases() {
     expectFailure([&] { execute(state, makePacket(0x10, {1, 0}, 0x68)); }, "already pushed");
     execute(state, makePacket(0x69, {0x10, 19}));
     execute(state, makePacket(0x69, {0x280, 0x00100010u, 0x00800010u}));
+    execute(state, makePacket(0x69, {0x282, 0x20u}));
     execute(state, makePacket(0x10, {2, 0}, 0x68));
+    check(state.context.at(0x282) == 8u, "context pop did not restore the saved line width");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "context pop did not restore saved point size and limits");
     check(state.context.at(0x10) == 17, "pop did not restore context");
     expectFailure([&] { execute(state, makePacket(0x10, {2, 0}, 0x68)); }, "not been pushed");

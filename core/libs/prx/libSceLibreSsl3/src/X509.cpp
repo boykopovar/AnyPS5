@@ -2,7 +2,9 @@
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -42,6 +44,23 @@ std::int64_t IntegerValue(const Asn1String* integer) {
     return static_cast<std::int64_t>(magnitude);
 }
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+int RetainGuest(T* object, const char* function) {
+    std::int32_t* const references = &object->references;
+    std::int32_t current{};
+    if (!CopyGuestInPreservingErrno(current, references) || !GuestWritable_nid_no_patch(references, sizeof(current)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return Retain_nid_no_patch(*references);
+}
+
 } // namespace
 
 extern "C" {
@@ -49,7 +68,7 @@ extern "C" {
 int APS5_VABI X509_up_ref_nid_postfix(LibreSsl3X509* certificate) {
     if (!certificate)
         throw std::invalid_argument("X509_up_ref requires a certificate");
-    return Retain_nid_no_patch(certificate->references);
+    return RetainGuest(certificate, __func__);
 }
 
 std::int64_t APS5_VABI X509_get_version_nid_postfix(const LibreSsl3X509* certificate) {
