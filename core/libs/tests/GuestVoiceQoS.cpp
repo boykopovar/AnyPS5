@@ -88,6 +88,11 @@ int main(int argc, char** argv) {
     std::int32_t remote = -1;
     std::int32_t connection = -1;
     Require(sceVoiceQoSCreateLocalEndpoint(nullptr, 1, 0, 0) == argumentInvalid);
+    errno = 71;
+    Require(sceVoiceQoSCreateLocalEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 1, 0, 0) == argumentInvalid);
+    Require(errno == 71);
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSCreateLocalEndpoint(&local, 1, 0, 0) == 0 && local == 0);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 0);
     float volume = 0.0f;
@@ -181,6 +186,9 @@ int main(int argc, char** argv) {
 
     packetSize = 100;
     Require(sceVoiceQoSWritePacket(connection, packet.data(), &packetSize) == 0);
+    errno = 71;
+    Require(sceVoiceQoSWritePacket(connection, packet.data(), reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSWritePacket(connection, nullptr, &packetSize) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
