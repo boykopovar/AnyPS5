@@ -869,6 +869,37 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
 
+    def test_elf_type_reads_the_header_type_or_none_when_truncated(self):
+        with tempfile.TemporaryDirectory() as root:
+            full = Path(root) / "full"
+            full.write_bytes(ELF)
+            short = Path(root) / "short"
+            short.write_bytes(ELF[:17])
+            self.assertEqual(audit_dump.elf_type(full), 0xFE18)
+            self.assertIsNone(audit_dump.elf_type(short))
+
+    def test_stage_copies_plain_elf_and_refuses_other_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / "plain").write_bytes(ELF)
+            (root / "junk").write_bytes(b"junk" + bytes(60))
+            self.assertEqual(audit_dump.stage(root / "plain", root / "out" / "plain"), "copied")
+            self.assertEqual((root / "out" / "plain").read_bytes(), ELF)
+            with self.assertRaises(unwrap_self.Refused):
+                audit_dump.stage(root / "junk", root / "out" / "junk")
+            self.assertFalse((root / "out" / "junk").exists())
+
+    def test_modules_of_ignores_directories_and_unrecognised_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / "a.prx").write_bytes(b"x")
+            (root / "B.PRX").write_bytes(b"x")
+            (root / "magic.bin").write_bytes(ELF)
+            (root / "notes.txt").write_bytes(b"text")
+            (root / "dir.prx").mkdir()
+            names = [path.name for path in audit_dump.modules_of(root)]
+            self.assertEqual(sorted(names), ["B.PRX", "a.prx", "magic.bin"])
+
 
 if __name__ == "__main__":
     unittest.main()
