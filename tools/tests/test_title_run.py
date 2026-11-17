@@ -320,9 +320,13 @@ def run(outcome, cache="cold", fps=0.0, error=""):
 
 
 def summary(titles):
-    return {"build": {"commit": "abc1234", "dirty": False, "note": "main + #6814"},
+    result = {"build": {"commit": "abc1234", "dirty": False, "note": "main + #6814"},
             "machine": {"os": "Windows 11", "gpu": "Radeon 860M", "driver": "32.0.13058.8001", "cpu": "Ryzen AI 7 350"},
             "runs": 2, "seconds": 60, "titles": titles}
+    for title in titles.values():
+        for observed in title["runs"]:
+            observed["machine"] = copy.deepcopy(result["machine"])
+    return result
 
 
 @unittest.skipUnless(os.name == "posix", "executable script fixture requires POSIX")
@@ -553,6 +557,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("| Title | ID | Measure | Before | Now |", report)
         self.assertNotIn("Before", title_run.render_markdown(now))
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
+        for observed in now["titles"]["PPSA85300"]["runs"]:
+            observed["machine"] = copy.deepcopy(now["machine"])
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
     def test_render_markdown_states_the_run_length_of_the_titles(self):
@@ -1029,14 +1035,14 @@ class ComparisonContextTests(unittest.TestCase):
         for field, section, key, value in cases:
             with self.subTest(field=field):
                 previous, now = self.recorded("blank", 10), self.recorded()
-                target = now["titles"]["PPSA00001"] if section == "title" else now[section] if section == "machine" else now
+                target = now["titles"]["PPSA00001"] if section == "title" else now["titles"]["PPSA00001"]["runs"][-1]["machine"] if section == "machine" else now
                 target[key] = value
                 self.assertEqual(title_run.compare(now, previous), ([], []))
                 compared = json.loads(title_run.compare_json(now, previous))["titles"]["PPSA00001"]
                 self.assertEqual(compared["fps"], {"before": 10, "now": 60})
                 self.assertEqual(compared["outcomes"], {"before": "blank", "now": "rendering"})
                 self.assertEqual(compared["context"]["status"], "differing")
-                self.assertEqual(compared["context"]["differences"], [field])
+                self.assertEqual(compared["context"]["differences"], [field, "runMachines"] if section == "machine" else [field])
                 self.assertEqual(compared["context"]["now"][field], value)
                 self.assertEqual(compared["context"]["unknowns"], {"before": [], "now": []})
                 markdown = title_run.render_markdown(now, previous)
@@ -1092,16 +1098,17 @@ class ComparisonContextTests(unittest.TestCase):
                 with self.subTest(side=side, value=value):
                     before, now = self.recorded("blank"), self.recorded()
                     target = before if side == "before" else now
-                    if value is None:
-                        del target["machine"]["cpu"]
-                    else:
-                        target["machine"]["cpu"] = value
+                    for observed in target["titles"]["PPSA00001"]["runs"]:
+                        if value is None:
+                            del observed["machine"]["cpu"]
+                        else:
+                            observed["machine"]["cpu"] = value
                     self.assertEqual(title_run.compare(now, before), ([], []))
                     compared = title_run.compare_runs(now, before)["PPSA00001"]
                     self.assertIn("context", compared)
                     context = compared["context"]
                     self.assertEqual(context["status"], "unknown")
-                    self.assertEqual(context["unknowns"][side], ["cpu"])
+                    self.assertEqual(context["unknowns"][side], ["cpu", "runMachines"])
                     self.assertIsNone(context[side]["cpu"])
                     self.assertIn(f"unknown {side}: cpu", title_run.render_markdown(now, before))
 
@@ -1127,6 +1134,8 @@ class ComparisonContextTests(unittest.TestCase):
     def test_legacy_metadata_is_unknown_without_erasing_known_differences(self):
         before, now = self.recorded("blank", 10), self.recorded()
         del before["machine"]
+        for observed in before["titles"]["PPSA00001"]["runs"]:
+            del observed["machine"]
         del before["driver_cache"]
         del before["titles"]["PPSA00001"]["seconds"]
         del before["titles"]["PPSA00001"]["missing_content"]
@@ -1138,7 +1147,7 @@ class ComparisonContextTests(unittest.TestCase):
         self.assertEqual(context["status"], "differing")
         self.assertEqual(context["differences"], ["contentVersion"])
         self.assertEqual(set(context["unknowns"]["before"]),
-                         {"os", "cpu", "gpu", "driver", "requestedSeconds", "missingContent", "runCaches", "driverCache"})
+                         {"os", "cpu", "gpu", "driver", "requestedSeconds", "missingContent", "runCaches", "runMachines", "driverCache"})
         self.assertEqual(context["before"]["runCaches"], [None, "warm"])
         self.assertEqual(compared["fps"], {"before": 10, "now": 60})
         self.assertIn("not recorded", title_run.render_markdown(now, before))

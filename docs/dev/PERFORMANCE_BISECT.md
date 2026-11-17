@@ -54,6 +54,8 @@ Each tested revision runs `title_run.py` repeatedly with one measured run per in
 
 Each sample requires clean native runtime provenance matching the requested commit as well as the clean source checkout. Native trace `commit`/`dirty` and run-report `anyps5.commit`/`modified` are checked together, including all recorded intervals. A missing, unknown, modified or conflicting identity stops the search. Historical title runners that omit native identity cannot provide a qualified sample; their saved metrics remain readable by the title-run comparison.
 
+Machine identity comes from the measured run's `machine` record. A present but malformed or incomplete record never falls back to the batch aggregate. A legacy summary without that record can use global machine fields only when the actual file contains exactly one title and one run; a multi-title aggregate does not identify the measured run. This exception preserves older single-title recipes without treating reported identities as hardware attestation. The existing required machine fields are unchanged.
+
 ## Read the report
 
 The command prints the first measured regression and its previous good commit. The optional JSON report records those commits, the supplied endpoints, the percentage threshold, the sample spread limit, the first-parent method, its monotonicity assumption, and every commit actually measured. `tested_commits` can be much smaller than `commits_between` because the search is logarithmic; it is not a claim that every commit was benchmarked.

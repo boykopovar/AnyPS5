@@ -95,6 +95,8 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 
 `SDL_AUDIODRIVER` is inherited and defaults to `dummy` (silent); set it to `wasapi` or another SDL driver to exercise a title's audio path.
 
+Each smoke run preserves its reported OS, GPU, driver and CPU in `machine`. The summary's `machine` contains only nonempty fields shared by every run; mixed or missing fields stay empty, and the Markdown lists per-run evidence. Comparison context uses the selected title's ordered `runMachines`, including cold and warm runs. Its scalar machine fields describe the last run, like the numeric pairs. Missing per-run fields, including older summaries with only a global machine record, remain unknown and cannot qualify an improvement or regression. These are reported identities, not hardware attestation; native build provenance is checked separately.
+
 ## CSV exports
 
 - `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.

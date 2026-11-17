@@ -122,6 +122,7 @@ def relink_args(entry, platform):
 ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
+MACHINE_FIELDS = ("os", "gpu", "driver", "cpu")
 
 
 def first_error(text):
@@ -262,14 +263,28 @@ def worst_recorded(runs):
     return worst(runs) if runs and all(run.get("outcome") in OUTCOMES for run in runs) else None
 
 
+def recorded_machine(run):
+    machine = run.get("machine")
+    machine = machine if isinstance(machine, dict) else {}
+    return {field: value if isinstance(value := machine.get(field), str) and value.strip() else None
+            for field in MACHINE_FIELDS}
+
+
+def common_machine(titles):
+    machines = [recorded_machine(run) for title in titles.values() for run in title["runs"]]
+    return {field: machines[0][field] if machines and machines[0][field] is not None
+            and all(machine[field] == machines[0][field] for machine in machines) else "" for field in MACHINE_FIELDS}
+
+
 def recorded_context(summary, title):
-    machine = summary.get("machine") or {}
+    machine = recorded_machine(title["runs"][-1]) if title["runs"] else {}
     seconds, missing = title.get("seconds"), title.get("missing_content")
     context = {"contentVersion": title.get("version"), **{field: machine.get(field) for field in ("os", "cpu", "gpu", "driver")},
                "driverCache": summary.get("driver_cache")}
     context = {field: value if isinstance(value, str) and value.strip() else None for field, value in context.items()}
     context["requestedSeconds"] = seconds if type(seconds) is int and seconds > 0 else None
     context["runCaches"] = [run.get("cache") if run.get("cache") in ("cold", "warm") else None for run in title["runs"]]
+    context["runMachines"] = [recorded_machine(run) for run in title["runs"]]
     context["missingContent"] = sorted(set(missing)) if isinstance(missing, list) and all(isinstance(item, str) for item in missing) else None
     return context
 
@@ -277,7 +292,9 @@ def recorded_context(summary, title):
 def comparison_context(summary, previous, title_id):
     contexts = {"before": recorded_context(previous, previous["titles"][title_id]),
                 "now": recorded_context(summary, summary["titles"][title_id])}
-    unknowns = {side: [field for field, value in context.items() if value is None or field == "runCaches" and (not value or None in value)]
+    unknowns = {side: [field for field, value in context.items() if value is None
+                      or field == "runCaches" and (not value or None in value)
+                      or field == "runMachines" and (not value or any(None in machine.values() for machine in value))]
                 for side, context in contexts.items()}
     differences = [field for field in contexts["before"] if all(field not in unknowns[side] for side in contexts)
                    and contexts["before"][field] != contexts["now"][field]]
@@ -402,6 +419,9 @@ def names(entries):
 
 def context_display(value):
     if isinstance(value, list):
+        if value and all(isinstance(machine, dict) for machine in value):
+            return "; ".join(f"run {index}: " + ", ".join(f"{field} {display(machine[field])}" for field in MACHINE_FIELDS)
+                             for index, machine in enumerate(value, 1))
         return ", ".join(display(item) for item in value) if value else "none"
     return display(value)
 
@@ -411,6 +431,7 @@ def render_compare(compared):
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     details = ["Recorded context compares content version, machine, requested time, cache classifications and missing content only; "
                "it does not establish scene, environment, resolution or native runtime identity equivalence. "
+               "Scalar machine fields describe the last run; runMachines records every run in order. "
                "Numeric pairs use the last run; outcomes use the worst of all runs."]
     for title_id, title in compared.items():
         context = title["context"]
@@ -458,8 +479,21 @@ def compare_json(summary, previous):
     return json.dumps({"format": "title-run-compare", "version": 1, "titles": compare_runs(summary, previous)}, indent=2)
 
 
+def render_machines(summary):
+    rows = [(title_id, index, recorded_machine(run)) for title_id, title in sorted(summary["titles"].items())
+            for index, run in enumerate(title["runs"], 1)]
+    if not rows or all(row[2] == rows[0][2] and None not in row[2].values() for row in rows):
+        return []
+    lines = ["Per-run machine evidence; the header shows only fields common to every run.", "",
+             "| ID | Run | OS | GPU | Driver | CPU |", "|---|---|---|---|---|---|"]
+    for title_id, index, machine in rows:
+        values = [title_id, str(index), *(display(machine[field]).replace("|", "\\|").replace("\n", " ") for field in MACHINE_FIELDS)]
+        lines.append("| " + " | ".join(values) + " |")
+    return lines + [""]
+
+
 def render_markdown(summary, previous=None):
-    build, machine = summary["build"], summary.get("machine") or {}
+    build, machine = summary["build"], common_machine(summary["titles"])
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
     parts = [machine.get("os"), machine.get("gpu"), machine.get("driver") and f"driver {machine['driver']}",
              machine.get("cpu") and f"CPU {machine['cpu']}"]
@@ -469,6 +503,7 @@ def render_markdown(summary, previous=None):
     length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
     header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
     lines = [header, "", "Build identity above records the source checkout. Native runtime identity is reported per run below.", ""]
+    lines += render_machines(summary)
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
         lines += [f"Ran without content: {'; '.join(lacking)}", ""]
@@ -1372,12 +1407,12 @@ def run_cli(argv, capture_resources):
                 continue
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
-                for key in ("os", "gpu", "driver", "cpu"):
-                    value = result.pop(key)
-                    summary["machine"][key] = summary["machine"][key] or value
+            result["machine"] = {key: result.pop(key, "") for key in MACHINE_FIELDS}
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
             print(f"{title_id} run{number}: {result['outcome']}", file=progress, flush=True)
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
+        if args.profile == "smoke":
+            summary["machine"] = common_machine(summary["titles"])
         write_summary(output, summary)
     write_summary(output, summary)
     if args.profile == "performance":
