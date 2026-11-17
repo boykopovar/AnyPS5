@@ -3256,7 +3256,7 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
                         if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
                             if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
                             result[index][offset] = current[index][offset];
-                        } else if (!GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
+                        } else if (!GuestMemory::StoreUnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
                             Require(cause == DepthReadCause::Reuse, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
                             tookGuest[index] = true;
                             result[index][offset] = current[index][offset];
