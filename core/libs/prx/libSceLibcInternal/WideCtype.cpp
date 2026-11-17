@@ -1,8 +1,12 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -63,6 +67,29 @@ char16_t Upper(const GuestLocale::Facet* self, unsigned char character) {
     return widen(self, static_cast<char>(mapped));
 }
 
+constexpr std::size_t ChunkUnits = 0x800;
+
+template<typename TVisit>
+void VisitRange(const char* function, const char16_t* first, const char16_t* last, TVisit visit) {
+    const auto start = reinterpret_cast<std::uintptr_t>(first);
+    const auto end = reinterpret_cast<std::uintptr_t>(last);
+    if (end < start || (end - start) % sizeof(char16_t) != 0) throw std::invalid_argument(std::string(function) + ": invalid range");
+    char16_t chunk[ChunkUnits];
+    const std::size_t total = (end - start) / sizeof(char16_t);
+    for (std::size_t done = 0; done < total;) {
+        const auto count = (std::min)(total - done, ChunkUnits);
+        if (!GuestCopyIn_nid_no_patch(chunk, first + done, count * sizeof(char16_t))) throw std::invalid_argument(std::string(function) + ": unreadable range");
+        if (!visit(chunk, count, done)) return;
+        done += count;
+    }
+}
+
+template<typename T>
+void CopyRangeOut(const char* function, T* destination, const T* values, std::size_t count) {
+    if (!GuestCopyOut_nid_no_patch(destination, values, count * sizeof(T)))
+        throw std::invalid_argument(std::string(function) + ": unwritable destination");
+}
+
 }
 
 extern "C" {
@@ -74,20 +101,33 @@ bool APS5_VABI sceLibcInternalWideCtypeDoIs_nid_no_patch(const GuestLocale::Face
 APS5_EXPORT("rh7L-TliPoc", sceLibcInternalWideCtypeDoIs_nid_no_patch);
 
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoIsRange_nid_no_patch(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination) {
-    for (; first != last; ++first, ++destination) {
-        const auto* table = Load<const short*>(self, offsetof(WideCtypeFacetPrefix, classification));
-        *destination = Classification(table, Narrow(self, *first));
-    }
-    return first;
+    const char* function = __func__;
+    VisitRange(function, first, last, [&](const char16_t* characters, std::size_t count, std::size_t done) {
+        short classes[ChunkUnits];
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto* table = Load<const short*>(self, offsetof(WideCtypeFacetPrefix, classification));
+            classes[index] = Classification(table, Narrow(self, characters[index]));
+        }
+        CopyRangeOut(function, destination + done, classes, count);
+        return true;
+    });
+    return last;
 }
 APS5_EXPORT("D0lUMKU+ELI", sceLibcInternalWideCtypeDoIsRange_nid_no_patch);
 
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last) {
-    for (; first != last; ++first) {
-        const auto doIs = LoadVtableFunction<DoIsFunction>(self, DoIsSlot);
-        if (!doIs(self, mask, *first)) break;
-    }
-    return first;
+    const char16_t* result = last;
+    VisitRange(__func__, first, last, [&](const char16_t* characters, std::size_t count, std::size_t done) {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto doIs = LoadVtableFunction<DoIsFunction>(self, DoIsSlot);
+            if (!doIs(self, mask, characters[index])) {
+                result = first + done + index;
+                return false;
+            }
+        }
+        return true;
+    });
+    return result;
 }
 APS5_EXPORT("Kbe+LHOer9o", sceLibcInternalWideCtypeDoScanNot_nid_no_patch);
 
@@ -98,11 +138,19 @@ char16_t APS5_VABI sceLibcInternalWideCtypeDoToupper_nid_no_patch(const GuestLoc
 APS5_EXPORT("JsZjB3TnZ8A", sceLibcInternalWideCtypeDoToupper_nid_no_patch);
 
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last) {
-    for (; first != last; ++first) {
-        const auto narrowed = Narrow(self, *first);
-        if (narrowed) *first = Upper(self, narrowed);
-    }
-    return first;
+    const char* function = __func__;
+    VisitRange(function, first, last, [&](const char16_t* characters, std::size_t count, std::size_t done) {
+        char16_t converted[ChunkUnits];
+        bool changed = false;
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto narrowed = Narrow(self, characters[index]);
+            converted[index] = narrowed ? Upper(self, narrowed) : characters[index];
+            changed = changed || converted[index] != characters[index];
+        }
+        if (changed) CopyRangeOut(function, first + done, converted, count);
+        return true;
+    });
+    return last;
 }
 APS5_EXPORT("r1W-NtOi6E8", sceLibcInternalWideCtypeDoToupperRange_nid_no_patch);
 
