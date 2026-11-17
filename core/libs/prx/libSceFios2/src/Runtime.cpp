@@ -1,9 +1,10 @@
 #include "Runtime.hpp"
+#include "prx/libSceFios2/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
-#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -32,7 +33,7 @@ struct Op {
 
 struct State {
     std::mutex mutex;
-    std::condition_variable finished;
+    TimedWait::Condition finished;
     std::map<SceFiosHandle, std::shared_ptr<Op>> ops;
     std::map<SceFiosHandle, std::shared_ptr<FileHandle>> files;
     std::map<SceFiosHandle, std::shared_ptr<DirectoryHandle>> directories;
@@ -75,7 +76,7 @@ void Finish(const std::shared_ptr<Op>& op, const Completion& completion) {
         op->work = nullptr;
         callback = op->attr.pCallback;
         context = op->attr.pCallbackContext;
-        Global().finished.notify_all();
+        Global().finished.NotifyAll();
     }
     if (callback != nullptr) callback(context, op->id, SCE_FIOS_OPEVENT_COMPLETE, completion.error);
 }
@@ -223,7 +224,7 @@ std::int32_t Wait(SceFiosOp op) {
     std::unique_lock lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return SCE_FIOS_ERROR_BAD_OP;
-    Global().finished.wait(lock, [&] { return found->done; });
+    Global().finished.Wait(lock, [&] { return found->done; });
     return found->error;
 }
 
@@ -231,7 +232,9 @@ std::int32_t WaitUntil(SceFiosOp op, SceFiosTime deadline) {
     std::unique_lock lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return SCE_FIOS_ERROR_BAD_OP;
-    if (!Global().finished.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)), [&] { return found->done; })) return SCE_FIOS_ERROR_TIMEOUT;
+    const SceFiosTime now = sceFiosTimeGetCurrent();
+    const std::uint64_t wake = deadline > now ? TimedWait::NowNanos() + static_cast<std::uint64_t>(deadline - now) : 0;
+    if (!Global().finished.WaitUntil(lock, wake, [&] { return found->done; })) return SCE_FIOS_ERROR_TIMEOUT;
     return found->error;
 }
 
@@ -258,7 +261,7 @@ bool SyncWait(SceFiosOp op, Completion& completion) {
     RunIfQueued(found);
     {
         std::unique_lock lock(Global().mutex);
-        Global().finished.wait(lock, [&] { return found->done; });
+        Global().finished.Wait(lock, [&] { return found->done; });
         completion.error = found->error;
         completion.result = found->result;
     }
@@ -282,7 +285,7 @@ bool DeleteOp(SceFiosOp op) {
     CancelQueued(found);
     {
         std::unique_lock lock(Global().mutex);
-        Global().finished.wait(lock, [&] { return found->done; });
+        Global().finished.Wait(lock, [&] { return found->done; });
         if (Global().ops.erase(op) == 0) return false;
     }
     FireDelete(found);
