@@ -703,6 +703,17 @@ static void CheckNetMemory() {
         Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 64 == 0);
         sceNetMemoryFree(block);
     }
+    auto* freed = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 0));
+    Require(freed != nullptr);
+    std::memset(freed, 0x5a, 64);
+    sceNetMemoryFree(freed);
+    auto* reused = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 0));
+    Require(reused == freed);
+    Require(std::all_of(reused, reused + 64, [](std::uint8_t byte) { return byte == 0xdd; }));
+    sceNetMemoryFree(reused);
+    auto* cleared = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 2));
+    Require(cleared == freed && std::all_of(cleared, cleared + 64, [](std::uint8_t byte) { return byte == 0; }));
+    sceNetMemoryFree(cleared);
     sceNetMemoryFree(nullptr);
     Require(*sceNetErrnoLoc() == 33);
 }
