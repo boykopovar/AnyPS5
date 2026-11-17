@@ -146,14 +146,23 @@ std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* 
     return result;
 }
 
+#ifdef ANYPS5_ENABLE_TSAN
+static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
+    for (const std::uint32_t value : payload) std::atomic_ref<std::uint32_t>(*destination++).store(value, std::memory_order_relaxed);
+}
+#else
+static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
+    std::copy(payload.begin(), payload.end(), destination);
+}
+#endif
+
 std::uint32_t* Emit(CommandBuffer* buffer, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload, const char* function) {
     Require(payload.size() <= 0x4000u, function, "packet payload exceeds maximum size");
     const auto count = static_cast<std::uint32_t>(payload.size()) + 1u;
     const auto header = Header(opcode, count);
     auto* packet = Allocate(buffer, count, function);
-    std::atomic_ref<std::uint32_t>(packet[0]).store(header, std::memory_order_relaxed);
-    auto* word = packet + 1;
-    for (const std::uint32_t value : payload) std::atomic_ref<std::uint32_t>(*word++).store(value, std::memory_order_relaxed);
+    packet[0] = header;
+    storePayload(packet + 1, payload);
     return packet;
 }
 
