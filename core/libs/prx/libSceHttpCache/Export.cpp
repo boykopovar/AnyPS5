@@ -47,6 +47,7 @@ constexpr int ErrorTooManyCaches = static_cast<int>(0x817a0002);
 constexpr int ErrorNotFound = static_cast<int>(0x817a0011);
 constexpr int ErrorInvalidValue = static_cast<int>(0x817a0012);
 constexpr int ErrorInvalidUser = static_cast<int>(0x817a0013);
+constexpr int ErrorCacheInfoDisabled = static_cast<int>(0x817a0014);
 constexpr int UserServiceAlreadyInitialized = static_cast<int>(0x80960003);
 constexpr int UserServiceNoMemory = static_cast<int>(0x80960004);
 constexpr int UserServiceInvalidArgument = static_cast<int>(0x80960005);
@@ -807,12 +808,13 @@ struct RollbackSnapshot {
 
 extern "C" {
 
-int APS5_VABI sceHttpCacheEnableCacheInfo() {
+int APS5_VABI sceHttpCacheEnableCacheInfo(bool enable) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl(const char* url) {
+    if (url == nullptr) return ErrorInvalidValue;
+    return ErrorCacheInfoDisabled;
 }
 
 
@@ -980,6 +982,7 @@ int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const H
     const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
     if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return snapshot.Rollback();
     if (retrieveResult != ResultHit && retrieveResult != ResultRevalidate) return 0;
+    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
     NotImplemented_nid_no_patch("sceHttpCacheRetrieveWithMemoryPool sizing or filling a pool");
 }
 
@@ -1022,6 +1025,7 @@ int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const
     const std::int32_t revalidateResult = Revalidate(*state, received, found);
     if (!CopyOut(result, &revalidateResult, sizeof(revalidateResult))) return snapshot.Rollback();
     if (!found) return 0;
+    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
     NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool sizing or filling a pool");
 }
 
@@ -1145,9 +1149,8 @@ int APS5_VABI sceHttpCacheClearAllUserTags(std::int32_t cacheId, const std::int3
     return 0;
 }
 
-int APS5_VABI sceHttpCacheClearCacheInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttpCacheClearCacheInfo(std::int32_t userId) {
+    return ErrorCacheInfoDisabled;
 }
 
 int APS5_VABI sceHttpCacheDebugSetUrl() {
@@ -1160,7 +1163,10 @@ int APS5_VABI sceHttpCacheRegisterCacheInfoUrl(const void* info) {
     return 0;
 }
 
-int APS5_VABI sceHttpCacheRemoveTag() {
+int APS5_VABI sceHttpCacheRemoveTag(std::int32_t cacheId, std::int32_t userId, const char* tag, const void* target) {
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
+    if (tag == nullptr || target == nullptr) return ErrorNotFound;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
