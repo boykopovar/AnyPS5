@@ -423,6 +423,47 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 self.titles.write_text(json.dumps({TITLE: {"executables": [executable]}}), encoding="utf-8")
                 self.refuse()
 
+    def test_auxiliary_library_alias_targets_are_protected(self):
+        self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-runtime"
+        target.write_bytes(b"original auxiliary runtime")
+        for name in ("libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libTracyClient.so.0.14.1"):
+            with self.subTest(name=name):
+                alias = self.build / "core/libs/libs" / name
+                self.symlink(target, alias)
+                self.refuse()
+                alias.unlink()
+
+    def test_invalid_enabled_tracy_preserves_work_before_cleanup(self):
+        self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        for names in ((), ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1")):
+            with self.subTest(clients=names):
+                self.stale_work()
+                for name in names:
+                    (libraries / name).write_bytes(b"client")
+                self.refuse()
+
+    def test_configured_windows_compiler_runtime_alias_is_protected(self):
+        package = self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-compiler-runtime.dll"
+        target.write_bytes(b"original compiler runtime")
+        compiler = self.root / "toolchain/bin"
+        self.symlink(target, compiler / "libstdc++-6.dll")
+        self.build.mkdir()
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (compiler / "g++.exe").as_posix() + "\n", encoding="utf-8")
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        before = snapshot(self.root)
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "windows")
+        self.assertEqual(snapshot(self.root), before)
+
     def test_disjoint_run_preserves_dump_and_cleans_previous_work(self):
         package = self.package(self.root / "games" / TITLE)
         self.fake_relinker()

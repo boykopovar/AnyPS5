@@ -926,6 +926,14 @@ class ReleasePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
                     self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
+    def test_linux_sanitizer_packages_omit_stale_allocator_runtimes(self):
+        for option in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=option):
+                (self.build / "CMakeCache.txt").write_text(f"{option}:BOOL=ON\n", encoding="utf-8")
+                package_release.package("linux", self.build, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/licenses/mimalloc.txt"])
+
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
         previous = {"prx-linux-v1.zip": b"old zip", "prx-linux-v1.tar.gz": b"old tar", "relinker-v1": b"old binary"}

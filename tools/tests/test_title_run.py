@@ -602,6 +602,86 @@ def wait_until(condition, seconds=10):
     return False
 
 
+class NativeRuntimePreparationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.package = package(self.root / "package", "PPSA00001")
+        self.build = self.root / "build"
+        self.libraries = self.build / "core/libs/libs"
+        self.libraries.mkdir(parents=True)
+        self.compiler = self.root / "configured compiler/bin"
+        self.compiler.mkdir(parents=True)
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (self.compiler / name).write_bytes(b"compiler " + name.encode())
+        for name in ("libc.prx", "libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libmimalloc.dylib",
+                     "libTracyClient.so.0.14.1", "libTracyClient.dll", "libTracyClient.0.14.1.dylib", "unrelated.dll", "libunrelated.so"):
+            (self.libraries / name).write_bytes(name.encode())
+        self.sequence = 0
+
+    def prepare(self, platform, cache="APS5_ENABLE_TRACY:BOOL=OFF\n"):
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (self.compiler / "g++.exe").as_posix() + "\n" + cache, encoding="utf-8")
+        self.sequence += 1
+        work = self.root / f"work{self.sequence}"
+        work.mkdir()
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted fixture")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+            executable = title_run.prepare("PPSA00001", {"package": self.package}, {}, platform, self.build, work)
+        self.assertEqual(executable.read_bytes(), b"converted fixture")
+        return {path.name: path.read_bytes() for path in (work / "libs").iterdir()}
+
+    def test_prepare_stages_only_the_target_allocator_and_compiler_runtimes(self):
+        cases = (("linux", {"libc.prx", "libmimalloc.so"}),
+                 ("windows", {"libc.prx", "mimalloc.dll", "mimalloc-redirect.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"}),
+                 ("macos", {"libc.prx", "libmimalloc.dylib"}))
+        for platform, names in cases:
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform)
+                self.assertEqual(set(staged), names)
+                for name in names:
+                    self.assertEqual(staged[name], (b"compiler " if name.startswith(("libgcc", "libstdc++", "libwinpthread")) else b"") + name.encode())
+
+    def test_prepare_stages_the_enabled_target_tracy_client(self):
+        for platform, name in (("linux", "libTracyClient.so.0.14.1"), ("windows", "libTracyClient.dll"), ("macos", "libTracyClient.0.14.1.dylib")):
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform, "APS5_ENABLE_TRACY:BOOL=ON\n")
+                self.assertEqual(staged.get(name), name.encode())
+                self.assertEqual([candidate for candidate in staged if "Tracy" in candidate], [name])
+
+    def test_prepare_ignores_stale_tracy_when_disabled(self):
+        for value in ("OFF", "TRACY-NOTFOUND", ""):
+            with self.subTest(value=value):
+                self.assertFalse(any("Tracy" in name for name in self.prepare("linux", f"APS5_ENABLE_TRACY:BOOL={value}\n")))
+
+    def test_prepare_refuses_missing_or_ambiguous_enabled_tracy(self):
+        (self.libraries / "libTracyClient.so.0.14.1").unlink()
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        for name in ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1"):
+            (self.libraries / name).write_bytes(name.encode())
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+
+    def test_prepare_does_not_stage_an_allocator_for_linux_sanitizer_builds(self):
+        for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=name):
+                staged = self.prepare("linux", f"{name}:BOOL=ON\n")
+                self.assertEqual(staged, {"libc.prx": b"libc.prx"})
+        staged = self.prepare("linux", "ANYPS5_ENABLE_ASAN:BOOL=OFF\nANYPS5_ENABLE_TSAN:BOOL=FALSE\n")
+        self.assertEqual(staged.get("libmimalloc.so"), b"libmimalloc.so")
+
+    def test_prepare_refuses_a_missing_target_allocator(self):
+        (self.libraries / "libmimalloc.so").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare("linux")
+
+
 class PadTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
