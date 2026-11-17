@@ -622,7 +622,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceIcu PRIVATE BreakIterator.cpp Data.cpp Configuration.cpp)
+target_sources(libSceIcu PRIVATE BreakIterator.cpp Data.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_break_iterator_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/BreakIterator.cpp)
