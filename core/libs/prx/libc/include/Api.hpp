@@ -1354,10 +1354,13 @@ int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute);
 int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad);
+void APS5_VABI _ZNSt4_PadC2EPKc_nid_postfix(GuestPad* pad, const char* name);
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread);
+void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** thread);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread);
+void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** attrSlot, void** thread);
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
 int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
 void* APS5_VABI _Thrd_id_nid_postfix(void);

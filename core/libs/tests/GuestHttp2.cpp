@@ -318,8 +318,16 @@ int main(int argc, char** argv) {
     Require(sceHttp2SslDisableOption(context, 0x20) == 0);
     Require(Throws([&] { sceHttp2SslEnableOption(context, 0x80000000); }));
     Http2MemoryPoolStats stats{1, 2, 3, 4};
+    std::memset(reinterpret_cast<unsigned char*>(&stats) + 28, 0x5a, 4);
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
+    const auto* statBytes = reinterpret_cast<const unsigned char*>(&stats);
+    Require(statBytes[28] == 0 && statBytes[29] == 0 && statBytes[30] == 0 && statBytes[31] == 0);
+    Http2MemoryPoolStats missing{1, 2, 3, 4};
+    std::memset(reinterpret_cast<unsigned char*>(&missing) + 28, 0x5a, 4);
+    Require(sceHttp2GetMemoryPoolStats(static_cast<int>(0x7fffffff), &missing) == static_cast<int>(0x817B1100));
+    const auto* missingBytes = reinterpret_cast<const unsigned char*>(&missing);
+    Require(missingBytes[28] == 0 && missingBytes[29] == 0 && missingBytes[30] == 0 && missingBytes[31] == 0);
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "http2-unsupported-async") == 0);
     Require(sceKernelAddUserEventEdge(eq, request) == 0);
