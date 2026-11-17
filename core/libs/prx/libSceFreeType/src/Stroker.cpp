@@ -43,9 +43,10 @@ struct NativeVector {
 int WriteCounts(std::uint32_t* points, std::uint32_t* contours, FT_UInt nativePoints, FT_UInt nativeContours, int error) {
     GuestArena::HostWrite pointsWrite(points, points ? sizeof(*points) : 0);
     GuestArena::HostWrite contoursWrite(contours, contours ? sizeof(*contours) : 0);
-    if ((points && !pointsWrite.Open()) || (contours && !contoursWrite.Open())) return error != 0 ? error : FT_Err_Invalid_Argument;
-    if (points) *points = nativePoints;
-    if (contours) *contours = nativeContours;
+    if ((points && (!pointsWrite.Open() || !GuestWritable_nid_no_patch(points, sizeof(*points)))) ||
+        (contours && (!contoursWrite.Open() || !GuestWritable_nid_no_patch(contours, sizeof(*contours))))) return error != 0 ? error : FT_Err_Invalid_Argument;
+    if (points && !GuestCopyOut_nid_no_patch(points, &nativePoints, sizeof(nativePoints))) return error != 0 ? error : FT_Err_Invalid_Argument;
+    if (contours && !GuestCopyOut_nid_no_patch(contours, &nativeContours, sizeof(nativeContours))) return error != 0 ? error : FT_Err_Invalid_Argument;
     return error;
 }
 
@@ -105,10 +106,14 @@ void ExportBorder(void* stroker, std::int32_t border, GuestOutline* outline, con
 extern "C" {
 
 int APS5_VABI FT_Stroker_New_nid_postfix(GuestLibrary* library, void** stroker) {
+    GuestArena::HostWrite strokerWrite(stroker, stroker ? sizeof(*stroker) : 0);
+    if (stroker && (!strokerWrite.Open() || !GuestWritable_nid_no_patch(stroker, sizeof(*stroker)))) return FT_Err_Invalid_Argument;
     FT_Library host = library ? library->host : nullptr;
     FT_Stroker native = nullptr;
     const FT_Error error = FT_Stroker_New(host, stroker ? &native : nullptr);
-    if (stroker && host) *stroker = native;
+    if (stroker && host) {
+        if (!GuestCopyOut_nid_no_patch(stroker, &native, sizeof(native))) return FT_Err_Invalid_Argument;
+    }
     return error;
 }
 
@@ -187,9 +192,13 @@ void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t b
     ExportBorder(stroker, border, outline, __func__);
 }
 
+void StrokerExport_nid_no_patch(void* stroker, GuestOutline* outline) {
+    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, "FT_Stroker_Export_nid_postfix");
+    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, "FT_Stroker_Export_nid_postfix");
+}
+
 void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, GuestOutline* outline) {
-    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, __func__);
-    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, __func__);
+    StrokerExport_nid_no_patch(stroker, outline);
 }
 
 }

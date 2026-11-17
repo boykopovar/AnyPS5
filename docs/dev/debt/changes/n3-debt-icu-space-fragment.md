@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [Space classification](../../../core/libs/prx/libSceIcu/Space.cpp)
+
+- [Space classification](../../../core/libs/prx/libSceIcu/Space.cpp) is unverified on a console. `u_isspace`, `u_isblank`, `u_isWhitespace`, `u_isJavaSpaceChar` and `u_isUWhiteSpace` follow ICU 78.1 [uchar.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/uchar.cpp#L196-L244) over fixed Zs, Zl, Zp and White_Space sets instead of ICU's property data; the sets are unchanged from ICU 65.1 to 78.1. Firmware 13.42 exports `u_isUWhiteSpace` but not the other four ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), which are kept from the 3.20 inventory for older firmware (see ICU export availability). A PS5 payload process on firmware 11.60 also exports only `u_isUWhiteSpace` and returned White_Space for 27 code points, all equal to this implementation; the title path is not measured. Closes when: the other four are compared with the console.

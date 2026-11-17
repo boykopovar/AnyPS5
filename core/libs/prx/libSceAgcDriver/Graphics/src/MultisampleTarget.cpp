@@ -252,15 +252,20 @@ public:
         VkImageCreateFlags flags = orderFlags;
         auto upload = std::move(preparedUpload);
         const bool importSamples = guestSamples || upload != nullptr;
+        const bool computeUpload = context.detiler != nullptr && context.storageImageMultisample && context.storageImageWriteWithoutFormat;
         const auto elementFormat = importSamples ? TextureDetiler::ImageElementFormat(target.elementBytes) : VK_FORMAT_UNDEFINED;
         const auto alignment = std::max<VkDeviceSize>({4u, target.elementBytes, context.limits.minStorageBufferOffsetAlignment});
         const auto stride = context.limits.maxStorageBufferRange / alignment * alignment;
         if (importSamples) {
-            Require(context.detiler != nullptr && context.storageImageMultisample && context.storageImageWriteWithoutFormat, "uploading multisampled guest color requires formatless multisampled storage image writes");
             Require(stride != 0, "uploading multisampled guest color needs a storage range of at least one aligned element");
             flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
-            Require(storageSupports(elementFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) && storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, flags), "the device cannot upload multisampled guest color through an unsigned storage view");
-            usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+            if (computeUpload) {
+                Require(storageSupports(elementFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) && storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, flags), "the device cannot upload multisampled guest color through an unsigned storage view");
+                usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+            } else {
+                Require(context.sampleRateShading, "uploading multisampled guest color requires storage writes or sample rate shading");
+                Require(storageSupports(elementFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0u) && storageSupports(target.format, usage, flags), "the device cannot upload multisampled guest color through an unsigned color attachment");
+            }
             if (upload == nullptr) upload = guestSampleUpload(target);
         }
         twinFormat = colorTwinFormat(context, target.format);
@@ -276,7 +281,7 @@ public:
             memory = created.memory;
             view = created.view;
             allocationBytes = created.bytes;
-            if (upload) {
+            if (upload && computeUpload) {
                 VkImageViewUsageCreateInfo storageUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
                 storageUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
                 VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -287,12 +292,19 @@ public:
                 info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
                 Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &uploadView), "vkCreateImageView multisampled guest color upload");
             }
+            std::shared_ptr<void> colorUpload;
             recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
                 if (!upload) {
                     recordToGeneral(commands, image);
                     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
                     context.Resolved(&DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &initial, 1, &range);
                     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                    if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+                    return;
+                }
+                if (!computeUpload) {
+                    if (recorder != nullptr) recorder->Keep(upload, upload->Bytes().size());
+                    colorUpload = RecordMultisampleColorUpload(context, commands, image, elementFormat, target.extent, target.samples, target.elementBytes, *upload, stride, recorder);
                     if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
                     return;
                 }
@@ -1149,6 +1161,11 @@ std::atomic<std::uint64_t>& guardedGeneration() {
     return generation;
 }
 
+std::atomic<std::uint64_t>& claimsReleased() {
+    static std::atomic<std::uint64_t> released{0};
+    return released;
+}
+
 std::atomic<std::uint64_t>& guardSpansGeneration() {
     static std::atomic<std::uint64_t> generation{0};
     return generation;
@@ -1245,7 +1262,10 @@ void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUs
 }
 
 void stampUse(TargetUse& use, std::uint64_t address, std::uint64_t bytes) {
-    use.claimed.store(false, std::memory_order_release);
+    if (use.claimed.load(std::memory_order_acquire)) {
+        claimsReleased().fetch_add(1, std::memory_order_seq_cst);
+        use.claimed.store(false, std::memory_order_seq_cst);
+    }
     if (bytes == 0) return;
     if (GuestMemory::Watched(address, static_cast<std::size_t>(bytes))) use.writes.store(GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)), std::memory_order_release);
     std::shared_lock lock(guardedMutex());
@@ -1720,7 +1740,6 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     std::shared_ptr<Buffer> upload;
     if (!clear) {
         Require(target.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
-        Require(context.detiler != nullptr && context.storageImageMultisample && context.storageImageWriteWithoutFormat, "initial multisample color samples require enabled formatless multisampled storage image writes");
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, target.elementBytes, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
         Require(layout.Bytes() == bytes && layout.LinearBytes() / target.elementBytes <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color layout and footprint differ");
         upload = stageGuestSamples(context, layout, snapshot);
@@ -2004,6 +2023,7 @@ void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
     if (!known) {
         guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<TargetUse>(), true});
+        guardedGeneration().fetch_add(1, std::memory_order_release);
         moveGuardSpans();
     }
     anyGuarded().store(true, std::memory_order_release);
@@ -2018,6 +2038,10 @@ bool HoldsMultisampleTargetsLock() {
 std::uint64_t MultisampleTargetRangeGeneration() {
     std::shared_lock lock(guardedMutex());
     return guardedGeneration().load(std::memory_order_acquire);
+}
+
+std::uint64_t MultisampleClaimSerial() {
+    return guardedGeneration().load(std::memory_order_acquire) + claimsReleased().load(std::memory_order_acquire);
 }
 
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
@@ -2158,7 +2182,7 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
         retired.push_back(range.active);
     }
     for (const auto& active : retired) active->store(false, std::memory_order_release);
-    std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); });
+    if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     if (!retired.empty()) moveGuardSpans();
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
