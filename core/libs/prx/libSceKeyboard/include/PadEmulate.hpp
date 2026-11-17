@@ -5,6 +5,6 @@
 extern "C" {
 
 int APS5_VABI sceKeyboardPadEmulateClose(void);
-int APS5_VABI sceKeyboardPadEmulateOpen(void);
+int APS5_VABI sceKeyboardPadEmulateOpen(void* param);
 
 }
