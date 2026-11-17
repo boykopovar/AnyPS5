@@ -1074,6 +1074,30 @@ static int IoPermission(int operation, void* parameters) {
     return 0;
 }
 
+static int ExtendedFpuState(int operation, void* parameters) {
+    constexpr int i386GetXfpustate = 11;
+    constexpr std::uint32_t firstRejectedLength = 1024;
+    constexpr std::uint32_t largestAcceptedLength = 512;
+    std::uint64_t address = 0;
+    std::uint32_t length = 0;
+    if (operation == i386GetXfpustate) {
+        std::uint32_t arguments[2];
+        if (!GuestCopyIn_nid_no_patch(arguments, parameters, sizeof(arguments))) return SysarchFailure(guestFault);
+        address = arguments[0];
+        length = arguments[1];
+    } else {
+        unsigned char arguments[16];
+        if (!GuestCopyIn_nid_no_patch(arguments, parameters, sizeof(arguments))) return SysarchFailure(guestFault);
+        std::memcpy(&address, arguments, sizeof(address));
+        std::memcpy(&length, arguments + 8, sizeof(length));
+    }
+    if (length >= firstRejectedLength) return SysarchFailure(guestInvalid);
+    if (length == 0) return 0;
+    if (length > largestAcceptedLength) NotImplemented_nid_no_patch("sysarch: XFPUSTATE length between the largest measured accepted and smallest rejected");
+    if (address == 0) return SysarchFailure(guestFault);
+    NotImplemented_nid_no_patch("sysarch: copying out the extended FPU state");
+}
+
 int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int i386GetLdt = 0;
     constexpr int i386SetLdt = 1;
@@ -1098,6 +1122,7 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     }
     if (operation == i386GetLdt || operation == i386SetLdt) return SysarchFailure(guestInvalid);
     if (operation == i386GetIoperm || operation == i386SetIoperm) return IoPermission(operation, parameters);
+    if (std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) return ExtendedFpuState(operation, parameters);
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
     if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase && operation != i386SetGsBase)
         NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
