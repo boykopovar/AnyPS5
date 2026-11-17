@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
+#include <cerrno>
 #include <climits>
 #include <cinttypes>
 #include <cstdio>
@@ -187,8 +188,10 @@ int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
 
 void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value) {
     if (id == nullptr) APS5_INVALID_ARG_EX;
-    *id = {};
-    id->val = value;
+    const CryptoThreadId local{nullptr, value};
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(id, &local, sizeof(local));
+    errno = savedErrno;
 }
 
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
@@ -258,10 +261,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
 }
 
 
-void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
-    if (response != nullptr) NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;
@@ -289,15 +288,6 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response,
     if ((flags & noIntern) == 0 && !findKnownMissing(response->certs)) NotImplemented_nid_no_patch(__func__);
     LibreSslPutError_nid_no_patch(39, 0xfff, 118);
     return 0;
-}
-
-void* APS5_VABI OCSP_response_get1_basic_nid_postfix(LibreSslOcspResponse* response) {
-    if (!response) throw std::invalid_argument(std::string(__func__) + ": null response");
-    if (!response->responseBytes) {
-        LibreSslPutError_nid_no_patch(39, 0xfff, 108);
-        return nullptr;
-    }
-    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
@@ -343,17 +333,7 @@ int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char*, void**, void**, v
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -654,11 +634,6 @@ int APS5_VABI UI_OpenSSL_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509V3_EXT_print_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
     if (!extension) return 0;
     std::int32_t critical;
@@ -681,11 +656,6 @@ void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
 }
 
 int APS5_VABI X509_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_print_ex_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

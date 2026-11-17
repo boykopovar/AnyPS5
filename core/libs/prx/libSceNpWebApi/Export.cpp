@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -209,7 +210,8 @@ int sendMultipartRequest(std::int64_t requestId, int partIndex, const void* data
     if (request.multipart) {
         if (partIndex > static_cast<int>(request.multipartParts.size())) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
         auto& part = request.multipartParts[static_cast<std::size_t>(partIndex - 1)];
-        part.sentSize += dataSize;
+        constexpr std::size_t maxSize = std::numeric_limits<std::size_t>::max();
+        part.sentSize = dataSize > maxSize - part.sentSize ? maxSize : part.sentSize + dataSize;
         for (const auto& p : request.multipartParts) {
             if (p.sentSize < p.contentLength) return 0;
         }
@@ -279,7 +281,7 @@ int APS5_VABI sceNpWebApiCreateRequest(int titleUserCtxId, const char* apiGroup,
         if (!copyIn(&localContent, contentParameter, sizeof(localContent))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
         if (localContent.contentLength != 0 && !localContent.contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
     }
-    if (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     return createRequest(titleUserCtxId, false, requestId);
 }
@@ -466,12 +468,20 @@ int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char
 
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex) {
     if (!parameter) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    NpWebApiMultipartPartParameter localParameter{};
+    if (!copyIn(&localParameter, parameter, sizeof(localParameter))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     const auto lookup = findRequest(requestId);
     if (lookup.error != 0) return lookup.error;
-    if (parameter->headerNum != 0 && !parameter->headers) NotImplemented_nid_no_patch(__func__);
-    lookup.request->multipartParts.push_back({parameter->contentLength, 0});
-    if (partIndex) *partIndex = static_cast<int>(lookup.request->multipartParts.size());
+    if (localParameter.headerNum != 0 && !localParameter.headers) NotImplemented_nid_no_patch(__func__);
+    lookup.request->multipartParts.push_back({localParameter.contentLength, 0});
+    if (partIndex) {
+        const int index = static_cast<int>(lookup.request->multipartParts.size());
+        if (!copyOut(partIndex, &index, sizeof(index))) {
+            lookup.request->multipartParts.pop_back();
+            return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+        }
+    }
     return 0;
 }
 
@@ -505,7 +515,7 @@ int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* t
 
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId) {
     if (!apiGroup || !path) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (method < 0 || (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     return createRequest(titleUserCtxId, true, requestId);
 }
@@ -538,7 +548,7 @@ int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter(int libCtxId, int ha
 }
 
 int APS5_VABI sceNpWebApiIntCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const NpWebApiContentParameter* contentParameter, const NpWebApiIntCreateRequestExtraArgs* internalArgs, std::int64_t* requestId) {
-    if (!apiGroup || !path || method > SCE_NP_WEBAPI_HTTP_METHOD_PATCH) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    if (!apiGroup || !path || method < 0 || method > SCE_NP_WEBAPI_HTTP_METHOD_PATCH) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     if (contentParameter) {
         NpWebApiContentParameter localContent{};
         if (!copyIn(&localContent, contentParameter, sizeof(localContent))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;

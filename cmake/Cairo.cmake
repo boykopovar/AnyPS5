@@ -1,4 +1,5 @@
 include(${CMAKE_SOURCE_DIR}/cmake/Pixman.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/LibPng.cmake)
 
 function(add_bundled_cairo)
     if(TARGET cairo_backend)
@@ -12,7 +13,7 @@ function(add_bundled_cairo)
     file(MAKE_DIRECTORY ${cairoBinaryDir})
 
     file(CONFIGURE OUTPUT ${cairoBinaryDir}/cairo-features.h CONTENT
-        "#ifndef CAIRO_FEATURES_H\n#define CAIRO_FEATURES_H\n#define CAIRO_HAS_IMAGE_SURFACE 1\n#define CAIRO_HAS_USER_FONT 1\n#define CAIRO_HAS_MIME_SURFACE 1\n#define CAIRO_HAS_RECORDING_SURFACE 1\n#define CAIRO_HAS_OBSERVER_SURFACE 1\n#endif\n")
+        "#ifndef CAIRO_FEATURES_H\n#define CAIRO_FEATURES_H\n#define CAIRO_HAS_IMAGE_SURFACE 1\n#define CAIRO_HAS_USER_FONT 1\n#define CAIRO_HAS_MIME_SURFACE 1\n#define CAIRO_HAS_RECORDING_SURFACE 1\n#define CAIRO_HAS_OBSERVER_SURFACE 1\n#define CAIRO_HAS_PNG_FUNCTIONS 1\n#endif\n")
 
     if(WIN32)
         set(cairoLongSize 4)
@@ -53,7 +54,7 @@ function(add_bundled_cairo)
         cairo-no-compositor.c cairo-observer.c cairo-output-stream.c cairo-paginated-surface.c
         cairo-path-bounds.c cairo-path-fill.c cairo-path-fixed.c cairo-path-in-fill.c
         cairo-path-stroke-boxes.c cairo-path-stroke-polygon.c cairo-path-stroke-traps.c
-        cairo-path-stroke-tristrip.c cairo-path-stroke.c cairo-path.c cairo-pattern.c cairo-pen.c
+        cairo-path-stroke-tristrip.c cairo-path-stroke.c cairo-path.c cairo-pattern.c cairo-pen.c cairo-png.c
         cairo-polygon-intersect.c cairo-polygon-reduce.c cairo-polygon.c cairo-raster-source-pattern.c
         cairo-recording-surface.c cairo-rectangle.c cairo-rectangular-scan-converter.c cairo-region.c
         cairo-rtree.c cairo-scaled-font.c cairo-shape-mask-compositor.c cairo-slope.c
@@ -72,7 +73,7 @@ function(add_bundled_cairo)
         target_compile_definitions(cairo_backend PUBLIC CAIRO_WIN32_STATIC_BUILD)
     endif()
     target_compile_options(cairo_backend PRIVATE -w -fno-strict-aliasing -include ${cairoBinaryDir}/CairoRename.h)
-    target_link_libraries(cairo_backend PUBLIC pixman_backend Threads::Threads)
+    target_link_libraries(cairo_backend PUBLIC pixman_backend png_backend Threads::Threads)
     if(NOT WIN32 AND NOT APPLE)
         target_link_libraries(cairo_backend PUBLIC m)
     endif()
