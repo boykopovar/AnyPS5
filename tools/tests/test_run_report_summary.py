@@ -31,6 +31,24 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Café Game", result.stdout.decode("utf-8"))
 
+    def test_cli_accepts_a_utf8_bom(self):
+        report = self.report("stop-none.json")
+        report["game"]["name"] = "Café Game"
+        text = json.dumps(report, ensure_ascii=False)
+        outputs = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for encoding in ("utf-8", "utf-8-sig"):
+                path.write_text(text, encoding=encoding)
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                    capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs.append(result.stdout.decode("utf-8"))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("Game: Café Game", outputs[0])
+
     def test_summary_includes_run_context_and_missing_import(self):
         summary = render(self.report("stop-missing-function.json"))
         self.assertIn("Game: Example Game (PPSA12345)", summary)
@@ -126,6 +144,172 @@ class RunReportSummaryTests(unittest.TestCase):
         summary = render(report)
         self.assertIn("  - SOPP: 0 (2 occurrences)", summary)
         self.assertIn("  - VOP2: unknown instruction (1 occurrence)", summary)
+
+    def test_non_finite_metrics_and_counts_are_not_rendered_as_measurements(self):
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=repr(non_finite)):
+                report = self.report("stop-none.json")
+                report["run"]["exitCode"] = non_finite
+                report["run"]["seconds"] = non_finite
+                report["run"]["averageFps"] = non_finite
+                report["system"]["ramGiB"] = non_finite
+                report["missing"]["functions"] = [
+                    {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateContext", "calls": non_finite}
+                ]
+                report["truncated"]["functions"] = non_finite
+                report["shaders"]["compiled"] = non_finite
+                report["shaders"]["failed"] = non_finite
+                report["shaders"]["unsupported"] = [
+                    {"encoding": "SOPP", "opcode": "s_nop", "opcodeValue": 0, "modifiers": None, "count": non_finite}
+                ]
+                report["truncated"]["unsupported"] = non_finite
+                summary = render(report)
+                self.assertIn("Result: clean (exit code unknown)", summary)
+                self.assertIn("Progress: presents after unknown seconds", summary)
+                self.assertIn("Rendering: 12580 frames, average FPS unavailable", summary)
+                self.assertIn("unknown GiB RAM", summary)
+                self.assertIn("Missing functions: unknown calls across 1 function", summary)
+                self.assertIn("  - libSceNpTrophy::sceNpTrophyCreateContext (unknown calls)", summary)
+                self.assertIn("  - unknown additional functions omitted", summary)
+                self.assertIn("Shaders: unknown compiled, unknown failures", summary)
+                self.assertIn("Unsupported shader instructions: unknown occurrences across 1 instruction", summary)
+                self.assertIn("  - SOPP: s_nop (unknown occurrences)", summary)
+                self.assertIn("  - unknown additional instructions omitted", summary)
+
+    def test_overflowing_finite_totals_and_cli_non_finite_metrics_are_unknown(self):
+        for sign in (1.0, -1.0):
+            with self.subTest(sign=sign):
+                report = self.report("stop-none.json")
+                value = sign * 1e308
+                report["missing"]["functions"] = [
+                    {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateContext", "calls": value},
+                    {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateHandle", "calls": value},
+                ]
+                report["shaders"]["unsupported"] = [
+                    {"encoding": "SOPP", "opcode": "s_nop", "opcodeValue": 0, "modifiers": None, "count": value},
+                    {"encoding": "SOPP", "opcode": "s_endpgm", "opcodeValue": 1, "modifiers": None, "count": value},
+                ]
+                summary = render(report)
+                self.assertIn("Missing functions: unknown calls across 2 functions", summary)
+                self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
+
+        cli_report = self.report("stop-none.json")
+        cli_report["run"]["exitCode"] = float("nan")
+        cli_report["run"]["seconds"] = float("inf")
+        cli_report["run"]["averageFps"] = float("-inf")
+        cli_report["system"]["ramGiB"] = float("nan")
+        cli_report["missing"]["functions"] = [
+            {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateContext", "calls": 1e308},
+            {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateHandle", "calls": 1e308},
+        ]
+        cli_report["shaders"]["compiled"] = float("inf")
+        cli_report["shaders"]["failed"] = float("nan")
+        cli_report["shaders"]["unsupported"] = [
+            {"encoding": "SOPP", "opcode": "s_nop", "opcodeValue": 0, "modifiers": None, "count": 1e308},
+            {"encoding": "SOPP", "opcode": "s_endpgm", "opcodeValue": 1, "modifiers": None, "count": 1e308},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "anyps5-report.json"
+            path.write_text(json.dumps(cli_report), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Result: clean (exit code unknown)", result.stdout)
+        self.assertIn("Progress: presents after unknown seconds", result.stdout)
+        self.assertIn("Rendering: 12580 frames, average FPS unavailable", result.stdout)
+        self.assertIn("unknown GiB RAM", result.stdout)
+        self.assertIn("Missing functions: unknown calls across 2 functions", result.stdout)
+        self.assertIn("Shaders: unknown compiled, unknown failures", result.stdout)
+        self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", result.stdout)
+
+    def test_large_finite_integers_render_without_float_overflow(self):
+        huge = 10 ** 400
+        report = self.report("stop-none.json")
+        report["run"]["exitCode"] = huge
+        report["run"]["seconds"] = huge
+        report["run"]["framesPresented"] = huge
+        report["run"]["averageFps"] = huge
+        report["system"]["ramGiB"] = huge
+        report["missing"]["functions"] = [
+            {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateContext", "calls": huge},
+            {"library": "libSceNpTrophy", "name": "sceNpTrophyCreateHandle", "calls": huge},
+        ]
+        report["shaders"]["compiled"] = huge
+        report["shaders"]["failed"] = huge
+        report["shaders"]["unsupported"] = [
+            {"encoding": "SOPP", "opcode": "s_nop", "opcodeValue": 0, "modifiers": None, "count": huge}
+        ]
+        summary = render(report)
+        self.assertIn(f"Result: clean (exit code {huge})", summary)
+        self.assertIn(f"Progress: presents after {huge} seconds", summary)
+        self.assertIn(f"Rendering: {huge} frames, {huge}.00 average FPS", summary)
+        self.assertIn(f"{huge} GiB RAM", summary)
+        self.assertIn(f"Missing functions: {huge * 2} calls across 2 functions", summary)
+        self.assertIn(f"Shaders: {huge} compiled, {huge} failures", summary)
+        self.assertIn(f"Unsupported shader instructions: {huge} occurrences across 1 instruction", summary)
+
+    def test_mixed_float_and_large_integer_totals_are_unknown(self):
+        for values in ((10 ** 400, 1.0), (1.0, 10 ** 400)):
+            with self.subTest(values=values):
+                report = self.report("stop-none.json")
+                report["missing"]["functions"] = [{"calls": value} for value in values]
+                report["shaders"]["unsupported"] = [{"count": value} for value in values]
+                summary = render(report)
+                self.assertIn("Missing functions: unknown calls across 2 functions", summary)
+                self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
+
+    def test_rejects_report_missing_a_required_section(self):
+        for key in ("game", "stop"):
+            with self.subTest(key=key):
+                report = self.report("stop-none.json")
+                report[key] = []
+                with self.assertRaisesRegex(ValueError, f"report field '{key}' must be an object"):
+                    render(report)
+
+    def test_lists_are_limited_to_five_entries(self):
+        report = self.report("stop-none.json")
+        report["coverage"].update(missing=True, unsupported=True)
+        report["missing"]["functions"] = [{"library": "libX", "name": f"fn{i}", "calls": 1} for i in range(7)]
+        report["shaders"]["unsupported"] = [{"encoding": "SOPP", "opcode": f"op{i}", "count": 1} for i in range(7)]
+        summary = render(report)
+        self.assertIn("Missing functions: 7 calls across 7 functions", summary)
+        self.assertIn("libX::fn4", summary)
+        self.assertNotIn("libX::fn5", summary)
+        self.assertIn("SOPP: op4", summary)
+        self.assertNotIn("SOPP: op5", summary)
+
+    def test_stop_summary_includes_reason_and_message(self):
+        report = self.report("stop-none.json")
+        report["stop"].update(kind="crash", reason="SIGSEGV", message="bad access")
+        self.assertIn("Stop: crash (SIGSEGV): bad access", render(report))
+
+    def test_average_fps_is_formatted_with_two_decimals(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = 59.9
+        self.assertIn("average FPS", render(report))
+        self.assertIn(", 59.90 average FPS", render(report))
+
+    def test_cli_reports_unreadable_and_invalid_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            invalid = Path(directory) / "invalid.json"
+            invalid.write_text("{not json", encoding="utf-8")
+            wrong = Path(directory) / "wrong.json"
+            wrong.write_text("[]", encoding="utf-8")
+            for path in (missing, invalid, wrong):
+                with self.subTest(path=path.name):
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("run_report_summary:", result.stderr)
 
 
 if __name__ == "__main__":
