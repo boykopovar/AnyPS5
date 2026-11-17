@@ -398,7 +398,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false) {
+    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -407,7 +407,7 @@ public:
         ShaderRecompiler::RecompileRequest pixelRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device->Target(), PixelPushLayout(vertexPush, device->Target())};
         pixelRequest.useCache = false;
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
-        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u, nullptr, heap}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
         if (compactRestart) {
             auto context = device->graphicsContext();
@@ -479,8 +479,8 @@ std::string PathName(const std::optional<Path>& path) {
     return path ? "the CPU path (" + std::string(AgcDriver::Graphics::IndirectDrawPathName(*path)) + ")" : std::string("the GPU");
 }
 
-std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false) {
-    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false);
+std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
+    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false, heap);
     const auto& indirect = *draw.indirect;
     const bool rules = expectedPath || (indirect.vertexRule == expectedRule && indirect.instanceRule == expectedRule);
     std::cout << what << ": classified to " << PathName(path) << '\n';
@@ -538,6 +538,28 @@ std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRest
               << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
     const std::array<std::uint32_t, 4> expected{index, 0, index, 0};
     return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
+}
+
+std::string HeapAttributes(Fixture& fixture) {
+    const auto userData = fixture.UserData(0, 0);
+    const auto perDraw = fixture.Vertex(VertexCode, userData);
+    const auto records = BufferTable[2];
+    BufferTable[2] = 1u;
+    const auto shared = fixture.Vertex(VertexCode, userData);
+    BufferTable[2] = records;
+    Require(!perDraw.vertexAttributes.empty() && shared.vertexAttributes.size() == perDraw.vertexAttributes.size(), "the vertex buffers did not become fixed vertex attributes");
+    ShaderRecompiler::HeapStageWords words;
+    words.vertexAttributes = perDraw.vertexAttributes;
+    const auto index = static_cast<std::uint32_t>(VertexSlots.size() - 1u);
+    const std::array<std::uint32_t, 1> fetched{index};
+    fixture.Place(0, fetched, 0);
+    alignas(256) static std::array<std::uint32_t, 5> indices{};
+    indices = {0xffffffffu, index, index, index, 0xffffffffu};
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data()), 5, 4, 1, 0, true, 0, 0};
+    fixture.Draw(shared, draw, false, true, false, &words);
+    std::cout << "heap vertex attributes, index " << index << ", compact restart: readback " << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
+    const std::array<std::uint32_t, 4> expected{index, 0, index, 0};
+    return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "a compacted index inside the draw's own vertex buffer was clamped by the shared program's buffer size\n";
 }
 
 std::string Run(Fixture& fixture) {
@@ -709,6 +731,13 @@ std::string Run(Fixture& fixture) {
             AgcDriver::Pm4::DrawParameters draw{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
             draw.indirect = indexedIndirect;
             failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::InPlace);
+            if (code == &PostAddCode) {
+                ShaderRecompiler::HeapStageWords words;
+                words.vertexAttributes = vertex.vertexAttributes;
+                for (auto& attribute : words.vertexAttributes) attribute.resource.fields[2] = 0x2000000u;
+                auto heapDraw = draw;
+                failures += Classified(fixture, what + ", with a 128 MiB vertex buffer in its heap words", vertex, staleUserData, heapDraw, Path::VertexRange, Rule::InPlace, false, &words);
+            }
             fixture.Place(indexedRecord[3], bufferIndices, indexedRecord[4]);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn in place on the GPU", bufferIndices, indexedRecord[3], indexedRecord[4], false);
@@ -750,6 +779,7 @@ int main(int argc, char** argv) {
         Fixture fixture(device);
         std::string failures;
         if (argc == 1) failures = Run(fixture);
+        else if (argc == 2 && std::string(argv[1]) == "heap-attributes") failures = HeapAttributes(fixture);
         else {
             Require(argc == 3 || argc == 4, "expected runtime-fetch INDEX [compact-restart]");
             Require(std::string(argv[1]) == "runtime-fetch", "unknown case");

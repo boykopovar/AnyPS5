@@ -4,8 +4,11 @@
 #include "Recompiler.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/SrtWalker.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -57,24 +60,39 @@ struct SourceHandle {
     std::shared_ptr<SourceEntry> source;
     std::shared_ptr<const CompiledVariant> artifact;
     std::vector<std::uint64_t> staticKey;
+    bool imageTableBindings = false;
+};
+struct HeapTemplateMiss {
+    bool missing = false;
+    std::uint64_t key = 0;
 };
 class PreparedShaderInvocation {
 public:
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key);
+    static std::optional<PreparedShaderInvocation> TryCreate(RecompileRequest&& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key);
     const RecompileRequest& Request() const { return request; }
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
+    std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words, HeapTemplateMiss* miss = nullptr) const;
+    std::shared_ptr<const IrResourcePlan> Plan() const;
+    std::shared_ptr<const IrResourcePlan> LoadPlan() const;
+    std::shared_ptr<const IrResourcePlan> PlanOrLoad() const;
+    std::uint64_t VariantId() const;
     [[nodiscard]] std::shared_ptr<const RecompileResult> MaterializeIfMemoized(const ResourceCapture& capture, bool* contended = nullptr) const;
     [[nodiscard]] PreparedShaderInvocation Rebound(const RecompileRequest& request) const;
     [[nodiscard]] std::uint64_t SnapshotKey(const ResourceCapture& capture) const;
 
 private:
-    PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
+    PreparedShaderInvocation(RecompileRequest request, const std::shared_ptr<const SourceHandle>& handle);
     RecompileRequest request;
     std::shared_ptr<const SourceHandle> handle;
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
+void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words);
+inline void OverlayUserWords(std::vector<std::uint32_t>& descriptor, std::span<const std::uint32_t> userData) {
+    std::copy_n(userData.begin(), std::min(userData.size(), descriptor.size()), descriptor.begin());
+}
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);

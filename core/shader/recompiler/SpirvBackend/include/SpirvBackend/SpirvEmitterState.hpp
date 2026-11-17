@@ -72,6 +72,16 @@ struct MemoryResourceAccess {
     bool addIndexOffset = false;
     std::uint32_t memoryAccess = 0;
     std::uint32_t misalignment = 0;
+    bool physical = false;
+    bool softwareBounds = false;
+    bool uniform = false;
+};
+
+struct PushedBufferVariables {
+    std::uint32_t plain = 0;
+    std::uint32_t coherent = 0;
+    std::uint32_t u64 = 0;
+    std::uint32_t uniform = 0;
 };
 
 struct SpirvTableImageVariable {
@@ -85,12 +95,16 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     bool uniform = false;
+    bool heap = false;
 };
 
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
     SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
+    [[nodiscard]] bool BdaAddressed() const;
+    [[nodiscard]] bool TableMapAddressed() const;
+    [[nodiscard]] bool TableHeap() const;
 
     SpirvModule module;
     const IrProgram& program;
@@ -113,6 +127,12 @@ struct SpirvEmitterState {
     bool depthRangeRemap = false;
     std::uint32_t depthRemapClipIndex = 0;
     bool registrationModules = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t heapDataUniformDwords = 0;
+    bool uniformConstantBuffers = false;
+    bool addressedBuffers = false;
+    std::vector<PushedBufferVariables> pushedBuffers;
+    std::optional<bool> guestBuffersWritten;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
@@ -229,7 +249,14 @@ struct SpirvEmitterState {
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
+    std::uint32_t shaderDataUniformVariable = 0;
+    std::uint32_t userDataUniformVariable = 0;
+    std::uint32_t flattenedSrtUniformVariable = 0;
+    std::uint32_t bufferOverflowUniformVariable = 0;
+    std::uint32_t pushItems = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
+    bool flattenedSrtAddressed = false;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;
@@ -256,6 +283,7 @@ struct SpirvEmitterState {
     std::unordered_set<const IrValue*> meshWindowBufferLoads;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
+    std::map<std::uint32_t, std::uint32_t> embeddedSamplerVariables;
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::uint32_t tableSamplerVariable = 0;
     std::uint32_t tableMapVariable = 0;

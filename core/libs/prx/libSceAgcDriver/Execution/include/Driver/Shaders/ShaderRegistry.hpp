@@ -374,6 +374,8 @@ struct OwnedRecompileRequest {
 std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompiler::RecompileRequest& source, ShaderRecompiler::MemoryRegionView memory);
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation = false, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
 std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address);
+std::uint64_t HeapTemplatesBuiltInBackground();
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeHeapInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::HeapStageWords& words, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address);
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
 bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset);
 

@@ -24,6 +24,9 @@
 namespace AgcDriver::DriverDetail {
 
 struct DriverTestAccess {
+    static std::uint64_t VariantBytes(const DispatchVariant& variant) {
+        return Driver::variantBytes(variant);
+    }
     static std::shared_ptr<DispatchVariant> Insert(const std::shared_ptr<const ShaderSnapshot>& shader, const ShaderRecompiler::RecompileRequest& request, bool disabled = false, std::vector<std::weak_ptr<const ShaderRecompiler::SrtGuestWords>>* dependencies = nullptr) {
         auto& driver = Driver::Get();
         auto memory = std::make_shared<ShaderMemory>(request.context.memory);
@@ -313,6 +316,16 @@ void Run(const std::string& mode, std::string_view watch) {
         const auto footprint = Driver::Get().DispatchCacheSize();
         Require(footprint.entries == 1u && footprint.variantBytes >= 16u, "cached callee snapshots were not accounted");
         Require(original->linking != nullptr && original->linking->dependencies.size() == 2u, "cached direct linking did not capture both callees");
+        {
+            const auto bare = DriverTestAccess::VariantBytes(*original);
+            auto ring = std::make_shared<ShaderRecompiler::HeapStageWords>();
+            ring->userData.assign(256u, 1u);
+            ring->bindings.assign(4u, std::vector<std::uint32_t>(128u, 2u));
+            original->ringTemplate = ring;
+            const auto held = DriverTestAccess::VariantBytes(*original);
+            original->ringTemplate = nullptr;
+            Require(held >= bare + 256u * sizeof(std::uint32_t) + 4u * 128u * sizeof(std::uint32_t), "a retained ring template was left out of the dispatch-cache byte accounting");
+        }
         std::vector<std::weak_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies(original->linking->dependencies.begin(), original->linking->dependencies.end());
         const auto linked = original->linking->linked;
         DriverTestAccess::Evict();

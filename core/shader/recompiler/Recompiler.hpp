@@ -377,6 +377,10 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool gpuResolvedImages = false;
+    bool descriptorMemory = false;
+    std::uint32_t heapDataUniformDwords = 0;
+    bool uniformConstantBuffers = false;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
@@ -462,7 +466,10 @@ inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
 inline constexpr std::uint32_t ScratchPoolDescriptorSet = 2;
-
+inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
+inline constexpr std::uint32_t GpuScratchPoolDescriptorSet = 5;
+inline constexpr std::uint32_t GpuScratchPoolAddressPushByte = 136;
+inline constexpr std::uint32_t GpuScratchPoolDwordsPushByte = 144;
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
     std::uint32_t indexCount;
@@ -503,6 +510,57 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+};
+
+struct VertexAttribute;
+
+struct HeapTemplateCacheCounts {
+    std::uint64_t entries = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t evicted = 0;
+};
+HeapTemplateCacheCounts HeapTemplateCounts();
+
+struct ResultKeyMemo {
+    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
+struct IdentityMemo {
+    mutable std::atomic<bool> taken{false};
+    mutable std::atomic<bool> sealed{false};
+    mutable std::atomic<std::uint64_t> low{0};
+    mutable std::atomic<std::uint64_t> high{0};
+    mutable std::atomic<std::uint64_t> moduleLow{0};
+    mutable std::atomic<std::uint64_t> moduleHigh{0};
+    IdentityMemo() = default;
+    IdentityMemo(const IdentityMemo&) {}
+    IdentityMemo& operator=(const IdentityMemo&) {
+        Reset();
+        return *this;
+    }
+    void Reset() const {
+        taken.store(false, std::memory_order_relaxed);
+        sealed.store(false, std::memory_order_relaxed);
+    }
+};
+
+[[nodiscard]] bool VerifyIdentityMemo();
+
+struct HeapStageWords {
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flattenedSrt;
+    std::vector<VertexAttribute> vertexAttributes;
+    std::vector<std::vector<std::uint32_t>> bindings;
+    std::shared_ptr<const HeapStageWords> base;
+    std::uint64_t dataOrigin = 0;
+    ResultKeyMemo drawKeyMemo;
+    bool memoizeKey = true;
 };
 
 struct RecompileRequest {
@@ -716,6 +774,8 @@ struct DescriptorBinding {
     ElementFlags samplerUnnormalized;
     ElementFlags samplerIntegerBorder;
     ElementFlags samplerCoordinatesIgnored;
+    std::vector<std::uint32_t> samplerEmbedded;
+    std::vector<std::uint32_t> samplerEmbeddedWords;
     ElementFlags imageUnnormalized;
     ElementFlags imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;
@@ -912,6 +972,15 @@ struct CompiledShaderArtifact {
     std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t samplerSlotDword = 0;
+    std::uint32_t bufferAddressDword = 0;
+    std::uint32_t bufferAddressCount = 0;
+    std::uint32_t pushedBufferCount = 0;
+    std::vector<std::uint32_t> pushedData;
+    std::uint32_t pushItems = 0;
+    bool dataAddressPush = false;
+    bool bdaStores = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t windowLaneGuards = 0;
     std::uint32_t descriptorFaults = 0;
@@ -942,6 +1011,7 @@ struct CompiledShaderArtifact {
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     std::uint64_t specializationId = 0;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
@@ -970,23 +1040,38 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
-struct ResultKeyMemo {
-    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
-    ResultKeyMemo() = default;
-    ResultKeyMemo(const ResultKeyMemo&) {}
-    ResultKeyMemo& operator=(const ResultKeyMemo&) {
-        words.store(nullptr, std::memory_order_relaxed);
-        return *this;
-    }
-};
-
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    std::uint64_t heapTemplateId = 0;
+    std::vector<std::uint32_t> heapUserWords;
     ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
     [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
+    IdentityMemo identityMemo;
     [[nodiscard]] PipelineIdentity Identity() const {
+        if (!identityMemo.sealed.load(std::memory_order_acquire)) return ComputeIdentity();
+        const auto module = spirv.ContentHash();
+        if (identityMemo.taken.load(std::memory_order_acquire) && identityMemo.moduleLow.load(std::memory_order_relaxed) == module.low &&
+            identityMemo.moduleHigh.load(std::memory_order_relaxed) == module.high) {
+            const PipelineIdentity kept{identityMemo.low.load(std::memory_order_relaxed), identityMemo.high.load(std::memory_order_relaxed)};
+            if (VerifyIdentityMemo() && !(kept == ComputeIdentity())) throw std::runtime_error("a shader's kept pipeline identity differs from its hash: a hashed field changed after the identity was taken");
+            return kept;
+        }
+        const auto identity = ComputeIdentity();
+        if (identity.Empty()) return identity;
+        identityMemo.taken.store(false, std::memory_order_relaxed);
+        identityMemo.low.store(identity.low, std::memory_order_relaxed);
+        identityMemo.high.store(identity.high, std::memory_order_relaxed);
+        identityMemo.moduleLow.store(module.low, std::memory_order_relaxed);
+        identityMemo.moduleHigh.store(module.high, std::memory_order_relaxed);
+        identityMemo.taken.store(true, std::memory_order_release);
+        return identity;
+    }
+    void SealIdentity() const {
+        if (!identityMemo.sealed.load(std::memory_order_relaxed)) identityMemo.sealed.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] PipelineIdentity ComputeIdentity() const {
         const auto hash = spirv.ContentHash();
         if (hash == SpirvContentHash{}) return {};
         PipelineIdentity identity{hash.low, hash.high};
@@ -1000,7 +1085,17 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
         mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
-        for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+        for (const auto& binding : bindings) {
+            mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+            mix(binding.samplerEmbedded.size());
+            for (const auto value : binding.samplerEmbedded) mix(value);
+            mix(binding.samplerEmbeddedWords.size());
+            for (const auto value : binding.samplerEmbeddedWords) mix(value);
+            for (const auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) {
+                mix(flags->size());
+                for (std::size_t element = 0; element < flags->size(); ++element) mix((*flags)[element] ? 1u : 0u);
+            }
+        }
         if (identity.Empty()) identity.low = 1;
         return identity;
     }

@@ -58,6 +58,7 @@ struct PreparedGraphicsStage {
     ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Vertex;
     std::uint32_t pushOffset = 0;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
+    bool heapVariant = false;
 };
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared = false);
@@ -123,6 +124,8 @@ private:
 
 enum class DrawVerdict { Drawn, Nothing, Rejected };
 
+enum class StageOrigin { Captured, HeapUnread, HeapRead };
+
 struct StageCapture {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
@@ -131,8 +134,15 @@ struct StageCapture {
     std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied;
     std::uint64_t forgetSerial = 0;
     std::uint32_t pushOffset = 0;
-    ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    StageOrigin origin = StageOrigin::Captured;
+    std::shared_ptr<ShaderRecompiler::HeapStageWords> heapWords;
+    std::shared_ptr<const std::vector<std::uint32_t>> heapReadWords;
+
+    const ShaderRecompiler::SrtUserDataUse& UserDataUse() const;
+
+    bool Cacheable() const { return origin != StageOrigin::HeapUnread; }
+    bool Direct() const { return origin != StageOrigin::Captured; }
 };
 
 struct RelocatableUserWord {
@@ -163,7 +173,7 @@ struct DrawRelocationTrial {
 };
 
 struct DrawRelocationCounters {
-    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
+    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0, admitted = 0;
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

@@ -11,6 +11,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -126,6 +127,37 @@ void preparedTransformTests(ShaderRecompiler::ShaderStage stage) {
     require(!PreparedShaderInvocation::TryCreate(other, handle).has_value(), "a prepared vertex shader matched a request of another depth remap mode");
 }
 
+void preparedInputValidationTests() {
+    using namespace ShaderRecompiler;
+    auto request = baseRequest(false);
+    request.useCache = true;
+    auto& vertex = *request.context.vertex;
+    vertex.resourcesNum = 2u;
+    vertex.resources[0].fields = {0x10000u, 16u << 16u, 100u, 0u};
+    vertex.resources[1].fields = {0x10004u, 16u << 16u, 100u, 0u};
+    vertex.resourcesDst[0] = {0, 4, 0, 0u};
+    vertex.resourcesDst[1] = {4, 4, 1, 0u};
+    const auto handle = PrepareShader(request);
+    std::vector<std::uint64_t> key;
+    BuildPreparedShaderKey(request, key);
+    require(PreparedShaderInvocation::TryCreate(request, handle, key).has_value(), "the prepared vertex shader did not match its own request");
+    auto disagreeing = request;
+    disagreeing.context.vertex->resources[1].fields[2] = 99u;
+    const auto rejects = [](const auto& create) {
+        try {
+            static_cast<void>(create());
+        } catch (const std::exception& error) {
+            return std::string_view(error.what()).find("disagree on record count") != std::string_view::npos;
+        }
+        return false;
+    };
+    require(rejects([&] { return PreparedShaderInvocation::TryCreate(disagreeing, handle, key); }), "a copied request with merged vertex buffers of different record counts was not rejected");
+    require(rejects([&] {
+        auto moved = disagreeing;
+        return PreparedShaderInvocation::TryCreate(std::move(moved), handle, key);
+    }), "a moved request with merged vertex buffers of different record counts was not rejected");
+}
+
 void pushedTransformTests(ShaderRecompiler::ShaderStage stage) {
     using namespace ShaderRecompiler;
     const auto remapped = Recompile(baseRequest(true, stage));
@@ -180,6 +212,7 @@ int main() {
             pushedTransformTests(stage);
             clipDistanceCapacityTests(stage);
         }
+        preparedInputValidationTests();
         std::cout << "Depth range remap tests passed\n";
         return 0;
     } catch (const std::exception& error) {

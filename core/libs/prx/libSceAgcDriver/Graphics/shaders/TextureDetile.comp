@@ -39,6 +39,11 @@ layout(local_size_x = 8, local_size_y = 8) in;
 #ifdef LINEAR_IMAGE
 layout(set = 0, binding = 0, std430) buffer Tiled { uint data[]; } tiledBuffer;
 layout(set = 0, binding = 1) uniform uimage2D linearImage;
+#elif defined(ADDRESSED)
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Input { uint data[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Output { uint data[]; };
 #else
 layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } inputBuffer;
 layout(set = 0, binding = 1, std430) buffer Output { uint data[]; } outputBuffer;
@@ -69,7 +74,16 @@ layout(push_constant) uniform Push {
     uint rowBegin;
     uint pipeBankXor;
     uint splitStride;
+#ifdef ADDRESSED
+    uvec2 inputAddress;
+    uvec2 outputAddress;
+#endif
 } params;
+
+#ifdef ADDRESSED
+#define inputBuffer Input(params.inputAddress)
+#define outputBuffer Output(params.outputAddress)
+#endif
 
 uint equationBit(uint mask, uvec2 p) {
     uint selected = (p.x & (mask & 0xfffu)) ^ ((p.y << 12) & (mask & 0xfff000u)) ^ ((params.slice << 24) & (mask & 0xff000000u));

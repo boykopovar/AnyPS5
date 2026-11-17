@@ -582,9 +582,25 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     if (std::ranges::any_of(pixel.merges, &TargetMerge::layered)) AddInput(info, StageInputKind::Layer, 0, 1, "gl_Layer");
 }
 
+void collectConstantSampler(const IrProgram& program, SamplerResource& sampler) {
+    sampler.constant = false;
+    sampler.constantWords = {};
+    const auto& sources = program.Resources().descriptorSources;
+    if (sampler.table != NoTable || sampler.source >= sources.size()) return;
+    const auto& source = sources[sampler.source];
+    if (source.dwordCount != 4u) return;
+    for (std::uint32_t index = 0; index < 4u; ++index) {
+        const IrValue* word = source.dwords[index] != nullptr ? source.dwords[index]->Resolve() : nullptr;
+        if (word == nullptr || !word->HasImmediate() || word->Type() != IrType::U32) return;
+        sampler.constantWords[index] = word->ImmediateU32();
+    }
+    sampler.constant = true;
+}
+
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
     for (auto& sampler : info.samplers) {
         sampler.uses = 0;
+        collectConstantSampler(program, sampler);
     }
     const auto& memoryInfo = program.Resources().memoryInfo;
     for (const auto& block : program.Blocks()) {

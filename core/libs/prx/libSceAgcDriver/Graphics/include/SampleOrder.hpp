@@ -39,6 +39,8 @@ struct SampleOrderPass {
     bool located = false;
 };
 
+class HeapSlotOwner;
+
 struct SampleOrderTarget {
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
@@ -47,6 +49,7 @@ struct SampleOrderTarget {
     std::uint32_t samples = 1;
     SampleOrderMethod method = SampleOrderMethod::Storage;
     std::shared_ptr<void> keep;
+    const HeapSlotOwner* owner = nullptr;
 };
 
 struct DepthSampleLocations {

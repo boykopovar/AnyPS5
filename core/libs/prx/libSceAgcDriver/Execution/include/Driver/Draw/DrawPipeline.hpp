@@ -51,6 +51,7 @@ public:
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
     static std::uint64_t DrainRequestsByReason(DrainReason reason);
     bool Busy() const;
+    std::uint32_t FullWaiters();
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     bool OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
@@ -98,6 +99,7 @@ private:
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
     std::uint32_t idleWaiters = 0;
+    std::uint32_t fullWaiters = 0;
     std::size_t resumeAt = 0;
     bool committerWaiting = false;
     bool stopped = false;
@@ -139,7 +141,7 @@ public:
     LabelLookup PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value);
     bool PendingOverlapsAny(std::span<const Range> ranges);
     bool PendingKey(std::uint64_t key, std::uint64_t shape);
-    enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Count };
+    enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Dispatch, Count };
     static void NoteDrain(DrainSite site, bool drained);
     static std::string DrainText();
     static void NoteDrainedOpcode(std::uint32_t opcode, bool besideCommits);
@@ -149,6 +151,7 @@ public:
     static bool Busy() { return outstanding.load(std::memory_order_acquire) != 0; }
     void Enqueue(Job job);
     void Enqueue(Job job, Pending held);
+    void EnqueueBeside(Job job, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {});
     void Drain();
     void Settle();
     void ReleaseRan();

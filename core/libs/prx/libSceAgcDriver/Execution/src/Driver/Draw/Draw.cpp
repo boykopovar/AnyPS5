@@ -7,6 +7,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -31,6 +34,7 @@
 #include <atomic>
 #include <exception>
 #include <mutex>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -39,6 +43,28 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+bool verifyDecodeReuse() {
+    static const bool verify = std::getenv("APS5_VERIFY_DECODE_REUSE") != nullptr;
+    return verify;
+}
+
+
+struct RecycledRingWordsStorage {};
+
+std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
+    constexpr std::size_t PoolSize = 1024, Probes = 16;
+    struct Pool : RecycledShared<ShaderRecompiler::HeapStageWords> {
+        Pool() : RecycledShared(PoolSize, Probes) {}
+    };
+    auto words = HostThreadLocal<Pool, RecycledRingWordsStorage>().Take([](ShaderRecompiler::HeapStageWords& candidate) {
+        candidate.userData.clear();
+        candidate.drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
+        candidate.dataOrigin = 0;
+    });
+    words->memoizeKey = false;
+    return words;
+}
 
 bool TraceShaderCorrelation() {
     static const bool enabled = std::getenv("APS5_TRACE_SHADER_CORRELATION") != nullptr;
@@ -204,6 +230,15 @@ void noteFinisherHandOff(bool handed) {
 
 namespace {
 
+bool MixesHeapAndGuestStages(std::span<const Graphics::CompiledShader> stages, std::span<const ShaderRecompiler::RecompileResult* const> programResults) {
+    const auto guest = [&](const Graphics::CompiledShader& stage) { return std::ranges::find(programResults, stage.program) != programResults.end(); };
+    return std::ranges::any_of(stages, [](const Graphics::CompiledShader& stage) { return stage.program->gpuResolvedImages; }) && std::ranges::any_of(stages, [&](const Graphics::CompiledShader& stage) { return guest(stage) && !stage.program->gpuResolvedImages; });
+}
+
+}
+
+namespace {
+
 enum class HeldReason : std::size_t { Known, NoDecode, Size, NullVertex, NullFragment, NullOther, Bda, Buffer, Storage, Count };
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeldReason::Count)> heldReasons{};
 
@@ -227,7 +262,7 @@ void noteHeld(HeldReason reason) {
 std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileResult& compiled) {
     using Role = ShaderRecompiler::DescriptorRole;
     for (const auto& binding : compiled.bindings) {
-        if (binding.role == Role::BdaPagetable && Graphics::ShaderStoresThroughAddresses(compiled.spirv)) return HeldReason::Bda;
+        if (binding.role == Role::BdaPagetable && Graphics::ProgramStoresThroughAddresses(compiled)) return HeldReason::Bda;
         if (binding.role == Role::GuestBuffers) {
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 if (element >= binding.bufferWritten.size() || binding.bufferWritten[element]) return HeldReason::Buffer;
@@ -259,8 +294,10 @@ void KeepUserDataTables(ShaderMemory& memory, const std::vector<DrawProgram>& pr
 
 DrawFinisher::Pending heldWrites(const DrawTail& tail) {
     DrawFinisher::Pending held;
-    held.key = tail.drawKey;
-    held.shape = tail.shapeKey;
+    if (!tail.drawHit) {
+        held.key = tail.drawKey;
+        held.shape = tail.shapeKey;
+    }
     if (tail.decode == nullptr) {
         noteHeld(HeldReason::NoDecode);
         return held;
@@ -696,11 +733,16 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (stageData[i].compiled != nullptr) stageData[i].compiled = patchDataWords(*matched[i], stageData[i].words);
     }
     const auto relocatedDecode = decode;
+    bool admitRelocated = false;
     if (!userPatches.empty()) {
         std::lock_guard cacheLock(drawCacheMutex);
         if (drawHit || verifyHit) {
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
+            if (drawHit && drawKey != 0 && !drawCache.contains(drawKey)) {
+                admitRelocated = drawKeySightingsTable().SeenBefore(drawKey);
+                if (admitRelocated) ++drawRelocationCounters.admitted;
+            }
             if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
                 const auto donor = drawCache.find(alias->second);
                 if (donor != drawCache.end() && drawCacheHits - donor->second->touched > drawCacheEntries() / 8) {
@@ -712,10 +754,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         if (profile && drawRelocationCounters.lookups >= 100000) reportDrawRelocation();
     }
-    if (!userPatches.empty() && !drawHit) {
+    const auto patchedDecode = [&] {
         auto current = std::make_shared<DrawDecode>(*decode);
         for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
-        decode = std::move(current);
+        return current;
+    };
+    if (!userPatches.empty() && !drawHit) decode = patchedDecode();
+    if (admitRelocated && std::all_of(matched.begin(), matched.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant != nullptr; })) {
+        std::vector<std::shared_ptr<DispatchVariant>> fresh(matched.begin(), matched.end());
+        insertDrawEntry(drawKey, fresh, patchedDecode(), 0, false);
     }
     tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
     tail.relocatedDecode = relocatedDecode;
@@ -921,6 +968,27 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             std::memcpy(words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
         }
     };
+    const auto buildRingWords = [&](std::size_t i, const DispatchVariant& variant) {
+        auto words = RecycledRingWords();
+        BuildRingWords(variant, programs[i].userData, &variant == matched[i].get() && stageData[i].compiled != nullptr ? &stageData[i].words : nullptr, *words);
+        if (words->vertexAttributes.empty()) return words;
+        if (!vertexInfos[i] || graphics.stages.mesh) {
+            decodeVertexInfo(i);
+        } else if (verifyDecodeReuse()) {
+            const auto kept = vertexInfos[i];
+            decodeVertexInfo(i);
+            if (!vertexInfos[i] || !sameVertexInfo(*vertexInfos[i], *kept))
+                throw std::runtime_error("APS5_VERIFY_DECODE_REUSE: a ring hit's vertex stage info decoded on the finisher differs from the queue worker's");
+        }
+        require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");
+        const auto& vertex = *vertexInfos[i];
+        for (auto& attribute : words->vertexAttributes) {
+            require(attribute.location < vertex.resourcesNum && attribute.location < vertex.resources.size(), "a ring vertex attribute lies outside the draw's vertex resources");
+            attribute.resource = vertex.resources[attribute.location];
+            if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
+        }
+        return words;
+    };
     const auto joinedRuns = [](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> joined;
         for (const auto& run : runs) {
@@ -943,6 +1011,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
         const auto& compiled = *stageCaptures[i].compiled;
+        if (kept.ringTemplate != nullptr) VerifyRingWords(*kept.compiled, *buildRingWords(i, kept), *stageCaptures[i].compiled, stageCaptures[i].heapWords.get());
         const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
         ++dataVerified;
         if (what == nullptr) return;
@@ -956,8 +1025,13 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
-        const auto& fresh = *stageCaptures[i].compiled;
-        const auto& patched = *hit.compiled;
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> effective = hit.compiled, expected = stageCaptures[i].compiled;
+        if (kept.ringTemplate != nullptr) {
+            effective = PatchedHeapResult(*hit.compiled, *buildRingWords(i, kept));
+            if (stageCaptures[i].heapWords != nullptr) expected = PatchedHeapResult(*stageCaptures[i].compiled, *stageCaptures[i].heapWords);
+        }
+        const auto& fresh = *expected;
+        const auto& patched = *effective;
         const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
         const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
         ++stageDataVerified;
@@ -966,66 +1040,111 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a stage data hit differs from its full build in its %s (%zu data positions refreshed)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.dataPositions.size());
         throw std::runtime_error(message);
     };
+    const auto ringWords = [&](std::size_t i) {
+        if (matched[i]->ringTemplate == nullptr) return;
+        stageCaptures[i].heapWords = buildRingWords(i, *matched[i]);
+        stageCaptures[i].origin = StageOrigin::HeapRead;
+    };
+    const auto adoptMatched = [&](std::size_t i) {
+        programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
+        memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
+        ringWords(i);
+    };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::size_t completedSubdraws = 0;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
+    const DrawStageContext stageContext{queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, meshBarycentrics};
     const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
     const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
-    for (std::size_t i = 0; i < programs.size(); ++i) {
-        if (roles[i] == Role::GeometryBack) continue;
-        const auto& program = programs[i];
-        pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, fixedSlots);
-        require(pushCursorBytes <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
-        const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, program.binary.stage, fixedSlots, hasFragment);
-        pushOffsets[i] = pushCursorBytes;
-        if (drawHit) {
-
-            programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
-            memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
-        } else {
-            const auto candidate = std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes && kept.first->compiled->pushConstants.size() <= pushBudget; });
-            if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
-                matched[i] = candidate->first;
-                stageCaptures[i].registeredViews = matched[i]->registeredViews;
-                matchedRegions[i] = std::move(candidate->second);
-                reused[i] = true;
-                programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
-                memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
+    const bool heapMode = Graphics::DescriptorHeapEnabled();
+    const bool heapCheck = !drawHit && heapMode;
+    const bool heapDraw = heapMode && [&] {
+        const bool descriptorMemory = localDevice->Target().descriptorMemory;
+        std::uint32_t cursor = pushCursorBytes;
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            if (roles[i] == Role::GeometryBack) continue;
+            const auto stage = programs[i].binary.stage;
+            require(stage == Stage::Fragment || HeapPreRasterStage(stage), "a draw stage kind the GPU heap does not take");
+            require(stage == Stage::Fragment || descriptorMemory, "a GPU heap draw on a device target without descriptor memory");
+            cursor = Graphics::StagePushOffset(cursor, stage, fixedSlots);
+            if (HeapStageExcluded(stage) || (HeapClassesExcluded() && drawStageExcluded(stageContext, i, cursor, drawParameters))) return false;
+        }
+        return true;
+    }();
+    const auto fitsDraw = [&](const ShaderRecompiler::RecompileResult& compiled) { return !heapMode || compiled.gpuResolvedImages == heapDraw; };
+    const auto candidateForStage = [&](std::size_t i, std::uint32_t pushBudget) {
+        return std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) {
+            return kept.first->pushOffset == pushCursorBytes && kept.first->compiled->pushConstants.size() <= pushBudget && fitsDraw(*kept.first->compiled);
+        });
+    };
+    const auto runStages = [&]() -> std::optional<DrawVerdict> {
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            if (roles[i] == Role::GeometryBack) continue;
+            const auto& program = programs[i];
+            pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, fixedSlots);
+            require(pushCursorBytes <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
+            const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, program.binary.stage, fixedSlots, hasFragment);
+            pushOffsets[i] = pushCursorBytes;
+            if (drawHit) {
+                adoptMatched(i);
             } else {
-                if (!dataCandidates[i].empty() && !verifyDrawDataHits()) decodeVertexInfo(i);
-                if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
-                    for (auto previous = i; previous-- > 0;) {
-                        if (programResults[previous] == nullptr) continue;
-                        pixel = Graphics::DefaultUnexportedInputs(decode->pixel, programResults[previous]->parameterExports);
-                        break;
-                    }
+                if (reused[i] && !fitsDraw(*matched[i]->compiled)) {
+                    reused[i] = false;
+                    matched[i] = nullptr;
+                    matchedRegions[i].clear();
                 }
-                compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
-                if (!rejected.empty()) return DrawVerdict::Rejected;
-                programResults[i] = compiledStages.back().get();
-                if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
-                if (stageData[i].compiled != nullptr && verifyDrawDataHits()) verifyStageData(i);
+                const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i, pushBudget);
+                if (reused[i]) {
+                    adoptMatched(i);
+                } else if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
+                    matched[i] = candidate->first;
+                    stageCaptures[i].registeredViews = matched[i]->registeredViews;
+                    matchedRegions[i] = std::move(candidate->second);
+                    reused[i] = true;
+                    adoptMatched(i);
+                } else {
+                    if (!dataCandidates[i].empty() && !verifyDrawDataHits()) decodeVertexInfo(i);
+                    if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
+                        for (auto previous = i; previous-- > 0;) {
+                            if (programResults[previous] == nullptr) continue;
+                            pixel = Graphics::DefaultUnexportedInputs(decode->pixel, programResults[previous]->parameterExports);
+                            break;
+                        }
+                    }
+                    compiledStages.push_back(materializeDrawStage(stageContext, i, pushCursorBytes, drawParameters, heapDraw));
+                    programResults[i] = compiledStages.back().get();
+                    if (verifyHit && matched[i] != nullptr && matched[i]->ringTemplate != nullptr) VerifyRingWords(*matched[i]->compiled, *buildRingWords(i, *matched[i]), *programResults[i], stageCaptures[i].heapWords.get());
+                    if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
+                    if (stageData[i].compiled != nullptr && verifyDrawDataHits()) verifyStageData(i);
+                }
+                if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
+                else if (dataEntry != nullptr) ++dataStagesCompiled;
             }
-            if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
-            else if (dataEntry != nullptr) ++dataStagesCompiled;
+            const auto& result = *programResults[i];
+            if (i == 0 && drawParameters.indirect) {
+                indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect, stageCaptures[0].heapWords.get());
+                if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
+            } else if (i == 0) {
+                fold(result, drawParameters);
+            }
+            try {
+                require(result.pushConstants.size() <= pushBudget, "stage push constants exceed the pipeline push constant block");
+                stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get(), stageCaptures[i].heapWords.get()});
+                pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
+            } catch (...) {
+                TraceMaterializationFailure(trace.token, submission, packetOffset, "push-constant-validation", completedSubdraws, std::current_exception());
+                throw;
+            }
+            if (stages.back().heap != nullptr && SampleHeapStageVerify()) VerifyHeapAccessor(stages.back());
         }
-        const auto& result = *programResults[i];
-        if (i == 0 && drawParameters.indirect) {
-            indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
-            if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
-        } else if (i == 0) {
-            fold(result, drawParameters);
-        }
-        try {
-            require(result.pushConstants.size() <= pushBudget, "stage push constants exceed the pipeline push constant block");
-            stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get()});
-            pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
-        } catch (...) {
-            TraceMaterializationFailure(trace.token, submission, packetOffset, "push-constant-validation", completedSubdraws, std::current_exception());
-            throw;
-        }
+        return std::nullopt;
+    };
+    if (const auto verdict = runStages()) return *verdict;
+    if (heapCheck) {
+        require(!MixesHeapAndGuestStages(stages, programResults), "a draw mixes GPU heap and per-draw stages");
+        if (!heapDraw) Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Draw);
     }
 
     if (stageDataVerified != 0) {
@@ -1047,7 +1166,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         };
         for (std::size_t i = 0; i < programs.size(); ++i) {
             const auto& capture = stageCaptures[i];
-            if (reused[i] || capture.compiled == nullptr || !CacheableResult(*capture.compiled)) continue;
+            if (reused[i] || capture.compiled == nullptr || !capture.Cacheable() || !CacheableResult(*capture.compiled)) continue;
             stored = true;
             const auto& words = programs[i].userData;
             for (std::size_t w = 0; w < words.size(); ++w) {
@@ -1120,11 +1239,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         if (programResults[0]->meshBarycentrics != meshBarycentrics) {
             const auto pushBytes = programResults[0]->pushConstants.size();
             const auto exports = programResults[0]->parameterExports;
-            compiledStages.push_back(materializeDrawStage(0, pushOffsets[0], queue, submission, packetOffset, traceToken, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
-            if (!rejected.empty()) return DrawVerdict::Rejected;
+            compiledStages.push_back(materializeDrawStage(stageContext, 0, pushOffsets[0], drawParameters, heapDraw));
+            require(fitsDraw(*compiledStages.back()), "a rebuilt mesh stage left the GPU heap mode of its draw");
             programResults[0] = compiledStages.back().get();
             stages[0].program = programResults[0];
             stages[0].registeredImageViews = stageCaptures[0].registeredViews.get();
+            stages[0].heap = stageCaptures[0].heapWords.get();
             require(programResults[0]->pushConstants.size() == pushBytes && programResults[0]->parameterExports == exports, "pairing the mesh program with its pixel shader changed the push constants or the parameter exports the pixel shader was built for");
         }
         require(programResults[0]->meshBarycentrics == meshBarycentrics, "the mesh program was compiled for a different barycentric layout than its pixel shader");
@@ -1218,7 +1338,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto sameInfo = [&](const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& a, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& b) { return a.has_value() == b.has_value() && (!a || sameVertexInfo(*a, *b)); };
         const auto forwardRecordWords = [&](std::size_t programIndex, ShaderRecompiler::RecompileResult& result, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& previousInfo) {
             std::uint64_t walked = 0;
-            if (stageCaptures[programIndex].capture != nullptr) walked = stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue;
+            if (stageCaptures[programIndex].capture != nullptr) walked = stageCaptures[programIndex].UserDataUse().asBase | stageCaptures[programIndex].UserDataUse().asValue;
             else if (matched[programIndex] != nullptr) walked = matched[programIndex]->userWordsWalked;
             else return false;
             if ((graphics.stages.mesh && programIndex == 0) || !sameInfo(previousInfo, vertexInfos[programIndex])) return false;
@@ -1240,7 +1360,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const bool sameBindings = forwarded.bindings.size() == fresh.bindings.size() && std::equal(forwarded.bindings.begin(), forwarded.bindings.end(), fresh.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
             std::uint64_t walked = 0;
             for (const auto& word : recordWords) {
-                if (word.program == programIndex && word.index < ShaderRecompiler::SrtUserDataUse::TrackedWords) walked |= (stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue) >> word.index & 1u;
+                if (word.program == programIndex && word.index < ShaderRecompiler::SrtUserDataUse::TrackedWords) walked |= (stageCaptures[programIndex].UserDataUse().asBase | stageCaptures[programIndex].UserDataUse().asValue) >> word.index & 1u;
             }
             const char* what = forwarded.variantId != fresh.variantId ? "variant" : forwarded.pushConstants != fresh.pushConstants ? "push constants" : !sameBindings ? "bindings" : forwarded.shaderDataUserWords != fresh.shaderDataUserWords ? "forwarded words" : walked != 0 ? "walked user word" : nullptr;
             ++wordsVerified;
@@ -1296,20 +1416,22 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 const auto pushBytes = result.pushConstants.size();
                 const auto previousInfo = vertexInfos[programIndex];
                 decodeVertexInfo(programIndex);
-                if (pushWord && forwardRecordWords(programIndex, result, previousInfo)) {
+                if (pushWord && !heapDraw && forwardRecordWords(programIndex, result, previousInfo)) {
                     wordsForwarded += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
                     if (!verifyPushWord) continue;
-                    const auto fresh = materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                    const auto fresh = materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], drawParameters, heapDraw);
                     for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
-                    if (!rejected.empty()) return DrawVerdict::Rejected;
                     verifyForwardedWords(programIndex, result, *fresh);
                     continue;
                 }
                 if (pushWord) wordsRefused += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                result = *materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, heapDraw);
                 for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
-                if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                require(fitsDraw(result), "a patched program left the GPU heap mode of its draw");
+                for (auto& stage : stages) {
+                    if (stage.program == &result) stage.heap = stageCaptures[programIndex].heapWords.get();
+                }
                 ++stagesRecompiled;
             }
             fold(*programResults[0], direct);

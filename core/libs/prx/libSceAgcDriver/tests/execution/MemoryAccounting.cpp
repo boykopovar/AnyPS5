@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
@@ -159,6 +160,7 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         auto context = device->graphicsContext();
+        if (context.descriptorHeap) static_cast<void>(BindlessHeap::For(context));
         context.bufferPool = std::make_shared<BufferPool>(context);
         drain(context);
         const auto baseline = MemoryAccounting::Read(context.device).allocations.size();

@@ -134,6 +134,10 @@ std::vector<std::uint32_t> DrawFrom(std::initializer_list<const void*> sources, 
     return commands;
 }
 
+std::uint64_t EntryInserts(const AgcDriver::DriverDetail::DrawEntryCounters& counters) {
+    return counters.inserts - (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr ? counters.verifyHits : 0u);
+}
+
 void MovedDataHitsTheCache(bool libraries) {
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
@@ -151,7 +155,7 @@ void MovedDataHitsTheCache(bool libraries) {
     for (std::size_t i = 0; i < 4; ++i) counters = draw({same[i].data()});
     Require(counters.lookups == 4 && counters.hits == 0 && counters.inserts == 2, mode + ": the draws that teach the moved pointer and its contents made " + std::to_string(counters.hits) + " hits and " + std::to_string(counters.inserts) + " inserts, expected 0 and 2");
     for (std::size_t i = 4; i < same.size(); ++i) counters = draw({same[i].data()});
-    Require(counters.lookups == 8 && counters.hits == 4 && counters.inserts == 2, mode + ": draws whose data moved again did not reuse the cached draw (" + std::to_string(counters.hits) + " hits in " + std::to_string(counters.lookups) + " lookups)");
+    Require(counters.lookups == 8 && counters.hits == 4 && EntryInserts(counters) == 2 && counters.verifyMismatches == 0, mode + ": draws whose data moved again did not reuse the cached draw (" + std::to_string(counters.hits) + " hits in " + std::to_string(counters.lookups) + " lookups)");
     const auto other = draw({Other.data()});
     Require(other.lookups == 9 && other.hits == 4, mode + ": a draw whose moved data holds another value reused the cached draw");
     const auto again = draw({same[0].data()});
@@ -295,6 +299,10 @@ void RelocatedDrawsReuseTheirRecipe(bool libraries) {
     const auto recipeHits = AgcDriver::VulkanDevice::DrawRecipeHits() - recipesBefore;
     const auto hits = counters.hits - start.hits;
     Require(hits == moved.size() - 4, mode + ": draws whose data moved again made " + std::to_string(hits) + " draw-cache hits, expected " + std::to_string(moved.size() - 4));
+    if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
+        Require(recipeHits == 0, mode + ": " + std::to_string(recipeHits) + " draws served by a relocated entry were recorded from a recipe while entry verification records every hit afresh");
+        return;
+    }
     Require(recipeHits == hits, mode + ": " + std::to_string(recipeHits) + " of " + std::to_string(hits) + " draws served by a relocated entry were recorded from the cached draw's recipe, expected all");
 }
 
@@ -321,7 +329,7 @@ void UnrelocatedAliasesStayOut(bool libraries) {
         for (const auto& entry : pair) draw(entry.data());
         counters = draw(repeated.data());
     }
-    const auto inserts = counters.inserts - start.inserts;
+    const auto inserts = EntryInserts(counters) - EntryInserts(start);
     Require(inserts <= AgcDriver::DriverDetail::DrawRelocationTrial::ProbationAdmissions, mode + ": draws whose alias repeats but never relocates were cached (" + std::to_string(inserts) + " inserts for " + std::to_string(twice.size()) + " aliases)");
     Require(counters.hits - start.hits == twice.size(), mode + ": the exact key of a repeated draw lost its hits next to draws whose alias never relocates (" + std::to_string(counters.hits - start.hits) + " hits in " + std::to_string(twice.size()) + " draws)");
 }
@@ -384,7 +392,8 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
     Require(!RestartArmed.load(), mode + ": the capture check did not run for the relocated draw");
     const bool pipelined = DrawFinisher::Enabled() && DrawPipeline::Depth() != 0;
-    Require(!pipelined || RestartChecked.load(), mode + ": the pipelined relocated draw was checked on the queue worker, not the draw finisher, so its restart patch and skip count were not exercised");
+    const bool dataHitsVerified = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    Require(!pipelined || dataHitsVerified || RestartChecked.load(), mode + ": the pipelined relocated draw was checked on the queue worker, not the draw finisher, so its restart patch and skip count were not exercised");
     if (RestartChecked.load()) {
         const auto skipped = restartedCounters.restartPatchSkipped - counters.restartPatchSkipped;
         const auto expected = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr ? 1u : 0u;
@@ -402,7 +411,8 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     SecondOffsetTable[2] = data;
     const auto moved2 = draw(&SecondOffsetTable[2]);
     std::printf("%s: a draw through a second moved table at the same alignment: %llu lookups, %llu hits, %llu stage data hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(moved2.lookups - again.lookups), static_cast<unsigned long long>(moved2.hits - again.hits), static_cast<unsigned long long>(moved2.stageDataHits - again.stageDataHits), static_cast<unsigned long long>(moved2.inserts - again.inserts));
-    Require(moved2.hits == again.hits + 1 && moved2.inserts == again.inserts, mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
+    const auto capturedAgain = std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr || std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    Require(moved2.hits == again.hits + 1 && (capturedAgain ? moved2.inserts == again.inserts + 1 : moved2.inserts == again.inserts), mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
     const auto second = pixels({64, 255, 255, 64});
     Require(second.empty(), mode + ": a draw through a second moved table drew wrong pixels: " + second);
 }

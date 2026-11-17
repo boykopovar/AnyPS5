@@ -15,7 +15,9 @@ struct StagedTemporary {
 
 std::shared_ptr<StagedTemporary> AcquireStagedTemporary(const Context& context, VkExtent2D extent, std::uint32_t samples);
 void RecordStagedClear(const Context& context, VkCommandBuffer commands, StagedTemporary& temporary);
-void RecordStagedMerge(const Context& context, VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area);
+class HeapSlotOwner;
+void RecordStagedMerge(const Context& context, VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area,
+                       const HeapSlotOwner* targetOwner = nullptr);
 void ClearStagedMerges(VkDevice device);
 
 }

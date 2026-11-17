@@ -401,6 +401,7 @@ CompiledVariant sampleVariant() {
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
     info.bindings.stencilReferenceDword = 23u;
+    info.bindings.dataAddress = true;
     info.bindings.userDataRegisters = {4, 5, 9};
     info.bindings.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}};
     variant.bindings.layout = info.bindings;
@@ -2511,7 +2512,12 @@ void verifyPlanRoundTrip() {
     const auto registeredHandle = PrepareShader(registeredRequest);
     const auto registeredPlan = GetResourcePlan(registeredRequest);
     ShaderDiskCache::Flush();
+    const auto registeredInvocation = PreparedShaderInvocation::TryCreate(registeredRequest, registeredHandle);
+    require(registeredInvocation.has_value(), "the registered shader has no prepared invocation");
+    const auto& heldPlan = registeredInvocation->Plan();
+    require(heldPlan != nullptr, "a registered shader with a held plan returned none");
     ReleaseUndrawnResourcePlan(*registeredHandle);
+    require(heldPlan != nullptr, "a plan returned by an invocation was cleared when its source released the plan");
     const auto beforeReload = ShaderDiskCache::Totals();
     const auto reloadedPlan = GetResourcePlan(registeredRequest);
     require(ShaderDiskCache::Totals().planHits == beforeReload.planHits + 1u, "a released registration plan was not reloaded from the disk cache");

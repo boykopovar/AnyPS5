@@ -141,8 +141,8 @@ bool faultReportOnlyCached(const ShaderRecompiler::SharedSpirv& spirv, std::uint
 
 }
 
-bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv) {
-    return storesThroughAddressesCached(spirv);
+bool ProgramStoresThroughAddresses(const ShaderRecompiler::RecompileResult& program) {
+    return program.gpuResolvedImages ? program.bdaStores : storesThroughAddressesCached(program.spirv);
 }
 
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words) {
@@ -232,7 +232,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         Require(shader.program->bdaAbiVersion == (faults == 0 ? 0u : ShaderRecompiler::BdaAbi::Version), "incompatible BDA ABI version");
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;
-        if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) bdaReadOnly = false;
+        if (tables != 0 && ProgramStoresThroughAddresses(*shader.program)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));
@@ -247,8 +247,8 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
     }
 }
 
-VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
-    if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment));
+VkDescriptorBufferInfo ShaderResources::descriptor(const Allocation& allocation, std::uint32_t& adjustment) const {
+    if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, adjustment));
     if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
         const auto placeholder = allocation.oversized ? context.oversizedBuffer : context.emptyBuffer;
         Require(placeholder != VK_NULL_HANDLE, "no placeholder buffer for a null V#");

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "Recompiler.hpp"
+#include "PushDataLayout.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -16,6 +17,10 @@ namespace AgcDriver::Graphics {
 inline constexpr std::uint32_t PipelinePushConstantBytes = 256;
 inline constexpr std::uint32_t PipelinePushSlotBytes = 128;
 inline constexpr std::uint32_t ComputePushConstantBytes = 128;
+
+inline constexpr std::uint32_t HeapLayoutKeyTag = 0x48454150u;
+inline constexpr std::uint32_t MainSetBit = 1u;
+inline constexpr std::uint32_t FragmentSetBit = 2u;
 
 inline std::uint32_t PushBlockBytes(bool libraries) {
     return libraries ? PipelinePushConstantBytes : PipelinePushSlotBytes;
@@ -52,7 +57,94 @@ struct CompiledShader {
     const ShaderRecompiler::RecompileResult* program;
     std::uint32_t pushConstantOffset;
     const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
+    const ShaderRecompiler::HeapStageWords* heap = nullptr;
 };
+
+inline bool HeapShader(const CompiledShader& shader) {
+    return shader.program != nullptr && shader.program->gpuResolvedImages;
+}
+
+inline bool AnyHeapShader(std::span<const CompiledShader> shaders) {
+    return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return HeapShader(shader); });
+}
+
+inline bool RootedPushData(std::span<const CompiledShader> shaders) {
+    return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->dataAddressPush; });
+}
+
+inline bool PushesGeneratedFaultAddress(const CompiledShader& shader, bool rooted) {
+    if (!rooted || shader.program == nullptr || shader.program->dataAddressPush || HeapShader(shader)) return false;
+    return std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
+}
+
+std::uint32_t PushedBufferRecordCap();
+
+inline std::vector<ShaderRecompiler::StagePushPlacement> PushDataPlacements(std::span<const CompiledShader> shaders) {
+    namespace Abi = ShaderRecompiler::RuntimeAbi;
+    std::vector<ShaderRecompiler::PushStage> stages(shaders.size());
+    std::uint64_t occupied = 0;
+    const bool rooted = RootedPushData(shaders);
+    for (std::size_t index = 0; index < shaders.size(); ++index) {
+        const auto* program = shaders[index].program;
+        stages[index].part = ShaderRecompiler::PushPartOf(shaders[index].stage);
+        if (program == nullptr) continue;
+        occupied |= ShaderRecompiler::StagePushFeatures(shaders[index].stage, program->pushItems);
+        if (program->dataAddressPush) {
+            stages[index].items = program->pushItems & ShaderRecompiler::RootItemMask;
+            stages[index].pushedWanted = static_cast<std::uint32_t>(program->pushedData.size());
+            stages[index].pushedBuffers = program->pushedBufferCount;
+            continue;
+        }
+        if (!program->pushConstants.empty()) occupied |= ShaderRecompiler::PushBytesMask(shaders[index].pushConstantOffset, static_cast<std::uint32_t>(program->pushConstants.size()));
+        if (PushesGeneratedFaultAddress(shaders[index], rooted)) stages[index].items = Abi::RootItemBit(Abi::RootItem::FaultAddress);
+    }
+    return ShaderRecompiler::PlacePushData(stages, occupied, PushedBufferRecordCap());
+}
+
+inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::RecompileResult& program, const ShaderRecompiler::HeapStageWords* heap, const ShaderRecompiler::DescriptorBinding& binding) {
+    if (heap == nullptr) return binding.guestDescriptor;
+    const auto index = static_cast<std::size_t>(&binding - program.bindings.data());
+    if (index < heap->bindings.size() && !heap->bindings[index].empty()) return heap->bindings[index];
+    if (binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && !heap->flattenedSrt.empty()) return heap->flattenedSrt;
+    const auto* base = heap->base.get();
+    const bool shared = binding.role != ShaderRecompiler::DescriptorRole::ShaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt;
+    return shared && base != nullptr && index < base->bindings.size() && !base->bindings[index].empty() ? base->bindings[index] : binding.guestDescriptor;
+}
+
+inline const std::vector<std::uint32_t>& DrawGuestWords(const CompiledShader& shader, const ShaderRecompiler::DescriptorBinding& binding) {
+    return DrawGuestWords(*shader.program, shader.heap, binding);
+}
+
+inline const std::vector<ShaderRecompiler::VertexAttribute>& DrawVertexAttributes(const CompiledShader& shader) {
+    return shader.heap != nullptr && !shader.heap->vertexAttributes.empty() ? shader.heap->vertexAttributes : shader.program->vertexAttributes;
+}
+
+enum class HeapBindingClass { SharedImage, StorageImage, ShaderData, PerDraw, Unsupported };
+
+inline HeapBindingClass ClassifyHeapBinding(const ShaderRecompiler::DescriptorBinding& binding) {
+    using Role = ShaderRecompiler::DescriptorRole;
+    switch (binding.role) {
+        case Role::GuestImages:
+            if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) return HeapBindingClass::SharedImage;
+            return binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet ? HeapBindingClass::StorageImage : HeapBindingClass::PerDraw;
+        case Role::GuestSamplers:
+            return HeapBindingClass::SharedImage;
+        case Role::BdaPagetable:
+        case Role::FaultBuffer:
+        case Role::Gds:
+        case Role::GuestBuffers:
+            return HeapBindingClass::PerDraw;
+        case Role::ShaderData:
+        case Role::FlattenedSrt:
+            return HeapBindingClass::ShaderData;
+        default:
+            return HeapBindingClass::Unsupported;
+    }
+}
+
+inline bool BindsRole(std::span<const CompiledShader> shaders, ShaderRecompiler::DescriptorRole role) {
+    return std::ranges::any_of(shaders, [&](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::any_of(shader.program->bindings, [&](const auto& binding) { return binding.role == role; }); });
+}
 
 inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
     return shader.program->pushConstants.empty() ? 0u : shader.pushConstantOffset;
@@ -92,7 +184,7 @@ inline VkShaderStageFlags PushConstantStages(std::span<const CompiledShader> sha
     VkShaderStageFlags result = 0;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
-        if (!shader.program->pushConstants.empty() || shader.program->readsDepthRemapPush || shader.stage == ShaderRecompiler::ShaderStage::Mesh || shader.stage == ShaderRecompiler::ShaderStage::TessellationControl) result |= VulkanStage(shader.stage);
+        if (!shader.program->pushConstants.empty() || shader.program->readsDepthRemapPush || shader.program->dataAddressPush || shader.stage == ShaderRecompiler::ShaderStage::Mesh || shader.stage == ShaderRecompiler::ShaderStage::TessellationControl) result |= VulkanStage(shader.stage);
     }
     return result;
 }

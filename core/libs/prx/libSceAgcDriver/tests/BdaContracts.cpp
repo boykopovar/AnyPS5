@@ -246,6 +246,18 @@ void RunBdaContractTests() {
     auto unparsed = MakeBdaStoreTestShader(0x1000, 7, 32, false);
     unparsed[5] |= 0xffff0000u;
     AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(unparsed), "a module with an instruction past its end was taken for one without stores");
+    RecompileResult classic;
+    classic.spirv = SharedSpirv(MakeBdaStoreTestShader(0x1000, 7, 32, false));
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::ProgramStoresThroughAddresses(classic), "a classic program's BDA store was taken from the emitter flag instead of its SPIR-V");
+    classic.spirv = SharedSpirv(MakeBdaTestShader(0x1000, 32));
+    classic.bdaStores = true;
+    AgcDriver::Graphics::Require(!AgcDriver::Graphics::ProgramStoresThroughAddresses(classic), "a classic program reading through an address was taken for one storing");
+    RecompileResult heap;
+    heap.gpuResolvedImages = true;
+    heap.spirv = SharedSpirv(MakeBdaStoreTestShader(0x1000, 7, 32, false));
+    AgcDriver::Graphics::Require(!AgcDriver::Graphics::ProgramStoresThroughAddresses(heap), "a heap program's stores were not taken from the emitter flag");
+    heap.bdaStores = true;
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::ProgramStoresThroughAddresses(heap), "a heap program's BDA store flag was ignored");
     using AgcDriver::Graphics::SpirvFaultReportOnly;
     AgcDriver::Graphics::Require(SpirvFaultReportOnly(MakeBdaTestShader(0x1000, 32), 0, 1) && SpirvFaultReportOnly(MakeBdaDwordReadTestShader(0x1000, 4, false, false), 0, 1) && SpirvFaultReportOnly(MakeBdaFaultSequenceTestShader({BdaAbi::FaultReason::Unmapped, BdaAbi::FaultReason::Unaligned}), 0, 1), "a BDA read program, which writes only the fault report, was given a full fault buffer");
     AgcDriver::Graphics::Require(!SpirvFaultReportOnly(MakeBdaStoreTestShader(0x1000, 7, 32, false), 0, 1) && !SpirvFaultReportOnly(MakeBdaWriteTestShader(0x1000, 7, 32, false), 0, 1), "a BDA store program, which records written pages, was given a report-only fault buffer");

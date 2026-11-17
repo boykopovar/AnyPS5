@@ -313,7 +313,7 @@ void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& 
             }
         }
     }
-    const auto result = Recompile(device.Target(), format, d16, mixed, texels);
+    const auto result = Recompile(device.ComputeTarget(64), format, d16, mixed, texels);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");

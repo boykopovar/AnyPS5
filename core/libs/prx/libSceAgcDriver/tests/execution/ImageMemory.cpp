@@ -359,7 +359,7 @@ bool SampledImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
     std::vector<std::unique_ptr<Texture>> textures;
     bool covered = true;
     {
-        Recorder recorder(context);
+        Recorder recorder(context, true);
         recorder.Activate();
         for (std::size_t i = 0; i < ImageCount; ++i) {
             auto texture = std::make_unique<Texture>(context, detiler, resource, identity, snapshot);

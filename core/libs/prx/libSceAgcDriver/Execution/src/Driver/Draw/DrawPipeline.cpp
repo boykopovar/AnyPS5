@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
@@ -130,7 +131,7 @@ bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
 bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
     if (!Busy() || !finisherProducer) return false;
     std::lock_guard lock(mutex);
-    return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); });
+    return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return (held.key != 0 && held.key == key) || (shape != 0 && held.shape == shape); });
 }
 
 namespace {
@@ -151,7 +152,7 @@ void DrawFinisher::NoteDrainedOpcode(std::uint32_t opcode, bool besideCommits) {
 }
 
 std::string DrawFinisher::DrainText() {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrainSite::Count)> names{"lookup", "reads", "packet", "kept draw"};
+    constexpr std::array<const char*, static_cast<std::size_t>(DrainSite::Count)> names{"lookup", "reads", "packet", "kept draw", "dispatch"};
     std::string text = "; worker drains of the finisher (drained/skipped):";
     for (std::size_t i = 0; i < names.size(); ++i) {
         char item[64];
@@ -179,6 +180,15 @@ bool DrawFinisher::OnFinisherThread() {
 
 void DrawFinisher::Enqueue(Job job) {
     Enqueue(std::move(job), Pending{});
+}
+
+void DrawFinisher::EnqueueBeside(Job job, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes) {
+    Pending held;
+    held.unknown = false;
+    held.writes = std::move(writes);
+    held.labelAddress = labelAddress;
+    held.labelBytes = std::move(labelBytes);
+    Enqueue(std::move(job), std::move(held));
 }
 
 void DrawFinisher::Enqueue(Job job, Pending held) {
@@ -308,6 +318,11 @@ void DrawPipeline::rethrowFailure() {
     std::rethrow_exception(error);
 }
 
+std::uint32_t DrawPipeline::FullWaiters() {
+    std::lock_guard lock(mutex);
+    return fullWaiters;
+}
+
 void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw) {
     enqueue({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
 }
@@ -359,13 +374,24 @@ void DrawPipeline::enqueue(Item item) {
     if (items.size() >= Depth()) {
         if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw pipeline full while the enqueuing thread holds the GPU lock");
         const auto start = std::chrono::steady_clock::now();
-        resumeAt = Depth() - 1;
-        ++idleWaiters;
-        idle.wait(lock, [&] { return items.size() <= resumeAt; });
-        --idleWaiters;
-        resumeAt = 0;
+        lock.unlock();
+        static_cast<void>(SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) < Depth(); }));
+        lock.lock();
+        if (items.size() >= Depth() && !closing) {
+            resumeAt = Depth() / 2;
+            ++idleWaiters;
+            ++fullWaiters;
+            idle.wait(lock, [&] { return items.size() <= resumeAt || closing; });
+            --idleWaiters;
+            if (--fullWaiters == 0) resumeAt = 0;
+        }
         fullWaitNs += elapsedNs(start);
         rethrowFailure();
+        if (closing) {
+            lock.unlock();
+            item.commit();
+            return;
+        }
     }
     depthSum += items.size();
     ++enqueued;
@@ -499,6 +525,7 @@ void DrawPipeline::Stop() {
         committer = std::move(thread);
     }
     wake.notify_all();
+    idle.notify_all();
     if (!committer.joinable()) return;
     if (committer.get_id() == std::this_thread::get_id()) committer.detach();
     else committer.join();
@@ -626,9 +653,15 @@ DrawPipeline::Watch DrawPipeline::WatchWrites() {
 }
 
 bool DrawPipeline::WrittenSince(const Watch& watch, const std::vector<Range>& reads) {
-    const auto overlaps = [&reads](const std::vector<Range>& writes) {
-        return std::any_of(reads.begin(), reads.end(), [&writes](const Range& read) {
-            return std::any_of(writes.begin(), writes.end(), [&read](const Range& write) { return read.first < write.second && write.first < read.second; });
+    Range hull{~std::uint64_t{0}, 0};
+    for (const auto& read : reads) {
+        hull.first = std::min(hull.first, read.first);
+        hull.second = std::max(hull.second, read.second);
+    }
+    const auto overlaps = [&reads, &hull](const std::vector<Range>& writes) {
+        return std::any_of(writes.begin(), writes.end(), [&](const Range& write) {
+            if (!(hull.first < write.second && write.first < hull.second)) return false;
+            return std::any_of(reads.begin(), reads.end(), [&write](const Range& read) { return read.first < write.second && write.first < read.second; });
         });
     };
     if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) return true;
@@ -646,7 +679,14 @@ bool DrawPipeline::Busy() const {
 bool DrawPipeline::OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(ranges)) return true;
     std::lock_guard lock(mutex);
+    if (queuedWrites.empty() || ranges.empty()) return false;
+    std::pair<std::uint64_t, std::uint64_t> hull{~std::uint64_t{0}, 0};
+    for (const auto& [address, end] : ranges) {
+        hull.first = std::min(hull.first, address);
+        hull.second = std::max(hull.second, end);
+    }
     for (const auto& [range, count] : queuedWrites) {
+        if (!(hull.first < range.second && range.first < hull.second)) continue;
         for (const auto& [address, end] : ranges) {
             if (address < range.second && range.first < end) return true;
         }

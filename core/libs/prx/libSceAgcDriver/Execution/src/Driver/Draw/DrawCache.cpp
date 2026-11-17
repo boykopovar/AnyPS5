@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include <algorithm>
 #include <bit>
@@ -23,17 +24,17 @@ bool DrawRecipeRecord::Expired() const {
 }
 
 bool Driver::drawEntries() {
-    static const bool entries = std::getenv("APS5_NO_DRAW_SRT_ENTRIES") == nullptr && !stampValidate();
+    static const bool entries = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawSrtEntries) && !stampValidate();
     return entries;
 }
 
 bool Driver::drawDataHits() {
-    static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr;
+    static const bool hits = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawDataHits);
     return hits;
 }
 
 bool Driver::drawStageDataHits() {
-    static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !stampValidate();
+    static const bool hits = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawStageDataHits) && !stampValidate();
     return hits;
 }
 
@@ -48,7 +49,7 @@ bool Driver::verifyDrawEntries() {
 }
 
 bool Driver::registerKeyEnabled() {
-    static const bool registerKey = std::getenv("APS5_NO_DRAW_KEY") == nullptr;
+    static const bool registerKey = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawKey);
     return registerKey;
 }
 
@@ -164,16 +165,26 @@ bool Driver::drawEntriesThisDraw() {
     return backoff.use(drawCacheUseful().load(std::memory_order_relaxed));
 }
 
+DrawKeySightings& Driver::drawKeySightingsTable() {
+    if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    return *drawKeySightings;
+}
+
+DrawKeySightings& Driver::drawShapeSightingsTable() {
+    if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    return *drawShapeSightings;
+}
+
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
-    if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
-    bool seen = drawKeySightings->SeenBefore(key);
+    auto& keySightings = drawKeySightingsTable();
+    bool seen = keySightings.SeenBefore(key);
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
         if (pending.alias != 0) {
             const auto trial = drawRelocationTrials.find(pending.identity);
-            if (drawKeySightings->SeenBefore(pending.alias ^ 0x9e3779b97f4a7c15ull) && trial != drawRelocationTrials.end()) {
+            if (keySightings.SeenBefore(pending.alias ^ 0x9e3779b97f4a7c15ull) && trial != drawRelocationTrials.end()) {
                 auto& state = trial->second;
                 if (state.productive || state.hits != 0 || state.admissions < DrawRelocationTrial::ProbationAdmissions) {
                     if (!state.productive && state.hits == 0) ++state.admissions;
@@ -181,12 +192,11 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
                 }
             }
         } else if (!drawRelocations.contains(pending.identity)) {
-            if (drawKeySightings->SeenBefore(pending.identity ^ 0xc2b2ae3d27d4eb4full)) seen = true;
+            if (keySightings.SeenBefore(pending.identity ^ 0xc2b2ae3d27d4eb4full)) seen = true;
         }
     }
     if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
-    if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
-    return drawShapeSightings->SeenBefore(shape);
+    return drawShapeSightingsTable().SeenBefore(shape);
 }
 
 void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {

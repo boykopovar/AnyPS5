@@ -6,3 +6,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_indirect_thread_dimensions)
+endif()

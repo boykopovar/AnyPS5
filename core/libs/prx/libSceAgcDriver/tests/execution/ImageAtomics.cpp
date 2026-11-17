@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -124,11 +125,12 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t format) {
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(32),
         {0, 0, 0, 128}
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(result.gpuResolvedImages == AgcDriver::Graphics::DescriptorHeapEnabled(), "the compute heap did not take the image atomic stage");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
@@ -159,7 +161,7 @@ void Check(std::uint32_t format) {
     }
 }
 
-void DispatchContention(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t groups) {
+void DispatchContention(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t groups) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto input = BufferDescriptor(ContentionInput.data(), static_cast<std::uint32_t>(ContentionInput.size() * 4u));
     const auto output = BufferDescriptor(ContentionOutput.data(), static_cast<std::uint32_t>(ContentionOutput.size() * 4u));
@@ -172,32 +174,33 @@ void DispatchContention(AgcDriver::VulkanDevice& device, std::span<const std::ui
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(result.gpuResolvedImages == target.gpuResolvedImages, "the contended image atomic stage did not take its target's mode");
     device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-std::uint32_t Contend(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t initial) {
+std::uint32_t Contend(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t initial) {
     ContentionOutput.fill(0xdeadbeefu);
     ContentionTexels.fill(0u);
     ContentionTexels[0] = initial;
-    DispatchContention(device, code, waveSize, ContentionGroups);
+    DispatchContention(device, target, code, waveSize, ContentionGroups);
     const auto returned = ContentionOutput;
     ContentionOutput.fill(0xdeadbeefu);
-    DispatchContention(device, ReadBack, waveSize, 1u);
+    DispatchContention(device, target, ReadBack, waveSize, 1u);
     const auto final = ContentionOutput[0];
     ContentionOutput = returned;
     return final;
 }
 
-void CheckContendedAdd(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+void CheckContendedAdd(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::uint32_t waveSize) {
     const auto name = "image_atomic_add contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
     ContentionInput.fill(1u);
-    const auto final = Contend(device, ContentionAdd, waveSize, 0u);
+    const auto final = Contend(device, target, ContentionAdd, waveSize, 0u);
     std::vector<bool> seen(ContentionValues, false);
     for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
         const auto returned = ContentionOutput[thread];
@@ -207,7 +210,7 @@ void CheckContendedAdd(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) 
     Require(final == ContentionValues, name + ": the texel holds " + std::to_string(final) + ", expected " + std::to_string(ContentionValues));
 }
 
-void CheckContendedUMax(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+void CheckContendedUMax(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::uint32_t waveSize) {
     const auto name = "image_atomic_umax contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
     constexpr std::uint32_t initial = 5u;
     std::uint64_t state = 0x2545f4914f6cdd1dull + waveSize;
@@ -219,7 +222,7 @@ void CheckContendedUMax(AgcDriver::VulkanDevice& device, std::uint32_t waveSize)
         values.insert(value);
         expected = std::max(expected, value);
     }
-    const auto final = Contend(device, ContentionUMax, waveSize, initial);
+    const auto final = Contend(device, target, ContentionUMax, waveSize, initial);
     for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
         const auto returned = ContentionOutput[thread];
         Require(values.contains(returned) && returned <= expected, name + ": thread " + std::to_string(thread) + " returned " + std::to_string(returned) + ", which no thread stored");
@@ -239,8 +242,15 @@ int main() {
             Check(format);
         }
         for (const auto waveSize : {32u, 64u}) {
-            CheckContendedAdd(*device, waveSize);
-            CheckContendedUMax(*device, waveSize);
+            const auto heapTarget = device->ComputeTarget(waveSize);
+            Require(heapTarget.gpuResolvedImages == AgcDriver::Graphics::DescriptorHeapEnabled(), "the compute target does not follow the descriptor heap");
+            CheckContendedAdd(*device, heapTarget, waveSize);
+            CheckContendedUMax(*device, heapTarget, waveSize);
+        }
+        {
+            const auto plainTarget = device->Target();
+            CheckContendedAdd(*device, plainTarget, 32u);
+            CheckContendedUMax(*device, plainTarget, 32u);
         }
         std::puts("image atomics tests passed");
         return 0;

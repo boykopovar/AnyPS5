@@ -305,9 +305,12 @@ void Driver::execute(Submission& submission) {
         auto nextCursor = cursor + count;
         const bool predicated = Pm4::Predicated(header) && queue.predication.operation != 0;
         if (submission.queue == 0 && DrawFinisher::Busy() && !keepsDrawFinisher(header, opcode)) {
-            const bool queuesLabel = pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && labelPacketQueues(packet, opcode);
+            const bool queueable = pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor);
+            const bool queuesLabel = queueable && labelPacketQueues(packet, opcode);
             const bool heldLabelWait = pipelined && !predicated && orderedWaits && (opcode == 0x3c || opcode == 0x93) && header != RenderingWaitPacketHeader && waitTakesPendingLabel(packet);
-            const bool beside = DrawFinisher::Overlap() && opcode != 0x15 && (queuesLabel || heldLabelWait || keepsDrawPipeline(packet, header, opcode));
+            const bool queuesSampleDump = queueable && sampleDumpQueues(packet, opcode, submission.queue);
+            const bool queuesDispatch = opcode == 0x15 && pipelined && pipelineDispatch() && !predicated;
+            const bool beside = DrawFinisher::Overlap() && (queuesDispatch || (opcode != 0x15 && (queuesLabel || heldLabelWait || queuesSampleDump || keepsDrawPipeline(packet, header, opcode))));
             if (!beside) DrawFinisher::Get().Drain();
             if (DrawFinisher::Overlap()) {
                 DrawFinisher::NoteDrain(DrawFinisher::DrainSite::Packet, !beside);

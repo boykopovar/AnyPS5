@@ -304,7 +304,7 @@ void CheckRuntimeDescriptors(AgcDriver::VulkanDevice& device, std::uint32_t wave
     const auto output = BufferDescriptor(Output.data(), threads * 4u);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-    ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}}, {waveSize, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.Target(), {0u, 0u, 0u, 128u}};
+    ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}}, {waveSize, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.ComputeTarget(waveSize), {0u, 0u, 0u, 128u}};
     ShaderRecompiler::RecompileResult first;
     for (const auto& value : cases) {
         auto input = BufferDescriptor(Input.data(), value.records);
@@ -345,9 +345,9 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, Wave32Code, 32, device->Target());
+        Run(*device, Wave32Code, 32, device->ComputeTarget(32));
         Check(Expected32, Names, "wave32");
-        Run(*device, Wave64Code, 64, device->Target());
+        Run(*device, Wave64Code, 64, device->ComputeTarget(64));
         Check(Expected64, Names, "wave64");
         Run(*device, Wave64Code, 64, device->ComputeTarget(32));
         Check(Expected64, Names, "wave64 split");

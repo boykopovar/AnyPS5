@@ -32,6 +32,8 @@ private:
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline heapPipeline = VK_NULL_HANDLE;
+    VkBufferUsageFlags addressUsage = 0;
     // Guest bytes in host memory, and the device-local copies the conversion shader works on.
     std::unique_ptr<Buffer> tiled;
     std::unique_ptr<DeviceBuffer> tiledDevice;

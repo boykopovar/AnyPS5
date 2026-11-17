@@ -68,7 +68,12 @@ Driver::DispatchCacheFootprint Driver::DispatchCacheSize() {
 
 std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
     const auto held = [](const auto& values) { return static_cast<std::uint64_t>(values.capacity() * sizeof(values[0])); };
-    auto bytes = sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.registeredViews != nullptr ? held(*variant.registeredViews) : 0u) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0);
+    auto bytes = sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.registeredViews != nullptr ? held(*variant.registeredViews) : 0u) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0) + held(variant.ringDescriptorPatches) + held(variant.ringDataPatches);
+    if (variant.ringTemplate != nullptr) {
+        const auto& ring = *variant.ringTemplate;
+        bytes += sizeof(ring) + held(ring.userData) + held(ring.flattenedSrt) + held(ring.vertexAttributes) + held(ring.bindings);
+        for (const auto& words : ring.bindings) bytes += held(words);
+    }
     if (variant.linking != nullptr) {
         const auto& link = *variant.linking;
         bytes += sizeof(link) + held(link.callees) + held(link.code) + held(link.tableUserData) + held(link.dependencies);

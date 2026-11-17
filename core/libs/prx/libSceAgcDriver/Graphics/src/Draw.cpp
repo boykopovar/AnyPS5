@@ -1,3 +1,6 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "HeapCacheSwitch.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
@@ -128,6 +131,9 @@ struct PixelFunctionLdsPool {
     std::uint32_t* header = nullptr;
     std::uint32_t subgroupSize = 0;
     std::uint32_t slots = 0;
+    VkDeviceSize bytes = 0;
+    VkDeviceAddress address = 0;
+    const BindlessHeap* heapWritten = nullptr;
     bool announced = false;
 };
 
@@ -145,6 +151,9 @@ struct MeshWindowPool {
     Context context{};
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize bytes = 0;
+    VkDeviceAddress address = 0;
+    const BindlessHeap* heapWritten = nullptr;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
@@ -202,6 +211,26 @@ PixelFunctionLdsLayouts PixelFunctionLdsSetLayouts(const Context& context) {
     return {pool.empty, pool.bufferLayout};
 }
 
+bool PoolAddressed(const Context& context) {
+    return context.descriptorHeap && context.bufferDeviceAddress;
+}
+
+VkBufferUsageFlags PoolBufferUsage(bool addressed) {
+    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+}
+
+constexpr VkMemoryAllocateFlagsInfo PoolAddressFlags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
+
+template <typename Pool, typename Heap>
+void WriteHeapPool(const Context& context, Pool& pool, const char* missingAddress, void (Heap::*write)(std::uint64_t, std::uint64_t)) {
+    if (!context.descriptorHeap || !DescriptorHeapEnabled()) return;
+    auto& heap = BindlessHeap::For(context);
+    if (pool.heapWritten == &heap) return;
+    Require(pool.address != 0, missingAddress);
+    (heap.*write)(pool.address, pool.bytes);
+    pool.heapWritten = &heap;
+}
+
 void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, std::uint32_t subgroupSize) {
     const auto operations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT;
     Require((context.subgroup.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT) != 0 && (context.subgroup.supportedOperations & operations) == operations, "pixel function LDS needs fragment subgroup elect, ballot and broadcast");
@@ -218,12 +247,14 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         const auto bytes = 16ull + stride * pool.slots;
         VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bufferInfo.size = bytes;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        const bool addressed = PoolAddressed(context);
+        bufferInfo.usage = PoolBufferUsage(addressed);
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer pixel function LDS");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        if (addressed) allocation.pNext = &PoolAddressFlags;
         allocation.allocationSize = requirements.size;
         constexpr auto hostCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         constexpr auto deviceLocalHost = hostCoherent | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -254,6 +285,10 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
             Check(allocated, "vkAllocateMemory pixel function LDS");
         }
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory pixel function LDS");
+        pool.bytes = bytes;
+        if (addressed) {
+            pool.address = BufferDeviceAddress(context, pool.buffer);
+        }
         Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, pool.memory, 0, 16, 0, reinterpret_cast<void**>(&pool.header)), "vkMapMemory pixel function LDS");
         pool.header[0] = 0u;
         pool.header[1] = 0u;
@@ -281,6 +316,7 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         pool.announced = true;
     }
     Require(pool.subgroupSize == subgroupSize, "pixel function LDS subgroup size does not match the pool");
+    WriteHeapPool(context, pool, "the pixel function LDS pool has no device address for the GPU heap", &BindlessHeap::WritePixelLdsBuffer);
     const VkMemoryBarrier beforeFill{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT};
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &beforeFill, 0, nullptr, 0, nullptr);
     context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, pool.buffer, 0, 4, 0u);
@@ -306,26 +342,39 @@ VkDescriptorSetLayout MeshWindowSetLayout(const Context& context) {
     return pool.layout;
 }
 
+void WriteMeshWindowHeap(const Context& context, MeshWindowPool& pool) {
+    WriteHeapPool(context, pool, "the mesh window pool has no device address for the GPU heap", &BindlessHeap::WriteMeshWindowBuffer);
+}
+
 void PrepareMeshWindow(const Context& context) {
     std::lock_guard lock(MeshWindowMutex());
     auto& pool = MeshWindowPools()[context.device];
     Require(pool.layout != VK_NULL_HANDLE, "mesh window descriptor set layout was not created");
-    if (pool.set != VK_NULL_HANDLE) return;
+    if (pool.set != VK_NULL_HANDLE) {
+        WriteMeshWindowHeap(context, pool);
+        return;
+    }
     try {
         const auto bytes = (static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowHeaderDwords) + static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowSlots) * ShaderRecompiler::MeshWindowSlotDwords) * 4ull;
         Require(bytes <= context.limits.maxStorageBufferRange, "mesh window pool does not fit in the device storage buffer range");
         VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bufferInfo.size = bytes;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        const bool addressed = PoolAddressed(context);
+        bufferInfo.usage = PoolBufferUsage(addressed);
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer mesh window");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        if (addressed) allocation.pNext = &PoolAddressFlags;
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         Check(MemoryAccounting::Allocate(context, allocation, "mesh window", &pool.memory), "vkAllocateMemory mesh window");
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory mesh window");
+        pool.bytes = bytes;
+        if (addressed) {
+            pool.address = BufferDeviceAddress(context, pool.buffer);
+        }
         const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.maxSets = 1u;
@@ -353,6 +402,7 @@ void PrepareMeshWindow(const Context& context) {
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &afterFill, 0, nullptr, 0, nullptr);
         batch.SubmitAndWait();
         pool.set = set;
+        WriteMeshWindowHeap(context, pool);
         std::fprintf(stderr, "[gpu] mesh window pool: %u workgroup slots, %llu MiB\n", ShaderRecompiler::MeshWindowSlots, static_cast<unsigned long long>(bytes >> 20u));
     } catch (...) {
         const auto layout = pool.layout;
@@ -368,7 +418,7 @@ void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipeline
     std::lock_guard lock(MeshWindowMutex());
     const auto& pool = MeshWindowPools().at(context.device);
     Require(pool.set != VK_NULL_HANDLE, "mesh window buffer was not prepared");
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, 0, nullptr);
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, SetBindSite::Draw);
 }
 
 void ReleaseMeshWindow(VkDevice device) {
@@ -391,7 +441,7 @@ void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPi
     std::lock_guard lock(PixelLdsMutex());
     const auto& pool = PixelLdsPools().at(context.device);
     Require(pool.set != VK_NULL_HANDLE, "pixel function LDS buffer was not prepared");
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::PixelFunctionLdsDescriptorSet, 1, &pool.set, 0, nullptr);
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::PixelFunctionLdsDescriptorSet, 1, &pool.set, SetBindSite::Draw);
 }
 
 void CheckPixelFunctionLds(const Context& context) {
@@ -655,7 +705,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     const auto commands = recorder.Commands();
     if (resident != nullptr && !resident->Cached()) recorder.KeepBytes(resident.get(), static_cast<std::size_t>(resident->BudgetBytes()));
     recorder.Keep(resident);
-    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
+    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0, resident.get());
     recorder.NotePendingWrite(address, bytes);
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
@@ -876,6 +926,11 @@ std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse
     return counts;
 }
 
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ShaderResources::MoveRefusal::Count)>& addressMoveRefusals() {
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ShaderResources::MoveRefusal::Count)> counts{};
+    return counts;
+}
+
 void countAddressDrawReuse(AddressDrawReuse outcome) {
     addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
 }
@@ -1020,6 +1075,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         }
         AgcDriver::ProfilePrint_nid_no_patch("%s\n", reuse);
         profile.addressSeen = address;
+        std::string refusals = "[rescache] address-based moved-buffer refusals (cumulative):";
+        for (std::size_t why = 1; why < addressMoveRefusals().size(); ++why) {
+            const auto count = addressMoveRefusals()[why].load(std::memory_order_relaxed);
+            if (count != 0) refusals += std::string(" ") + ShaderResources::MoveRefusalName(static_cast<ShaderResources::MoveRefusal>(why)) + " " + std::to_string(count);
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("%s\n", refusals.c_str());
     }
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
@@ -1069,7 +1130,7 @@ void countCache(std::uint64_t DrawProfile::*counter) {
 // every draw.
 bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key) {
     using Stage = ShaderRecompiler::ShaderStage;
-    static const bool disabled = std::getenv("APS5_NO_VALIDATE_CACHE") != nullptr;
+    static const bool disabled = !ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::ValidateCache);
     const auto add = [&](auto value) { key.push_back(static_cast<std::uint64_t>(value)); };
     bool keyed = !disabled;
     if (keyed) {
@@ -1090,8 +1151,9 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
             add(KeyedPushOffset(shader));
             add(program.pushConstants.size());
             add(program.bdaAbiVersion);
-            add(program.vertexAttributes.size());
-            for (const auto& attribute : program.vertexAttributes) {
+            const auto& attributes = DrawVertexAttributes(shader);
+            add(attributes.size());
+            for (const auto& attribute : attributes) {
                 add(attribute.location);
                 add(attribute.components);
                 add(attribute.fetchIndex);
@@ -1253,8 +1315,65 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
 // workload with such rings; in the profiled menu stage every draw was DRAW_INDEX_AUTO (index range
 // 0) onto one fixed target, so its misses come from the stages' descriptor words themselves.
 bool MovableBuffers() {
-    static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr;
+    static const bool enabled = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::MovedBufferTemplates);
     return enabled;
+}
+
+std::atomic<std::uint64_t>& drawContentKeysBuilt() {
+    static std::atomic<std::uint64_t> built{0};
+    return built;
+}
+
+bool KeysOnTemplate(const CompiledShader& shader) {
+    if (!MovableBuffers()) return false;
+    const auto* heap = shader.heap;
+    if (heap == nullptr || heap->base == nullptr || shader.program->heapTemplateId == 0) return false;
+    const auto& bindings = shader.program->bindings;
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+        const auto role = bindings[index].role;
+        if (role != ShaderRecompiler::DescriptorRole::GuestImages && role != ShaderRecompiler::DescriptorRole::GuestSamplers) continue;
+        if (index < heap->bindings.size() && !heap->bindings[index].empty()) return false;
+    }
+    return true;
+}
+
+struct DrawKeyMemoChoice {
+    decltype(ShaderRecompiler::ResultKeyMemo::words)& memo;
+    bool memoize;
+};
+
+DrawKeyMemoChoice ChooseDrawKeyMemo(const CompiledShader& shader) {
+    const ShaderRecompiler::HeapStageWords* owner = shader.heap;
+    if (owner == nullptr) return {shader.program->drawKeyMemo.words, true};
+    if (!owner->memoizeKey && KeysOnTemplate(shader)) owner = owner->base.get();
+    return {owner->drawKeyMemo.words, owner->memoizeKey};
+}
+
+std::array<std::uint32_t, 5> DrawKeyOwnerWords(const CompiledShader& shader) {
+    const auto ownerId = shader.program->heapTemplateId != 0 ? shader.program->heapTemplateId : static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(shader.program));
+    const auto variant = shader.program->PipelineVariantId();
+    return {static_cast<std::uint32_t>(ownerId), static_cast<std::uint32_t>(ownerId >> 32u),
+            static_cast<std::uint32_t>(shader.stage) | (shader.program->heapTemplateId != 0 ? 0x80000000u : 0u),
+            static_cast<std::uint32_t>(variant), static_cast<std::uint32_t>(variant >> 32u)};
+}
+
+bool ReadsAddressTable(const CompiledShader& shader) {
+    return std::ranges::any_of(shader.program->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
+}
+
+void AppendMovedBufferAlignments(const CompiledShader& shader, std::uint64_t alignment, ResourceCache::Key& key) {
+    for (const auto& binding : shader.program->bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        const auto& words = DrawGuestWords(shader, binding);
+        if (words.size() != static_cast<std::size_t>(binding.count) * 4u) continue;
+        for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto* descriptor = words.data() + static_cast<std::size_t>(element) * 4u;
+            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+            const bool empty = descriptor[2] == 0 || (descriptor[0] == 0 && (descriptor[1] & 0xffffu) == 0);
+            if (written || empty) continue;
+            key.push_back(static_cast<std::uint32_t>(descriptor[0] & (alignment - 1u)));
+        }
+    }
 }
 
 ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
@@ -1267,16 +1386,31 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     };
     append64(reinterpret_cast<std::uint64_t>(context.device));
     key.push_back(static_cast<std::uint32_t>(shaders.size()));
+    const bool inPlaceMoves = MovableBuffers() && AnyHeapShader(shaders) && std::ranges::any_of(shaders, ReadsAddressTable);
+    const auto alignment = inPlaceMoves ? static_cast<std::uint64_t>(GuestBufferViewAlignment(context.limits)) : 0u;
     for (const auto& shader : shaders) {
         const auto sizeAt = key.size();
         key.push_back(0u);
-        auto& memo = shader.program->drawKeyMemo.words;
-        if (auto words = memo.load(std::memory_order_acquire); words != nullptr) {
-            key.insert(key.end(), words->begin(), words->end());
-        } else {
-            ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
-            memo.store(std::make_shared<const std::vector<std::uint32_t>>(key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end()), std::memory_order_release);
+        const auto [memo, memoize] = ChooseDrawKeyMemo(shader);
+        std::array<std::uint32_t, 5> ownerStorage{};
+        std::span<const std::uint32_t> owner;
+        if (shader.heap != nullptr) {
+            ownerStorage = DrawKeyOwnerWords(shader);
+            owner = ownerStorage;
         }
+        const auto words = memoize ? memo.load(std::memory_order_acquire) : nullptr;
+        if (words != nullptr && words->size() >= owner.size() && std::equal(owner.begin(), owner.end(), words->begin())) {
+            key.insert(key.end(), words->begin() + static_cast<std::ptrdiff_t>(owner.size()), words->end());
+        } else {
+            drawContentKeysBuilt().fetch_add(1, std::memory_order_relaxed);
+            ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
+            if (memoize) {
+                auto stored = std::make_shared<std::vector<std::uint32_t>>(owner.begin(), owner.end());
+                stored->insert(stored->end(), key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end());
+                memo.store(std::move(stored), std::memory_order_release);
+            }
+        }
+        if (inPlaceMoves) AppendMovedBufferAlignments(shader, alignment, key);
         key[sizeAt] = static_cast<std::uint32_t>(key.size() - sizeAt - 1u);
     }
     key.push_back(colorAttachments);
@@ -1299,7 +1433,7 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
     for (const auto& shader : shaders) {
         for (const auto& binding : shader.program->bindings) {
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
-            const auto& words = binding.guestDescriptor;
+            const auto& words = DrawGuestWords(shader, binding);
             for (std::size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[offset], words[offset + 1], words[offset + 2], words[offset + 3]}};
                 const auto address = descriptor.Base48();
@@ -1417,8 +1551,12 @@ void CountDrawSkip(DrawSkip kind, double us) {
 }
 
 
+std::uint64_t DrawContentKeysBuilt() {
+    return drawContentKeysBuilt().load(std::memory_order_relaxed);
+}
+
 bool DrawRecipes() {
-    static const bool noDrawRecipe = std::getenv("APS5_NO_DRAW_RECIPE") != nullptr;
+    static const bool noDrawRecipe = !ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawRecipe);
     return !noDrawRecipe;
 }
 
@@ -1744,7 +1882,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     ValidateSampleMask(context, state, shaders);
     timer.phase(PhaseValidate);
     const auto layoutStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const auto& attributes = shaders.front().program->vertexAttributes;
+    const auto& attributes = DrawVertexAttributes(shaders.front());
     if (recipe != nullptr) {
         plan.vertexInput = recipe->vertexInput;
     } else if (!attributes.empty()) {
@@ -1752,7 +1890,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
         if (plan.retainedVertexInput == nullptr) plan.vertexInput = BuildVertexInputLayout(context, attributes);
     }
     timer.charge(PhaseVertex, layoutStart);
-    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
+    static const bool noDrawResourceCache = !ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::DrawResourceCache);
     static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     plan.candidate = recipe == nullptr && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
@@ -1906,7 +2044,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool restartLeft = draw.indirect.has_value();
         auto bounds = DrawIndexRange(kept, draw.indexSize, restartLeft);
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
-        if (const auto zeroFrom = bounds && !shaders.front().program->vertexAttributes.empty() ? ZeroFetchVertex(shaders.front().program->vertexAttributes) : std::nullopt) {
+        if (const auto& attributes = DrawVertexAttributes(shaders.front()); const auto zeroFrom = bounds && !attributes.empty() ? ZeroFetchVertex(attributes) : std::nullopt) {
             const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
             if (bounds->highest >= limit && bounds->highest - limit >= ZeroFetchSlack) bounds = ClampDrawIndices(kept, draw.indexSize, restartLeft, limit);
         }
@@ -1953,7 +2091,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             return inputs;
         }
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
-        if (const auto zeroFrom = state.stages.mesh || shaders.front().program->vertexAttributes.empty() ? std::nullopt : ZeroFetchVertex(shaders.front().program->vertexAttributes)) {
+        if (const auto& attributes = DrawVertexAttributes(shaders.front()); const auto zeroFrom = state.stages.mesh || attributes.empty() ? std::nullopt : ZeroFetchVertex(attributes)) {
             const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
             if (*highest >= limit && *highest - limit >= ZeroFetchSlack) {
                 GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
@@ -1990,7 +2128,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");
     timing.Mark("index_upload");
-    const auto& attributes = shaders.front().program->vertexAttributes;
+    const auto& attributes = DrawVertexAttributes(shaders.front());
     inputs.vertexOffsets.assign(attributes.size(), 0);
     inputs.vertexHandles.reserve(attributes.size());
     // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
@@ -2147,7 +2285,7 @@ AddressStages addressStages(std::span<const CompiledShader> shaders) {
     auto stages = AddressStages::None;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr || std::none_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; })) continue;
-        if (ShaderStoresThroughAddresses(shader.program->spirv)) return AddressStages::Storing;
+        if (ProgramStoresThroughAddresses(*shader.program)) return AddressStages::Storing;
         stages = AddressStages::ReadOnly;
     }
     return stages;
@@ -2254,20 +2392,23 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             bool patched = false;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
+            auto refusal = ShaderResources::MoveRefusal::None;
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched, &refusal);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
-                static_cast<void>(heldSpace.release());
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
+                if (resolved.resources->HeapStage()) resolved.resources->RefreshHeapStage(shaders);
+                static_cast<void>(heldSpace.release());
+                outcome.addressBased = resolved.resources->HoldsLease();
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
                 if (counted) reuse = AddressDrawReuse::Reused;
             } else if (valid || inUse) {
                 if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
-                countCache(&DrawProfile::cacheMisses);
+                if (valid && counted) addressMoveRefusals()[static_cast<std::size_t>(refusal)].fetch_add(1, std::memory_order_relaxed);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 SharedResourceCache().Remove(resolved.contentKey);
@@ -2647,6 +2788,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
 struct StagedWrite {
     std::shared_ptr<StagedTemporary> temporary;
     VkImageView target = VK_NULL_HANDLE;
+    const HeapSlotOwner* targetOwner = nullptr;
     std::uint16_t mask = 0;
     std::uint32_t samples = 1;
     VkRect2D area{};
@@ -2681,14 +2823,17 @@ struct RecordedDraw {
 
 // A remapped viewport depth range reads its scale and offset from the draw's push block (the vertex shader's
 // RemapPositionDepth), so draws that differ only in them share one pipeline; the draw's own state supplies them.
-void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state) {
+void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state, std::span<const CompiledShader> shaders) {
     if (state.depthRemap.mode == 0u) return;
+    const auto reads = [](const CompiledShader& shader) { return shader.program != nullptr && (shader.program->pushItems & ShaderRecompiler::RuntimeAbi::DepthRemapPushBit) != 0u; };
+    const auto rooted = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->dataAddressPush; };
+    if (std::ranges::any_of(shaders, rooted) && !std::ranges::any_of(shaders, reads)) return;
     static_assert(ShaderRecompiler::DepthRemapPushOffsetBytes + ShaderRecompiler::DepthRemapPushBytes <= PipelinePushSlotBytes);
     const std::array<float, ShaderRecompiler::DepthRemapPushBytes / 4> words{state.depthRemap.scale, state.depthRemap.offset};
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
-void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0, const ShaderResources::DrawBindings* drawBindings = nullptr) {
     const auto commands = recording.Commands();
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -2696,10 +2841,15 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
         resources.PatchPushConstants(block);
         stages = PushConstantStages(shaders);
     }
-    patchDepthRemapPush(block, state);
+    patchDepthRemapPush(block, state, shaders);
+    Require(!replay.empty(), "stencil replay has no pipelines");
+    const auto placements = replay.front().second->PushPlacements();
+    resources.PatchDataAddresses(block, shaders, placements, drawBindings);
     const auto fragment = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && !shader.program->stencilReferences.empty(); });
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
-    const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
+    const auto stencilItem = fragment->program->dataAddressPush ? placements[static_cast<std::size_t>(fragment - shaders.begin())].Item(ShaderRecompiler::RuntimeAbi::RootItem::StencilReference) : 0u;
+    Require(stencilItem != ShaderRecompiler::RuntimeAbi::NoPushPosition, "stencil replay fragment stage has no stencil reference in its push layout");
+    const auto referenceOffset = fragment->program->dataAddressPush ? stencilItem * sizeof(std::uint32_t) : fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
     const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
         std::uint32_t unusedSubdraw = 0;
@@ -2730,13 +2880,14 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
     }
 }
 
-void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes, VkShaderStageFlags stages, VkDeviceAddress meshArguments = 0, bool restartTable = false, std::uint32_t meshLayerStride = 0) {
+void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes, VkShaderStageFlags stages, VkDeviceAddress meshArguments = 0, bool restartTable = false, std::uint32_t meshLayerStride = 0, const ShaderResources::DrawBindings* drawBindings = nullptr) {
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
     if (bytes == nullptr) {
         resources.PatchPushConstants(block);
         stages = PushConstantStages(shaders);
     }
-    patchDepthRemapPush(block, state);
+    patchDepthRemapPush(block, state, shaders);
+    resources.PatchDataAddresses(block, shaders, pipeline.PushPlacements(), drawBindings);
     if (state.stages.tessellation) {
         for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || shader.pushConstantOffset >= PipelinePushSlotBytes || shader.pushConstantOffset + shader.program->pushConstants.size() <= ShaderRecompiler::TessellationLevelPushOffsetBytes, "a stage's push constants overlap the tessellation levels");
         const std::array<float, ShaderRecompiler::TessellationLevelPushBytes / 4> levels{state.stages.minTessellationLevel, state.stages.maxTessellationLevel};
@@ -2855,6 +3006,20 @@ bool WriteOnlyPasses() {
     return enabled;
 }
 
+void bindDrawResources(const Context& context, VkCommandBuffer commands, const Pipeline& pipeline, const ShaderResources& resources, const ShaderResources::DrawUse* drawUse, const ShaderResources::DrawBindings* drawBindings, bool guestBuffersChecked) {
+    if (pipeline.DescriptorHeap()) {
+        resources.BindDescriptorHeaps(commands, guestBuffersChecked);
+        NoteEmptyResourceSet();
+    } else if (drawBindings != nullptr) {
+        const auto set = drawBindings->allocation.set;
+        const auto fragmentSet = drawBindings->fragmentAllocation.set;
+        if (set != VK_NULL_HANDLE) CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Layout(), 0, 1, &set, SetBindSite::Draw);
+        if (fragmentSet != VK_NULL_HANDLE) CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, SetBindSite::Draw);
+    } else {
+        resources.BindDrawUse(commands, pipeline.Layout(), drawUse);
+    }
+}
+
 void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, RecordedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs, const DrawTraceContext* trace = nullptr) {
     std::uint32_t subdraw = 0;
     auto* recorder = record.recorder;
@@ -2872,9 +3037,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     // A queued DCC key store over memory the draw writes or reads in place (unknown for an
     // address-based build), or over its GPU-side records, lands before it, as before a dispatch
     // (VulkanDevice::dispatch); the flush ends an open pass, so it comes before the decision.
+    const auto movedReadOverlaps = [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(record.moved.begin(), record.moved.end(), [&](const ShaderResources::MovedBuffer& moved) { return moved.words.empty() && moved.address < end && begin < moved.address + moved.size; }); };
     const auto touches = [&](std::uint64_t begin, std::uint64_t end) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (resources.WritesOverlap(begin, bytes) || resources.ReadsOverlap(begin, bytes)) return true;
+        if (movedReadOverlaps(begin, end)) return true;
         if (!gpuIndirect) return false;
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
@@ -2914,9 +3081,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     for (const auto image : record.multisampleImages) passAttachments.emplace_back(image, true);
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
-    static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
+    static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)) || movedReadOverlaps(begin, end); }, unknownMemory));
     const auto drawUse = resources.BeginDrawUse(*recorder);
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved, false, drawUse != nullptr ? drawUse->record.get() : nullptr);
+    if (drawBindings != nullptr) passReads.insert(passReads.end(), drawBindings->movedReads.begin(), drawBindings->movedReads.end());
     static const bool addressReadPasses = std::getenv("APS5_NO_ADDRESS_READ_PASSES") == nullptr;
     const bool readOnlyBda = addressReadPasses && resources.BdaReadOnly();
     outcome.addressDraw = addressBased;
@@ -3026,16 +3194,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->Begin(recording, *record.framebuffer, state.renderExtent, state, record.masked);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    if (drawBindings != nullptr) {
-        const auto set = drawBindings->allocation.set;
-        const auto fragmentSet = drawBindings->fragmentAllocation.set;
-        if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
-        if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
-    } else {
-        resources.BindDrawUse(commands, record.pipeline->Layout(), drawUse.get());
-    }
-    if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
-    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
+    const bool heapPipeline = record.pipeline->DescriptorHeap();
+    NoteHeapRecord(false, heapPipeline);
+    Require(heapPipeline || !resources.HeapStage(), "a GPU-mode draw needs a VK_EXT_descriptor_heap pipeline");
+    bindDrawResources(context, commands, *record.pipeline, resources, drawUse.get(), drawBindings.get(), true);
+    if (!heapPipeline && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
+    if (!heapPipeline && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     std::array<std::byte, PipelinePushConstantBytes> movedPush;
     const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
@@ -3048,7 +3212,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             pushBytes = &movedPush;
         }
     }
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
+    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride, drawBindings.get());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
@@ -3062,7 +3226,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
+        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages, drawBindings.get());
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
@@ -3106,11 +3270,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
+    if (drawBindings != nullptr && !drawBindings->movedReads.empty()) recorder->NotePendingReads(drawBindings->movedReads, Recorder::ReadKind::DrawInput);
     timer.phase(PhaseKeep);
     if (!record.staged.empty()) {
         const auto merged = recorder->Commands();
         for (auto& write : record.staged) {
-            RecordStagedMerge(context, merged, *write.temporary, write.target, write.mask, write.samples, write.area);
+            RecordStagedMerge(context, merged, *write.temporary, write.target, write.mask, write.samples, write.area, write.targetOwner);
             recorder->Keep(write.temporary);
         }
     }
@@ -3198,6 +3363,8 @@ struct TargetBinding {
     std::shared_ptr<void> multisampleOwner;
     std::shared_ptr<StagedTemporary> stagedTemporary;
     VkImageView stagedTarget = VK_NULL_HANDLE;
+    const HeapSlotOwner* stagedTargetOwner = nullptr;
+    std::shared_ptr<void> stagedTargetKeep;
     std::unique_ptr<Buffer> dump;
 };
 
@@ -3251,7 +3418,7 @@ void keepHeldSpace(PreparedDraw& prepared) {
 }
 
 bool ShapeMemoEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr;
+    static const bool enabled = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::ShapeMemo);
     return enabled;
 }
 
@@ -3564,7 +3731,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         recipeOut = nullptr;
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
-    if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
+    if (context.recorder != nullptr) context.recorder->BoundDrawBatch();
     auto& timing = prepared.timing.emplace("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -3612,7 +3779,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
                 PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
-                binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
+                const auto storage = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
+                binding.stagedTarget = storage.view;
+                binding.stagedTargetOwner = storage.owner;
+                binding.stagedTargetKeep = storage.keep;
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
                 targetViews.push_back(binding.stagedTemporary->View());
                 timer.phase(PhaseReadTarget);
@@ -3766,8 +3936,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
-                    for (std::size_t offset = 0; offset + 8u <= binding.guestDescriptor.size(); offset += 8u) {
-                        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(offset, 8u);
+                    const auto& guestWords = DrawGuestWords(shader, binding);
+                    for (std::size_t offset = 0; offset + 8u <= guestWords.size(); offset += 8u) {
+                        const auto words = std::span<const std::uint32_t>(guestWords).subspan(offset, 8u);
                         if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
                         const auto texture = DecodeTextureResource(words);
                         Require(!DepthSurfaceAt(context, words, texture), "stencil replay refuses sampled depth-surface feedback");
@@ -4037,6 +4208,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             if (binding.multisampled) {
                 record.multisampleImages.push_back(binding.multisampleImage);
                 record.multisampleTargets.push_back(binding.multisampleOwner);
+                if (binding.stagedTargetKeep != nullptr && binding.stagedTargetKeep != binding.multisampleOwner) record.multisampleTargets.push_back(binding.stagedTargetKeep);
             }
             if (binding.stagedTemporary != nullptr) {
                 record.multisampleImages.push_back(binding.stagedTemporary->Image());
@@ -4048,7 +4220,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
                 const auto right = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.x) + state.scissor.extent.width, color.extent.width);
                 const auto bottom = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.y) + state.scissor.extent.height, color.extent.height);
                 area.extent = {static_cast<std::uint32_t>(std::max<std::int64_t>(right - area.offset.x, 0)), static_cast<std::uint32_t>(std::max<std::int64_t>(bottom - area.offset.y, 0))};
-                record.staged.push_back({binding.stagedTemporary, binding.stagedTarget, color.stagedMask, color.samples, area});
+                record.staged.push_back({binding.stagedTemporary, binding.stagedTarget, binding.stagedTargetOwner, color.stagedMask, color.samples, area});
             }
         }
         record.indirect = args != nullptr ? &indirect : nullptr;
@@ -4087,6 +4259,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             recipe->fragmentOutputs = inputs.fragmentOutputs;
             recipe->shaderStages = inputs.shaderStages;
             recipe->hasDepth = state.depth.has_value();
+            recipe->movedBuffers = !resolved.moved.empty();
             *recipeOut = std::move(recipe);
         }
         timing.Mark("draw_and_resource_release");
@@ -4213,10 +4386,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
     pipeline->Begin(recording, *framebuffer, state.renderExtent, state, masked.has_value() ? &*masked : nullptr);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    const auto drawUse = recorded ? resources->BeginDrawUse(*recorder) : nullptr;
-    resources->BindDrawUse(commands, pipeline->Layout(), drawUse.get());
-    if (pixelLdsSubgroup != 0u) BindPixelFunctionLds(context, commands, pipeline->Layout());
-    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
+    const bool heapPipeline = pipeline->DescriptorHeap();
+    const auto drawUse = recorded && !heapPipeline ? resources->BeginDrawUse(*recorder) : nullptr;
+    bindDrawResources(context, commands, *pipeline, *resources, drawUse.get(), nullptr, false);
+    if (pixelLdsSubgroup != 0u && !heapPipeline) BindPixelFunctionLds(context, commands, pipeline->Layout());
+    if (!heapPipeline && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
@@ -4512,7 +4686,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
-    if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
+    if (context.recorder != nullptr) context.recorder->BoundDrawBatch();
     static_cast<void>(snapshots);
     PerformanceTimer timing("Graphics.DrawWithRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4592,10 +4766,14 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         return miss(DrawRecipeMiss::Proof);
     }
     const auto moved = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
-    if (!moved.has_value()) return miss(DrawRecipeMiss::Buffers);
+    if (!moved.has_value()) {
+        timer.phase(PhaseLookup);
+        return miss(DrawRecipeMiss::Buffers);
+    }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    if (resources->HeapStage()) resources->RefreshHeapStage(shaders);
     if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
-    SharedResourceCache().Touch(recipe.key);
+    SharedResourceCache().TouchAging(recipe.key, resources->CacheTouchedAt());
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);
     outcome.completion = resources->ChecksFaults();

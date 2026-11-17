@@ -18,6 +18,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -10958,11 +10959,11 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
     std::cout << "Storage upload lifetime" << (failView ? " after view failure" : " after caller release") << ": passed\n";
 }
 
-void refreshProofTests(const Device& device, Recorder& recorder) {
+bool refreshProofTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: refresh proofs not tested\n";
-        return;
+        return false;
     }
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
@@ -10971,7 +10972,7 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     void* block = AllocateWatched(bytes, 65536);
     if (block == nullptr) {
         std::cout << "no write watching: refresh proofs not tested\n";
-        return;
+        return false;
     }
     auto* texels = static_cast<std::uint8_t*>(block);
     auto* keys = texels + surfaceBytes;
@@ -10996,7 +10997,7 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     } unregister{base, block, address};
     if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
         std::cout << "no watched host import: refresh proofs not tested\n";
-        return;
+        return false;
     }
     TextureDetiler detiler(base);
     auto context = base;
@@ -11079,6 +11080,47 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
     }
     recorder.Sync();
+    {
+        std::memset(keys, 0xff, keyCount);
+        const auto meta = resource.dccAddress >> 8u;
+        const std::vector<std::uint32_t> words{
+            static_cast<std::uint32_t>(address >> 8u),
+            static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((side - 1u) & 3u) << 30u),
+            ((side - 1u) >> 2u) | ((side - 1u) << 14u),
+            0xfacu | (0x1bu << 20u) | (9u << 28u),
+            0u,
+            0u,
+            (1u << 19u) | (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),
+            static_cast<std::uint32_t>(meta >> 8u),
+        };
+        ShaderRecompiler::RecompileResult program;
+        ShaderRecompiler::DescriptorBinding images{ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::GuestImages, 0, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding, 1, words};
+        images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        images.imageWritten = {true};
+        program.bindings.push_back(images);
+        const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        const PlaceholderImages placeholders(context);
+        auto imageContext = context;
+        imageContext.placeholderImages = &placeholders;
+        std::lock_guard gpu(GpuMutex());
+        ShaderResources resources(imageContext, compute);
+        Require(resources.Reusable(), "a set writing a keyed storage image is not kept for reuse");
+        ShaderResources::ProofReport report;
+        Require(resources.Revalidate(std::span(&compute, 1), &report), "a set over an unchanged keyed storage image did not revalidate");
+        Require(resources.Revalidate(std::span(&compute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a set over an unchanged keyed storage image left the fast proof");
+        const auto image = StorageTexture::FindLive(address, surfaceBytes);
+        Require(image != nullptr && image->UploadedKeys() == DccKeys::Uncompressed, "the storage image was not uploaded under uncompressed keys");
+        std::memset(keys, 0x00, keyCount);
+        Require(resources.Revalidate(std::span(&compute, 1), &report), "a set over a fast-cleared keyed storage image did not revalidate");
+        Require(report.path == ShaderResources::ProofPath::OwnRefreshed, "a fast clear of a storage image's keys took the full walk instead of the image's own refresh");
+        Require(image->UploadedKeys() == DccKeys::Clear0000, "the own refresh did not apply the fast clear");
+        Require(resources.Revalidate(std::span(&compute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "the set did not return to the fast proof after the fast clear");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+    }
+    return true;
 }
 
 bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
@@ -17352,6 +17394,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unchanged-cpu-stamps-only") {
             unchangedCpuStampTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--refresh-proofs-only") {
+            if (!refreshProofTests(device, recorder)) return 77;
+            std::cout << "refresh proof tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--rewritten-blocks-only") return rewrittenBlockTests(device, recorder) ? 0 : 77;

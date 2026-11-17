@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstdint>
 #include <map>
@@ -34,6 +35,7 @@ private:
     struct Target {
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline heapPipeline = VK_NULL_HANDLE;
     };
     struct Surface {
         VkImage image = VK_NULL_HANDLE;
@@ -42,7 +44,8 @@ private:
         VkFormat format = VK_FORMAT_UNDEFINED;
         VkExtent2D extent{};
     };
-    struct Slot {
+    struct Slot : Graphics::HeapSlotOwner {
+        using Graphics::HeapSlotOwner::ReleaseHeapSlots;
         Surface stage;
         Surface upscaled;
         VkDescriptorSet easuSet = VK_NULL_HANDLE;
@@ -51,16 +54,18 @@ private:
     };
 
     const Target& target(VkFormat format, VkImageLayout finalLayout, Filter filter);
-    void ensureSurface(Surface& surface, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
-    void releaseSurface(Surface& surface) noexcept;
+    void ensureSurface(Slot& slot, Surface& surface, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
+    void releaseSurface(Slot& slot, Surface& surface) noexcept;
     VkImageView createView(VkImage image, VkFormat format, VkImageUsageFlags usage) const;
     VkFramebuffer transientFramebuffer(Slot& slot, VkRenderPass renderPass, VkImage image, VkFormat format, VkExtent2D extent, VkImageLayout finalLayout);
     void bindSource(VkDescriptorSet set, VkImageView view) const;
-    void draw(VkCommandBuffer commands, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkDescriptorSet set, const void* parameters, std::uint32_t size) const;
+    void draw(VkCommandBuffer commands, Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkDescriptorSet set, VkImageView source, const void* parameters, std::uint32_t size) const;
     void release() noexcept;
 
     Graphics::Context context;
     float sharpness;
+    bool heap = false;
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSampler sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;

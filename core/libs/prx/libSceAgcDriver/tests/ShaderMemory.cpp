@@ -46,6 +46,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <map>
+#include <set>
 #include <future>
 #include <memory>
 #include <new>
@@ -443,6 +444,35 @@ void verifySpecializedModuleRelease() {
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
     const auto shared = Recompile(pixel);
     require(shared.spirv.data() == again.spirv.data(), "specialized module release: a second result of a live module copied its words");
+}
+
+void verifyRebuiltModuleKeepsWords() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> color{0x3f800000u};
+    const std::vector<std::uint32_t> code{0xbf800003u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
+    auto pixel = FrontendRequest(code, color);
+    pixel.shader.stage = ShaderStage::Fragment;
+    pixel.context.compute.reset();
+    pixel.context.pixel = ShaderPixelStageInfo{};
+    pixel.context.pixel->wave32 = true;
+    pixel.context.pixel->targetOutputMode[0] = 9u;
+    pixel.context.pixel->dualSourceBlend = true;
+    pixel.context.waveSize = 32u;
+    pixel.useCache = true;
+    {
+        const auto built = Recompile(pixel);
+        require(built.specializationId != 0u, "rebuilt module: the pixel fixture was not specialized");
+    }
+    SharedSpirv::Weak rebuilt;
+    const std::uint32_t* words = nullptr;
+    {
+        const auto again = Recompile(pixel);
+        rebuilt = again.spirv.Weaken();
+        words = again.spirv.data();
+    }
+    require(!rebuilt.Expired(), "rebuilt module: a module needed again after its release dropped its words a second time");
+    const auto third = Recompile(pixel);
+    require(third.spirv.data() == words, "rebuilt module: a kept module was specialized again");
 }
 
 void verifyLayerSpecializationRelease() {
@@ -8243,6 +8273,28 @@ void verifySingleLaneVertexWave() {
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
 }
 
+void verifyExtensionKey() {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    const std::array<std::string_view, 2> first{"VK_KHR_a", "VK_KHR_bb"};
+    const std::string copied[2] = {"VK_KHR_a", "VK_KHR_bb"};
+    const std::array<std::string_view, 2> same{copied[0], copied[1]};
+    const std::array<std::string_view, 2> second{"VK_KHR_a", "VK_KHR_bc"};
+    std::vector<std::uint64_t> firstKey, againKey, sameKey, secondKey, backKey;
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, firstKey);
+    RecompileCacheKey::BuildInterface(request, againKey);
+    request.target.supportedExtensions = same;
+    RecompileCacheKey::BuildInterface(request, sameKey);
+    request.target.supportedExtensions = second;
+    RecompileCacheKey::BuildInterface(request, secondKey);
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, backKey);
+    require(firstKey == againKey && firstKey == sameKey && firstKey == backKey, "extension key: the same extension names built different keys");
+    require(firstKey != secondKey, "extension key: a changed extension name kept the key");
+}
+
 void verifySingleLaneElectedAtomicMax() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformShuffleRelative, spv::CapabilityClipDistance, spv::CapabilityInt64};
@@ -8915,7 +8967,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQT4AAAA=", "new requests did not use serialization version 62");
+    require(requestPrefix(encoded, 8u) == "NVNQQT8AAAA=", "new requests did not use serialization version 63");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9036,7 +9088,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQT8AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQTwAAAA=", "NVNQQT0AAAA=", "NVNQQUAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9090,6 +9142,11 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
+    if (bytes.size() > 26u && bytes[4] == 63u) {
+        require(std::all_of(bytes.end() - 19, bytes.end() - 6, [](std::uint8_t value) { return value == 0u; }), "a version 63 request in these checks set a GPU heap target field");
+        bytes.erase(bytes.end() - 19, bytes.end() - 6);
+        bytes[4] = 62u;
+    }
     return bytes;
 }
 
@@ -9100,7 +9157,11 @@ std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
     return bytes;
 }
 
-std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
+std::string encodeBase64(std::vector<std::uint8_t> bytes) {
+    if (bytes.size() > 13u && bytes[4] == 62u) {
+        bytes[4] = 63u;
+        bytes.insert(bytes.end() - 6, 13u, 0u);
+    }
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string text;
     for (std::size_t index = 0; index < bytes.size(); index += 3u) {
@@ -10363,7 +10424,7 @@ void verifyCoherentGds() {
     require(std::ranges::find(decorations[gds], static_cast<std::uint32_t>(spv::DecorationCoherent)) != decorations[gds].end(), "coherent GDS: the gds buffer is not Coherent");
 }
 
-void verifyCoherentBufferAccesses() {
+auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t address, std::span<const std::uint32_t> capabilities) {
     using namespace ShaderRecompiler;
     alignas(256) static std::array<std::uint32_t, 64> input{};
     alignas(256) static std::array<std::uint32_t, 64> output{};
@@ -10373,6 +10434,26 @@ void verifyCoherentBufferAccesses() {
         static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
         static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, address, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    return Recompile(request).spirv;
+}
+
+void verifyCoherentBufferAccesses() {
+    using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     struct Module {
         std::map<std::uint32_t, std::string> names;
@@ -10384,22 +10465,7 @@ void verifyCoherentBufferAccesses() {
         std::vector<std::uint32_t> code{0x34020082u};
         if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
         code.insert(code.end(), {0xe0301000u | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, 0xe0701000u | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        RecompileRequest request{};
-        request.shader = {ShaderStage::Compute, 0x5a000u, code, 0, {}};
-        request.context.waveSize = 32;
-        request.context.userDataBaseRegister = 0;
-        request.context.userData = userData;
-        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-        request.target.vulkanVersion = 0x00401000u;
-        request.target.spirvVersion = 0x00010300u;
-        request.target.subgroupSize = 32;
-        request.target.bdaAbiVersion = BdaAbi::Version;
-        request.target.supportedCapabilities = capabilities;
-        request.target.supportedExtensions = extensions;
-        request.target.fragmentShaderBarycentricEnabled = false;
-        request.layout.pushConstantSizeBytes = 128;
-        request.useCache = false;
-        const auto words = Recompile(request).spirv;
+        const auto words = recompileCoherent(code, 0x5a000u, capabilities);
         Module module;
         std::map<std::uint32_t, std::uint32_t> bases;
         const auto base = [&](std::uint32_t pointer) {
@@ -13005,6 +13071,122 @@ void verifyRuntimeImageSwitchDeduplication() {
     require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
 }
 
+void verifyRegistrationStorageMipSlots() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t MetadataDword = 200u;
+    IrProgram program;
+    program.SetWaveSize(32u);
+    program.Resources().stage = IrShaderStage::Compute;
+    program.Resources().srtPlanComplete = true;
+    program.Resources().resourceTrackingComplete = true;
+    program.Metadata().shaderInfoComplete = true;
+    program.Metadata().bindingLayoutComplete = true;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    program.Metadata().blockInfo.emplace_back();
+    auto& zero = program.CreateValue(IrOpcode::Void, IrType::U32);
+    zero.SetImmediateU32(0u);
+    auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+    enabled.SetImmediateBool(true);
+    auto& handle = program.CreateValue(IrOpcode::GetImageResource, IrType::ImageResource, 0u);
+    for (std::uint32_t i = 0u; i < 8u; ++i) handle.AddArgument(&zero);
+    block.AppendInstruction(&handle);
+    auto& address = program.CreateValue(IrOpcode::MakeImageAddress, IrType::ImageAddress);
+    for (std::uint32_t i = 0u; i < 13u; ++i) address.AddArgument(&zero);
+    block.AppendInstruction(&address);
+    MemoryInfo memory{};
+    memory.kind = ResourceKind::Image;
+    memory.resource = 0u;
+    memory.imageDimension = RdnaImageDimension::Dim2D;
+    memory.imageAddressComponents = 2u;
+    memory.dmask = 0xfu;
+    memory.dataBits = 32u;
+    memory.dataDwords = 4u;
+    memory.componentCount = 4u;
+    program.Resources().memoryInfo.push_back(memory);
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Storage;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.mipMode = ImageMipMode::DynamicStorage;
+    image.mipCount = 3u;
+    image.written = true;
+    image.fmaskCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto Mips = std::ranges::max(modes, {}, &ImageResource::mipCount).mipCount;
+    require(Mips > 1u, "registration slot words: a dynamic-mip storage image has no mip chain");
+    program.Info().images.push_back(image);
+    program.Info().runtimeImageModes.push_back(modes);
+    auto& layout = program.Metadata().bindings;
+    layout.gpuResolvedImages = true;
+    layout.heapStorageImages = true;
+    layout.dataAddress = true;
+    layout.runtimeImageCount = 1u;
+    layout.memoryOffsetDword = MetadataDword;
+    for (const auto& mode : modes) {
+        const auto kind = DescriptorBindingForImage(mode);
+        if (std::ranges::none_of(layout.descriptors, [&](const IrDescriptorBinding& entry) { return entry.kind == kind; })) layout.descriptors.push_back({kind, std::vector<std::uint32_t>(Mips, 0u)});
+    }
+    for (const auto& descriptor : layout.descriptors) {
+        require(layout.HeapSlotWordKind(descriptor.kind), "registration slot words: a storage image kind has no slot words in a registration layout");
+        layout.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
+    }
+    require(!layout.HeapSlotWordKind(static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)), "registration slot words: a sampled image kind has slot words in a registration layout");
+    auto plain = layout;
+    plain.runtimeImageCount = 0u;
+    require(plain.HeapSlotWordKind(static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)), "registration slot words: a sampled image kind has no slot words outside a registration layout");
+    ShaderComputeInputInfo compute{};
+    compute.threadsNum[0] = 32u;
+    compute.threadsNum[1] = 1u;
+    compute.threadsNum[2] = 1u;
+    compute.hostSubgroupSize = 32u;
+    compute.waveSize = 32u;
+    ShaderStageInputInfo inputs{};
+    inputs.compute = &compute;
+    auto& texel = program.CreateValue(IrOpcode::CompositeConstructU32x4, IrType::U32x4);
+    for (std::uint32_t i = 0u; i < 4u; ++i) texel.AddArgument(&zero);
+    block.AppendInstruction(&texel);
+    auto& store = program.CreateValue(IrOpcode::ImageWrite, IrType::Void);
+    store.AddArgument(&handle);
+    store.AddArgument(&address);
+    store.AddArgument(&texel);
+    store.AddArgument(&enabled);
+    block.AppendInstruction(&store);
+    CompiledBindingLayout bindings{};
+    bindings.layout = layout;
+    SpirvTargetOptions target{};
+    target.vulkanVersion = 0x00401000u;
+    target.spirvVersion = 0x00010300u;
+    target.subgroupSize = 32u;
+    target.registrationModules = true;
+    target.gpuResolvedImages = true;
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityStorageImageArrayDynamicIndexing, spv::CapabilitySampledImageArrayDynamicIndexing, spv::CapabilityStorageImageWriteWithoutFormat};
+    target.supportedCapabilities = capabilities;
+    const auto words = SpirvEmitter().Emit(program, inputs, bindings, target);
+    std::map<std::uint32_t, std::size_t> definitions;
+    std::vector<std::size_t> writes;
+    for (std::size_t cursor = 5u; cursor < words.size(); cursor += words[cursor] >> 16u) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0u && count <= words.size() - cursor, "registration slot words: truncated SPIR-V instruction");
+        const auto opcode = words[cursor] & 0xffffu;
+        if (opcode == spv::OpImageWrite) writes.push_back(cursor);
+        if ((opcode == spv::OpLoad || opcode == spv::OpAccessChain) && count >= 4u) definitions[words[cursor + 2u]] = cursor;
+    }
+    const auto operandOf = [&](std::uint32_t id, std::uint32_t opcode, std::size_t operand) {
+        const auto found = definitions.find(id);
+        require(found != definitions.end() && (words[found->second] & 0xffffu) == opcode, "registration slot words: a storage image write does not take its descriptor through the image array");
+        return words[found->second + operand];
+    };
+    std::set<std::uint32_t> slotVariables;
+    for (const auto write : writes) {
+        const auto pointer = operandOf(words[write + 1u], spv::OpLoad, 3u);
+        const auto index = operandOf(pointer, spv::OpAccessChain, 4u);
+        slotVariables.insert(operandOf(index, spv::OpLoad, 3u));
+    }
+    require(writes.size() >= Mips && slotVariables.size() >= Mips, "registration slot words: the storage image writes of a dynamic mip chain do not each read their own heap slot word");
+}
+
 void verifyTableKeep() {
     using namespace ShaderRecompiler;
     std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
@@ -13338,6 +13520,7 @@ int main(int argc, char** argv) {
         verifyImageTables();
         verifyImageTableKeyBounds();
         verifySpecializedModuleRelease();
+        verifyRebuiltModuleKeepsWords();
         verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
         verifyImageTableUintStorage();
@@ -13360,6 +13543,7 @@ int main(int argc, char** argv) {
         verifyNarrowVertexWave();
         verifySingleLaneCrossLaneReads();
         verifySingleLaneVertexWave();
+        verifyExtensionKey();
         verifySingleLaneElectedAtomicMax();
         verifySingleLaneDomainWave();
         verifyMeshConfiguration();
@@ -13411,6 +13595,7 @@ int main(int argc, char** argv) {
         verifyGcnDimensionQueries();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
+        verifyRegistrationStorageMipSlots();
         verifyQuadMaskNeighbourReads();
         verifyPixelQuadPermReads();
         verifyCoherentGds();

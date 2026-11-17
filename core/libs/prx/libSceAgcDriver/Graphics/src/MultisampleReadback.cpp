@@ -1,13 +1,25 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MultisampleReadbackUint_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/MultisampleReadbackDepth_spv.h"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <limits>
 
 namespace AgcDriver::Graphics {
 namespace {
+
+struct HeapReadbackPush {
+    std::array<std::uint32_t, 7> values;
+    std::uint32_t pad;
+    VkDeviceAddress buffer;
+    std::uint32_t slot;
+    std::uint32_t pad2;
+};
+
+static_assert(offsetof(HeapReadbackPush, buffer) == 32 && offsetof(HeapReadbackPush, slot) == 40 && sizeof(HeapReadbackPush) == 48);
 
 std::uint32_t readbackElementBytes(VkFormat format) {
     switch (format) {
@@ -22,8 +34,8 @@ std::uint32_t readbackElementBytes(VkFormat format) {
 
 }
 
-VkPipeline TextureDetiler::multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth) {
-    const auto key = elementBytes | (depth ? 32u : 0u);
+VkPipeline TextureDetiler::multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth, bool heap) {
+    const auto key = elementBytes | (depth ? 32u : 0u) | (heap ? 64u : 0u);
     for (const auto& entry : readbackPipelines) if (entry.first == key) return entry.second;
     if (readbackDescriptorLayout == VK_NULL_HANDLE) {
         const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
@@ -60,7 +72,12 @@ VkPipeline TextureDetiler::multisampleReadbackPipeline(std::uint32_t elementByte
     info.layout = readbackPipelineLayout;
     readbackPipelines.reserve(readbackPipelines.size() + 1u);
     VkPipeline result = VK_NULL_HANDLE;
-    {
+    if (heap) {
+        const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+            HeapPushAddressMapping(0u, 0u, offsetof(HeapReadbackPush, buffer)),
+            HeapPushIndexMapping(BindlessHeap::For(context), 0u, 1u, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, offsetof(HeapReadbackPush, slot))};
+        result = CreateHeapComputePipeline(context, info, mappings);
+    } else {
         auto pipelineCacheLock = context.LockPipelineCacheForUse();
         Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1u, &info, nullptr, &result), "vkCreateComputePipelines multisample readback");
     }
@@ -68,7 +85,7 @@ VkPipeline TextureDetiler::multisampleReadbackPipeline(std::uint32_t elementByte
     return result;
 }
 
-void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFormat format, VkBuffer destination, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements) {
+void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFormat format, VkBuffer destination, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements, const HeapSlotOwner* owner) {
     GuestMemory::AssertGpuLockHeld("TextureDetiler::DispatchMultisampleReadback");
     const auto elementBytes = readbackElementBytes(format);
     Require(commands != VK_NULL_HANDLE && destination != VK_NULL_HANDLE && arrayView != VK_NULL_HANDLE, "multisample readback requires commands, buffer and array view");
@@ -87,7 +104,19 @@ void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFor
     Require(groupsX != 0u, "device has no multisample readback workgroups");
     const auto groupsY = (groups + groupsX - 1u) / groupsX;
     Require(groupsY <= context.limits.maxComputeWorkGroupCount[1] && groupsX * groupsY * 64u <= std::numeric_limits<std::uint32_t>::max(), "multisample readback dispatch exceeds device limits");
-    const auto pipeline = multisampleReadbackPipeline(elementBytes, format == VK_FORMAT_D32_SFLOAT);
+    const std::array<std::uint32_t, 7> push{width, height, layers, fragments, firstElement, elements, static_cast<std::uint32_t>(groupsX * 64u)};
+    const auto address = owner != nullptr && HeapPassesActive(context) ? bufferAddress(destination) : 0;
+    const auto heapPipeline = address != 0 ? multisampleReadbackPipeline(elementBytes, format == VK_FORMAT_D32_SFLOAT, true) : VK_NULL_HANDLE;
+    const auto slot = heapPipeline != VK_NULL_HANDLE ? BindlessHeap::For(context).ViewSlot(HeapPassSampledKind, owner, arrayView) : std::nullopt;
+    if (slot) {
+        BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        context.BindComputePipeline(commands, heapPipeline);
+        const HeapReadbackPush pushed{push, 0u, address + offset, *slot, 0u};
+        CmdPushData(context, commands, sizeof(pushed), &pushed);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);
+        return;
+    }
+    const auto pipeline = multisampleReadbackPipeline(elementBytes, format == VK_FORMAT_D32_SFLOAT, false);
     const auto set = allocateFrom(readbackDescriptorSets, readbackDescriptorLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64u}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 64u}}, "vkCreateDescriptorPool multisample readback", "vkAllocateDescriptorSets multisample readback", "vkResetDescriptorPool multisample readback");
     const VkDescriptorBufferInfo buffer{destination, offset, bytes};
     const VkDescriptorImageInfo image{VK_NULL_HANDLE, arrayView, VK_IMAGE_LAYOUT_GENERAL};
@@ -97,9 +126,8 @@ void TextureDetiler::DispatchMultisampleReadback(VkCommandBuffer commands, VkFor
     }};
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
     context.BindComputePipeline(commands, pipeline);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, readbackPipelineLayout, 0u, 1u, &set, 0u, nullptr);
-    const std::array<std::uint32_t, 7> push{width, height, layers, fragments, firstElement, elements, static_cast<std::uint32_t>(groupsX * 64u)};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, readbackPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, readbackPipelineLayout, 0u, 1u, &set, SetBindSite::ColorTransfer);
+    CmdPushConstants(context, commands, readbackPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);
 }
 

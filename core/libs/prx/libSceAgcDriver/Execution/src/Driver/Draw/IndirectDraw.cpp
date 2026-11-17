@@ -22,7 +22,7 @@ void Driver::FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, co
     if (result.instanceOffsetSgpr >= 0) parameters.firstInstance = drawUserWord(program, result.instanceOffsetSgpr);
 }
 
-std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
+std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect, const ShaderRecompiler::HeapStageWords* heap) {
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     auto& indirect = *drawParameters.indirect;
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
@@ -66,7 +66,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 1024) fail(Path::FeatureGap);
 
     static const std::uint64_t vertexCap = [] { const char* text = std::getenv("APS5_INDIRECT_VERTEX_MIB"); return (text ? std::strtoull(text, nullptr, 10) : 64ull) << 20u; }();
-    for (const auto& attribute : result.vertexAttributes) {
+    for (const auto& attribute : heap != nullptr && !heap->vertexAttributes.empty() ? heap->vertexAttributes : result.vertexAttributes) {
         const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
         const auto extent = stride == 0 ? static_cast<std::uint64_t>(attribute.resource.fields[2]) : static_cast<std::uint64_t>(attribute.resource.fields[2]) * stride;
         if (extent > vertexCap) fail(Path::VertexRange);

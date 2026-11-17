@@ -81,6 +81,27 @@ public:
 
     [[nodiscard]] const VkSpecializationInfo* Info() const { return entries.empty() ? nullptr : &info; }
 
+    void PlaceHeapImageSlots(std::uint32_t slots) {
+        for (auto& constant : values) {
+            if (constant.id == ShaderRecompiler::PipelineSpecialization::HeapImageSlots) constant.value = slots;
+        }
+    }
+
+    void PlacePushData(const ShaderRecompiler::StagePushPlacement& placement) {
+        namespace Ids = ShaderRecompiler::PipelineSpecialization;
+        for (auto& constant : values) {
+            if (constant.id == Ids::PushedDataBase) constant.value = placement.pushed.base;
+            if (constant.id == Ids::PushedDataCount) constant.value = placement.pushed.count;
+            if (constant.id >= Ids::BufferRootPosition && constant.id < Ids::BufferRootPosition + Ids::BufferRootCount) constant.value = placement.bufferRoots[constant.id - Ids::BufferRootPosition];
+            if (constant.id == Ids::BufferOverflowPosition) constant.value = placement.bufferOverflow;
+            if (constant.id >= Ids::RootItemPositionBase && constant.id < Ids::RootItemPositionBase + ShaderRecompiler::RuntimeAbi::RootItemCount) {
+                const auto item = constant.id - Ids::RootItemPositionBase;
+                constant.value = placement.items[item];
+                Require(item == static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::RootItem::UserData) || constant.value != ShaderRecompiler::RuntimeAbi::NoPushPosition, "a stage reads a root item its pipeline's push layout does not hold");
+            }
+        }
+    }
+
 private:
     void describe(std::span<const ShaderRecompiler::PipelineSpecializationConstant> constants) {
         entries.reserve(constants.size());
