@@ -1,8 +1,10 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libcairo/include/Matrix.hpp"
 #include <cstdint>
 
+struct CairoPattern;
 struct cairo_font_options_t;
 struct CairoContext;
 
@@ -50,29 +52,29 @@ int APS5_VABI cairo_scaled_font_get_font_face();
 int APS5_VABI cairo_font_face_set_user_data();
 int APS5_VABI cairo_arc_negative();
 int APS5_VABI cairo_ft_scaled_font_lock_face();
-int APS5_VABI cairo_pattern_reference();
+CairoPattern* APS5_VABI cairo_pattern_reference(CairoPattern* pattern);
 int APS5_VABI cairo_scaled_font_get_font_options();
-int APS5_VABI cairo_pattern_set_extend();
+void APS5_VABI cairo_pattern_set_extend(CairoPattern* pattern, int extend);
 int APS5_VABI cairo_ft_font_face_create_for_pattern();
 int APS5_VABI cairo_font_face_destroy();
-int APS5_VABI cairo_pattern_create_linear();
+CairoPattern* APS5_VABI cairo_pattern_create_linear(double x0, double y0, double x1, double y1);
 int APS5_VABI cairo_set_scaled_font();
 int APS5_VABI cairo_arc();
 int APS5_VABI cairo_ft_scaled_font_unlock_face();
 int APS5_VABI cairo_in_fill();
 int APS5_VABI cairo_font_face_get_user_data();
 int APS5_VABI cairo_ft_font_face_create_for_ft_face();
-int APS5_VABI cairo_pattern_destroy();
-int APS5_VABI cairo_pattern_set_matrix();
-int APS5_VABI cairo_pattern_set_filter();
+void APS5_VABI cairo_pattern_destroy(CairoPattern* pattern);
+void APS5_VABI cairo_pattern_set_matrix(CairoPattern* pattern, const CairoMatrix* matrix);
+void APS5_VABI cairo_pattern_set_filter(CairoPattern* pattern, int filter);
 int APS5_VABI cairo_font_face_reference();
 int APS5_VABI cairo_scaled_font_text_to_glyphs();
 int APS5_VABI cairo_scaled_font_glyph_extents();
 int APS5_VABI cairo_set_font_face();
 int APS5_VABI cairo_scaled_font_create();
-int APS5_VABI cairo_pattern_create_radial();
+CairoPattern* APS5_VABI cairo_pattern_create_radial(double cx0, double cy0, double radius0, double cx1, double cy1, double radius1);
 int APS5_VABI cairo_device_destroy();
-int APS5_VABI cairo_pattern_add_color_stop_rgba();
+void APS5_VABI cairo_pattern_add_color_stop_rgba(CairoPattern* pattern, double offset, double red, double green, double blue, double alpha);
 
 void APS5_VABI cairo_glyph_free(cairo_glyph_t* glyphs);
 
