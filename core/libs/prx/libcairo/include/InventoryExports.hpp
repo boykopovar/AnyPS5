@@ -67,7 +67,6 @@ int APS5_VABI cairo_ft_font_face_create_for_ft_face();
 void APS5_VABI cairo_pattern_destroy(CairoPattern* pattern);
 void APS5_VABI cairo_pattern_set_matrix(CairoPattern* pattern, const CairoMatrix* matrix);
 void APS5_VABI cairo_pattern_set_filter(CairoPattern* pattern, int filter);
-int APS5_VABI cairo_ft_font_options_substitute();
 int APS5_VABI cairo_font_face_reference();
 int APS5_VABI cairo_scaled_font_text_to_glyphs();
 int APS5_VABI cairo_scaled_font_glyph_extents();

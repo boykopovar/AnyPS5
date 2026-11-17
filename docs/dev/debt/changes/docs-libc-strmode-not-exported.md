@@ -1,0 +1,5 @@
+# libc
+
+## change [strmode]
+
+- [strmode](../../../core/libs/prx/libc/src/StringExtensions.cpp) (libc, NID `Uo-nB2s+1+A`) follows FreeBSD 11.4 [strmode.c](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/string/strmode.c): decode the mode into the twelve-byte `ls -l` string, with the file-type character from the top four bits, `rwx` per owner/group/other triple, `s`/`S`/`t`/`T` for setuid/setgid/sticky combined with the matching execute bit, a trailing space in the ACL slot and a final NUL. The signature takes `int` to match the FreeBSD 11.4 [string.h](https://github.com/freebsd/freebsd-src/blob/releng/11.4/include/string.h) prototype `void strmode(/* mode_t */ int, char *)` and sibling guest `chmod`/`fchmod` exports; FreeBSD's `__mode_t` is `__uint16_t`, which SysV AMD64 widens to 32 bits in the register. A null buffer is undefined on FreeBSD and is not special-cased. Firmware 11.60's `libSceLibcInternal.sprx` does not export it (payload `dlsym`); console behavior and register width are unmeasured.

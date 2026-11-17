@@ -65,6 +65,9 @@
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
+| `cairo_pattern_destroy` | `eZpt6dzI9oo` |
+| `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
+| `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
@@ -72,3 +75,8 @@
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
+| `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
+
+### FreeType font-option substitution
+
+- [FreeType font-option substitution](../../../core/libs/prx/libcairo/src/FtFontOptions.cpp) follows Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c), `_cairo_ft_font_options_substitute` and its public wrapper, through the guest Fontconfig exports. PS5 behavior is unmeasured. The existing four-field font-options state has no internal LCD filter; its Cairo default leaves `lcdfilter` untouched. Hint metrics are unused by upstream substitution. Allocation failure stops substitution without rolling back earlier properties, as in the void upstream wrapper.
