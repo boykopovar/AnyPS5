@@ -6287,7 +6287,11 @@ bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
         for (std::uint32_t index = 0; index < context.memory.memoryTypeCount && !deviceHeap; ++index) {
             if ((context.memory.memoryTypes[index].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) deviceHeap = context.memory.memoryTypes[index].heapIndex;
         }
-        if (!deviceHeap) return false;
+        if (!deviceHeap) {
+            room.store(0, std::memory_order_relaxed);
+            checkedMs.store(nowMs, std::memory_order_relaxed);
+            return false;
+        }
         const auto heap = *deviceHeap;
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];

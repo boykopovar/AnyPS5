@@ -2891,7 +2891,8 @@ void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& ac
             const auto bytes = access.bytes(view.buffer);
             Require(view.offset + adjustment + 512 <= bytes.size() && bytes[view.offset + adjustment] == std::byte{0x5a} && bytes[view.offset + adjustment + 256] == std::byte{0x6b}, "a read-only V# across two imports misses the bytes of either range");
         }
-        const auto ranges = leased.AddressRanges();
+        auto ranges = leased.AddressRanges();
+        std::sort(ranges.begin(), ranges.end(), [](const auto& left, const auto& right) { return left.begin < right.begin; });
         auto covered = first;
         for (const auto& range : ranges) {
             if (range.begin <= covered && covered < range.end) covered = range.end;
