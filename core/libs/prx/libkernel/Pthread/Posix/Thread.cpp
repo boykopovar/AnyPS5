@@ -56,7 +56,6 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         return -1;
     };
     if (size < sizeof(KernelCpumask) || size > 16) return fail(GuestErange);
-    if (!mask) return fail(GuestEfault);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
     switch (which) {
@@ -72,8 +71,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         if (id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_getaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichDomain:
         break;
@@ -95,6 +93,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     default:
         return fail(GuestEinval);
     }
+    if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     std::memcpy(buffer.data(), &affinity, sizeof(affinity));
     if (!GuestCopyOut_nid_no_patch(mask, buffer.data(), size)) return fail(GuestEfault);
@@ -134,8 +133,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
             if (id != -1) NotImplemented_nid_no_patch("cpuset_setaffinity of a numbered cpuset");
             break;
         case WhichJail:
-            NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-            break;
+            return fail(GuestEsrch);
         case WhichIrq:
         case WhichDomain:
         default:
@@ -159,8 +157,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         NotImplemented_nid_no_patch(id == -1 ? "cpuset_setaffinity of the calling thread's base cpuset" : "cpuset_setaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichInterruptHandler:
     case WhichInterruptThread:
