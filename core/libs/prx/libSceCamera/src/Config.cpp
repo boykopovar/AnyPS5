@@ -30,17 +30,8 @@ int CheckConfig(std::int32_t handle, const CameraConfig* config) {
 extern "C" {
 
 int APS5_VABI sceCameraGetConfig(std::int32_t handle, CameraConfig* config) {
-    if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
-    std::uint32_t size = 0;
+    if (const int error = CheckConfig(handle, config)) return error;
     const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
-        errno = savedErrno;
-        return SCE_CAMERA_ERROR_PARAM;
-    }
-    if (!Camera::IsOpen(handle)) {
-        errno = savedErrno;
-        return SCE_CAMERA_ERROR_NOT_OPEN;
-    }
     CameraConfig localConfig{};
     localConfig.sizeThis = sizeof(CameraConfig);
     localConfig.configType = CONFIG_TYPE1;
@@ -63,17 +54,8 @@ int APS5_VABI sceCameraSetConfigInternal(std::int32_t handle, const CameraConfig
 }
 
 int APS5_VABI sceCameraGetDeviceConfig(std::int32_t handle, CameraConfig* config) {
-    if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
-    std::uint32_t size = 0;
+    if (const int error = CheckConfig(handle, config)) return error;
     const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
-        errno = savedErrno;
-        return SCE_CAMERA_ERROR_PARAM;
-    }
-    if (!Camera::IsOpen(handle)) {
-        errno = savedErrno;
-        return SCE_CAMERA_ERROR_NOT_OPEN;
-    }
     CameraConfig outConfig{};
     outConfig.sizeThis = sizeof(CameraConfig);
     const bool copied = GuestCopyOut_nid_no_patch(config, &outConfig, sizeof(outConfig));

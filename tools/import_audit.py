@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import nid_names
 import progress
@@ -665,6 +665,13 @@ def nids_of(name, aliases):
     return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
 
 
+def hashed_nid(symbol):
+    try:
+        return nid_names.compute_nid(symbol)
+    except UnicodeEncodeError:
+        return symbol
+
+
 def top_level_statements(body):
     braces, parens, start, parts = 0, 0, 1, []
     for i, character in enumerate(body[1:-1], 1):
@@ -818,8 +825,10 @@ def always_stub_calls(text):
 
 def conditional_stubs(library):
     conditional = set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    library_flavored = flavor(str(library))
     for source in library.rglob("*.cpp"):
-        if "tests" in source.relative_to(library).parts:
+        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
             continue
         text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
@@ -905,7 +914,7 @@ def read_registry(path):
         if not isinstance(entry, dict) or not isinstance(entry.get("nid"), str) or not isinstance(entry.get("library"), str):
             raise AuditError(f"{path}: entry {index} needs string fields 'nid' and 'library': {entry!r}")
         nid = entry["nid"].split("#", 1)[0]
-        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in nid):
+        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 or 0xD800 <= ord(character) <= 0xDFFF for character in nid):
             raise AuditError(f"{path}: entry {index} has an invalid import symbol {entry['nid']!r}")
         weak = entry.get("weak", False)
         if not isinstance(weak, bool):
@@ -1077,7 +1086,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         resolved_nid = nid
         record["symbol_mismatch"] = False
         if not providers:
-            resolved_nid = nid_names.compute_nid(nid)
+            resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
         kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)

@@ -460,6 +460,10 @@ static void CheckSecureFormat() {
     Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
     Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
+    Require(printf_s_nid_postfix(nullptr) == -1);
+    Require(printf_s_nid_postfix("ab%n", &written) == -1 && written == -7);
+    Require(printf_s_nid_postfix("a%s", static_cast<const char*>(nullptr)) == -1);
+    Require(printf_s_nid_postfix("printf_s: %d %.1f\n", 7, 2.5) == 16);
 }
 
 static void CheckScanInputFailureErrno() {

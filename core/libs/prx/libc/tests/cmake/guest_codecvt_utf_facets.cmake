@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_codecvt_utf_facets_tests ${LIBS_INCLUDE_DIR}/tests/GuestCodecvtUtfFacets.cpp)
+    target_include_directories(guest_codecvt_utf_facets_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_codecvt_utf_facets_tests PRIVATE libc libSceLibcInternal)
+    configure_windows_unwind(guest_codecvt_utf_facets_tests)
+    add_test(NAME guest_codecvt_utf_facets COMMAND guest_codecvt_utf_facets_tests)
+    set_tests_properties(guest_codecvt_utf_facets PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_codecvt_utf_facets PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
