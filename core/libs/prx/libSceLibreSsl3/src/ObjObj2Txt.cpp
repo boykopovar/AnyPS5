@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -57,9 +58,15 @@ extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength,
     if (buffer && bufferLength > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
     std::string text;
-    if (!noName && (object->longName || object->shortName)) {
-        text = object->longName ? object->longName : object->shortName;
-    } else if (object->length > 0) {
+    if (!noName) {
+        const char* name = object->longName ? object->longName : object->shortName;
+        if (!name && object->length > 0) {
+            const int nid = OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(object));
+            if (nid != 0) name = OBJ_nid2sn_nid_postfix(nid);
+        }
+        if (name) text = name;
+    }
+    if (text.empty() && object->length > 0) {
         Number number;
         bool first = true;
         bool continued = false;

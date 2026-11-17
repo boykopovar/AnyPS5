@@ -51,6 +51,30 @@ int main() {
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 13);
     Require(std::strcmp(buffer.data(), "rsaEncryption") == 0);
 
+    object.shortName = nullptr;
+    object.longName = nullptr;
+    object.length = 9;
+    object.data = rsaOid.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 13);
+    Require(std::strcmp(buffer.data(), "rsaEncryption") == 0);
+
+    const std::array<unsigned char, 2> leadingTwo{0x81, 0x34};
+    object.length = 2;
+    object.data = leadingTwo.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 5);
+    Require(std::strcmp(buffer.data(), "2.100") == 0);
+
+    const std::array<unsigned char, 11> wideArc{0x2a, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00};
+    object.length = 11;
+    object.data = wideArc.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 24);
+    Require(std::strcmp(buffer.data(), "1.2.18446744073709551616") == 0);
+
+    object.length = 3;
+    object.data = keyUsage.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), 1, &object, 1) == 9);
+    Require(buffer[0] == '\0');
+
     std::memset(buffer.data(), 'x', buffer.size());
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), nullptr, 1) == 0);
     Require(buffer[0] == '\0');
