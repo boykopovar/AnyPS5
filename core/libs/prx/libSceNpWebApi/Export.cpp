@@ -501,8 +501,10 @@ void APS5_VABI sceNpWebApiCheckTimeout() {
     }
 }
 
-int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiClearAllUnusedConnection(int titleUserCtxId, bool flag) {
+    (void)flag;
+    std::lock_guard lock(contextsMutex);
+    return findUserContext(titleUserCtxId).error;
 }
 
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
@@ -633,8 +635,10 @@ int APS5_VABI sceNpWebApiSetHandleTimeout(int libCtxId, int handleId, std::uint3
     return context->second.timeoutCapableHandles.contains(handleId) ? 0 : SCE_NP_WEBAPI_ERROR_HANDLE_NOT_FOUND;
 }
 
-int APS5_VABI sceNpWebApiSetMaxConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiSetMaxConnection(int libCtxId, int maxConnection) {
+    if (maxConnection > 16) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    return contexts.contains(libCtxId) ? 0 : SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const char* typeName, const char* boundary) {

@@ -85,7 +85,7 @@ int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex);
 void APS5_VABI sceNpWebApiCheckTimeout();
-int APS5_VABI sceNpWebApiClearAllUnusedConnection();
+int APS5_VABI sceNpWebApiClearAllUnusedConnection(int titleUserCtxId, bool flag);
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep);
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId);
 int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* target, void* result);
@@ -103,7 +103,7 @@ int APS5_VABI sceNpWebApiSendMultipartRequest(std::int64_t requestId, int partIn
 int APS5_VABI sceNpWebApiSendMultipartRequest2(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSendRequest2(std::int64_t requestId, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSetHandleTimeout(int libCtxId, int handleId, std::uint32_t timeout);
-int APS5_VABI sceNpWebApiSetMaxConnection();
+int APS5_VABI sceNpWebApiSetMaxConnection(int libCtxId, int maxConnection);
 int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const char* typeName, const char* boundary);
 int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout);
 int APS5_VABI sceNpWebApiUnregisterNotificationCallback(int titleUserCtxId);
