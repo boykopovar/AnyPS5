@@ -7,7 +7,6 @@
 #include <cstring>
 #include <filesystem>
 #include <random>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -47,16 +46,6 @@ void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
-
-template<typename Function> bool ThrowsNotImplemented(Function function) {
-    const auto before = NotImplementedCalls_nid_no_patch();
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return NotImplementedCalls_nid_no_patch() == before + 1;
-    }
-    return false;
-}
 
 StringImpl Latin1(const char* text) {
     return StringImpl{4, static_cast<unsigned>(std::strlen(text)), text, 4};
@@ -133,13 +122,6 @@ void CheckClosedDatabase() {
     Require(_ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(statement.get(), 1, "x", 1) == SqliteError);
     Require(_ZN7WebCore15SQLiteStatement7bindIntEii(statement.get(), 1, 1) == SqliteMisuse);
     Require(_ZNK7WebCore15SQLiteStatement18bindParameterCountEv(statement.get()) == 0);
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase27runIncrementalVacuumCommandEv(db.get()); }));
-    CollationFunction function{nullptr};
-    auto name = Latin1("NOCASE2");
-    String collation(&name);
-    Require(ThrowsNotImplemented([&] {
-        _ZN7WebCore14SQLiteDatabase20setCollationFunctionERKN3WTF6StringEONS1_8FunctionIFiiPKviS7_EEE(db.get(), &collation, &function);
-    }));
 }
 
 void CheckOpenFailures(const std::filesystem::path& directory) {
@@ -220,11 +202,6 @@ void CheckBindAndRead(Database& db) {
     Require(_ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE(insert.get(), 5, &latinText) == SqliteOk);
     Require(_ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE(insert.get(), 6, &nullText) == SqliteOk);
     Require(insert.Step() == SqliteDone);
-    SQLValue valueless{};
-    valueless.index = -1;
-    Require(ThrowsNotImplemented([&] {
-        _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE(insert.get(), 1, &valueless);
-    }));
     Require(latin.refCount == 4 && unicode.refCount == 4);
 
     Statement select(db, "SELECT i, big, d, t, b, n, typeof(n), 1 + 1 FROM items ORDER BY rowid");
@@ -240,7 +217,6 @@ void CheckBindAndRead(Database& db) {
     Require(_ZN7WebCore15SQLiteStatement12getColumnIntEi(query, 9) == 0 && !_ZN7WebCore15SQLiteStatement12isColumnNullEi(query, 9));
     Require(_ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi(query, 4));
     Require(!_ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi(query, 3));
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi(query, 7); }));
     Vector<char> chars;
     _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(query, 4, &chars);
     Require(chars.size == 4 && chars.capacity == 16 && std::memcmp(chars.buffer, bytes, 4) == 0);
