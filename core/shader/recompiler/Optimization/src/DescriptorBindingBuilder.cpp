@@ -316,10 +316,15 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             const auto mode = ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image));
             if (info.runtimeImageModes.at(pair.image).at(mode).dimension != RdnaImageDimension::Dim3D) continue;
             const auto& words = snapshot.samplers.at(r).dwords;
-            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) {
+            const auto xyFilters = (words[2] >> 20u) & 0xfu;
+            const auto zFilter = (words[2] >> 24u) & 3u;
+            const auto clampZ = (words[0] >> 6u) & 7u;
+            const bool filtered = xyFilters != 0u || zFilter > 1u;
+            const bool pointOrBilinearXy = xyFilters == 0u || xyFilters == 5u;
+            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > (filtered ? 0u : 2u) || !pointOrBilinearXy || ((words[2] >> 26u) & 3u) > 1u || (filtered && clampZ > 3u)) {
                 char sampler[64];
                 std::snprintf(sampler, sizeof(sampler), " (S# %08x %08x %08x %08x)", words[0], words[1], words[2], words[3]);
-                fail(std::string("2D sampling of a one-slice volume requires a normalized point sampler") + sampler);
+                fail(std::string("2D sampling of a one-slice volume requires a normalized point or bilinear sampler without mip interpolation, and a Z address mode that does not read the border when it filters") + sampler);
             }
         }
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {

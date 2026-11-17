@@ -67,6 +67,19 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
+std::array<std::uint32_t, 4> BilinearSampler(std::uint32_t clampZ) {
+    auto sampler = SamplerDescriptor();
+    sampler[0] |= (2u << 0u) | (2u << 3u) | (clampZ << 6u);
+    sampler[2] |= (1u << 20u) | (1u << 22u) | (2u << 24u);
+    return sampler;
+}
+
+std::array<std::uint32_t, 8> PlaneDescriptor() {
+    auto plane = VolumeDescriptor();
+    plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
+    return plane;
+}
+
 void FillTexture() {
     const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(VolumeDescriptor()));
     Require(geometry.guestBytes <= Volume.size(), "single-level volume does not fit the texel storage");
@@ -209,6 +222,12 @@ int main() {
             ordinaryArtifact = Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
         }
+        for (const auto sample : {BiasSample, LevelZeroSample, ImplicitSample}) {
+            Draw(*device, PlaneDescriptor(), BilinearSampler(2u), 0.0f, false, sample);
+            const auto plane = Pixels;
+            Draw(*device, VolumeDescriptor(), BilinearSampler(2u), 0.0f, false, sample);
+            Require(Pixels == plane, "single-level volume: a bilinear clamp-to-last-texel sample differs from the same sample of the plane");
+        }
         for (const auto sample : {LevelZeroSample, ImplicitSample}) {
             Draw(*device, VolumeDescriptor(), SamplerDescriptor(), 0.0f, false, sample);
             Check();
@@ -226,9 +245,7 @@ int main() {
                 Check();
             }
         }
-        auto plane = VolumeDescriptor();
-        plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
-        Require(Draw(*device, plane, SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume and plane modes did not share their cached artifact");
+        Require(Draw(*device, PlaneDescriptor(), SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume and plane modes did not share their cached artifact");
         Check();
         auto integerTexture = VolumeDescriptor();
         integerTexture[1] = (integerTexture[1] & ~(0x1ffu << 20u)) | (60u << 20u);
@@ -254,12 +271,13 @@ int main() {
         texture[3] |= 1u << 16u;
         texture[5] |= 1u << 4u;
         RequireRefused(*device, texture, SamplerDescriptor(), "one slice and mip level zero only");
-        auto sampler = SamplerDescriptor();
-        sampler[2] |= (1u << 20u) | (1u << 22u);
-        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point sampler");
+        RequireRefused(*device, VolumeDescriptor(), BilinearSampler(6u), "does not read the border");
+        auto sampler = BilinearSampler(2u);
+        sampler[0] |= 1u << 29u;
+        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point or bilinear sampler");
         sampler = SamplerDescriptor();
         sampler[0] |= 1u << 15u;
-        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point sampler");
+        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point or bilinear sampler");
         std::puts("image plane bias on single-level volume tests passed");
         return 0;
     } catch (const std::exception& error) {
