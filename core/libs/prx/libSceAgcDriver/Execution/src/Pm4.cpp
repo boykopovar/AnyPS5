@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <bit>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -712,14 +711,13 @@ bool PredicationPasses(const QueueState& queue) {
     if (predication.operation == 1) {
         constexpr std::uint64_t ready = 1ull << 63u;
         require(queue.sampleDumpBlocks != 0, "Z-pass predication with no counter block enabled by PIXEL_PIPE_STAT_CONTROL is not implemented");
-        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
-        const auto pairs = static_cast<std::size_t>(std::bit_width(queue.sampleDumpBlocks));
-        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(pairs * SampleDumpStride), 8);
         std::uint64_t samples = 0;
         for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
             if (((queue.sampleDumpBlocks >> db) & 1u) == 0) continue;
-            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
-            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            std::array<std::uint64_t, 2> pair{};
+            GuestMemory::Read(predication.address + db * SampleDumpStride, std::as_writable_bytes(std::span(pair)), 8);
+            const auto begin = pair[0];
+            const auto end = pair[1];
             if ((begin & ready) == 0 || (end & ready) == 0) {
                 require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
                 return true;
