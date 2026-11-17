@@ -726,7 +726,7 @@ public:
     WaitingOutput(Frames& frames, const std::uint32_t* label) : frames(frames), label(label) {}
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
         const auto deadline = Clock::now() + std::chrono::seconds(2);
-        while (*static_cast<const volatile std::uint32_t*>(label) == 0) {
+        while (std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(label)).load(std::memory_order_acquire) == 0) {
             check(Clock::now() < deadline, "a blocking driver call prevented the later memory update");
             std::this_thread::yield();
         }

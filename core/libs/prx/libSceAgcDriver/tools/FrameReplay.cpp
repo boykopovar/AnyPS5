@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -644,10 +645,10 @@ struct Replay {
                     std::memcpy(&value, bytes.data() + at, sizeof(value));
                     if (!again || (value & AgcDriver::Pm4::RewindValid) == 0 || std::ranges::binary_search(polled, address)) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
                 }
-                std::memcpy(target + from, bytes.data() + from, at - from);
+                AgcDriver::GuestMemory::CopyToGuestBytes(target + from, bytes.data() + from, at - from);
                 from = at + 4;
             }
-            std::memcpy(target + from, bytes.data() + from, bytes.size() - from);
+            AgcDriver::GuestMemory::CopyToGuestBytes(target + from, bytes.data() + from, bytes.size() - from);
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
@@ -673,7 +674,7 @@ struct Replay {
 
     static std::uint64_t load(std::uint64_t address, std::size_t bytes) {
         std::uint64_t value = 0;
-        std::memcpy(&value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), bytes);
+        AgcDriver::GuestMemory::CopyGuestBytes(&value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), bytes);
         return value;
     }
 
@@ -716,11 +717,11 @@ struct Replay {
             const auto length = static_cast<std::size_t>(std::min<std::uint64_t>(wait.bytes == 8 ? 8 : 4, chunk->address + chunk->bytes - address));
             const auto* const recorded = bytes.data() + (address - chunk->address);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(address));
-            if (std::memcmp(target, recorded, length) == 0) return false;
+            if (AgcDriver::GuestMemory::GuestBytesEqual(target, recorded, length)) return false;
             std::uint64_t value = 0;
             std::memcpy(&value, recorded, length);
             if (wait.function != 0 && !satisfies(wait, value)) return false;
-            std::memcpy(target, recorded, length);
+            AgcDriver::GuestMemory::CopyToGuestBytes(target, recorded, length);
             return true;
         }
         return false;
@@ -746,7 +747,7 @@ struct Replay {
             }
             if (!released && options.synthesize) {
                 if (const auto value = satisfying(wait, load(wait.address, bytes))) {
-                    std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(wait.address)), &*value, bytes);
+                    AgcDriver::GuestMemory::CopyToGuestBytes(reinterpret_cast<void*>(static_cast<std::uintptr_t>(wait.address)), &*value, bytes);
                     ++syntheticReleases;
                     released = true;
                 }

@@ -201,7 +201,7 @@ std::vector<std::byte> readFile(const std::filesystem::path& path) {
 }
 
 bool equal(const std::byte* bytes, const std::vector<std::byte>& expected) {
-    return std::memcmp(bytes, expected.data(), expected.size()) == 0;
+    return AgcDriver::GuestMemory::GuestBytesEqual(bytes, expected.data(), expected.size());
 }
 
 void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
