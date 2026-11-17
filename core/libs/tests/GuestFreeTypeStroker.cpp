@@ -463,13 +463,30 @@ static void TestParseOutlineArrays(GuestLibrary& library, FT_Library native) {
     endAtCount.n_points = 3;
     GuestOutline endPastCount = valid;
     endPastCount.n_points = 2;
-    for (const GuestOutline& outline : {noContours, noPoints, noTags, endAtCount, endPastCount}) {
+    GuestOutline unmappedContours = valid;
+    unmappedContours.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    GuestOutline unmappedPoints = valid;
+    unmappedPoints.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    GuestOutline unmappedTags = valid;
+    unmappedTags.tags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    for (const GuestOutline& outline : {noContours, noPoints, noTags, endAtCount, endPastCount, unmappedContours, unmappedPoints, unmappedTags}) {
         ParseAtHostLimit(library, native, outline, nativeValid, false);
         Require(FT_Stroker_ParseOutline_nid_postfix(nullptr, &outline, 0) == FT_Err_Invalid_Argument);
     }
     std::uint16_t end = 0;
     ParseAtHostLimit(library, native, GuestOutline{1, 1, nullptr, nullptr, &end, 0}, FT_Outline{1, 1, nullptr, nullptr, &end, 0}, false);
     ParseAtHostLimit(library, native, GuestOutline{0, 4, nullptr, nullptr, nullptr, 0}, FT_Outline{0, 4, nullptr, nullptr, nullptr, 0}, true);
+    Pair pair(library, native);
+    pair.Square(0);
+    std::uint32_t points = 0;
+    std::uint32_t contours = 0;
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &points, &contours) == 0 && points != 0);
+    const auto* unmapped = reinterpret_cast<const GuestOutline*>(std::uintptr_t{0x10});
+    Require(FT_Stroker_ParseOutline_nid_postfix(pair.guest, unmapped, 0) == FT_Stroker_ParseOutline(pair.native, nullptr, 0));
+    Require(FT_Stroker_ParseOutline_nid_postfix(nullptr, unmapped, 1) == FT_Err_Invalid_Outline);
+    std::uint32_t keptPoints = 0;
+    std::uint32_t keptContours = 0;
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &keptPoints, &keptContours) == 0 && keptPoints == points && keptContours == contours);
 }
 
 static void TestExportBorder(GuestLibrary& library, FT_Library native) {
