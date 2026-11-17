@@ -27,7 +27,7 @@ public:
     PresentationPass(const PresentationPass&) = delete;
     PresentationPass& operator=(const PresentationPass&) = delete;
 
-    void Bind(std::size_t slot, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer = 0);
+    void Bind(std::size_t slot, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer = 0, bool reversedRows = false);
     void BindTexels(std::size_t slot, VkCommandBuffer commands, std::span<const std::byte> texels, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits);
     void RecordPresent(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
     void RecordStage(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);

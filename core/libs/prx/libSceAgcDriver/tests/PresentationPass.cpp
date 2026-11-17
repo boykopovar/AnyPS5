@@ -310,11 +310,11 @@ std::vector<std::byte> convertPathPresent(const Context& context, const Source& 
     return bytesOf(readback, bytes);
 }
 
-std::vector<std::byte> passPresent(const Context& context, PresentationPass& pass, const Source& source, const Image& resident, VkExtent2D extent, VkFormat format, std::uint32_t layer = 0, float whiteNits = AgcDriver::SdrToneMapLuminanceNits, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+std::vector<std::byte> passPresent(const Context& context, PresentationPass& pass, const Source& source, const Image& resident, VkExtent2D extent, VkFormat format, std::uint32_t layer = 0, float whiteNits = AgcDriver::SdrToneMapLuminanceNits, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, bool reversedRows = false) {
     Image destination(context, format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
     Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    pass.Bind(0, resident.Handle(), source.width, source.height, source.pixelFormat, whiteNits, layer);
+    pass.Bind(0, resident.Handle(), source.width, source.height, source.pixelFormat, whiteNits, layer, reversedRows);
     {
         CommandBatch batch(context);
         const auto commands = batch.Handle();
@@ -365,6 +365,23 @@ void passMatchesConvertPath(const Context& context, PresentationPass& pass, cons
         std::printf("  %s: scaled, %zu of %zu channels differ, by at most %d\n", describe(source, extent).c_str(), differing, expected.size(), worst);
         Require(worst <= 2, "the scaled presentation pass differs from the convert path's filtered blit by more than two levels: " + describe(source, extent));
     }
+}
+
+std::vector<std::byte> flippedRows(const std::vector<std::byte>& pixels, std::uint32_t width, std::uint32_t height) {
+    std::vector<std::byte> reversed(pixels.size());
+    for (std::uint32_t y = 0; y < height; ++y) {
+        std::memcpy(reversed.data() + static_cast<std::size_t>(y) * width * 4,
+                    pixels.data() + static_cast<std::size_t>(height - 1u - y) * width * 4, static_cast<std::size_t>(width) * 4);
+    }
+    return reversed;
+}
+
+void passReversesResidentRows(const Context& context, PresentationPass& pass, const Source& source, const Image& resident) {
+    const VkExtent2D extent{source.width, source.height};
+    const auto upright = convertPathPresent(context, source, extent);
+    Require(passPresent(context, pass, source, resident, extent, VK_FORMAT_B8G8R8A8_UNORM) == upright, "a presentation without reversed rows changed the convert path's pixels: " + describe(source, extent));
+    const auto drawn = passPresent(context, pass, source, resident, extent, VK_FORMAT_B8G8R8A8_UNORM, 0, AgcDriver::SdrToneMapLuminanceNits, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, true);
+    Require(drawn == flippedRows(upright, extent.width, extent.height), "a presentation with reversed rows does not mirror the resident image vertically: " + describe(source, extent));
 }
 
 void passDumpMatchesSubsample(const Context& context, PresentationPass& pass, const Source& source, const Image& resident, std::uint32_t layer = 0) {
@@ -755,7 +772,10 @@ void residentPresentTests(const Context& context) {
         const auto resident = residentImage(context, source);
         passMatchesConvertPath(context, pass, source, *resident);
         passDumpMatchesSubsample(context, pass, source, *resident);
-        if (AgcDriver::DisplayTenBit(pixelFormat)) passKeepsTenBits(context, pass, source, *resident);
+        if (AgcDriver::DisplayTenBit(pixelFormat)) {
+            passKeepsTenBits(context, pass, source, *resident);
+            passReversesResidentRows(context, pass, source, *resident);
+        }
         if (pixelFormat == Bgra8) passRefusesHalfFloat(pass, *resident);
     }
     for (const auto& [pixelFormat, storage] : {std::pair{Rgb10Pq, VK_FORMAT_A2B10G10R10_UNORM_PACK32}, std::pair{Bgr10Pq, VK_FORMAT_A2R10G10B10_UNORM_PACK32}, std::pair{Bgr10Pq, VK_FORMAT_A2B10G10R10_UNORM_PACK32}}) {

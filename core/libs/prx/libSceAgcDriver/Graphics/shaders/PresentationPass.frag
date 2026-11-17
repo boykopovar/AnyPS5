@@ -44,6 +44,7 @@ void main() {
         color = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
+    if ((parameters.mode & 32u) != 0u) pixel.y = parameters.size.y - 1 - pixel.y;
     if ((parameters.mode & 8u) != 0u) {
         color = texel(pixel * parameters.stride);
         return;

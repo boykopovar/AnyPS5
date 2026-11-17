@@ -20,6 +20,7 @@ constexpr std::uint32_t ModeRedLow = 2;
 constexpr std::uint32_t ModeKeepTenBit = 4;
 constexpr std::uint32_t ModeSubsample = 8;
 constexpr std::uint32_t ModePq = 16;
+constexpr std::uint32_t ModeReversedRows = 32;
 
 }
 
@@ -265,7 +266,7 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
     return targets.emplace(key, created).first->second;
 }
 
-void PresentationPass::Bind(std::size_t index, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer) {
+void PresentationPass::Bind(std::size_t index, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer, bool reversedRows) {
     Graphics::Require(index < slots.size(), "presentation pass slot is out of range");
     Graphics::Require(image != VK_NULL_HANDLE && width != 0 && height != 0, "presentation pass source is unavailable");
     Graphics::Require(!DisplayHalfFloat(pixelFormat), "presentation pass does not decode 16-bit float display buffers");
@@ -275,7 +276,7 @@ void PresentationPass::Bind(std::size_t index, VkImage image, std::uint32_t widt
     slot.source = createView(image, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_SAMPLED_BIT, layer);
     slot.width = width;
     slot.height = height;
-    slot.mode = (DisplayTenBit(pixelFormat) ? ModeTenBit : 0u) | (DisplayRedLow(pixelFormat) ? ModeRedLow : 0u) | (DisplayPq(pixelFormat) ? ModePq : 0u);
+    slot.mode = (DisplayTenBit(pixelFormat) ? ModeTenBit : 0u) | (DisplayRedLow(pixelFormat) ? ModeRedLow : 0u) | (DisplayPq(pixelFormat) ? ModePq : 0u) | (reversedRows ? ModeReversedRows : 0u);
     slot.whiteNits = whiteNits;
     const VkDescriptorImageInfo imageInfo{sampler, slot.source, VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
