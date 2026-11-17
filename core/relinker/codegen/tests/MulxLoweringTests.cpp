@@ -1,12 +1,15 @@
 #include <codegen/x86/MulxLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -115,7 +118,7 @@ struct State {
 
 class Execution {
 public:
-    Execution(const Bytes& site, std::uint64_t memoryValue) {
+    Execution(const Bytes& site, std::uint64_t memoryValue, std::optional<std::size_t> clobberOffset = std::nullopt) {
         auto operands = Codegen::DecodeMulx(site.data(), site.size());
         require(operands.has_value(), "Execution site was not MULX");
         for (auto reg : {3, 5, 6, 7, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
@@ -150,7 +153,19 @@ public:
         auto body = builder.Finish();
         const auto stubOffset = bytes.size();
         Codegen::ApplyStubRelocations(body.Bytes, body.Relocations, siteOffset, stubOffset, 0);
-        bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + static_cast<std::ptrdiff_t>(body.ReturnBranchOffset));
+        const auto stubEnd = static_cast<std::ptrdiff_t>(body.ReturnBranchOffset);
+        if (clobberOffset) {
+            const auto cut = static_cast<std::ptrdiff_t>(*clobberOffset);
+            bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + cut);
+            for (std::int32_t disp = -256; disp < -128; disp += 4) {
+                bytes.insert(bytes.end(), {0xC7, 0x84, 0x24});
+                append32(disp);
+                bytes.insert(bytes.end(), {0xEF, 0xBE, 0xAD, 0xDE});
+            }
+            bytes.insert(bytes.end(), body.Bytes.begin() + cut, body.Bytes.begin() + stubEnd);
+        } else {
+            bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + stubEnd);
+        }
         rip({0x48, 0x89, 0x25}, 16);
         rip({0x48, 0x8B, 0x25}, 8);
         memory(0x8D, 4, 4, -256);
@@ -255,7 +270,14 @@ void check(const State& state, const Codegen::MulxOperands& operands, std::uint6
         const auto expected = reg == operands.HighDestination ? high : reg == operands.LowDestination ? low : state.Input[reg];
         require(state.Output[reg] == expected, "MULX changed an unrelated register or produced an incorrect result");
     }
-    require((state.Flags & 0x8D5u) == (state.InputFlags & 0x8D5u), "MULX changed arithmetic flags");
+    if ((state.Flags & 0x8D5u) != (state.InputFlags & 0x8D5u)) {
+        char text[192];
+        std::snprintf(text, sizeof text, "MULX changed arithmetic flags: input %#llx, output %#llx, changed bits %#llx (wide %d, high %u, low %u)",
+            static_cast<unsigned long long>(state.InputFlags & 0x8D5u), static_cast<unsigned long long>(state.Flags & 0x8D5u),
+            static_cast<unsigned long long>((state.InputFlags ^ state.Flags) & 0x8D5u), operands.Wide ? 1 : 0,
+            static_cast<unsigned>(operands.HighDestination), static_cast<unsigned>(operands.LowDestination));
+        throw std::runtime_error(text);
+    }
     for (const auto value : state.RedZone) require(value == Execution::kSentinel, "MULX overwrote the caller's red zone");
 }
 
@@ -333,6 +355,20 @@ void execution() {
                 if ((bits >> bit) & 1) state.InputFlags |= std::uint64_t{1} << std::array{0, 2, 4, 6, 7, 11}[bit];
             executable.Run(state);
             check(state, *Codegen::DecodeMulx(site.data(), site.size()), state.Input[2]);
+        }
+        for (const auto [high, low, source] : {std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>{4, 1, 6}, {1, 4, 6}, {4, 4, 6}, {4, 1, 4}, {1, 4, 4}}) {
+            const auto stackSite = instruction(wide, high, low, source);
+            const auto operands = *Codegen::DecodeMulx(stackSite.data(), stackSite.size());
+            Codegen::StubBodyBuilder probe;
+            Codegen::EmitMulx(probe, operands);
+            const auto built = probe.Finish();
+            Codegen::X64InstructionDecoder decoder;
+            for (std::size_t cut = 0; cut < built.ReturnBranchOffset; cut += decoder.Decode(built.Bytes.data() + cut, built.ReturnBranchOffset - cut)) {
+                Execution clobbered(stackSite, 0, cut);
+                auto state = initialState();
+                clobbered.Run(state);
+                check(state, operands, state.Input[source]);
+            }
         }
     }
     std::cout << "Executed 73,868 MULX cases with register, flag and red-zone checks\n";

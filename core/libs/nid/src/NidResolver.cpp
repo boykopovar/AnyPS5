@@ -17,11 +17,22 @@ bool IsSceImport(const std::string& name) {
         std::tolower(static_cast<unsigned char>(name[2])) == 'e');
 }
 
+bool IsMangledSceImport(const std::string& name) {
+    if (!name.starts_with("_ZN")) return false;
+    std::size_t index = 3u;
+    while (index < name.size() && (name[index] == 'r' || name[index] == 'V' || name[index] == 'K')) ++index;
+    return name.size() >= index + 4u && name[index] == '3' &&
+        std::tolower(static_cast<unsigned char>(name[index + 1u])) == 's' &&
+        std::tolower(static_cast<unsigned char>(name[index + 2u])) == 'c' &&
+        std::tolower(static_cast<unsigned char>(name[index + 3u])) == 'e';
+}
+
 std::unordered_map<std::string, std::string> ResolveImportNids(const std::vector<std::string>& names, const std::unordered_set<std::string>& excluded, const PatchOptions& options) {
     const std::unordered_set<std::string> unique(names.begin(), names.end());
     auto result = ResolveNids(std::vector<std::string>(unique.begin(), unique.end()), "", excluded);
     for (const auto& name : unique) {
-        if ((!options.executable || options.onlySce) && !IsSceImport(name)) result.at(name) = name;
+        const bool sce = IsSceImport(name) || (!options.executable && IsMangledSceImport(name));
+        if ((!options.executable || options.onlySce) && !sce) result.at(name) = name;
         else if (!options.executable) result.at(name) = ResolveOneName(name);
     }
     return result;

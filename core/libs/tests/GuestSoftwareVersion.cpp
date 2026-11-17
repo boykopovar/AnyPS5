@@ -16,6 +16,7 @@ static void Require(bool value) { if (!value) std::abort(); }
 static void CheckProsperoSystemSwVersion() {
     *__error_nid_postfix() = 13;
     Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(nullptr) == 0);
+    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(reinterpret_cast<SceKernelProsperoSystemSwVersion*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     const std::uint64_t sizes[] = {0, 0x18, 0x27, 0x28, 0x29, 0x30, 0x100, ~0ull};
     for (const std::uint64_t size : sizes) {
         struct {

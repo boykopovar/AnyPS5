@@ -131,4 +131,6 @@ int APS5_VABI tcsetpgrp_nid_postfix(int descriptor, int group) {
     if (GuestPipe(descriptor)) return File::SetPipeProcessGroup(descriptor, group);
     return Fail(TerminalError(descriptor));
 }
+
+int APS5_VABI tcgetsid_nid_postfix(int descriptor) { return Fail(TerminalError(descriptor)); }
 }

@@ -52,13 +52,6 @@ int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config) {
     return DEBUG_UNAVAILABLE;
 }
 
-int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second) {
-    (void)first;
-    (void)second;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes) {
     const auto alignedBytes = (static_cast<std::uint64_t>(bytes) + 3) & ~std::uint64_t{3};
     const auto totalBytes = alignedBytes + 8;
@@ -156,6 +149,46 @@ int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(uint64_t, uint64_t, uint
 int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* range) {
     if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
     return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverIsCoredumpValid() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSetTFRingDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverIsSuspendPointInFlightDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverReleaseRazorACQ() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverRegisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdSetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetSystemGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

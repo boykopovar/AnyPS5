@@ -1,12 +1,16 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
-#ifndef _WIN32
+#ifdef __linux__
 #include "prx/libc/include/GuestArena.hpp"
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,13 +18,14 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#ifdef _WIN32
+#ifndef __linux__
 int main() {
     std::printf("skipped, udmabuf imports are Linux only\n");
     return 77;
@@ -55,6 +60,7 @@ struct MockDevice {
     std::set<VkFence> fences;
     std::set<VkBuffer> sparse;
     std::map<VkBuffer, VkDeviceSize> sizes;
+    std::map<VkBuffer, VkBufferUsageFlags> usages;
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
@@ -87,6 +93,10 @@ VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer, const VkC
 VKAPI_ATTR VkResult VKAPI_CALL mockEndCommandBuffer(VkCommandBuffer) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer, VkBuffer, std::uint32_t, const VkBufferCopy*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdFillBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, std::uint32_t) {}
+VKAPI_ATTR VkResult VKAPI_CALL mockQueueWaitIdle(VkQueue) { return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
+VKAPI_ATTR VkResult VKAPI_CALL mockGetFenceStatus(VkDevice, VkFence) { return VK_SUCCESS; }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t, const VkFence*, VkBool32, std::uint64_t) {
     return VK_SUCCESS;
@@ -106,6 +116,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
     mock.buffers.insert(*buffer);
     if ((info->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0) mock.sparse.insert(*buffer);
     mock.sizes[*buffer] = info->size;
+    mock.usages[*buffer] = info->usage;
     return VK_SUCCESS;
 }
 
@@ -162,6 +173,10 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockEndCommandBuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(mockQueueSubmit)},
         {"vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyBuffer)},
+        {"vkCmdFillBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdFillBuffer)},
+        {"vkQueueWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(mockQueueWaitIdle)},
+        {"vkFreeCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockFreeCommandBuffers)},
+        {"vkGetFenceStatus", reinterpret_cast<PFN_vkVoidFunction>(mockGetFenceStatus)},
         {"vkCreateFence", reinterpret_cast<PFN_vkVoidFunction>(mockCreateFence)},
         {"vkDestroyFence", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyFence)},
         {"vkWaitForFences", reinterpret_cast<PFN_vkVoidFunction>(mockWaitForFences)},
@@ -203,12 +218,43 @@ struct Backing {
 };
 
 std::vector<Backing*> backings;
+// The descriptor the resolver last handed out: the import owns it, so after the import it is closed.
+int lastBackingFile = -1;
+dev_t lastBackingDevice = 0;
+ino_t lastBackingInode = 0;
+bool failAfterRunsResolved = false;
+
+void RememberBacking(int file) {
+    lastBackingFile = file;
+    struct stat info {};
+    if (file >= 0 && fstat(file, &info) == 0) {
+        lastBackingDevice = info.st_dev;
+        lastBackingInode = info.st_ino;
+    } else {
+        lastBackingDevice = 0;
+        lastBackingInode = 0;
+    }
+}
+
+void ExpectBackingClosed(const char* what) {
+    if (lastBackingFile < 0) {
+        Expect(false, what);
+        return;
+    }
+    struct stat info {};
+    if (fstat(lastBackingFile, &info) != 0) {
+        Expect(errno == EBADF, what);
+        return;
+    }
+    Expect(info.st_dev != lastBackingDevice || info.st_ino != lastBackingInode, what);
+}
 
 bool Resolve(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     for (const auto* backing : backings) {
         const auto begin = reinterpret_cast<std::uintptr_t>(backing->base);
         if (address < begin || address + bytes > begin + backing->bytes) continue;
         *file = dup(backing->file);
+        RememberBacking(*file);
         *offset = backing->fileOffset + (address - begin);
         return *file >= 0;
     }
@@ -261,7 +307,8 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     const auto baselineBuffers = mock.buffers.size();
     const auto baselineMemories = mock.memories.size();
     const auto baselineFences = mock.fences.size();
-    SharedRange range(8u << 20u, 0, true);
+    constexpr std::uint64_t bytes = 8u << 20u;
+    SharedRange range(bytes, 0, true);
     auto first = mockContext();
     first.device = reinterpret_cast<VkDevice>(mock.next++);
     first.settleQueue = reinterpret_cast<VkQueue>(mock.next++);
@@ -273,7 +320,8 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     second.settlePool = reinterpret_cast<VkCommandPool>(mock.next++);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     for (const auto& context : {first, second, first}) {
-        const auto* imported = HostImportFor(context, range.Address(), 4096);
+        const auto* imported = HostImportFor(context, range.Address(), bytes);
+        ExpectBackingClosed("a chunk import retained the backing descriptor");
         Expect(imported != nullptr && imported->dmaBuf, "replacement device did not settle its dma-buf import");
     }
     ClearHostImports(reverse ? second.device : first.device);
@@ -287,6 +335,20 @@ void SettlingSurvivesDeviceReplacement(bool reverse) {
     Expect(mock.fences.size() == baselineFences, "repeated device cleanup changed the live fences");
 }
 
+void ImportsASmallRangeForVertexAndIndexInput() {
+    constexpr std::uint64_t bytes = 8u << 20u;
+    SharedRange range(bytes, 0, true);
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, range.Address(), bytes);
+    Expect(import != nullptr && import->dmaBuf, "a small shared range was not imported as a dma-buf");
+    if (import == nullptr) return;
+    Expect(!mock.sparse.contains(import->buffer), "the small import unexpectedly took the sparse path");
+    const auto usage = mock.usages.at(import->buffer);
+    Expect((usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as a vertex buffer");
+    Expect((usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as an index buffer");
+}
+
 void ImportsALargeRangeAsOneSparseBuffer() {
     const auto bytes = RangeBytes();
     SharedRange range(bytes, 0, true);
@@ -294,6 +356,7 @@ void ImportsALargeRangeAsOneSparseBuffer() {
     mock.binds.clear();
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     const auto* import = HostImportFor(context, range.Address(), static_cast<std::size_t>(bytes));
+    ExpectBackingClosed("a sparse import retained the backing descriptor");
     Expect(import != nullptr, "a shared range larger than udmabuf's size limit was not imported");
     if (import == nullptr) return;
     Expect(import->base == range.Address() && import->bytes == bytes && import->dmaBuf, "the import does not cover the whole range as a dma-buf import");
@@ -309,6 +372,144 @@ void ImportsALargeRangeAsOneSparseBuffer() {
         resource += bind.size;
     }
     Expect(memories.size() == chunks, "two parts of the range are bound to the same chunk import");
+}
+
+struct ScatteredRange {
+    int file = -1;
+    std::uint8_t* base = nullptr;
+    void* reservation = nullptr;
+    std::uint64_t reserved = 0;
+    std::vector<GuestArena::SharedBackingRun> runs;
+
+    ScatteredRange(std::vector<GuestArena::SharedBackingRun> pieces) : runs(std::move(pieces)) {
+        std::uint64_t bytes = 0;
+        std::uint64_t fileEnd = 0;
+        for (const auto& run : runs) {
+            bytes += run.bytes;
+            fileEnd = std::max<std::uint64_t>(fileEnd, run.offset + run.bytes);
+        }
+        file = memfd_create("anyps5-sparse-runs-mock", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        const auto fileBytes = (fileEnd + ChunkBytes - 1) / ChunkBytes * ChunkBytes;
+        if (file < 0 || ftruncate(file, static_cast<off_t>(fileBytes)) != 0 || fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) != 0) throw std::runtime_error("cannot make the scattered backing file");
+        reserved = bytes + Alignment;
+        reservation = mmap(nullptr, reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (reservation == MAP_FAILED) throw std::runtime_error("cannot reserve the scattered guest range");
+        auto cursor = (reinterpret_cast<std::uintptr_t>(reservation) + Alignment - 1) / Alignment * Alignment;
+        base = reinterpret_cast<std::uint8_t*>(cursor);
+        for (const auto& run : runs) {
+            if (mmap(reinterpret_cast<void*>(cursor), run.bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(run.offset)) == MAP_FAILED) throw std::runtime_error("cannot map a scattered run");
+            cursor += run.bytes;
+        }
+        GuestAllocations::Mutation mutation;
+        mutation.Add(base, static_cast<std::size_t>(bytes), true, true, true);
+    }
+
+    std::uint64_t Bytes() const {
+        std::uint64_t bytes = 0;
+        for (const auto& run : runs) bytes += run.bytes;
+        return bytes;
+    }
+};
+
+std::vector<ScatteredRange*> scattered;
+
+bool ResolveRuns(std::uintptr_t address, std::size_t bytes, int* file, GuestArena::SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
+    *count = 0;
+    for (const auto* range : scattered) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(range->base);
+        if (address < begin || address + bytes > begin + range->Bytes()) continue;
+        auto cursor = begin;
+        for (const auto& run : range->runs) {
+            const auto first = std::max<std::uintptr_t>(cursor, address);
+            const auto last = std::min<std::uintptr_t>(cursor + run.bytes, address + bytes);
+            if (first < last) {
+                if (*count == capacity) return false;
+                runs[(*count)++] = GuestArena::SharedBackingRun{run.offset + (first - cursor), static_cast<std::size_t>(last - first)};
+            }
+            cursor += run.bytes;
+        }
+        *file = dup(range->file);
+        RememberBacking(*file);
+        if (failAfterRunsResolved && *file >= 0) {
+            failAfterRunsResolved = false;
+            AgcDriver::Tests::SetAllocationFailureCountdown(0);
+        }
+        return *file >= 0;
+    }
+    std::uint64_t offset = 0;
+    if (!Resolve(address, bytes, file, &offset)) return false;
+    runs[0] = GuestArena::SharedBackingRun{offset, bytes};
+    *count = 1;
+    return true;
+}
+
+void ScatteredRunsAboveTheLimitBindTheirChunks() {
+    const auto total = RangeBytes();
+    const auto first = total / 2 / Alignment * Alignment;
+    const auto second = total - first;
+    const std::uint64_t firstOffset = 3 * ChunkBytes + 3 * Alignment;
+    const std::uint64_t secondOffset = 5 * Alignment;
+    ScatteredRange range({{firstOffset, static_cast<std::size_t>(first)}, {secondOffset, static_cast<std::size_t>(second)}});
+    scattered.push_back(&range);
+    const auto context = mockContext();
+    mock.binds.clear();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, reinterpret_cast<std::uint64_t>(range.base), static_cast<std::size_t>(total));
+    ExpectBackingClosed("a scattered sparse import retained the backing descriptor");
+    Expect(import != nullptr, "a range of two scattered runs larger than udmabuf's size limit was not imported");
+    if (import != nullptr) {
+        Expect(import->dmaBuf && mock.sparse.contains(import->buffer) && import->lead == 0, "the scattered range was not imported as one sparse buffer");
+        VkDeviceSize resource = 0;
+        bool mapped = true;
+        for (const auto& bind : mock.binds) {
+            const auto file = resource < first ? firstOffset + resource : secondOffset + (resource - first);
+            mapped = mapped && bind.resourceOffset == resource && bind.memoryOffset == file % ChunkBytes && bind.memoryOffset + bind.size <= ChunkBytes && (resource >= first || resource + bind.size <= first);
+            resource += bind.size;
+        }
+        Expect(mapped, "a bind does not map the chunk of its run's file offset to its place in the range");
+        Expect(resource == total, "the binds do not cover the scattered range exactly");
+    }
+    std::erase(scattered, &range);
+}
+
+void RunListAllocationFailureClosesTheBacking() {
+    ScatteredRange range({{0, Alignment}, {2 * Alignment, Alignment}});
+    scattered.push_back(&range);
+    auto context = mockContext();
+    context.sparseBinding = false;
+    failAfterRunsResolved = true;
+    bool threw = false;
+    try {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        HostImportFor(context, reinterpret_cast<std::uint64_t>(range.base), 2 * Alignment);
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    AgcDriver::Tests::SetAllocationFailureCountdown(-1);
+    Expect(threw && !failAfterRunsResolved, "the run-list allocation failure was not injected");
+    failAfterRunsResolved = false;
+    ExpectBackingClosed("the run-list allocation failure retained the backing descriptor");
+    if (lastBackingFile >= 0 && fcntl(lastBackingFile, F_GETFD) >= 0) close(lastBackingFile);
+    std::erase(scattered, &range);
+}
+
+void UnalignedInteriorRunKeepsTheFallback() {
+    const auto total = RangeBytes();
+    const auto first = (total / 2 / (2 * Alignment)) * (2 * Alignment) + Alignment;
+    const auto second = total - first;
+    ScatteredRange range({{3 * ChunkBytes, static_cast<std::size_t>(first)}, {0, static_cast<std::size_t>(second)}});
+    scattered.push_back(&range);
+    const auto context = mockContext();
+    mock.binds.clear();
+    mock.sparseAlignment = 2 * Alignment;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto* import = HostImportFor(context, reinterpret_cast<std::uint64_t>(range.base), static_cast<std::size_t>(total));
+        Expect(import == nullptr || !mock.sparse.contains(import->buffer), "a run list whose interior run is off the sparse block size took the sparse path");
+        Expect(mock.binds.empty(), "a chunk was bound for a run list that does not take the sparse path");
+    }
+    mock.sparseAlignment = Alignment;
+    std::erase(scattered, &range);
 }
 
 void UnalignedOffsetStartsAtTheBlockBelow() {
@@ -386,6 +587,7 @@ void FailureAfterTheDecisionThrows(bool sealed, VkResult bind, const char* step)
         thrown = error.what();
     }
     mock.bindResult = VK_SUCCESS;
+    ExpectBackingClosed("a throwing sparse import retained the backing descriptor");
     Expect(thrown.find("sparse dma-buf import") != std::string::npos && thrown.find(step) != std::string::npos, std::string("a failure at ") + step + " after the sparse path was chosen did not throw (got \"" + thrown + "\")");
     Expect(mock.buffers.size() == live, std::string("the sparse buffer outlived the failure at ") + step);
 }
@@ -406,12 +608,17 @@ int main() {
     setenv("APS5_WRITE_WATCH_IMPORTS", "unwatch", 1);
     SetHostImportBudget(~std::uint64_t{0});
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
+    GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(ResolveRuns);
     try {
         SettlingSurvivesDeviceReplacement(false);
         SettlingSurvivesDeviceReplacement(true);
+        ImportsASmallRangeForVertexAndIndexInput();
         ImportsALargeRangeAsOneSparseBuffer();
         UnalignedOffsetStartsAtTheBlockBelow();
         LargerSparseBlockIsDecidedBeforeImporting();
+        ScatteredRunsAboveTheLimitBindTheirChunks();
+        RunListAllocationFailureClosesTheBacking();
+        UnalignedInteriorRunKeepsTheFallback();
         FailureAfterTheDecisionThrows(false, VK_SUCCESS, "UDMABUF_CREATE");
         FailureAfterTheDecisionThrows(true, VK_ERROR_DEVICE_LOST, "vkQueueBindSparse");
         RetainsFailedWindowAcrossUnrelatedMutation();

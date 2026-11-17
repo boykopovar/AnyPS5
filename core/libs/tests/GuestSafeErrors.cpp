@@ -1,11 +1,15 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <thread>
@@ -96,11 +100,32 @@ void CheckConstraints() {
         Require(strerror_s_nid_postfix(nullptr, capacity, 2) == 22, "reject null destination");
         Require(violations == before + 1 && violationBuffer == nullptr, "one callback for null destination");
     }
+    for (const auto capacity : {std::size_t{4}, std::size_t{128}}) {
+        const int before = violations;
+        Require(strerror_s_nid_postfix(reinterpret_cast<char*>(0x10), capacity, 2) == 22, "reject unwritable destination");
+        Require(violations == before + 1 && violationBuffer == nullptr, "one callback for an unwritable destination");
+    }
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(ignore_handler_s_nid_postfix));
 
     Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "installed ignore handler returns to caller");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(Constraint));
 
+}
+
+void CheckDefaultHandler() {
+    const auto filename = "anyps5-default-constraint-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(freopen_nid_postfix(filename.c_str(), "w", __stderrp_nid_postfix) == __stderrp_nid_postfix, "redirect guest stderr");
+    Require(setvbuf_nid_postfix(__stderrp_nid_postfix, nullptr, 2, 0) == 0, "unbuffered guest stderr");
+    auto previous = set_constraint_handler_s_nid_postfix(nullptr);
+    Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "default handler returns to the caller");
+    Require(strerror_s_nid_postfix(nullptr, 0, 2) == 22, "default handler returns again");
+    Require(fflush_nid_postfix(__stderrp_nid_postfix) == 0, "flush guest stderr");
+    std::ifstream written(filename, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
+    written.close();
+    Require(text == "strerror_s: bad argument\nstrerror_s: bad argument\n", "default handler writes the message and a newline to stderr");
+    set_constraint_handler_s_nid_postfix(previous);
+    std::remove(filename.c_str());
 }
 
 void CheckThreads() {
@@ -125,6 +150,6 @@ int main() {
     CheckConstraints();
     CheckThreads();
     set_constraint_handler_s_nid_postfix(previous);
-
+    CheckDefaultHandler();
     std::puts("safe error message checks passed");
 }

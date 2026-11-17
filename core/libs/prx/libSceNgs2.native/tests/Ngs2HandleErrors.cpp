@@ -1,6 +1,9 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
+#include "tests/ExportLookup.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <array>
 #include <cstdio>
@@ -16,8 +19,47 @@ static void Status(int actual, int expected, const char* message) {
 }
 
 static void CheckExportLinked() {
-    auto* volatile linked = &sceNgs2RackQueryInfo;
+    auto* volatile linked = reinterpret_cast<void*>(&sceNgs2RackQueryInfo);
     Require(linked != nullptr);
+}
+
+static void CheckPendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleArrayEnumItems), "sceNgs2ModuleArrayEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleEnumConfigs), "sceNgs2ModuleEnumConfigs"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleQueueEnumItems), "sceNgs2ModuleQueueEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2RackRunCommands), "sceNgs2RackRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreate), "sceNgs2StreamCreate"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreateWithAllocator), "sceNgs2StreamCreateWithAllocator"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamDestroy), "sceNgs2StreamDestroy"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryBufferSize), "sceNgs2StreamQueryBufferSize"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryInfo), "sceNgs2StreamQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamResetOption), "sceNgs2StreamResetOption"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamRunCommands), "sceNgs2StreamRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemQueryInfo), "sceNgs2SystemQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemRunCommands), "sceNgs2SystemRunCommands"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
+    }
+}
+
+static void CheckCorePendingExports(const char* path) {
+    struct Export {
+        void (*function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
+    }
 }
 
 static void CheckResetOption() {
@@ -40,6 +82,12 @@ static void CheckResetOption() {
     Require(std::memcmp(&option, expected, sizeof(expected)) == 0);
     Ngs2ContextBufferInfo query{};
     Status(sceNgs2SystemQueryBufferSize(&option, &query), SCE_NGS2_OK, "reset system option was rejected");
+    errno = 71;
+    Status(sceNgs2SystemResetOption(reinterpret_cast<Ngs2SystemOption*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable system option did not return the invalid out address error");
+    Require(errno == 71);
+    errno = 71;
+    Status(sceNgs2SystemQueryBufferSize(&option, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable buffer info did not return the invalid out address error");
+    Require(errno == 71);
 }
 
 static int allocations = 0;
@@ -155,6 +203,7 @@ static int APS5_VABI DestroyScheduler(std::uintptr_t handle) {
 
 static void CheckResetScheduler() {
     Require(sceNgs2JobSchedulerResetOption(nullptr) == static_cast<int>(0x804A8012u));
+    Require(sceNgs2JobSchedulerResetOption(reinterpret_cast<Ngs2JobSchedulerOption*>(0x10)) == static_cast<int>(0x804A8012u));
     Ngs2JobSchedulerOption option{};
     Require(sceNgs2JobSchedulerResetOption(&option) == SCE_NGS2_OK);
     Require(option.size == 112 && option.user_data == 0 && option.num_workers == 4 && option.max_jobs == 1024);
@@ -259,6 +308,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {CreateCase{&valid, nullptr, true, bufferError, "a null buffer info"},
                           CreateCase{&valid, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{&valid, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), true, bufferError, "an unreadable buffer info"},
                           CreateCase{&badRate, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
                           CreateCase{&badRate, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
                           CreateCase{&badRate, &buffer, false, outputError, "a null handle and bad option"},
@@ -280,6 +330,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {AllocatorCase{&valid, nullptr, true, allocatorError, "a null allocator"},
                           AllocatorCase{&valid, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{&valid, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), true, allocatorError, "an unreadable allocator"},
                           AllocatorCase{&badRate, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
                           AllocatorCase{&badRate, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
                           AllocatorCase{&badRate, &allocator, false, outputError, "a null handle and bad option"},
@@ -410,6 +461,8 @@ static void CheckFftQuerySize() {
     Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+    errno = 71;
+    Require(sceNgs2FftQuerySize(8, 0, reinterpret_cast<std::uint64_t*>(0x10)) == -1 && errno == 71);
 }
 
 static void CheckEnumeration() {
@@ -430,10 +483,41 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
     const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
     Require(racks == 1 && handles[0] == rack);
+    errno = 71;
+    Require(sceNgs2SystemEnumHandles(reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Require(sceNgs2SystemEnumRackHandles(system, reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Status(sceNgs2SystemGetInfo(system, reinterpret_cast<Ngs2SystemInfo*>(0x10), sizeof(Ngs2SystemInfo)), static_cast<int>(0x804A8010u), "an unwritable system info did not return the invalid out address error");
+    Require(errno == 71);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-int main() {
+static void CheckRackCreateGuestPointers() {
+    constexpr uintptr_t sentinel = 0x5a5a;
+    const auto system = CreateSystem();
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), &created), static_cast<int>(0x804A8020u), "sceNgs2RackCreate", "an unreadable buffer info");
+    Require(created == sentinel);
+
+    const int allocationsBefore = allocations;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), &created), static_cast<int>(0x804A8023u), "sceNgs2RackCreateWithAllocator", "an unreadable allocator");
+    Require(created == sentinel && allocations == allocationsBefore);
+
+    Ngs2ContextBufferInfo query{};
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackQueryBufferSize", "an unwritable buffer info");
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, &query), SCE_NGS2_OK, "sceNgs2RackQueryBufferSize", "a writable buffer info");
+    Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
+}
+
+static void CheckDestroyGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackDestroy(rack, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackDestroy", "an unwritable buffer info");
+    Returned(sceNgs2RackDestroy(rack, nullptr), SCE_NGS2_OK, "sceNgs2RackDestroy", "a null buffer info after a refused destroy");
+    Returned(sceNgs2SystemDestroy(system, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2SystemDestroy", "an unwritable buffer info");
+    Returned(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "sceNgs2SystemDestroy", "a null buffer info after a refused destroy");
+}
+
+int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
@@ -466,6 +550,8 @@ int main() {
         Status(sceNgs2SystemGetUserData(system, &value), systemError, "retired system returned the wrong error");
         Require(value == sentinel);
         CheckCreateArguments();
+        CheckRackCreateGuestPointers();
+        CheckDestroyGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();
@@ -476,6 +562,8 @@ int main() {
         CheckFftQuerySize();
         CheckEnumeration();
         CheckExportLinked();
+        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
+        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

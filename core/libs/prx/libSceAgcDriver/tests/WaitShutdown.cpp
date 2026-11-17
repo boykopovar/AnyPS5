@@ -74,6 +74,11 @@ void CheckCommandBufferSubmission() {
     Require(sceAgcDriverSubmitMultiCommandBuffers(&graphicsCtx, cmdBufs, cmdSizes, 1) == 0, "graphics context multi submit failed");
     Require(sceAgcDriverSubmitMultiCommandBuffers(&computeCtx, cmdBufs, cmdSizes, 1) == 0, "compute context multi submit failed");
 
+    alignas(alignof(std::uint32_t)) char unalignedBuffer[sizeof(MockQueueContext) + 4]{};
+    auto* unalignedCtx = reinterpret_cast<void*>(unalignedBuffer + 1);
+    Require(sceAgcDriverSubmitCommandBuffer(unalignedCtx, &emptyPacket) == 0, "unaligned context submit must succeed");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(unalignedCtx, cmdBufs, cmdSizes, 1) == 0, "unaligned context multi submit must succeed");
+
     bool submitRejected = false;
     try {
         sceAgcDriverSubmitCommandBuffer(&invalidCtx, &emptyPacket);

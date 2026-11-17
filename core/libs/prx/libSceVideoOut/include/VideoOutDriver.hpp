@@ -32,6 +32,9 @@
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
+static constexpr int VIDEO_OUT_ERROR_INVALID_PITCH = static_cast<int>(0x80290004u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_TILING_MODE = static_cast<int>(0x80290007u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO = static_cast<int>(0x80290008u);
 static constexpr int VIDEO_OUT_ERROR_INVALID_ADDRESS = -2144796670;
 static constexpr int VIDEO_OUT_ERROR_INVALID_HANDLE = -2144796661;
 static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE = -2144796660;
@@ -96,7 +99,6 @@ static constexpr uint64_t VIDEO_OUT_OUTPUT_MODE_119_88HZ = 0x000000000000000FULL
 
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_SDR = 1;
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_HDR = 2;
-static constexpr std::uint64_t VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR = 1;
 
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_59_94HZ = 3;
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_119_88HZ = 13;
@@ -117,6 +119,7 @@ struct BufferAttributeGroup {
     int category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED;
     bool occupied = false;
     bool ps4 = false;
+    uint32_t ps4Pitch = 0;
 };
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group);
@@ -233,6 +236,7 @@ public:
     std::shared_ptr<VideoOutConfig> GetConfig(int handle);
     bool IsOpen(int handle);
     bool HasConfig(int handle);
+    int GetBusType(int handle);
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
     std::uint32_t GetDisplayResolution();

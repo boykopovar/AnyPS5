@@ -1,5 +1,26 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceIcu/Version.hpp"
+
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#else
+#include <io.h>
+#endif
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
+#include <thread>
 
 #include <cmath>
 #include <cstddef>
@@ -11,7 +32,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -190,6 +213,83 @@ static void TestMemoryAllocations() {
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
 }
 
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
+}
+
 static void TestTime() {
     MonotonicTime mNow = _ZN3WTF13MonotonicTime3nowEv();
     Require(mNow.m_value > 0.0);
@@ -257,17 +357,169 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
-static void TestSystem() {
-    int cores = _ZN3WTF22numberOfProcessorCoresEv();
-    Require(cores >= 1);
+extern "C" void CurrentTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
 
-    std::uint64_t ram = _ZN3WTF7ramSizeEv();
+static int g_clockQueries = 0;
+static int g_lastClockId = -1;
+
+static int ClockWithTimes(int clockId, KernelTimespec* time) {
+    ++g_clockQueries;
+    g_lastClockId = clockId;
+    if (clockId == 0) {
+        *time = KernelTimespec{1700000000, 250000000};
+        return 0;
+    }
+    if (clockId == 4) {
+        *time = KernelTimespec{12345, 500000000};
+        return 0;
+    }
+    *time = KernelTimespec{99, 0};
+    return 0;
+}
+
+static int ClockFailing(int, KernelTimespec*) {
+    ++g_clockQueries;
+    return -1;
+}
+
+static double GuestClockSeconds(int clockId) {
+    KernelTimespec time{};
+    Require(clock_gettime_nid_postfix(clockId, &time) == 0);
+    return static_cast<double>(time.tv_sec) + time.tv_nsec / 1'000'000'000.0;
+}
+
+static void TestGuestClocks() {
+    CurrentTimeClockForTest_nid_no_patch(ClockWithTimes);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 1700000000.25);
+    Require(g_lastClockId == 0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 12345.5);
+    Require(g_lastClockId == 4);
+    Require(g_clockQueries == 2);
+
+    TimeWithDynamicClockType dynamicWall = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Wall);
+    Require(dynamicWall.m_type == ClockType::Wall && dynamicWall.m_value == 1700000000.25);
+    TimeWithDynamicClockType dynamicMonotonic = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+    Require(dynamicMonotonic.m_type == ClockType::Monotonic && dynamicMonotonic.m_value == 12345.5);
+
+    MonotonicTime monotonic{12346.5};
+    Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == 1700000001.25);
+    WallTime wall{1700000002.25};
+    Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == 12347.5);
+
+    CurrentTimeClockForTest_nid_no_patch(ClockFailing);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 0.0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 0.0);
+    Require(g_clockQueries == 2);
+
+    CurrentTimeClockForTest_nid_no_patch(nullptr);
+    const double monotonicBefore = GuestClockSeconds(4);
+    const double monotonicNow = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    Require(monotonicBefore <= monotonicNow && monotonicNow <= GuestClockSeconds(4));
+    const double wallBefore = GuestClockSeconds(0);
+    const double wallNow = _ZN3WTF8WallTime3nowEv().m_value;
+    Require(wallBefore <= wallNow && wallNow <= GuestClockSeconds(0));
+}
+
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static int g_sysconfQueries = 0;
+
+static std::int64_t SysconfWithProcessors(int name) {
+    ++g_sysconfQueries;
+    if (name == 58) return 37;
+    if (name == 57) return 41;
+    return -1;
+}
+
+static std::int64_t SysconfFailing(int) {
+    ++g_sysconfQueries;
+    return -1;
+}
+
+static void TestNumberOfProcessorCores() {
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfWithProcessors);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfFailing);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(nullptr);
+    const int cores = _ZN3WTF22numberOfProcessorCoresEv();
+    Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
+}
+
+extern "C" void RamSizeSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static std::int64_t SysconfWithMemory(int name) {
+    ++g_sysconfQueries;
+    if (name == 121) return 139888;
+    if (name == 47) return 16384;
+    return -1;
+}
+
+static std::int64_t SysconfWithoutPhysPages(int name) {
+    ++g_sysconfQueries;
+    return name == 47 ? 16384 : -1;
+}
+
+static std::int64_t SysconfWithoutPageSize(int name) {
+    ++g_sysconfQueries;
+    return name == 121 ? 139888 : -1;
+}
+
+static void TestRamSize() {
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithMemory);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPhysPages);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPageSize);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfFailing);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(nullptr);
+    const std::uint64_t ram = _ZN3WTF7ramSizeEv();
+    Require(ram == static_cast<std::uint64_t>(sysconf_nid_postfix(121)) * static_cast<std::uint64_t>(sysconf_nid_postfix(47)));
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == ram);
+}
+
+static void TestSystem() {
+    TestNumberOfProcessorCores();
+    TestRamSize();
+    TestGuestClocks();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
+
+    std::uint8_t icuVersion[4] = {0};
+    u_getVersion_nid_postfix(icuVersion);
+    Require(_ZN3WTF3ICU12majorVersionEv() == icuVersion[0]);
+    Require(_ZN3WTF3ICU12minorVersionEv() == icuVersion[1]);
+    Require(_ZN3WTF3ICU12majorVersionEv() == 78);
+    Require(_ZN3WTF3ICU12minorVersionEv() == 1);
 
     char b1[16] = {0};
     char b2[16] = {0};
@@ -375,8 +627,375 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestMappedFiles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto construct = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb;
+    const auto readOnly = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb;
+    const auto fromPath = &_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto fromPathBase = &_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto destroy = &_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev;
+    const auto destroyBase = &_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev;
+    const auto map = &_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE;
+    WTF::MappedFileData mapped{};
+    bool success = true;
+    readOnly(&mapped, -1, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    destroy(&mapped);
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
+    fromPath(&mapped, path, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    int handle = open(path, 2, true, true);
+    Require(handle >= 0);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && !mapped.data && !mapped.size);
+    destroyBase(&mapped);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "abcdef", 6) == 0);
+    VirtualQueryInfo info{};
+    void* address = mapped.data;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    close(handle);
+    Require(std::memcmp(mapped.data, "abcdef", 6) == 0);
+    destroy(&mapped);
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0);
+    handle = open(path, 2, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'S';
+    char contents[6]{};
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroy(&mapped);
+    construct(&mapped, handle, 2, 1, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'P';
+    Require(sceKernelLseek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroyBase(&mapped);
+    construct(&mapped, handle, 1, 0, success);
+    Require(success);
+    static_cast<char*>(mapped.data)[1] = 'W';
+    destroy(&mapped);
+    close(handle);
+    fromPathBase(&mapped, path, 1, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroyBase(&mapped);
+    handle = open(path, 0, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    Require(map(&mapped, handle, 0, 1));
+    Require(mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroy(&mapped);
+    close(handle);
+#ifndef _WIN32
+    std::filesystem::resize_file(root / "file.bin", std::uint64_t{1} << 32);
+    handle = open(path, 0, true, false);
+    readOnly(&mapped, handle, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    close(handle);
+#endif
+    RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
+    std::filesystem::remove_all(root);
+}
+
+static void TestFileHandles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto seek = &_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE;
+    const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
+    const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
+    const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
+    const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(guestPath));
+    Require(open(path, 0, true, false) == -1);
+    Require(openAndLock(path, 0, 1) == -1);
+    NKWebKit::WtfAbi::String nullPath;
+    Require(open(nullPath, 0, true, false) == -1);
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    int handle = open(path, 1, false, false);
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(handle >= 0);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    Require(seek(handle, 2, 0) == 2);
+    Require(seek(handle, 1, 1) == 3);
+    Require(seek(handle, -1, 2) == 5);
+    Require(truncate(handle, 4));
+    Require(seek(handle, 0, 2) == 4);
+    Require(!truncate(handle, -1));
+    close(handle);
+    Require(handle == -1);
+    close(handle);
+    Require(handle == -1);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / std::filesystem::path(u8"é.bin")).permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    handle = open(path, 0, true, false);
+    Require(handle >= 0);
+    char bytes[8]{};
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 4);
+    Require(std::memcmp(bytes, "abcd", 4) == 0);
+    Require(!truncate(handle, 1));
+    close(handle);
+    for (int mode = 0; mode != 3; ++mode) Require(open(path, mode, true, true) == -1);
+    Require(std::filesystem::file_size(root / std::filesystem::path(u8"é.bin")) == 4);
+    handle = open(path, 2, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 4);
+    Require(sceKernelWrite(handle, "ef", 2) == 2);
+    Require(seek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 6);
+    Require(std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    handle = open(path, 1, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 0);
+    Require(sceKernelClose(handle) == 0);
+    handle = sceKernelOpen(guestPath, SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    close(handle);
+    Require(handle == -1);
+    handle = openAndLock(path, 2, 2);
+    Require(handle >= 0 && sceKernelWrite(handle, "x", 1) == 1);
+    unlockAndClose(handle);
+    Require(seek(handle, 0, 0) == -1);
+    Require(!truncate(-1, 0));
+    Require(seek(-1, 0, 0) == -1);
+    handle = -2;
+    close(handle);
+    Require(handle == -1);
+    auto allPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/all.bin"));
+#ifndef _WIN32
+    const auto allMask = ::umask(0);
+#endif
+    handle = open(allPath, 2, true, true);
+#ifndef _WIN32
+    ::umask(allMask);
+#endif
+    Require(handle >= 0);
+    close(handle);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "all.bin").permissions() & std::filesystem::perms::mask) == static_cast<std::filesystem::perms>(0666));
+#endif
+    auto readPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/read.bin"));
+    handle = open(readPath, 0, false, true);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
+    close(handle);
+    RemovePathAlias_nid_no_patch("/nkwebkit-handles");
+    std::filesystem::remove_all(root);
+}
+
+static void RequireCurrentStackBounds() {
+    static_assert(sizeof(WTF::StackBounds) == 16);
+    static_assert(offsetof(WTF::StackBounds, m_origin) == 0);
+    static_assert(offsetof(WTF::StackBounds, m_bound) == 8);
+    const WTF::StackBounds bounds = _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+    int local = 0;
+    const auto* here = reinterpret_cast<const char*>(&local);
+    const auto* origin = static_cast<const char*>(bounds.m_origin);
+    const auto* bound = static_cast<const char*>(bounds.m_bound);
+    Require(origin > bound);
+    Require(here < origin && here > bound);
+    PthreadAttr attr = nullptr;
+    Require(pthread_attr_init_nid_postfix(&attr) == 0);
+    Require(pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr) == 0);
+    void* stackAddress = nullptr;
+    std::size_t stackSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, &stackSize) == 0);
+    Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    Require(bounds.m_bound == stackAddress);
+    Require(origin == static_cast<const char*>(stackAddress) + stackSize);
+}
+
+static void TestStackBounds() {
+    RequireCurrentStackBounds();
+    std::thread worker(RequireCurrentStackBounds);
+    worker.join();
+}
+
+static std::string CaptureLog(void (*body)()) {
+    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    const int file = _open(path.c_str(), _O_CREAT | _O_TRUNC | _O_WRONLY, 0600);
+    const int savedOut = _dup(1);
+    const int savedErr = _dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && _dup2(file, 1) == 0 && _dup2(file, 2) == 0);
+#else
+    const int file = open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    const int savedOut = dup(1);
+    const int savedErr = dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && dup2(file, 1) == 1 && dup2(file, 2) == 2);
+#endif
+    body();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    Require(_dup2(savedOut, 1) == 0 && _dup2(savedErr, 2) == 0);
+    _close(savedOut);
+    _close(savedErr);
+    _close(file);
+#else
+    Require(dup2(savedOut, 1) == 1 && dup2(savedErr, 2) == 2);
+    close(savedOut);
+    close(savedErr);
+    close(file);
+#endif
+    std::ifstream input(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    return text;
+}
+
+static std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+static const char g_firstTimingName[] = "nkwebkit-timing-first";
+static const char g_secondTimingName[] = "nkwebkit-timing-second";
+
+static void EndScope(const char* name, unsigned interval) {
+    WTF::TimingScope scope{_ZN3WTF13MonotonicTime3nowEv(), name, interval};
+    _ZN3WTF11TimingScope11scopeDidEndEv(&scope);
+}
+
+static void TestTimingScope() {
+    static_assert(sizeof(WTF::TimingScope) == 24);
+    static_assert(offsetof(WTF::TimingScope, m_startTime) == 0);
+    static_assert(offsetof(WTF::TimingScope, m_name) == 8);
+    static_assert(offsetof(WTF::TimingScope, m_logIterationInterval) == 16);
+    const std::string first = CaptureLog([] {
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_secondTimingName, 2);
+    });
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 2 calls, mean duration: ") == 1);
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 1 calls") == 0);
+    Require(CountOccurrences(first, g_secondTimingName) == 0);
+    Require(CountOccurrences(first, "ms, total duration: ") == 1);
+    Require(CountOccurrences(first, "ms, max duration ") == 1);
+    const std::string second = CaptureLog([] {
+        EndScope(g_secondTimingName, 2);
+        EndScope(g_firstTimingName, 1);
+    });
+    Require(CountOccurrences(second, std::string(g_secondTimingName) + ": 2 calls") == 1);
+    Require(CountOccurrences(second, std::string(g_firstTimingName) + ": 3 calls") == 1);
+    bool rejected = false;
+    try {
+        EndScope(g_firstTimingName, 0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
+static void TestUniStdExtras() {
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
+    const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
+    Require(handle >= 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) == 0);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) != 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    const int duplicate = _ZN3WTF14dupCloseOnExecEi(handle);
+    Require(duplicate >= 0 && duplicate != handle);
+    Require(fcntl_nid_postfix(duplicate, 1) == 1);
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    Require(sceKernelWrite(duplicate, "abc", 3) == 3);
+    Require(sceKernelLseek(handle, 0, 1) == 3);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(sceKernelClose(handle) == 0);
+    *__error_nid_postfix() = 0;
+    Require(!_ZN3WTF11setNonBlockEi(handle));
+    Require(*__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
+    Require(*__error_nid_postfix() == 9);
+    RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
+    std::filesystem::remove_all(root);
+}
+
+static void TestSleepSeconds() {
+    double start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.05});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start >= 0.05);
+    start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-5.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+}
+
+static void TestMakeAllDirectories() {
+    const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const auto guest = [](const char* text) {
+        return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text));
+    };
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(std::filesystem::is_directory(root / "a" / "b" / "c"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+    Require((std::filesystem::status(root / "a" / "b" / "c").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+    Require(make(guest("/nkwebkit-dirs")));
+    Require(make(guest("/nkwebkit-dirs/d/e/")));
+    Require(std::filesystem::is_directory(root / "d" / "e"));
+    Require(make(guest("/nkwebkit-dirs/\xC3\xA9/z")));
+    Require(std::filesystem::is_directory(root / std::filesystem::path(u8"é") / "z"));
+    {
+        std::ofstream file(root / "f.bin", std::ios::binary);
+        Require(static_cast<bool>(file));
+    }
+    Require(make(guest("/nkwebkit-dirs/f.bin")));
+    Require(std::filesystem::is_regular_file(root / "f.bin"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x")));
+    Require(!std::filesystem::exists(root / "f.bin" / "x"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x/y")));
+    NKWebKit::WtfAbi::String nullPath;
+    Require(!make(nullPath));
+    Require(!make(guest("")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
+    TestStackBounds();
+    TestTimingScope();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -384,6 +1003,11 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestMappedFiles();
+    TestFileHandles();
+    TestUniStdExtras();
+    TestSleepSeconds();
+    TestMakeAllDirectories();
     return 0;
 }
 
@@ -408,6 +1032,8 @@ const auto ViewUpper = &_ZNK3WTF10StringView23convertToASCIIUppercaseEv;
 const auto ImplUTF8 = &_ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE;
 const auto UTF8 = &_ZNK3WTF6String4utf8ENS_14ConversionModeE;
 const auto ViewUTF8 = &_ZNK3WTF10StringView4utf8ENS_14ConversionModeE;
+const auto Utf8For16 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE;
+const auto Utf8For8 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKhj;
 const auto FromUTF8 = &_ZN3WTF6String8fromUTF8EPKhm;
 const auto FromUTF8Z = &_ZN3WTF6String8fromUTF8EPKh;
 const auto FromCString = &_ZN3WTF6String8fromUTF8ERKNS_7CStringE;
@@ -626,6 +1252,17 @@ void TestUTFConversions() {
     Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
+    Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
+    Throws([&] { Utf8For16(nullptr, 1, 1); });
+    Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
+    Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
+    Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
+    Throws([&] { Utf8For8(nullptr, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);
@@ -767,6 +1404,166 @@ void TestIntegersAndConstructors() {
     { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Check(!value.buffer); }
 }
 
+std::u16string Units(const String& value) {
+    std::u16string result;
+    if (!value.impl) return result;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        if (value.impl->hashAndFlags & 4) result.push_back(static_cast<const unsigned char*>(value.impl->data)[i]);
+        else result.push_back(static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return result;
+}
+
+void TestFoldQuoteMarks() {
+    const auto fold = &_ZN7WebCore14foldQuoteMarksERKN3WTF6StringE;
+    struct Mark { char16_t code; char16_t folded; };
+    const Mark marks[] = {
+        {0x00AB, u'"'}, {0x00BB, u'"'}, {0x05F4, u'"'}, {0x201C, u'"'}, {0x201D, u'"'}, {0x201E, u'"'},
+        {0x201F, u'"'}, {0x2E42, u'"'}, {0x301D, u'"'}, {0x301E, u'"'}, {0x301F, u'"'}, {0xFF02, u'"'},
+        {0x05F3, u'\''}, {0x2018, u'\''}, {0x2019, u'\''}, {0x201A, u'\''}, {0x201B, u'\''}, {0x2039, u'\''},
+        {0x203A, u'\''}, {0x300C, u'\''}, {0x300D, u'\''}, {0x300E, u'\''}, {0x300F, u'\''}, {0xFE41, u'\''},
+        {0xFE42, u'\''}, {0xFE43, u'\''}, {0xFE44, u'\''}, {0xFF07, u'\''}, {0xFF62, u'\''}, {0xFF63, u'\''},
+    };
+    Check(sizeof(marks) / sizeof(marks[0]) == 30);
+    for (const auto& mark : marks) {
+        const char16_t input[] = {u'a', mark.code, u'b'};
+        auto wide = Create16(input, 3);
+        auto folded = fold(&wide);
+        Check(folded.impl != wide.impl);
+        Check(!(folded.impl->hashAndFlags & 4));
+        Check(Units(folded) == std::u16string({u'a', mark.folded, u'b'}));
+        Check(Units(wide) == std::u16string(input, 3));
+        const char16_t single[] = {mark.code};
+        auto lone = Create16(single, 1);
+        Check(Units(fold(&lone)) == std::u16string(1, mark.folded));
+    }
+    const char16_t unchanged[] = {u'"', u'\'', u'a', 0x2017, 0x2020, 0x2038, 0x203B, 0x300B, 0x3010, 0xFE40, 0xFE45, 0xFF01, 0xFF08, 0xFF61, 0xFF64, 0x05F2, 0x05F5, 0x00AA, 0x00BC, 0x4E2D};
+    auto plain = Create16(unchanged, sizeof(unchanged) / sizeof(unchanged[0]));
+    auto plainResult = fold(&plain);
+    Check(plainResult.impl == plain.impl);
+    Check(plain.impl->refCount == 4);
+    const char16_t mixed[] = {0x201C, u'h', u'i', 0x201D, u' ', 0x2018, u'x', 0x2019, 0x4E2D, 0x300C, 0x300D, 0xFF07, 0xFF02};
+    auto mixedString = Create16(mixed, 13);
+    Check(Units(fold(&mixedString)) == std::u16string({u'"', u'h', u'i', u'"', u' ', u'\'', u'x', u'\'', 0x4E2D, u'\'', u'\'', u'\'', u'"'}));
+    const char16_t asciiAfter[] = {0x201C, u'a', 0x201D};
+    auto wideAscii = Create16(asciiAfter, 3);
+    auto wideAsciiResult = fold(&wideAscii);
+    Check(Units(wideAsciiResult) == u"\"a\"");
+    Check(!(wideAsciiResult.impl->hashAndFlags & 4));
+
+    const unsigned char latin[] = {0xAB, 'a', 0xBB, 0xE9, 0xA0};
+    auto narrow = Create8(latin, 5);
+    Check(narrow.impl->hashAndFlags & 4);
+    auto narrowResult = fold(&narrow);
+    Check(narrowResult.impl != narrow.impl);
+    Check(narrowResult.impl->hashAndFlags & 4);
+    Check(Units(narrowResult) == std::u16string({u'"', u'a', u'"', 0xE9, 0xA0}));
+    Check(Units(narrow) == std::u16string({0xAB, u'a', 0xBB, 0xE9, 0xA0}));
+    auto narrowPlain = Create8(U8("it's"), 4);
+    auto narrowPlainResult = fold(&narrowPlain);
+    Check(narrowPlainResult.impl == narrowPlain.impl);
+    Check(narrowPlain.impl->refCount == 4);
+
+    auto empty = Create16(u"", 0);
+    auto emptyResult = fold(&empty);
+    Check(emptyResult.impl == empty.impl);
+    Check(!emptyResult.impl->length);
+    String absent;
+    Check(!fold(&absent).impl);
+    Throws([&] { fold(nullptr); });
+}
+
+void TestDefaultMIMEType() {
+    const auto defaultType = &_ZN7WebCore15defaultMIMETypeEv;
+    const String& first = defaultType();
+    const String& second = defaultType();
+    Check(&first == &second);
+    Check(first.impl);
+    Check(first.impl->length == 24);
+    Check(first.impl->hashAndFlags & 4);
+    Check(!(first.impl->hashAndFlags & 48));
+    Check(Units(first) == u"application/octet-stream");
+    Check(first.impl->refCount & 1);
+    const unsigned refCount = first.impl->refCount;
+    {
+        String copy(first);
+        Check(copy.impl == first.impl);
+        Check(first.impl->refCount == refCount + 2);
+    }
+    Check(first.impl->refCount == refCount);
+    Check(ConcurrentHash(first.impl) == (first.impl->hashAndFlags >> 8));
+    auto fresh = Create8(U8("application/octet-stream"), 24);
+    Check(Equal(first.impl, fresh.impl));
+    Check(EqualZ(first.impl, U8("application/octet-stream")));
+}
+
+void TestRedirectChainAllowsReuse() {
+    const auto allows = &_ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE;
+    using Status = WebCore::RedirectChainCacheStatus::Status;
+    const double now = _ZN3WTF8WallTime3nowEv().m_value;
+    const double infinity = std::numeric_limits<double>::infinity();
+    for (int reuse = 0; reuse < 2; ++reuse) {
+        Check(allows({WallTime{infinity}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{0.0}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{std::nan("")}, Status::NoRedirection}, reuse));
+        Check(!allows({WallTime{infinity}, Status::NotCachedRedirection}, reuse));
+        Check(!allows({WallTime{0.0}, Status::NotCachedRedirection}, reuse));
+    }
+    Check(allows({WallTime{infinity}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{0.0}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{-infinity}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{std::nan("")}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{0.0}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{-infinity}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{std::nan("")}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 2));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 1));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(3)}, 0));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(255)}, 1));
+}
+
+void TestSharedStringHash() {
+    const auto hash16 = &_ZN7WebCore23computeSharedStringHashEPKDsj;
+    const auto hashString = &_ZN7WebCore23computeSharedStringHashERKN3WTF6StringE;
+    struct Vector { const char* latin1; const char16_t* utf16; unsigned length; unsigned expected; };
+    const Vector vectors[] = {
+        {"", u"", 0, 0x04ec889eu},
+        {"a", u"a", 1, 0xf095343bu},
+        {"ab", u"ab", 2, 0x1b7603e0u},
+        {"abc", u"abc", 3, 0xcc946882u},
+        {"http://example.com/", u"http://example.com/", 19, 0x836f1d81u},
+    };
+    for (const auto& vector : vectors) {
+        Check(hash16(vector.utf16, vector.length) == vector.expected);
+        String narrow;
+        _ZN3WTF6StringC1EPKcj(&narrow, vector.latin1, vector.length);
+        Check(!vector.length || (narrow.impl->hashAndFlags & 4));
+        Check(hashString(&narrow) == vector.expected);
+        String wide;
+        _ZN3WTF6StringC1EPKDsj(&wide, vector.utf16, vector.length);
+        Check(!vector.length || !(wide.impl->hashAndFlags & 4));
+        Check(hashString(&wide) == vector.expected);
+    }
+    const char16_t nonLatin1[] = {0x00e9, 0x4e2d};
+    Check(hash16(nonLatin1, 2) == 0x77f0e865u);
+    String nonLatin1String;
+    _ZN3WTF6StringC1EPKDsj(&nonLatin1String, nonLatin1, 2);
+    Check(hashString(&nonLatin1String) == 0x77f0e865u);
+    const char16_t deletedValue[] = {3163, 53528};
+    Check(hash16(deletedValue, 2) == 0xffffffffu);
+    String deletedString;
+    _ZN3WTF6StringC1EPKDsj(&deletedString, deletedValue, 2);
+    Check(hashString(&deletedString) == 0xffffffffu);
+    String absent;
+    Check(hashString(&absent) == 0x04ec889eu);
+    Check(hash16(nullptr, 0) == 0x04ec889eu);
+    Throws([&] { hash16(nullptr, 1); });
+    Throws([&] { hashString(nullptr); });
+}
+
 void Run() {
     TestStorageAndQueries();
     TestASCIIAndViews();
@@ -775,13 +1572,17 @@ void Run() {
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
+    TestFoldQuoteMarks();
+    TestDefaultMIMEType();
+    TestRedirectChainAllowsReuse();
+    TestSharedStringHash();
 }
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); void TestFileSystemRepresentations(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); Wtf2Tests::TestFileSystemRepresentations(); }
 
 namespace Wtf2Tests {
 
@@ -803,11 +1604,455 @@ const auto URLSrcdoc = &_ZNK3WTF3URL13isAboutSrcDocEv;
 const auto URLJavaScript = &_ZNK3WTF3URL20protocolIsJavaScriptEv;
 const auto URLInvalidate = &_ZN3WTF3URL10invalidateEv;
 const auto URLEqualIgnoringFragment = &_ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_;
+const auto URLPortAllowed = &_ZN3WTF11portAllowedERKNS_3URLE;
+const auto URLProtocolHostAndPortAreEqual = &_ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_;
 const auto IsJavaScript = &_ZN3WTF20protocolIsJavaScriptENS_10StringViewE;
 const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
+const auto URLLastPathComponent = &_ZNK3WTF3URL17lastPathComponentEv;
+const auto URLStrippedForReferrer = &_ZNK3WTF3URL24strippedForUseAsReferrerEv;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
+
+const auto URLEllipsize = &_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj;
+const auto DataURLMime = &_ZN3WTF19mimeTypeFromDataURLENS_10StringViewE;
+
+bool Is8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+StringView ViewOf(const String& value) {
+    return {value.impl->data, value.impl->length, !!(value.impl->hashAndFlags & 4)};
+}
+
+StringView Literal(const char* text) { return {text, static_cast<unsigned>(std::strlen(text)), true}; }
+
+void TestURLStringHelpers() {
+    auto narrow = FromUTF8Z(U8("http://example.com/abcdefghij"));
+    URL narrowURL{narrow.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (unsigned length : {29U, 30U, 40U, 0xFFFFFFFFU}) {
+        auto same = URLEllipsize(&narrowURL, length);
+        Check(same.impl == narrow.impl && narrow.impl->refCount == 4);
+    }
+    Check(narrow.impl->refCount == 2);
+    Text(URLEllipsize(&narrowURL, 28), "http://exampl...m/abcdefghij");
+    Text(URLEllipsize(&narrowURL, 10), "http...hij");
+    Text(URLEllipsize(&narrowURL, 11), "http...hij");
+    Text(URLEllipsize(&narrowURL, 6), "ht...j");
+    Text(URLEllipsize(&narrowURL, 5), "h...");
+    Text(URLEllipsize(&narrowURL, 4), "h...");
+    Text(URLEllipsize(&narrowURL, 3), "...");
+    Text(URLEllipsize(&narrowURL, 2), "...");
+    Text(URLEllipsize(&narrowURL, 1), "http://example.com/abcdefghij...");
+    Text(URLEllipsize(&narrowURL, 0), "http://example.com/abcdefghij...");
+    Check(Is8Bit(URLEllipsize(&narrowURL, 10)) && Is8Bit(URLEllipsize(&narrowURL, 3)));
+    Check(URLEllipsize(&narrowURL, 10).impl != narrow.impl);
+
+    auto wide = Create16(u"http://wide.test/path", 21);
+    URL wideURL{wide.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&wideURL, 21).impl == wide.impl);
+    auto wideShort = URLEllipsize(&wideURL, 10);
+    Text(wideShort, "http...ath");
+    Check(!Is8Bit(wideShort));
+    auto wideDots = URLEllipsize(&wideURL, 3);
+    Text(wideDots, "...");
+    Check(!Is8Bit(wideDots));
+    auto wideLong = URLEllipsize(&wideURL, 1);
+    Text(wideLong, "http://wide.test/path...");
+    Check(!Is8Bit(wideLong));
+
+    URL absent{};
+    Check(URLEllipsize(&absent, 0).impl == nullptr && URLEllipsize(&absent, 10).impl == nullptr);
+    auto empty = Create8(U8(""), 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&emptyURL, 0).impl == empty.impl && URLEllipsize(&emptyURL, 5).impl == empty.impl);
+    Throws([&] { URLEllipsize(nullptr, 10); });
+
+    Text(DataURLMime(Literal("data:text/HTML;base64,x")), "text/html");
+    Text(DataURLMime(Literal("data:Text/X,y")), "text/x");
+    Text(DataURLMime(Literal("data:,x")), "text/plain");
+    Text(DataURLMime(Literal("data:;base64,x")), "text/plain");
+    Check(Is8Bit(DataURLMime(Literal("data:,x"))));
+    Text(DataURLMime(Literal("data:a,b;c")), "a,b");
+    Text(DataURLMime(Literal("data:text/plain")), "");
+    Text(DataURLMime(Literal("data:")), "");
+    Text(DataURLMime(Literal("data")), "");
+    Text(DataURLMime(Literal("")), "");
+    Text(DataURLMime(StringView{nullptr, 0, true}), "");
+    Text(DataURLMime(Literal("http://a;b")), "//a");
+    auto wideData = Create16(u"data:TEXT/Plain;x", 17);
+    auto wideMime = DataURLMime(ViewOf(wideData));
+    Text(wideMime, "text/plain");
+    Check(!Is8Bit(wideMime));
+    auto accented = Create16(u"data:É/X,", 9);
+    Text(DataURLMime(ViewOf(accented)), "\xC3\x89/x");
+    auto widePlain = Create16(u"data:,x", 7);
+    Text(DataURLMime(ViewOf(widePlain)), "text/plain");
+}
+
+const auto EncodeName = &_ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE;
+const auto DecodeName = &_ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE;
+const auto LastComponent = &_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE;
+
+bool NameIs8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+std::u16string NameUnits(const String& value) {
+    Check(value.impl != nullptr);
+    std::u16string units;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        units.push_back(NameIs8Bit(value) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return units;
+}
+
+String Wide(const std::u16string& units) { return Create16(units.data(), static_cast<unsigned>(units.size())); }
+
+String NameString(const char* text) { return Create8(U8(text), static_cast<unsigned>(std::strlen(text))); }
+
+void TestFileNameHelpers() {
+    for (unsigned c = 0; c < 128; ++c) {
+        char16_t unit = static_cast<char16_t>(c);
+        auto encoded = EncodeName(&(const String&)Wide(std::u16string(1, unit)));
+        bool escaped = c < 0x20 || c == 0x7F || std::strchr(" \"%*/:<>?\\|", static_cast<int>(c)) != nullptr;
+        if (escaped) {
+            static const char Hex[] = "0123456789ABCDEF";
+            std::u16string expected{u'%', static_cast<char16_t>(Hex[c >> 4]), static_cast<char16_t>(Hex[c & 15])};
+            Check(NameUnits(encoded) == expected);
+        } else {
+            Check(NameUnits(encoded) == std::u16string(1, unit));
+        }
+        Check(NameIs8Bit(encoded));
+    }
+
+    Text(EncodeName(&(const String&)NameString("a b/c%")), "a%20b%2Fc%25");
+    Text(EncodeName(&(const String&)NameString("#+.~ -_")), "#+.~%20-_");
+    Text(EncodeName(&(const String&)NameString("a\\b|c:d*e?f<g>h\"i")), "a%5Cb%7Cc%3Ad%2Ae%3Ff%3Cg%3Eh%22i");
+
+    auto accented = Wide(u"café");
+    Check(!NameIs8Bit(accented));
+    auto accentedEncoded = EncodeName(&accented);
+    Check(NameUnits(accentedEncoded) == u"café" && NameIs8Bit(accentedEncoded));
+    Check(accentedEncoded.impl != accented.impl);
+
+    const unsigned char latin1Source[] = {'c', 'a', 'f', 0xE9, '/'};
+    auto latin1Bytes = Create8(latin1Source, 5);
+    auto latin1Encoded = EncodeName(&latin1Bytes);
+    Check(NameUnits(latin1Encoded) == u"café%2F" && NameIs8Bit(latin1Encoded));
+    auto latin1Decoded = DecodeName(&latin1Encoded);
+    Check(NameUnits(latin1Decoded) == u"café/" && NameIs8Bit(latin1Decoded));
+
+    auto wide = Wide(u"a中 b");
+    auto wideEncoded = EncodeName(&wide);
+    Check(NameUnits(wideEncoded) == u"a中%20b" && !NameIs8Bit(wideEncoded));
+
+    auto paired = Wide(u"\xD83D\xDE00");
+    auto pairedEncoded = EncodeName(&paired);
+    Check(NameUnits(pairedEncoded) == u"\xD83D\xDE00" && !NameIs8Bit(pairedEncoded));
+
+    auto loneLeadEnd = Wide(u"a\xD83D");
+    Check(NameUnits(EncodeName(&loneLeadEnd)) == u"a%+D83D");
+    auto loneLeadMiddle = Wide(u"\xD83D" u"a");
+    Check(NameUnits(EncodeName(&loneLeadMiddle)) == u"%+D83Da");
+    auto loneTrailStart = Wide(u"\xDE00" u"a");
+    Check(NameUnits(EncodeName(&loneTrailStart)) == u"%+DE00a");
+    auto loneTrailMiddle = Wide(u"a\xDE00");
+    Check(NameUnits(EncodeName(&loneTrailMiddle)) == u"a%+DE00");
+    auto doubleLead = Wide(u"\xD83D\xD83D\xDE00");
+    Check(NameUnits(EncodeName(&doubleLead)) == u"%+D83D\xD83D\xDE00");
+    auto doubleTrail = Wide(u"\xD83D\xDE00\xDE00");
+    Check(NameUnits(EncodeName(&doubleTrail)) == u"\xD83D\xDE00%+DE00");
+    auto reversed = Wide(u"\xDE00\xD83D");
+    Check(NameUnits(EncodeName(&reversed)) == u"%+DE00%+D83D");
+
+    auto latinWide = Wide(u"a/é");
+    Check(!NameIs8Bit(latinWide) && !NameIs8Bit(wide) && !NameIs8Bit(paired));
+    auto latinWideEncoded = EncodeName(&latinWide);
+    Check(NameUnits(latinWideEncoded) == u"a%2Fé" && NameIs8Bit(latinWideEncoded));
+    auto highByte = Wide(u"\x00ff\x0100");
+    Check(NameUnits(EncodeName(&highByte)) == u"\x00ff\x0100");
+
+    String null;
+    Check(EncodeName(&null).impl == nullptr);
+    auto empty = NameString("");
+    auto emptyEncoded = EncodeName(&empty);
+    Check(emptyEncoded.impl == empty.impl && empty.impl->length == 0);
+    Throws([&] { EncodeName(nullptr); });
+
+    StringImpl privateEmpty{4, 0, nullptr, 0};
+    String privateHolder(&privateEmpty);
+    Check(EncodeName(&privateHolder).impl == &privateEmpty);
+    Check(DecodeName(&privateHolder).impl == &privateEmpty);
+    Check(LastComponent(&privateHolder).impl == &privateEmpty);
+    Check(privateEmpty.refCount == 4);
+
+    auto plain = NameString("name.txt");
+    auto plainEncoded = EncodeName(&plain);
+    Text(plainEncoded, "name.txt");
+    Check(plainEncoded.impl != plain.impl);
+
+    auto roundTrip = Wide(u"a b/\x01\x7Fé中\xD83D\xDE00\xD83D%\xDE00");
+    auto roundTripEncoded = EncodeName(&roundTrip);
+    Check(NameUnits(DecodeName(&roundTripEncoded)) == NameUnits(roundTrip));
+
+    Text(DecodeName(&(const String&)NameString("a%20b%2fc%2Fd")), "a b/c/d");
+    Text(DecodeName(&(const String&)NameString("%41")), "A");
+    Text(DecodeName(&(const String&)NameString("%+0041")), "A");
+    Text(DecodeName(&(const String&)NameString("plain+text")), "plain+text");
+    Text(DecodeName(&(const String&)NameString("%41%42")), "AB");
+    auto e9 = DecodeName(&(const String&)NameString("%+00e9"));
+    Check(NameUnits(e9) == u"é" && NameIs8Bit(e9));
+    auto latin1 = DecodeName(&(const String&)NameString("%E9"));
+    Check(NameUnits(latin1) == u"é" && NameIs8Bit(latin1));
+    auto cjk = DecodeName(&(const String&)NameString("x%+4E2Dy"));
+    Check(NameUnits(cjk) == u"x中y" && !NameIs8Bit(cjk));
+    auto lone = DecodeName(&(const String&)NameString("%+d83D"));
+    Check(NameUnits(lone) == u"\xD83D");
+    auto nul = DecodeName(&(const String&)NameString("a%00b"));
+    Check(NameUnits(nul) == std::u16string(u"a\0b", 3));
+    auto widePlain = Wide(u"中%41");
+    Check(NameUnits(DecodeName(&widePlain)) == u"中A");
+
+    for (const char* invalid : {"%", "%4", "a%4", "%G1", "%1G", "%+", "%+4", "%+41", "%+004", "%+00G1", "%+G041", "%+0G41", "%+00", "x%", "x%4"}) {
+        auto result = DecodeName(&(const String&)NameString(invalid));
+        Check(result.impl == nullptr);
+    }
+    auto truncatedInSharedParent = [&](const char* parentText, unsigned length) {
+        auto parent = NameString(parentText);
+        auto part = SharedSubstring(&parent, 0, length);
+        Check((part.impl->hashAndFlags & 3) == 2 && part.impl->length == length);
+        Check(DecodeName(&part).impl == nullptr);
+    };
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%41", 18);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 17);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 19);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+4141", 20);
+
+    auto invalidWide = Wide(u"中%4");
+    Check(DecodeName(&invalidWide).impl == nullptr);
+    auto nonHexWide = Wide(u"%١٢");
+    Check(DecodeName(&nonHexWide).impl == nullptr);
+
+    Check(DecodeName(&null).impl == nullptr);
+    auto emptyDecoded = DecodeName(&empty);
+    Check(emptyDecoded.impl == empty.impl);
+    Throws([&] { DecodeName(nullptr); });
+    auto unchanged = NameString("abc");
+    Check(DecodeName(&unchanged).impl != unchanged.impl);
+
+    auto sameImpl = [&](const char* path) {
+        auto input = NameString(path);
+        auto result = LastComponent(&input);
+        Check(result.impl == input.impl);
+    };
+    sameImpl("abc");
+    sameImpl("");
+    Check(LastComponent(&null).impl == nullptr);
+
+    Text(LastComponent(&(const String&)NameString("/abc")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/b/c")), "c");
+    Text(LastComponent(&(const String&)NameString("a/b/")), "b");
+    Text(LastComponent(&(const String&)NameString("abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/")), "a");
+    Text(LastComponent(&(const String&)NameString("x/abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("/a/")), "a");
+    Text(LastComponent(&(const String&)NameString("/")), "");
+    Text(LastComponent(&(const String&)NameString("//")), "");
+    Text(LastComponent(&(const String&)NameString("a//")), "");
+    Text(LastComponent(&(const String&)NameString("///")), "");
+    Text(LastComponent(&(const String&)NameString("a/b//")), "");
+    Text(LastComponent(&(const String&)NameString("dir/file.txt")), "file.txt");
+    sameImpl("a\\b\\c");
+    sameImpl("a\\b\\c\\");
+
+    auto widePath = Wide(u"中/文/");
+    auto wideLast = LastComponent(&widePath);
+    Check(NameUnits(wideLast) == u"文" && !NameIs8Bit(wideLast));
+    auto wideNoSlash = Wide(u"中文");
+    Check(LastComponent(&wideNoSlash).impl == wideNoSlash.impl);
+    auto wideTail = Wide(u"a/文");
+    Check(NameUnits(LastComponent(&wideTail)) == u"文");
+    Throws([&] { LastComponent(nullptr); });
+}
+
+void TestFileSystemRepresentations() {
+    const auto Representation = &_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE;
+    const auto FromRepresentation = &_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc;
+    const auto Append = &_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE;
+
+    Check(Bytes(Representation(&(const String&)NameString("/data/a b"))) == "/data/a b");
+    const unsigned char latin1Path[] = {'/', 'c', 'a', 'f', 0xE9};
+    auto latin1 = Create8(latin1Path, 5);
+    Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
+    Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    String nullString;
+    CString nullRepresentation = Representation(&nullString);
+    Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
+    Throws([&] { Representation(nullptr); });
+
+    Check(!FromRepresentation(nullptr).impl);
+    auto fromUTF8 = FromRepresentation("/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(NameUnits(fromUTF8) == u"/a/caf\u00E9/\u4E2D");
+    Check(!FromRepresentation("bad\xFF").impl);
+    auto empty = FromRepresentation("");
+    Check(empty.impl && !empty.impl->length);
+
+    NKWebKit::WtfAbi::Vector<StringView> components(3);
+    components.buffer[0] = Literal("b");
+    components.buffer[1] = Literal("");
+    components.buffer[2] = Literal("c.txt");
+    components.size = 3;
+    auto joined = Append(Literal("/a"), &components);
+    Check(NameUnits(joined) == u"/a/b//c.txt" && NameIs8Bit(joined));
+    auto trailing = Append(Literal("/a/"), &components);
+    Check(NameUnits(trailing) == u"/a//b//c.txt");
+    auto relative = Append(Literal(""), &components);
+    Check(NameUnits(relative) == u"/b//c.txt");
+
+    NKWebKit::WtfAbi::Vector<StringView> none;
+    auto alone = Append(Literal("/only"), &none);
+    Check(NameUnits(alone) == u"/only" && NameIs8Bit(alone));
+    auto nothing = Append(Literal(""), &none);
+    Check(nothing.impl && !nothing.impl->length && NameIs8Bit(nothing));
+    auto nullPath = Append(StringView{nullptr, 0, true}, &none);
+    Check(nullPath.impl && !nullPath.impl->length);
+
+    const std::u16string widePath = u"/\u4E2D";
+    auto wideJoined = Append(StringView{widePath.data(), 2, false}, &components);
+    Check(NameUnits(wideJoined) == u"/\u4E2D/b//c.txt" && !NameIs8Bit(wideJoined));
+    const std::u16string latinUnit = u"\u00E9";
+    auto latinAlone = Append(StringView{latinUnit.data(), 1, false}, &none);
+    Check(NameUnits(latinAlone) == u"\u00E9" && NameIs8Bit(latinAlone));
+    const std::u16string emptyWide;
+    auto emptyWideAlone = Append(StringView{emptyWide.data(), 0, false}, &none);
+    Check(NameIs8Bit(emptyWideAlone));
+    NKWebKit::WtfAbi::Vector<StringView> wideComponent(1);
+    wideComponent.buffer[0] = StringView{latinUnit.data(), 1, false};
+    wideComponent.size = 1;
+    auto upconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(upconverted) == u"/a/\u00E9" && !NameIs8Bit(upconverted));
+    wideComponent.buffer[0] = StringView{emptyWide.data(), 0, false};
+    auto emptyUpconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(emptyUpconverted) == u"/a/" && !NameIs8Bit(emptyUpconverted));
+
+    wideComponent.buffer[0] = StringView{nullptr, 1, true};
+    Throws([&] { Append(Literal("/a"), &wideComponent); });
+    Throws([&] { Append(Literal("/a"), nullptr); });
+}
+
+const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;
+const auto ParserConsistent = &_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE;
+
+void TestURLParserChecks() {
+    constexpr unsigned valid = 1U;
+    constexpr unsigned http = 2U;
+    constexpr unsigned opaque = 4U;
+    auto text = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    const std::string raw = Bytes(UTF8(&text, 1));
+    const unsigned hostEnd = static_cast<unsigned>(raw.find(":8443"));
+    URL url{text.impl, valid | (5U << 3) | (5U << 6), 8, 12, 17, hostEnd,
+        static_cast<unsigned>(raw.rfind('/') + 1), static_cast<unsigned>(raw.find('?')), static_cast<unsigned>(raw.find('#'))};
+    Check(ParserEqual(&url, &url) && ParserConsistent(&url));
+
+    auto copy = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    Check(copy.impl != text.impl);
+    URL same = url;
+    same.impl = copy.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto wide = Create16(u"https://u%20:p%40@example.test:8443/a/b?q=1#frag", 48);
+    Check(!(wide.impl->hashAndFlags & 4));
+    same.impl = wide.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto other = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frog"));
+    same.impl = other.impl;
+    Check(!ParserEqual(&url, &same) && ParserConsistent(&same));
+    auto shorter = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#fra"));
+    same.impl = shorter.impl;
+    Check(!ParserEqual(&url, &same));
+
+    for (unsigned flip : {valid, http, opaque, 1U << 3, 4U << 3, 1U << 6, 1U << 31}) {
+        URL changed = url;
+        changed.bits ^= flip;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+    unsigned URL::* const offsets[] = {&URL::userStart, &URL::userEnd, &URL::passwordEnd, &URL::hostEnd,
+        &URL::pathAfterLastSlash, &URL::pathEnd, &URL::queryEnd};
+    for (auto offset : offsets) {
+        URL changed = url;
+        changed.*offset += 1;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+
+    URL absent{};
+    URL absentCopy{};
+    Check(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
+    auto empty = FromUTF8Z(U8(""));
+    Check(empty.impl && empty.impl->length == 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
+    Check(ParserConsistent(&emptyURL));
+    absent.queryEnd = 1;
+    Check(!ParserConsistent(&absent));
+
+    {
+        URL changed = url;
+        changed.bits = (changed.bits & 63U) | ((changed.userStart + 1) << 6);
+        Check(!ParserConsistent(&changed));
+        changed.bits = (changed.bits & 63U) | (changed.userStart << 6);
+        Check(ParserConsistent(&changed));
+    }
+    const std::pair<unsigned URL::*, unsigned URL::*> orders[] = {{&URL::userStart, &URL::userEnd},
+        {&URL::userEnd, &URL::passwordEnd}, {&URL::passwordEnd, &URL::hostEnd}, {&URL::pathAfterLastSlash, &URL::pathEnd},
+        {&URL::pathEnd, &URL::queryEnd}};
+    for (const auto& [lower, upper] : orders) {
+        URL changed = url;
+        changed.*lower = changed.*upper + 1;
+        Check(!ParserConsistent(&changed));
+        changed.*lower = changed.*upper;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.pathAfterLastSlash = changed.hostEnd + 4;
+        Check(!ParserConsistent(&changed));
+        changed.pathAfterLastSlash = changed.hostEnd + 5;
+        Check(ParserConsistent(&changed));
+        changed.bits &= ~(7U << 3);
+        changed.pathAfterLastSlash = changed.hostEnd;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.queryEnd = text.impl->length;
+        Check(ParserConsistent(&changed));
+        changed.queryEnd = text.impl->length + 1;
+        Check(!ParserConsistent(&changed));
+        changed.queryEnd = url.queryEnd;
+        changed.bits &= ~(valid | http | opaque);
+        Check(ParserConsistent(&changed));
+        changed.bits |= http | opaque;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        auto abc = FromUTF8Z(U8("abc"));
+        URL wrapped{abc.impl, valid | (1U << 3), 0, 0, 0, 0xFFFFFFFFU, 0, 0, 0};
+        Check(ParserConsistent(&wrapped));
+        wrapped.bits = valid | (2U << 3);
+        Check(!ParserConsistent(&wrapped));
+        wrapped.pathAfterLastSlash = 1;
+        wrapped.pathEnd = 1;
+        wrapped.queryEnd = 1;
+        Check(ParserConsistent(&wrapped));
+    }
+
+    StringImpl corrupt{2, 3, nullptr, 4};
+    StringImpl corruptCopy{2, 3, nullptr, 4};
+    URL broken{&corrupt, 0, 0, 0, 0, 0, 0, 0, 0};
+    URL brokenCopy{&corruptCopy, 0, 0, 0, 0, 0, 0, 0, 0};
+    Throws([&] { ParserEqual(&broken, &brokenCopy); });
+    Check(ParserEqual(&broken, &broken));
+    Throws([&] { ParserEqual(nullptr, &url); });
+    Throws([&] { ParserEqual(&url, nullptr); });
+    Throws([&] { ParserConsistent(nullptr); });
+}
 
 void TestURLsAndReallocation() {
     struct PinnedBits {
@@ -955,6 +2200,297 @@ void TestURLsAndReallocation() {
     Check(!URLEqualIgnoringFragment(&absent, &javascript));
     Throws([&] { URLEqualIgnoringFragment(nullptr, &url); });
     Throws([&] { URLEqualIgnoringFragment(&url, nullptr); });
+    auto urlNoPortStr = FromUTF8Z(U8("http://example.test/path"));
+    URL urlNoPort{urlNoPortStr.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 24, 24};
+    Check(URLPortAllowed(&urlNoPort));
+    auto urlPort80Str = FromUTF8Z(U8("http://example.test:80/path"));
+    URL urlPort80{urlPort80Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&urlPort80));
+    auto urlPort443Str = FromUTF8Z(U8("http://example.test:443/path"));
+    URL urlPort443{urlPort443Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlPort443));
+    auto urlPort8080Str = FromUTF8Z(U8("http://example.test:8080/path"));
+    URL urlPort8080{urlPort8080Str.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
+    Check(URLPortAllowed(&urlPort8080));
+    auto urlPort0Str = FromUTF8Z(U8("http://example.test:0/path"));
+    URL urlPort0{urlPort0Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&urlPort0));
+    auto urlPort10081Str = FromUTF8Z(U8("http://example.test:10081/path"));
+    URL urlPort10081{urlPort10081Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&urlPort10081));
+    auto urlPort1Str = FromUTF8Z(U8("http://example.test:1/path"));
+    URL urlPort1{urlPort1Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(!URLPortAllowed(&urlPort1));
+    auto urlPort7Str = FromUTF8Z(U8("http://example.test:7/path"));
+    URL urlPort7{urlPort7Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(!URLPortAllowed(&urlPort7));
+    auto urlPort21Str = FromUTF8Z(U8("http://example.test:21/path"));
+    URL urlPort21{urlPort21Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort21));
+    auto urlPort22Str = FromUTF8Z(U8("http://example.test:22/path"));
+    URL urlPort22{urlPort22Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort22));
+    auto urlPort25Str = FromUTF8Z(U8("http://example.test:25/path"));
+    URL urlPort25{urlPort25Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort25));
+    auto urlPort87Str = FromUTF8Z(U8("http://example.test:87/path"));
+    URL urlPort87{urlPort87Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort87));
+    auto urlPort10080Str = FromUTF8Z(U8("http://example.test:10080/path"));
+    URL urlPort10080{urlPort10080Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(!URLPortAllowed(&urlPort10080));
+    auto ftpPort20Str = FromUTF8Z(U8("ftp://example.test:20/path"));
+    URL ftpPort20{ftpPort20Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpPort20));
+    auto ftpPort21Str = FromUTF8Z(U8("ftp://example.test:21/path"));
+    URL ftpPort21{ftpPort21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpPort21));
+    auto ftpPort22Str = FromUTF8Z(U8("ftp://example.test:22/path"));
+    URL ftpPort22{ftpPort22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpPort22));
+    auto ftpPort25Str = FromUTF8Z(U8("ftp://example.test:25/path"));
+    URL ftpPort25{ftpPort25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpPort25));
+    auto ftpUpper21Str = FromUTF8Z(U8("FTP://example.test:21/path"));
+    URL ftpUpper21{ftpUpper21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpUpper21));
+    auto ftpUpper22Str = FromUTF8Z(U8("FTP://example.test:22/path"));
+    URL ftpUpper22{ftpUpper22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpUpper22));
+    auto ftpUpper25Str = FromUTF8Z(U8("FTP://example.test:25/path"));
+    URL ftpUpper25{ftpUpper25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpUpper25));
+    auto filePort1Str = FromUTF8Z(U8("file://example.test:1/path"));
+    URL filePort1{filePort1Str.impl, 1U | 0U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&filePort1));
+    auto filePort21Str = FromUTF8Z(U8("file://example.test:21/path"));
+    URL filePort21{filePort21Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&filePort21));
+    auto filePort25Str = FromUTF8Z(U8("file://example.test:25/path"));
+    URL filePort25{filePort25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&filePort25));
+    auto filePort10080Str = FromUTF8Z(U8("file://example.test:10080/path"));
+    URL filePort10080{filePort10080Str.impl, 1U | 0U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&filePort10080));
+    auto fileUpper25Str = FromUTF8Z(U8("FILE://example.test:25/path"));
+    URL fileUpper25{fileUpper25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&fileUpper25));
+    auto urlMinusPortStr = FromUTF8Z(U8("http://example.test:-80/path"));
+    URL urlMinusPort{urlMinusPortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlMinusPort));
+    auto urlOverflowPortStr = FromUTF8Z(U8("http://example.test:65536/path"));
+    URL urlOverflowPort{urlOverflowPortStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&urlOverflowPort));
+    auto urlBarePlusPortStr = FromUTF8Z(U8("http://example.test:+/path"));
+    URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&urlBarePlusPort));
+    auto urlPlus25PortStr = FromUTF8Z(U8("http://example.test:+25/path"));
+    URL urlPlus25Port{urlPlus25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlPlus25Port));
+    auto urlSpace25PortStr = FromUTF8Z(U8("http://example.test: 25 /path"));
+    URL urlSpace25Port{urlSpace25PortStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
+    Check(!URLPortAllowed(&urlSpace25Port));
+    auto urlTab25PortStr = FromUTF8Z(U8("http://example.test:\t25/path"));
+    URL urlTab25Port{urlTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTab25Port));
+    auto urlLf25PortStr = FromUTF8Z(U8("http://example.test:\n25/path"));
+    URL urlLf25Port{urlLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlLf25Port));
+    auto urlCr25PortStr = FromUTF8Z(U8("http://example.test:\r25/path"));
+    URL urlCr25Port{urlCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlCr25Port));
+    auto urlFf25PortStr = FromUTF8Z(U8("http://example.test:\f25/path"));
+    URL urlFf25Port{urlFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlFf25Port));
+    auto urlTrailingTab25PortStr = FromUTF8Z(U8("http://example.test:25\t/path"));
+    URL urlTrailingTab25Port{urlTrailingTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingTab25Port));
+    auto urlTrailingLf25PortStr = FromUTF8Z(U8("http://example.test:25\n/path"));
+    URL urlTrailingLf25Port{urlTrailingLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingLf25Port));
+    auto urlTrailingCr25PortStr = FromUTF8Z(U8("http://example.test:25\r/path"));
+    URL urlTrailingCr25Port{urlTrailingCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingCr25Port));
+    auto urlTrailingFf25PortStr = FromUTF8Z(U8("http://example.test:25\f/path"));
+    URL urlTrailingFf25Port{urlTrailingFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingFf25Port));
+    auto urlJunk25PortStr = FromUTF8Z(U8("http://example.test:25x/path"));
+    URL urlJunk25Port{urlJunk25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlJunk25Port));
+    auto urlJunk80PortStr = FromUTF8Z(U8("http://example.test:80junk/path"));
+    URL urlJunk80Port{urlJunk80PortStr.impl, 1U | 2U | (7U << 3) | (4U << 6), 7, 7, 7, 19, 27, 31, 31};
+    Check(URLPortAllowed(&urlJunk80Port));
+    auto widePort8080 = Create16(u"http://wide.test:8080/path", 26);
+    URL urlWidePort8080{widePort8080.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 26, 26};
+    Check(URLPortAllowed(&urlWidePort8080));
+    auto widePort25 = Create16(u"http://wide.test:25/path", 24);
+    URL urlWidePort25{widePort25.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(!URLPortAllowed(&urlWidePort25));
+    auto wideFtpPort21 = Create16(u"ftp://wide.test:21/path", 23);
+    URL urlWideFtpPort21{wideFtpPort21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
+    Check(URLPortAllowed(&urlWideFtpPort21));
+    auto wideFilePort25 = Create16(u"file://wide.test:25/path", 24);
+    URL urlWideFilePort25{wideFilePort25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(URLPortAllowed(&urlWideFilePort25));
+    auto wideFtpUpper21 = Create16(u"FTP://wide.test:21/path", 23);
+    URL urlWideFtpUpper21{wideFtpUpper21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
+    Check(URLPortAllowed(&urlWideFtpUpper21));
+    auto wideFileUpper25 = Create16(u"FILE://wide.test:25/path", 24);
+    URL urlWideFileUpper25{wideFileUpper25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(URLPortAllowed(&urlWideFileUpper25));
+    auto wideTab25 = Create16(u"http://wide.test:\t25/path", 25);
+    URL urlWideTab25{wideTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTab25));
+    auto wideLf25 = Create16(u"http://wide.test:\n25/path", 25);
+    URL urlWideLf25{wideLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideLf25));
+    auto wideCr25 = Create16(u"http://wide.test:\r25/path", 25);
+    URL urlWideCr25{wideCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideCr25));
+    auto wideFf25 = Create16(u"http://wide.test:\f25/path", 25);
+    URL urlWideFf25{wideFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideFf25));
+    auto wideTrailingTab25 = Create16(u"http://wide.test:25\t/path", 25);
+    URL urlWideTrailingTab25{wideTrailingTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingTab25));
+    auto wideTrailingLf25 = Create16(u"http://wide.test:25\n/path", 25);
+    URL urlWideTrailingLf25{wideTrailingLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingLf25));
+    auto wideTrailingCr25 = Create16(u"http://wide.test:25\r/path", 25);
+    URL urlWideTrailingCr25{wideTrailingCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingCr25));
+    auto wideTrailingFf25 = Create16(u"http://wide.test:25\f/path", 25);
+    URL urlWideTrailingFf25{wideTrailingFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingFf25));
+    auto wideJunk25 = Create16(u"http://wide.test:25x/path", 25);
+    URL urlWideJunk25{wideJunk25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(URLPortAllowed(&urlWideJunk25));
+    auto urlWraparoundPortStr = FromUTF8Z(U8("25://example.test/path"));
+    URL urlWraparoundPort{urlWraparoundPortStr.impl, 1U | 2U | (3U << 3) | (2U << 6), 5, 5, 5, ~0U, 23, 22, 22};
+    Check(URLPortAllowed(&urlWraparoundPort));
+    Check(URLPortAllowed(&absent));
+    Throws([&] { URLPortAllowed(nullptr); });
+    {
+        Check(URLProtocolHostAndPortAreEqual(&url, &url));
+        Check(URLProtocolHostAndPortAreEqual(&url, &urlNoFrag));
+        Check(URLProtocolHostAndPortAreEqual(&url, &urlDiffQuery));
+        Check(URLProtocolHostAndPortAreEqual(&url, &urlDiffPath));
+        auto urlUpperSchemeStr = FromUTF8Z(U8("HTTPS://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+        URL urlUpperScheme = url;
+        urlUpperScheme.impl = urlUpperSchemeStr.impl;
+        Check(URLProtocolHostAndPortAreEqual(&url, &urlUpperScheme));
+        auto urlUpperHostStr = FromUTF8Z(U8("https://u%20:p%40@EXAMPLE.TEST:8443/a/b?q=1#frag"));
+        URL urlUpperHost = url;
+        urlUpperHost.impl = urlUpperHostStr.impl;
+        Check(URLProtocolHostAndPortAreEqual(&url, &urlUpperHost));
+        auto urlHttpStr = FromUTF8Z(U8("http://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+        URL urlHttp = url;
+        urlHttp.impl = urlHttpStr.impl;
+        urlHttp.bits = 1U | 2U | (5U << 3) | (4U << 6);
+        Check(!URLProtocolHostAndPortAreEqual(&url, &urlHttp));
+        Check(!URLProtocolHostAndPortAreEqual(&url, &urlDiffHost));
+        auto urlShortHostStr = FromUTF8Z(U8("https://u%20:p%40@ex.test:8443/a/b?q=1#frag"));
+        URL urlShortHost = url;
+        urlShortHost.impl = urlShortHostStr.impl;
+        urlShortHost.hostEnd = 25;
+        Check(!URLProtocolHostAndPortAreEqual(&url, &urlShortHost));
+        auto urlDiffPortStr = FromUTF8Z(U8("https://u%20:p%40@example.test:9443/a/b?q=1#frag"));
+        URL urlDiffPort = url;
+        urlDiffPort.impl = urlDiffPortStr.impl;
+        Check(!URLProtocolHostAndPortAreEqual(&url, &urlDiffPort));
+        auto urlPort80Str = FromUTF8Z(U8("http://example.test:80/path"));
+        URL urlPort80{urlPort80Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+        auto urlNoPortStr = FromUTF8Z(U8("http://example.test/path"));
+        URL urlNoPort{urlNoPortStr.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 24, 24};
+        Check(!URLProtocolHostAndPortAreEqual(&urlPort80, &urlNoPort));
+        auto urlNoPort2Str = FromUTF8Z(U8("http://example.test/other"));
+        URL urlNoPort2{urlNoPort2Str.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 25, 25};
+        Check(URLProtocolHostAndPortAreEqual(&urlNoPort, &urlNoPort2));
+        auto widePort = Create16(u"http://wide.test:8080/path", 26);
+        URL urlWidePort{widePort.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 26, 26};
+        auto widePortMatch = Create16(u"HTTP://WIDE.TEST:8080/other", 27);
+        URL urlWideMatch{widePortMatch.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlWideMatch));
+        auto narrowPortStr = FromUTF8Z(U8("http://wide.test:8080/narrow"));
+        URL urlNarrowPort{narrowPortStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlNarrowPort));
+        auto urlPort0Str = FromUTF8Z(U8("http://example.test:0/path"));
+        URL urlPort0{urlPort0Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+        Check(URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort0));
+        Check(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlNoPort));
+        Check(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort80));
+        auto urlPortMaxStr = FromUTF8Z(U8("http://example.test:65535/path"));
+        URL urlPortMax{urlPortMaxStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+        Check(URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPortMax));
+        Check(!URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPort80));
+        auto urlEmptyPortStr = FromUTF8Z(U8("http://example.test:/path"));
+        URL urlEmptyPort{urlEmptyPortStr.impl, 1U | 2U | (1U << 3) | (4U << 6), 7, 7, 7, 19, 21, 25, 25};
+        Check(!URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlNoPort));
+        auto urlMalformedPortStr = FromUTF8Z(U8("http://example.test:8x/path"));
+        URL urlMalformedPort{urlMalformedPortStr.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+        Check(!URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlNoPort));
+        auto urlOutOfRangePortStr = FromUTF8Z(U8("http://example.test:70000/path"));
+        URL urlOutOfRangePort{urlOutOfRangePortStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+        Check(!URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlNoPort));
+        auto urlPlusPort80Str = FromUTF8Z(U8("http://example.test:+80/path"));
+        URL urlPlusPort80{urlPlusPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlPort80));
+        Check(!URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlNoPort));
+        auto urlSpacePort80Str = FromUTF8Z(U8("http://example.test: 80 /path"));
+        URL urlSpacePort80{urlSpacePort80Str.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
+        Check(URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlPort80));
+        Check(!URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlNoPort));
+        auto urlTabPort80Str = FromUTF8Z(U8("http://example.test:\t80/path"));
+        URL urlTabPort80{urlTabPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlTabPort80, &urlPort80));
+        auto urlNewlinePort80Str = FromUTF8Z(U8("http://example.test:\n80/path"));
+        URL urlNewlinePort80{urlNewlinePort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlNewlinePort80, &urlPort80));
+        auto urlReturnPort80Str = FromUTF8Z(U8("http://example.test:\r80/path"));
+        URL urlReturnPort80{urlReturnPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlReturnPort80, &urlPort80));
+        auto urlFormFeedPort80Str = FromUTF8Z(U8("http://example.test:\f80/path"));
+        URL urlFormFeedPort80{urlFormFeedPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlFormFeedPort80, &urlPort80));
+        auto widePlusPort = Create16(u"http://wide.test:+8080/path", 27);
+        URL urlWidePlusPort{widePlusPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWidePlusPort, &urlWidePort));
+        auto wideSpacePort = Create16(u"http://wide.test: 8080 /path", 28);
+        URL urlWideSpacePort{wideSpacePort.impl, 1U | 2U | (7U << 3) | (4U << 6), 7, 7, 7, 16, 24, 28, 28};
+        Check(URLProtocolHostAndPortAreEqual(&urlWideSpacePort, &urlWidePort));
+        auto wideTabPort = Create16(u"http://wide.test:\t8080/path", 27);
+        URL urlWideTabPort{wideTabPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWideTabPort, &urlWidePort));
+        auto wideNewlinePort = Create16(u"http://wide.test:\n8080/path", 27);
+        URL urlWideNewlinePort{wideNewlinePort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWideNewlinePort, &urlWidePort));
+        auto wideReturnPort = Create16(u"http://wide.test:\r8080/path", 27);
+        URL urlWideReturnPort{wideReturnPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWideReturnPort, &urlWidePort));
+        auto wideFormFeedPort = Create16(u"http://wide.test:\f8080/path", 27);
+        URL urlWideFormFeedPort{wideFormFeedPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
+        Check(URLProtocolHostAndPortAreEqual(&urlWideFormFeedPort, &urlWidePort));
+        auto urlMinusPortStr = FromUTF8Z(U8("http://example.test:-80/path"));
+        URL urlMinusPort{urlMinusPortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+        Check(!URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlNoPort));
+        auto urlBarePlusPortStr = FromUTF8Z(U8("http://example.test:+/path"));
+        URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+        Check(!URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlNoPort));
+        auto urlPortOutOfBoundsStr = FromUTF8Z(U8("http://example.test:80"));
+        URL urlPortOutOfBounds{urlPortOutOfBoundsStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 24, 22, 22};
+        Check(URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlNoPort));
+        Check(!URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlPort80));
+        Check(URLProtocolHostAndPortAreEqual(&absent, &absent));
+        Check(!URLProtocolHostAndPortAreEqual(&url, &absent));
+        Check(!URLProtocolHostAndPortAreEqual(&absent, &url));
+        Throws([&] { URLProtocolHostAndPortAreEqual(nullptr, &url); });
+        Throws([&] { URLProtocolHostAndPortAreEqual(&url, nullptr); });
+    }
     URLInvalidate(&url);
     Check(url.impl == string.impl && url.bits == 0 && url.userStart == 0 && url.userEnd == 0);
     Check(url.passwordEnd == 0 && url.hostEnd == 0 && url.pathEnd == 0 && url.pathAfterLastSlash == 0 && url.queryEnd == 0);
@@ -967,6 +2503,99 @@ void TestURLsAndReallocation() {
     memory = static_cast<unsigned char*>(JSRealloc(memory, 2));
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
+    TestURLStringHelpers();
+    TestURLParserChecks();
+}
+
+void TestURLLastPathComponentAndReferrer() {
+    auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
+    auto simple = FromUTF8Z(U8("http://h/a/b"));
+    URL url{simple.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    Check(ViewText(URLLastPathComponent(&url)) == "b");
+    auto trailing = FromUTF8Z(U8("http://h/a/b/"));
+    URL slashed{trailing.impl, httpBits(4, 0), 7, 7, 7, 8, 13, 13, 13};
+    Check(ViewText(URLLastPathComponent(&slashed)) == "b");
+    auto root = FromUTF8Z(U8("http://h/"));
+    URL rootUrl{root.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 9, 9};
+    Check(!URLLastPathComponent(&rootUrl).data);
+    auto hostOnly = FromUTF8Z(U8("http://h"));
+    URL noPath{hostOnly.impl, httpBits(4, 0), 7, 7, 7, 8, 8, 8, 8};
+    Check(!URLLastPathComponent(&noPath).data);
+    auto opaque = FromUTF8Z(U8("mailto:abc"));
+    URL mailto{opaque.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 10, 10};
+    Check(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
+    auto wide = Create16(u"http://h/a/b", 12);
+    URL wideUrl{wide.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    auto wideResult = URLLastPathComponent(&wideUrl);
+    Check(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
+    auto port = FromUTF8Z(U8("http://h:80/dir/file.txt?q"));
+    URL withPort{port.impl, httpBits(4, 3), 7, 7, 7, 8, 16, 24, 26};
+    Check(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
+    auto slashDot = FromUTF8Z(U8("foo:/.//a"));
+    URL dotted{slashDot.impl, 1U | (3U << 6), 4, 4, 4, 4, 8, 9, 9};
+    Check(ViewText(URLLastPathComponent(&dotted)) == "a");
+    auto beforePath = FromUTF8Z(U8("foo:/.a"));
+    URL guarded{beforePath.impl, 1U | (3U << 6), 4, 4, 4, 4, 5, 7, 7};
+    Check(!URLLastPathComponent(&guarded).data);
+    auto emptyComponent = FromUTF8Z(U8("http://h//"));
+    URL doubled{emptyComponent.impl, httpBits(4, 0), 7, 7, 7, 8, 10, 10, 10};
+    auto emptyResult = URLLastPathComponent(&doubled);
+    Check(emptyResult.data && emptyResult.length == 0);
+    URL absent{};
+    Check(!URLLastPathComponent(&absent).data);
+    URL pastEnd = url;
+    pastEnd.pathEnd = 50;
+    Throws([&] { URLLastPathComponent(&pastEnd); });
+    Throws([&] { URLLastPathComponent(nullptr); });
+
+    auto full = FromUTF8Z(U8("https://u:p@h:80/a?q#f"));
+    URL credentialed{full.impl, httpBits(5, 3), 8, 9, 11, 13, 17, 18, 20};
+    auto stripped = URLStrippedForReferrer(&credentialed);
+    Check(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
+    auto plain = FromUTF8Z(U8("http://h/a?q"));
+    URL untouched{plain.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 12};
+    auto same = URLStrippedForReferrer(&untouched);
+    Check(same.impl == plain.impl && plain.impl->refCount == 4);
+    auto fragment = FromUTF8Z(U8("http://h/a#f"));
+    URL fragmentOnly{fragment.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 10};
+    auto noFragment = URLStrippedForReferrer(&fragmentOnly);
+    Check(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
+    auto userOnly = FromUTF8Z(U8("http://u@h/a"));
+    URL userUrl{userOnly.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto noUser = URLStrippedForReferrer(&userUrl);
+    Check(Bytes(UTF8(&noUser, 1)) == "http://h/a");
+    auto wideFull = Create16(u"http://u@h/a#f", 14);
+    URL wideCredentialed{wideFull.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto wideStripped = URLStrippedForReferrer(&wideCredentialed);
+    Check(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
+    URL invalid{plain.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    {
+        const unsigned before = plain.impl->refCount;
+        auto kept = URLStrippedForReferrer(&invalid);
+        Check(kept.impl == plain.impl && plain.impl->refCount == before + 2);
+    }
+    Check(plain.impl->refCount == 4);
+    URL badBounds = untouched;
+    badBounds.queryEnd = 99;
+    Throws([&] { URLStrippedForReferrer(&badBounds); });
+    auto passwordOnly = FromUTF8Z(U8("http://:p@h/"));
+    URL passwordUrl{passwordOnly.impl, httpBits(4, 0), 7, 7, 9, 11, 12, 12, 12};
+    auto noPassword = URLStrippedForReferrer(&passwordUrl);
+    Check(Bytes(UTF8(&noPassword, 1)) == "http://h/");
+    URL reversedCredentials = userUrl;
+    reversedCredentials.userStart = 200;
+    Throws([&] { URLStrippedForReferrer(&reversedCredentials); });
+    auto hostless = FromUTF8Z(U8("mailto:@x"));
+    URL atSign{hostless.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 9, 9};
+    Check(URLStrippedForReferrer(&atSign).impl == hostless.impl);
+    auto allCredentials = FromUTF8Z(U8("ab"));
+    URL consumed{allCredentials.impl, 1U, 0, 0, 0, 0, 0, 0, 0};
+    auto vanished = URLStrippedForReferrer(&consumed);
+    Check(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
+    URL queryBeforeCredentials = userUrl;
+    queryBeforeCredentials.queryEnd = 8;
+    Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
+    Throws([&] { URLStrippedForReferrer(nullptr); });
 }
 
 }  // namespace Wtf2Tests
