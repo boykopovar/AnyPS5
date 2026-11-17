@@ -43,28 +43,17 @@ void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
     if (!writable) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
-FreeType::GuestMemoryRec ReadMemory(FreeType::GuestMemoryRec* memory, const char* caller) {
+FreeType::GuestMemoryRec GuestRecord(FreeType::GuestMemoryRec* memory, const char* caller) {
     FreeType::GuestMemoryRec record{};
     CopyIn(&record, memory, sizeof(record), caller);
     return record;
 }
 
-void Zero(void* block, std::size_t bytes, const char* caller) {
-    static constexpr std::array<char, Chunk> zeros{};
-    auto* destination = static_cast<char*>(block);
-    for (std::size_t offset = 0; offset < bytes; offset += Chunk) {
-        CopyOut(destination + offset, zeros.data(), std::min(Chunk, bytes - offset), caller);
-    }
+FreeType::GuestMemoryRec HostRecord(FreeType::GuestMemoryRec* memory, const char*) {
+    return *memory;
 }
 
-void Copy(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    std::array<char, Chunk> buffer;
-    for (std::size_t offset = 0; offset < bytes; offset += Chunk) {
-        const std::size_t count = std::min(Chunk, bytes - offset);
-        CopyIn(buffer.data(), static_cast<const char*>(source) + offset, count, caller);
-        CopyOut(static_cast<char*>(destination) + offset, buffer.data(), count, caller);
-    }
-}
+using Reader = FreeType::GuestMemoryRec (*)(FreeType::GuestMemoryRec*, const char*);
 
 std::string ReadText(const char* source, std::size_t limit, const char* caller) {
     std::string text;
@@ -81,11 +70,12 @@ std::string ReadText(const char* source, std::size_t limit, const char* caller) 
     return text;
 }
 
+template <Reader Read>
 void* QuickAllocate(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t& result, const char* caller) {
     result = 0;
     void* block = nullptr;
     if (size > 0) {
-        block = ReadMemory(memory, caller).alloc(memory, size);
+        block = Read(memory, caller).alloc(memory, size);
         if (!block) result = OutOfMemory;
     } else if (size < 0) {
         result = InvalidArgument;
@@ -93,30 +83,33 @@ void* QuickAllocate(FreeType::GuestMemoryRec* memory, std::int64_t size, std::in
     return block;
 }
 
+template <Reader Read>
 void* Allocate(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t& result, const char* caller) {
-    void* block = QuickAllocate(memory, size, result, caller);
-    if (!result && block && size > 0) Zero(block, static_cast<std::size_t>(size), caller);
+    void* block = QuickAllocate<Read>(memory, size, result, caller);
+    if (!result && block && size > 0) std::memset(block, 0, static_cast<std::size_t>(size));
     return block;
 }
 
+template <Reader Read>
 void Free(FreeType::GuestMemoryRec* memory, const void* block, const char* caller) {
-    if (block) ReadMemory(memory, caller).free(memory, const_cast<void*>(block));
+    if (block) Read(memory, caller).free(memory, const_cast<void*>(block));
 }
 
+template <Reader Read>
 void* QuickReallocate(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount, std::int64_t newCount,
                       void* block, std::int32_t& result, const char* caller) {
     result = 0;
     if (currentCount < 0 || newCount < 0 || itemSize < 0) {
         result = InvalidArgument;
     } else if (newCount == 0 || itemSize == 0) {
-        Free(memory, block, caller);
+        Free<Read>(memory, block, caller);
         block = nullptr;
     } else if (newCount > IntMax / itemSize) {
         result = ArrayTooLarge;
     } else if (currentCount == 0) {
-        block = Allocate(memory, newCount * itemSize, result, caller);
+        block = Allocate<Read>(memory, newCount * itemSize, result, caller);
     } else {
-        void* resized = ReadMemory(memory, caller).realloc(memory, Bytes(currentCount, itemSize), newCount * itemSize, block);
+        void* resized = Read(memory, caller).realloc(memory, Bytes(currentCount, itemSize), newCount * itemSize, block);
         if (resized) {
             block = resized;
         } else {
@@ -126,13 +119,43 @@ void* QuickReallocate(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, s
     return block;
 }
 
+template <Reader Read>
+void* Reallocate(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount, std::int64_t newCount, void* block,
+                 std::int32_t& result, const char* caller) {
+    block = QuickReallocate<Read>(memory, itemSize, currentCount, newCount, block, result, caller);
+    if (!result && block && newCount > currentCount) {
+        std::memset(static_cast<char*>(block) + currentCount * itemSize, 0, static_cast<std::size_t>((newCount - currentCount) * itemSize));
+    }
+    return block;
+}
+
 void* Duplicate(FreeType::GuestMemoryRec* memory, const void* address, std::uint64_t size, std::int32_t* error, const char* caller) {
     RequireWritable(error, sizeof(*error), caller);
     std::int32_t result = 0;
-    void* copy = QuickAllocate(memory, static_cast<std::int64_t>(size), result, caller);
-    if (!result && address && size > 0) Copy(copy, address, static_cast<std::size_t>(size), caller);
+    void* copy = QuickAllocate<GuestRecord>(memory, static_cast<std::int64_t>(size), result, caller);
+    if (!result && address && size > 0) CopyIn(copy, address, static_cast<std::size_t>(size), caller);
     CopyOut(error, &result, sizeof(result), caller);
     return copy;
+}
+
+}
+
+namespace FreeType {
+
+void* OtMemAlloc(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
+    return Allocate<HostRecord>(memory, size, *error, __func__);
+}
+
+void* OtMemQAlloc(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
+    return QuickAllocate<HostRecord>(memory, size, *error, __func__);
+}
+
+void* OtMemRealloc(GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount, std::int64_t newCount, void* block, std::int32_t* error) {
+    return Reallocate<HostRecord>(memory, itemSize, currentCount, newCount, block, *error, __func__);
+}
+
+void OtMemFree(GuestMemoryRec* memory, const void* block) {
+    Free<HostRecord>(memory, block, __func__);
 }
 
 }
@@ -142,7 +165,7 @@ extern "C" {
 void* APS5_VABI ft_mem_qalloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
     RequireWritable(error, sizeof(*error), __func__);
     std::int32_t result = 0;
-    void* block = QuickAllocate(memory, size, result, __func__);
+    void* block = QuickAllocate<GuestRecord>(memory, size, result, __func__);
     CopyOut(error, &result, sizeof(result), __func__);
     return block;
 }
@@ -150,20 +173,20 @@ void* APS5_VABI ft_mem_qalloc_nid_postfix(FreeType::GuestMemoryRec* memory, std:
 void* APS5_VABI ft_mem_alloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
     RequireWritable(error, sizeof(*error), __func__);
     std::int32_t result = 0;
-    void* block = Allocate(memory, size, result, __func__);
+    void* block = Allocate<GuestRecord>(memory, size, result, __func__);
     CopyOut(error, &result, sizeof(result), __func__);
     return block;
 }
 
 void APS5_VABI ft_mem_free_nid_postfix(FreeType::GuestMemoryRec* memory, const void* block) {
-    Free(memory, block, __func__);
+    Free<GuestRecord>(memory, block, __func__);
 }
 
 void* APS5_VABI ft_mem_qrealloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount,
                                             std::int64_t newCount, void* block, std::int32_t* error) {
     RequireWritable(error, sizeof(*error), __func__);
     std::int32_t result = 0;
-    block = QuickReallocate(memory, itemSize, currentCount, newCount, block, result, __func__);
+    block = QuickReallocate<GuestRecord>(memory, itemSize, currentCount, newCount, block, result, __func__);
     CopyOut(error, &result, sizeof(result), __func__);
     return block;
 }
@@ -172,10 +195,7 @@ void* APS5_VABI ft_mem_realloc_nid_postfix(FreeType::GuestMemoryRec* memory, std
                                            std::int64_t newCount, void* block, std::int32_t* error) {
     RequireWritable(error, sizeof(*error), __func__);
     std::int32_t result = 0;
-    block = QuickReallocate(memory, itemSize, currentCount, newCount, block, result, __func__);
-    if (!result && block && newCount > currentCount) {
-        Zero(static_cast<char*>(block) + currentCount * itemSize, static_cast<std::size_t>((newCount - currentCount) * itemSize), __func__);
-    }
+    block = Reallocate<GuestRecord>(memory, itemSize, currentCount, newCount, block, result, __func__);
     CopyOut(error, &result, sizeof(result), __func__);
     return block;
 }

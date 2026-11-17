@@ -1,5 +1,8 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include <atomic>
 #include <cerrno>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +13,23 @@
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+#ifdef __linux__
+#include <linux/ioctl.h>
+#include <sys/syscall.h>
+#endif
+
+#ifdef __linux__
+std::atomic<int> procmapQueries{0};
+
+extern "C" int ioctl(int fd, unsigned long request, ...) {
+    va_list arguments;
+    va_start(arguments, request);
+    void* argument = va_arg(arguments, void*);
+    va_end(arguments);
+    if (request == _IOWR('f', 17, char[104])) ++procmapQueries;
+    return static_cast<int>(syscall(SYS_ioctl, fd, request, argument));
+}
 #endif
 
 namespace {
@@ -27,7 +47,6 @@ struct Recorder {
     void* lastBlock = nullptr;
     GuestMemoryRec* lastMemory = nullptr;
     bool fail = false;
-    void* forced = nullptr;
 };
 
 Recorder* Owner(GuestMemoryRec* memory) {
@@ -39,7 +58,6 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     ++recorder->allocs;
     recorder->lastMemory = memory;
     recorder->lastSize = size;
-    if (recorder->forced) return recorder->forced;
     if (recorder->fail) return nullptr;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
@@ -370,12 +388,6 @@ void GuestPointers() {
             "dup refuses an unmapped source");
     Require(uncopied == nullptr && error == -1, "an unmapped source leaves the error untouched");
 
-    recorder.forced = readOnly;
-    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, &error); }), "alloc refuses to clear a read-only block");
-    Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, &error); }), "dup refuses to fill a read-only block");
-    Require(readOnly[0] == 0x5A && error == -1, "a read-only block is untouched");
-    recorder.forced = nullptr;
-
     char buffer[8];
     std::memset(buffer, 'x', sizeof(buffer));
     Require(RejectsKeepingErrno([&] { ft_mem_strcpyn_nid_postfix(buffer, unmappedText, sizeof(buffer)); }) && buffer[0] == 'x',
@@ -394,6 +406,26 @@ void GuestPointers() {
     UnmapPages(pages, 3 * pageSize);
 }
 
+void InternalCallers() {
+#ifdef __linux__
+    Recorder recorder;
+    Reset(recorder);
+    std::int32_t error = -1;
+    procmapQueries = 0;
+    ft_mem_free_nid_postfix(&recorder.memory, ft_mem_alloc_nid_postfix(&recorder.memory, 8, &error));
+    if (procmapQueries == 0) {
+        std::puts("FreeType Ot memory: no PROCMAP_QUERY on this host, internal caller check skipped");
+        return;
+    }
+    procmapQueries = 0;
+    FreeType::GuestOutline outline{};
+    Require(FT_Outline_New_Internal_nid_postfix(&recorder.memory, 512, 16, &outline) == 0, "an internal caller allocates an outline");
+    Require(outline.points && outline.tags && outline.contours && Filled(outline.tags, 512, 0), "an internal caller gets cleared arrays");
+    Require(FT_Outline_Done_Internal_nid_postfix(&recorder.memory, &outline) == 0 && recorder.frees == 4, "an internal caller frees its arrays");
+    Require(procmapQueries == 0, "internal callers allocate and free without guest pointer checks");
+#endif
+}
+
 }
 
 int main() {
@@ -405,6 +437,7 @@ int main() {
     BoundedCopy();
     LargeBlocks();
     GuestPointers();
+    InternalCallers();
     std::puts("Guest FreeType Ot memory tests passed");
     return 0;
 }

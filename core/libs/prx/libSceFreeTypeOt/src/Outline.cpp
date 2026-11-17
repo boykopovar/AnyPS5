@@ -10,7 +10,7 @@ constexpr std::int32_t OutlineOwner = 0x1;
 
 template <typename T>
 T* NewArray(FreeType::GuestMemoryRec* memory, std::int64_t count, std::int32_t* error) {
-    return static_cast<T*>(ft_mem_realloc_nid_postfix(memory, static_cast<std::int64_t>(sizeof(T)), 0, count, nullptr, error));
+    return static_cast<T*>(FreeType::OtMemRealloc(memory, static_cast<std::int64_t>(sizeof(T)), 0, count, nullptr, error));
 }
 
 }
@@ -20,9 +20,9 @@ extern "C" {
 int APS5_VABI FT_Outline_Done_Internal_nid_postfix(FreeType::GuestMemoryRec* memory, FreeType::GuestOutline* outline) {
     if (!memory || !outline) return InvalidArgument;
     if (outline->flags & OutlineOwner) {
-        ft_mem_free_nid_postfix(memory, outline->points);
-        ft_mem_free_nid_postfix(memory, outline->tags);
-        ft_mem_free_nid_postfix(memory, outline->contours);
+        FreeType::OtMemFree(memory, outline->points);
+        FreeType::OtMemFree(memory, outline->tags);
+        FreeType::OtMemFree(memory, outline->contours);
     }
     *outline = {};
     return 0;
