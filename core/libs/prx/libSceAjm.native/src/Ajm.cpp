@@ -37,6 +37,7 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_INVALID_PRIORITY = static_cast<int>(0x8093000E);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
 constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
 constexpr int SCE_AJM_ERROR_INVALID_ADDRESS = static_cast<int>(0x80930016);
@@ -1998,8 +1999,11 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     for (std::uint32_t attempt = 0; attempt < 0x4000; ++attempt) {
         const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
         if (g_instances.contains(id)) continue;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(instance, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
         g_instances.emplace(id, std::move(created));
-        *instance = id;
         AJM_TRACE("[ajm] instance create: context %u, codec %u, flags 0x%llx -> instance %u\n", context, codec, static_cast<unsigned long long>(flags), id);
         return 0;
     }
@@ -2051,9 +2055,14 @@ int APS5_VABI sceAjmDecMp3ParseFrame(const uint8_t* stream, uint32_t streamSize,
 
 int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) {
     if (!buffer || !info) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    info->p_buffer = buffer;
-    info->offset = 0;
-    info->size = size;
+    AjmBatchInfo local{};
+    local.p_buffer = buffer;
+    local.offset = 0;
+    local.size = size;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
@@ -2176,8 +2185,8 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
-    (void)priority;
-    if (!info || !batch || !info->p_buffer || info->offset > info->size) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch || !info->p_buffer || info->offset > info->size || info->offset == 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (priority < SCE_AJM_PRIORITY_MIN || priority > SCE_AJM_PRIORITY_MAX) return SCE_AJM_ERROR_INVALID_PRIORITY;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
     auto remaining = info->offset;
@@ -2232,7 +2241,13 @@ int APS5_VABI sceAjmBatchCancel(uint32_t context, uint32_t batch) {
 
 int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
     (void)info;
-    if (error) std::memset(error, 0, sizeof(*error));
+    if (error) {
+        constexpr AjmBatchError localError{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError));
+        errno = savedErrno;
+        if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 

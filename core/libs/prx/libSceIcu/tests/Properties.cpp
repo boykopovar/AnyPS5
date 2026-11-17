@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/ucpmap.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -177,6 +178,23 @@ void TestPropertyValues() {
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x6000), 0, "u_getIntPropertyValue(A, 0x6000)");
 }
 
+void TestIntPropertyMap() {
+    std::int32_t status = 0;
+    const UCPMap* map = u_getIntPropertyMap_nid_postfix(0x1005, &status);
+    Expect(map != nullptr, "u_getIntPropertyMap(gc) returns a map");
+    ExpectInt(status, 0, "u_getIntPropertyMap(gc) preserves successful status");
+    ExpectInt(ucpmap_get(map, 0x41), 1, "u_getIntPropertyMap(gc, A)");
+    ExpectInt(ucpmap_get(map, 0x301), 6, "u_getIntPropertyMap(gc, U+0301)");
+
+    status = 0;
+    Expect(u_getIntPropertyMap_nid_postfix(-1, &status) == nullptr, "u_getIntPropertyMap rejects an invalid property");
+    ExpectInt(status, 1, "u_getIntPropertyMap reports illegal argument");
+
+    status = 1;
+    Expect(u_getIntPropertyMap_nid_postfix(0x1005, &status) == nullptr, "u_getIntPropertyMap skips failed status");
+    ExpectInt(status, 1, "u_getIntPropertyMap preserves failed status");
+}
+
 }
 
 int main() {
@@ -186,5 +204,6 @@ int main() {
     TestBidiAndCase();
     TestPropertyNames();
     TestPropertyValues();
+    TestIntPropertyMap();
     std::puts("ICU property tests passed");
 }

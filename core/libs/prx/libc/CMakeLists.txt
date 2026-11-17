@@ -143,6 +143,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/GuestFaultCopy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
@@ -155,6 +157,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
@@ -240,6 +243,8 @@ endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
@@ -1695,6 +1700,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_binary_scaling PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_extended_precision_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2ExtendedPrecision.cpp)
+    target_include_directories(guest_sce_v2_extended_precision_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_extended_precision_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_extended_precision_tests)
+    add_test(NAME guest_sce_v2_extended_precision COMMAND guest_sce_v2_extended_precision_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_extended_precision PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_qsort_tests ${LIBS_INCLUDE_DIR}/tests/GuestQsort.cpp)
     target_include_directories(guest_qsort_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_qsort_tests PRIVATE libc)
@@ -1934,8 +1948,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_formatting_tests PRIVATE libc)
     configure_windows_unwind(guest_formatting_tests)
     add_test(NAME guest_formatting COMMAND guest_formatting_tests)
+    add_test(NAME guest_sprintf_s_constraints COMMAND guest_formatting_tests --terminated-only)
     if(WIN32)
-        set_tests_properties(guest_formatting PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_formatting guest_sprintf_s_constraints PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_new_handler_tests ${LIBS_INCLUDE_DIR}/tests/GuestNewHandler.cpp)
@@ -2018,6 +2033,15 @@ if(BUILD_TESTING)
     configure_windows_unwind(unwind_cursor_tests)
     add_test(NAME unwind_cursor COMMAND unwind_cursor_tests)
     set(unwindCursorTests unwind_cursor)
+    if(WIN32)
+        add_test_executable(unwind_import_queries_tests ${LIBS_INCLUDE_DIR}/tests/UnwindImportQueries.cpp)
+        target_include_directories(unwind_import_queries_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(unwind_import_queries_tests PRIVATE libc)
+        configure_windows_unwind(unwind_import_queries_tests)
+        add_test(NAME unwind_import_queries COMMAND unwind_import_queries_tests)
+        set_tests_properties(unwind_import_queries PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     foreach(operation IN ITEMS get set)
         add_test(NAME unwind_cursor_${operation}_register COMMAND unwind_cursor_tests ${operation}-register)
         set_tests_properties(unwind_cursor_${operation}_register PROPERTIES TIMEOUT 20
@@ -2187,11 +2211,19 @@ if(BUILD_TESTING)
         target_include_directories(guest_exit_order_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_exit_order_tests PRIVATE libc)
         add_test(NAME guest_exit_order COMMAND guest_exit_order_tests)
+        add_test_executable(guest_cxa_finalize_handles_tests ${LIBS_INCLUDE_DIR}/tests/GuestCxaFinalizeHandles.cpp)
+        target_include_directories(guest_cxa_finalize_handles_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_cxa_finalize_handles_tests PRIVATE libc)
+        add_test(NAME guest_cxa_finalize_handles COMMAND guest_cxa_finalize_handles_tests)
         add_test_executable(guest_path_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/GuestPathLifetime.cpp)
         target_include_directories(guest_path_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_path_lifetime_tests PRIVATE libc)
         add_test(NAME guest_path_lifetime COMMAND guest_path_lifetime_tests)
         set_tests_properties(guest_path_lifetime PROPERTIES TIMEOUT 20)
+        add_test_executable(guest_atomic_4_tests ${LIBS_INCLUDE_DIR}/tests/GuestAtomic4.cpp)
+        target_include_directories(guest_atomic_4_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_atomic_4_tests PRIVATE libc)
+        add_test(NAME guest_atomic_4 COMMAND guest_atomic_4_tests)
         add_test_executable(guest_heap_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/GuestHeapLifetime.cpp)
         target_include_directories(guest_heap_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_heap_lifetime_tests PRIVATE libc)
