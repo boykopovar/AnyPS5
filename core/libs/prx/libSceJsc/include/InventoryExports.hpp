@@ -78,8 +78,6 @@ int APS5_VABI _ZN3JSC14JSGlobalObject3putEPNS_6JSCellEPS0_NS_12PropertyNameENS_7
 int APS5_VABI _ZN3JSC14JSGlobalObject7destroyEPNS_6JSCellE();
 int APS5_VABI _ZN3JSC14JSRunLoopTimer13timeUntilFireEv();
 int APS5_VABI _ZN3JSC14LocalAllocator16allocateSlowCaseERNS_4HeapEPNS_17GCDeferralContextENS_21AllocationFailureModeE();
-int APS5_VABI _ZN3JSC14ProtoCallFrame14needArityCheckEv();
-int APS5_VABI _ZN3JSC14ProtoCallFrame4initEPNS_9CodeBlockEPNS_14JSGlobalObjectEPNS_8JSObjectENS_7JSValueEiPS7_();
 int APS5_VABI _ZN3JSC14StructureCache32emptyObjectStructureConcurrentlyEPNS_14JSGlobalObjectEPNS_8JSObjectEj();
 int APS5_VABI _ZN3JSC14formatDateTimeERKN3WTF17GregorianDateTimeENS_14DateTimeFormatEb();
 int APS5_VABI _ZN3JSC15ArrayBufferViewD0Ev();
@@ -206,7 +204,6 @@ int APS5_VABI _ZN3WTF10StringImpl18simplifyWhiteSpaceEv();
 int APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDs();
 int APS5_VABI _ZN3WTF10StringImpl20createWithoutCopyingEPKDsj();
 int APS5_VABI _ZN3WTF10StringImpl20createWithoutCopyingEPKhj();
-int APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb();
 int APS5_VABI _ZN3WTF10StringImpl6createEPKh();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEDsPS0_();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEPS0_S1_();

@@ -32,8 +32,10 @@ struct RecognizerState {
 static_assert(sizeof(RecognizerState) <= sizeof(SystemGestureTouchRecognizer));
 
 bool loadRecognizerState(const SystemGestureTouchRecognizer* recognizer, RecognizerState& state) {
-    std::memcpy(&state, recognizer->reserve, sizeof(state));
-    return state.magic == RECOGNIZER_STATE_MAGIC;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&state, recognizer->reserve, sizeof(state));
+    errno = savedErrno;
+    return copied;
 }
 
 constexpr std::int32_t TOUCH_STATE_BEGIN = 1;
@@ -138,7 +140,7 @@ SystemGesturePrimitiveTouchEvent buildPrimitiveTouchEvent(const TrackedTouch& to
     event.current_position = touch.currentPosition;
     event.delta_vector = touch.deltaVector;
     event.delta_time = touch.deltaTime;
-    event.elapsed_time = touch.updatedTime - touch.pressedTime;
+    event.elapsed_time = touch.updatedTime >= touch.pressedTime ? touch.updatedTime - touch.pressedTime : 0;
     return event;
 }
 
@@ -160,6 +162,8 @@ int APS5_VABI sceSystemGestureClose(int32_t gestureHandle) {
     auto* context = findGestureContext(gestureHandle);
     if (!context) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     context->touches.clear();
+    context->touchArea = {};
+    context->touchAreaConfigured = false;
     context->handle = 0;
     return 0;
 }
@@ -308,7 +312,8 @@ int APS5_VABI sceSystemGestureGetTouchRecognizerInformation(int32_t gestureHandl
     if (!findGestureContext(gestureHandle)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     if (!recognizer || !information) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     RecognizerState state{};
-    if (!loadRecognizerState(recognizer, state))
+    if (!loadRecognizerState(recognizer, state)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
+    if (state.magic != RECOGNIZER_STATE_MAGIC)
         throw std::runtime_error(std::string(__func__) + ": recognizer was not created by sceSystemGestureCreateTouchRecognizer");
     if (!state.hasRectangle)
         throw std::runtime_error(std::string(__func__) + ": recognizer was created without a rectangle");
@@ -345,6 +350,8 @@ int32_t APS5_VABI sceSystemGestureOpen(int32_t inputType, const void* param) {
         ++gestureGeneration;
         if (gestureGeneration == 0) gestureGeneration = 1;
         context.touches.clear();
+        context.touchArea = {};
+        context.touchAreaConfigured = false;
         context.handle = static_cast<std::int32_t>(1191182336u + (static_cast<std::uint32_t>(gestureGeneration) << 8) + index);
         return context.handle;
     }
