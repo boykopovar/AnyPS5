@@ -7,6 +7,17 @@
 
 namespace Agc::Command {
 
+std::uint32_t* WriteAcquireMem(CommandBuffer* buffer, std::uint32_t engine, std::uint32_t cbDbOp, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles, const char* function) {
+    constexpr std::uint64_t lastPage = (1ull << 40u) - 1u;
+    const auto requested = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const bool wholeRange = (cbDbOp & 0x04004000u) != 0;
+    const std::uint64_t page = wholeRange ? 1u : requested >> 8u;
+    const std::uint64_t blocks = !wholeRange && sizeBytes <= (lastPage << 8u) - (requested & 0xffu) ? (sizeBytes + (requested & 0xffu) + 0xffu) >> 8u : page < lastPage ? lastPage - page : 0;
+    const auto control = gcrControl & 0x7ffffu;
+    return Emit(buffer, 0x58u, {((engine & 1u) << 31u) | (cbDbOp & 0x06007fc0u), static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(blocks >> 32u) & 0xffu,
+        static_cast<std::uint32_t>(page), static_cast<std::uint32_t>(page >> 32u) & 0xffffffu, std::min(pollCycles >> 4u, 0xffffu), control | ((control & 0x4000u) << 1u)}, function);
+}
+
 std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddress, std::uint32_t numBytes, std::uint8_t waitForPrevious, std::uint8_t writeConfirm, std::uint8_t blockEngine, const char* function) {
     engine &= 1u;
     dst &= 0xfu;
@@ -40,14 +51,9 @@ std::uint32_t* WriteCopyData(CommandBuffer* buffer, bool compute, std::uint8_t d
     return Emit(buffer, 0x40u, {control, static_cast<std::uint32_t>(srcAddressOrImmediate), static_cast<std::uint32_t>(srcAddressOrImmediate >> 32u), static_cast<std::uint32_t>(dstAddress), static_cast<std::uint32_t>(dstAddress >> 32u)}, function);
 }
 
-std::uint32_t* WriteAtomicMem(CommandBuffer* buffer, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval, const char* function) {
-    CheckBits(atomicOp, 0x7fu, function);
-    CheckBits(command, 0xfu, function);
-    CheckBits(cachePolicy, 3, function);
-    CheckBits(loopInterval, 0x1fffu, function);
-    const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    CheckAddress(guestAddress, (atomicOp & 0x60u) == 0x60u ? 8 : 4, function);
-    return Emit(buffer, 0x1eu, {atomicOp | (static_cast<std::uint32_t>(command) << 8u) | (static_cast<std::uint32_t>(cachePolicy) << 25u), static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), static_cast<std::uint32_t>(srcData), static_cast<std::uint32_t>(srcData >> 32u), static_cast<std::uint32_t>(compareData), static_cast<std::uint32_t>(compareData >> 32u), loopInterval}, function);
+std::uint32_t* WriteAtomicMem(CommandBuffer* buffer, std::uint8_t engine, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, std::uint64_t address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval, const char* function) {
+    const auto control = (atomicOp & 0x7fu) | ((static_cast<std::uint32_t>(command) & 0xfu) << 8u) | ((static_cast<std::uint32_t>(cachePolicy) & 3u) << 25u) | ((static_cast<std::uint32_t>(engine) & 3u) << 30u);
+    return Emit(buffer, 0x1eu, {control, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(srcData), static_cast<std::uint32_t>(srcData >> 32u), static_cast<std::uint32_t>(compareData), static_cast<std::uint32_t>(compareData >> 32u), loopInterval & 0x1fffu}, function);
 }
 
 std::uint32_t* WritePrimeUtcl2(CommandBuffer* buffer, const volatile void* address, std::uint32_t sizeInBytes, const char* function) {
@@ -78,10 +84,9 @@ std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, 
 }
 
 std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles, const char* function) {
-    CheckBits(size, 1, function);
+    if (size > 1u) return nullptr;
     Require(compareFunction <= 6, function, "invalid wait comparison");
     CheckBits(operation, size == 0 ? 0xfu : 7u, function);
-    CheckBits(cachePolicy, 3, function);
     Require((pollCycles >> 4u) <= 0xffffu, function, "wait poll interval overflow");
     if (size == 0) {
         // 32-bit waits only use the low halves; guests commonly pass a full 64-bit mask.
@@ -90,7 +95,7 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size,
     }
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
     // The address may be left null and filled in later with sceAgcWaitRegMemPatchAddress.
-    if (guestAddress != 0) CheckAddress(guestAddress, size == 0 ? 4 : 8, function);
+    if (guestAddress != 0 && size == 0) CheckAddress(guestAddress, 4, function);
     CheckBits(guestAddress, 0xffffffffffffull, function);
     const auto waitSize = size == 0 ? 7u : 9u;
     const auto tagFlags = compute ? 0u : 4u;
@@ -102,8 +107,8 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size,
     auto* wait = packet + 4;
     wait[0] = Header(size == 0 ? 0x3cu : 0x93u, waitSize);
     const auto opBits = size == 0 ? ((operation & 3u) << 8u) | ((operation & 0xcu) << 4u) : ((operation & 1u) << 8u) | ((operation & 6u) << 5u);
-    wait[1] = 0x10u | compareFunction | opBits | (static_cast<std::uint32_t>(cachePolicy) << 25u);
-    wait[2] = static_cast<std::uint32_t>(guestAddress);
+    wait[1] = 0x10u | compareFunction | opBits | ((static_cast<std::uint32_t>(cachePolicy) & 3u) << 25u);
+    wait[2] = static_cast<std::uint32_t>(guestAddress) & (size == 0 ? ~0u : ~7u);
     wait[3] = static_cast<std::uint32_t>(guestAddress >> 32u);
     wait[4] = static_cast<std::uint32_t>(reference);
     if (size == 0) {

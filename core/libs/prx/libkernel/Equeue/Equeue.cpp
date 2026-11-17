@@ -586,7 +586,10 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             NoteDroppedPendingEvents(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
-        if (!was && it->triggered) ++m_activations;
+        if (!was && it->triggered) {
+            ++m_activations;
+            if (filter == EVFILT_USER) m_events.splice(m_events.end(), m_events, it);
+        }
     }
     m_cond.NotifyAll();
     WakePollers();
@@ -749,31 +752,77 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
 }
 
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
+    const auto fail = [out](int error) {
+        if (out != nullptr) {
+            const int zero = 0;
+            const int savedErrno = errno;
+            GuestCopyOut_nid_no_patch(out, &zero, sizeof(zero));
+            errno = savedErrno;
+        }
+        return error;
+    };
+    if (num < 1) {
+        return fail(SCE_KERNEL_ERROR_EINVAL);
+    }
     auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
-        return SCE_KERNEL_ERROR_EBADF;
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
     if (ev == nullptr) {
-        return SCE_KERNEL_ERROR_EFAULT;
+        return fail(SCE_KERNEL_ERROR_EFAULT);
     }
-    if (num < 1 || out == nullptr) {
+    if (out == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    KernelUseconds localTimo{};
+    if (timo != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localTimo, timo, sizeof(localTimo));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
     const auto waitStart = std::chrono::steady_clock::now();
+    int result = 0;
+    constexpr int STACK_EVENTS = 64;
+    constexpr int MAX_WAIT_EVENTS = 1024;
+    KernelEvent stackEvents[STACK_EVENTS];
+    std::unique_ptr<KernelEvent[]> heapEvents;
+    const int capacity = std::min(num, MAX_WAIT_EVENTS);
+    KernelEvent* target = stackEvents;
+    if (capacity > STACK_EVENTS) {
+        heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(capacity));
+        target = heapEvents.get();
+    }
     if (timo == nullptr) {
-        *out = owner->WaitForEvents(ev, num, 0);
-    } else if (*timo == 0) {
-        *out = owner->GetTriggeredEvents(ev, num);
+        result = owner->WaitForEvents(target, capacity, 0);
+    } else if (localTimo == 0) {
+        result = owner->GetTriggeredEvents(target, capacity);
     } else {
-        *out = owner->WaitForEvents(ev, num, *timo);
+        result = owner->WaitForEvents(target, capacity, localTimo);
     }
-    if (timo == nullptr || *timo != 0) {
-        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
+    if (timo == nullptr || localTimo != 0) {
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), result == 0);
     }
-    if (*out == SCE_KERNEL_ERROR_EBADF) {
-        return SCE_KERNEL_ERROR_EBADF;
+    if (result == SCE_KERNEL_ERROR_EBADF) {
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
-    if (*out == 0) {
+    if (result > 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(ev, target, static_cast<std::size_t>(result) * sizeof(KernelEvent));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (result == 0) {
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
     return EQUEUE_OK;

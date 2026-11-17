@@ -129,6 +129,7 @@ static void ThreadEndWithoutBroadcastLeavesFlag() {
         Require(_Mtx_unlock_nid_postfix(&mutex) == success);
         worker.join();
         for (const int flag : flags) Require(flag == 0);
+        _Cnd_unregister_at_thread_exit_nid_postfix(mutex);
         _Mtx_destroy_nid_postfix(&mutex);
         _Cnd_destroy_nid_postfix(&condition);
     }

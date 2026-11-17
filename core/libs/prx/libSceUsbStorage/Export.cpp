@@ -329,8 +329,8 @@ std::int32_t UnregisterMapCallback(std::vector<MapRegistration>& registrations, 
     return 0;
 }
 
-void WriteMountPoint(char* mountPoint, const std::string& path) {
-    if (mountPoint != nullptr) std::memcpy(mountPoint, path.c_str(), path.size() + 1);
+bool WriteMountPoint(char* mountPoint, const std::string& path) {
+    return mountPoint == nullptr || GuestCopyOut_nid_no_patch(mountPoint, path.c_str(), path.size() + 1);
 }
 
 std::uint64_t CopyString(char (&destination)[256], const std::string& text, const char* function) {
@@ -526,7 +526,9 @@ std::int32_t APS5_VABI sceUsbStorageGetMountPointOfShellCore(std::uint32_t devic
     if (Find(service, device) == nullptr) {
         return UsbStorage::DeviceNotFound;
     }
-    WriteMountPoint(mountPoint, MountPoint(device));
+    if (!WriteMountPoint(mountPoint, MountPoint(device))) {
+        return UsbStorage::InvalidArgument;
+    }
     return 0;
 }
 
@@ -557,10 +559,13 @@ std::int32_t APS5_VABI sceUsbStorageRequestMap(std::uint32_t device, const char*
         }
         if (flags != 0 || volumeSize != 0) throw std::runtime_error("sceUsbStorageRequestMap: nonzero flags or a volume size are not implemented");
         map = MapDirectory(*found, device, directory, __func__);
+        const std::uint64_t id = 0;
+        if (!WriteMountPoint(mountPoint, map.path) || (mountId != nullptr && !CopyOut(mountId, &id, sizeof(id)))) {
+            found->maps.pop_back();
+            return UsbStorage::InvalidArgument;
+        }
         volumeFlags = Flags(found->volume);
     }
-    WriteMountPoint(mountPoint, map.path);
-    if (mountId != nullptr) *mountId = 0;
     const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::MountEvent), device, volumeFlags};
     DispatchMap(service, service.availableMaps, device, map.directory, map.path, event);
     return 0;
@@ -696,10 +701,13 @@ std::int32_t APS5_VABI sceUsbStorageRequestMapWSB(std::uint32_t device, const ch
         }
         if (flags != 0 || unknown != 0) throw std::runtime_error("sceUsbStorageRequestMapWSB: nonzero flags or a nonzero fourth argument are not implemented");
         map = MapDirectory(*found, device, subpath, __func__);
+        const std::int32_t mapped = 0;
+        if (!WriteMountPoint(mountPath, map.path) || (status != nullptr && !CopyOut(status, &mapped, sizeof(mapped)))) {
+            found->maps.pop_back();
+            return UsbStorage::InvalidArgument;
+        }
         volumeFlags = Flags(found->volume);
     }
-    WriteMountPoint(mountPath, map.path);
-    if (status != nullptr) *status = 0;
     const UsbStorageEvent event{static_cast<std::uint32_t>(UsbStorage::MountEvent), device, volumeFlags};
     DispatchMap(service, service.availableMaps, device, map.directory, map.path, event);
     return 0;
