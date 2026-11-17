@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -71,7 +72,8 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 bool BindsIndexCopy(const State& state);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
-const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
+inline constexpr std::uint64_t InPlaceDrawInputMaxReads = 512;
+const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr, std::size_t fetched = std::numeric_limits<std::size_t>::max(), std::uint64_t reads = std::numeric_limits<std::uint64_t>::max());
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     std::uint32_t lowest = 0;
@@ -202,6 +204,16 @@ VertexPlanScratchState ThreadVertexPlanScratch();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
+enum class TargetMemoEvent : std::uint8_t {
+    Lookup, Hit, OverlapCached, OverlapComputed, Accept, AcceptWithDepthMiss, DepthHit, AvoidedRefreshLookups,
+    Invalid, ThreadChanged, Descriptor, ResidentGone, ResidentEvicted, DepthOverlap, Metadata,
+    Epoch, Proofs, Pending, Unwatch, Allocations, Surfaces, Released, Claims, Recorder, Device,
+    PostDepthInvalidated, DepthFallback, Admission, RecipeInvalidated, Build, VerifyChecked, Count
+};
+std::uint64_t TargetMemoEvents(TargetMemoEvent event);
+const char* TargetMemoEventName(TargetMemoEvent event);
+std::uint64_t TargetMemoBuildsForTest();
+std::uint64_t TargetMemoHitNanosecondsForTest(const Context& context, const State& state, std::size_t repeats, std::size_t& hits);
 
 }
 
