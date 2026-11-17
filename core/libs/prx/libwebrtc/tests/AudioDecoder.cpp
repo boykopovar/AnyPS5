@@ -7,6 +7,13 @@
 #include <source_location>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -14,6 +21,49 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::fprintf(stderr, "libwebrtc AudioDecoder check failed at line %u\n", location.line());
     std::abort();
 }
+
+enum class Access { ReadOnly, None };
+
+struct GuardedPage {
+    std::size_t size = 0;
+    unsigned char* base = nullptr;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base = mapped == MAP_FAILED ? nullptr : static_cast<unsigned char*>(mapped);
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    template<typename T> T* As() const { return reinterpret_cast<T*>(base); }
+
+    void Protect(Access access) const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, access == Access::ReadOnly ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(base, size, access == Access::ReadOnly ? PROT_READ : PROT_NONE) == 0);
+#endif
+    }
+};
 
 unsigned char decoderStorage[64];
 unsigned char bufferStorage[32];
@@ -132,11 +182,41 @@ void TestParseResultDestructorDeletesFrame() {
     Require(g_firstDeleted == 2 && first.deleted == 2);
 }
 
+void TestInaccessibleGuestPointersThrow() {
+    using Result = WebRtcAudioDecoderParseResult;
+    g_firstVtable[1] = reinterpret_cast<const void*>(DeleteFirst);
+    FakeFrame frame{g_firstVtable};
+    GuardedPage none;
+    none.Protect(Access::None);
+    GuardedPage readOnly;
+    *readOnly.As<Result>() = Result{3, 4, &frame};
+    readOnly.Protect(Access::ReadOnly);
+    Result source{1, 2, &frame};
+    Result target{9, 9, nullptr};
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(none.As<Result>(), &source); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(readOnly.As<Result>(), &source); });
+    Require(source.timestamp == 1 && source.priority == 2 && source.frame == &frame);
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&target, none.As<Result>()); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&target, readOnly.As<Result>()); });
+    Require(target.timestamp == 9 && target.priority == 9 && target.frame == nullptr && readOnly.As<Result>()->frame == &frame);
+
+    const int deletedBefore = g_firstDeleted;
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(none.As<Result>()); });
+    Result hiddenFrame{5, 6, none.As<void>()};
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&hiddenFrame); });
+    FakeFrame hiddenVtable{none.As<const void*>()};
+    Result hiddenSlot{7, 8, &hiddenVtable};
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&hiddenSlot); });
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(readOnly.As<Result>());
+    Require(g_firstDeleted == deletedBefore + 1 && frame.deleted == 1);
+}
+
 int main() {
     TestPlc();
     TestErrorCode();
     TestParseResultMove();
     TestParseResultDestructor();
     TestParseResultDestructorDeletesFrame();
+    TestInaccessibleGuestPointersThrow();
     return 0;
 }

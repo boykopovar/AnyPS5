@@ -80,6 +80,7 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <array>
@@ -87,6 +88,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -316,10 +318,41 @@ const std::int16_t* FrameData(const WebRtcAudioFrame* frame) {
     return frame->muted ? ZeroedData : frame->data;
 }
 
-void Validate(const WebRtcFrameCombiner* combiner, WebRtcAudioFrameList mixList, std::size_t channels, int sampleRate, std::size_t numberOfStreams,
-              const WebRtcAudioFrame* output) {
-    if (!combiner || !combiner->dataDumper || !output)
-        throw std::invalid_argument("FrameCombiner::Combine requires a constructed FrameCombiner and an output frame");
+constexpr std::size_t FramePointerChunk = 4096 / sizeof(WebRtcAudioFrame*);
+constexpr const char* CombinerMessage = "FrameCombiner::Combine requires a constructed FrameCombiner and an output frame";
+
+struct MixTiming {
+    std::uint32_t timestamp = 0;
+    std::int64_t elapsedTimeMs = 0;
+    std::int64_t ntpTimeMs = 0;
+};
+
+void ReadFrame(const WebRtcAudioFrame* frame, WebRtcAudioFrame& host) {
+    if (!GuestPtr<WebRtcAudioFrame>(frame).CopyIn(host))
+        throw std::invalid_argument("FrameCombiner::Combine requires readable frames");
+}
+
+void WriteFrame(WebRtcAudioFrame* frame, const WebRtcAudioFrame& host) {
+    if (!GuestPtr<WebRtcAudioFrame>(frame).CopyOut(host))
+        throw std::invalid_argument("FrameCombiner::Combine requires writable frames");
+}
+
+template<typename TVisit> void ForEachFrame(WebRtcAudioFrameList mixList, TVisit visit) {
+    std::array<WebRtcAudioFrame*, FramePointerChunk> chunk{};
+    for (std::size_t base = 0; base < mixList.size; base += chunk.size()) {
+        const std::size_t count = std::min(chunk.size(), mixList.size - base);
+        const auto address = reinterpret_cast<std::uintptr_t>(mixList.data) + base * sizeof(WebRtcAudioFrame*);
+        if (!GuestPtr<WebRtcAudioFrame*>(reinterpret_cast<const void*>(address)).CopyIn(chunk.data(), count))
+            throw std::invalid_argument("FrameCombiner::Combine requires a readable mix list");
+        for (std::size_t i = 0; i < count; ++i)
+            visit(base + i, chunk[i]);
+    }
+}
+
+MixTiming Validate(const WebRtcFrameCombiner& combiner, WebRtcAudioFrameList mixList, std::size_t channels, int sampleRate, std::size_t numberOfStreams,
+                   const WebRtcAudioFrame* output, const WebRtcAudioFrame& hostOutput, WebRtcAudioFrame& frame) {
+    if (!combiner.dataDumper)
+        throw std::invalid_argument(CombinerMessage);
     if (mixList.size != 0 && !mixList.data)
         throw std::invalid_argument("FrameCombiner::Combine requires the mix list data");
     if (sampleRate < 0)
@@ -328,24 +361,39 @@ void Validate(const WebRtcFrameCombiner* combiner, WebRtcAudioFrameList mixList,
     if (channels != 0 && samplesPerChannel > MaxDataSamples / channels)
         throw std::invalid_argument("FrameCombiner::Combine: the output frame cannot hold 10 ms at this rate and channel count");
     const std::size_t mixSamples = std::min(samplesPerChannel, MaxChannelSize);
-    for (std::size_t i = 0; i < mixList.size; ++i) {
-        const WebRtcAudioFrame* frame = mixList.data[i];
-        if (!frame)
+    MixTiming timing;
+    ForEachFrame(mixList, [&](std::size_t i, const WebRtcAudioFrame* guestFrame) {
+        if (!guestFrame)
             throw std::invalid_argument("FrameCombiner::Combine requires every mixed frame");
-        if (frame == output)
+        if (guestFrame == output)
             throw std::invalid_argument("FrameCombiner::Combine: the output frame cannot also be mixed");
-        if (frame->packetInfos || output->packetInfos)
+        ReadFrame(guestFrame, frame);
+        if (frame.packetInfos || hostOutput.packetInfos)
             throw std::invalid_argument("FrameCombiner::Combine: merging RtpPacketInfos is not implemented");
-        const std::size_t remixed = RemixedChannels(frame, channels);
-        if (remixed < frame->numChannels && !frame->muted && frame->samplesPerChannel > MaxDataSamples / frame->numChannels)
+        const std::size_t remixed = RemixedChannels(&frame, channels);
+        if (remixed < frame.numChannels && !frame.muted && frame.samplesPerChannel > MaxDataSamples / frame.numChannels)
             throw std::invalid_argument("FrameCombiner::Combine: a frame to downmix holds more samples than an AudioFrame");
-        if (numberOfStreams > 1 && (frame->samplesPerChannel == 0 || remixed == 0))
+        if (numberOfStreams > 1 && (frame.samplesPerChannel == 0 || remixed == 0))
             throw std::invalid_argument("FrameCombiner::Combine: a mixed frame has no samples");
-        if (numberOfStreams <= 1 && i == 0 && remixed != 0 && frame->samplesPerChannel > MaxDataSamples / remixed)
+        if (numberOfStreams <= 1 && i == 0 && remixed != 0 && frame.samplesPerChannel > MaxDataSamples / remixed)
             throw std::invalid_argument("FrameCombiner::Combine: the first frame holds more samples than an AudioFrame");
-    }
-    if (numberOfStreams > 1 && combiner->useLimiter && mixSamples % WebRtcLimiterSubFrames != 0)
+        if (remixed != frame.numChannels && !GuestWritable_nid_no_patch(const_cast<WebRtcAudioFrame*>(guestFrame), sizeof(WebRtcAudioFrame)))
+            throw std::invalid_argument("FrameCombiner::Combine requires writable frames");
+        if (i == 0) {
+            timing = {frame.timestamp, frame.elapsedTimeMs, frame.ntpTimeMs};
+        } else {
+            timing.timestamp = std::min(timing.timestamp, frame.timestamp);
+            timing.ntpTimeMs = std::min(timing.ntpTimeMs, frame.ntpTimeMs);
+            timing.elapsedTimeMs = std::max(timing.elapsedTimeMs, frame.elapsedTimeMs);
+        }
+    });
+    if (numberOfStreams > 1 && combiner.useLimiter && mixSamples % WebRtcLimiterSubFrames != 0)
         throw std::invalid_argument("FrameCombiner::Combine: the limiter needs a multiple of 20 samples per channel");
+    return timing;
+}
+
+void* DataDumperAddress(WebRtcFrameCombiner* combiner) {
+    return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(combiner) + offsetof(WebRtcFrameCombiner, dataDumper));
 }
 
 }
@@ -355,83 +403,114 @@ extern "C" {
 void APS5_VABI _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(WebRtcFrameCombiner* combiner, bool useLimiter) {
     if (!combiner)
         throw std::invalid_argument("FrameCombiner constructor requires an object");
+    if (!GuestWritable_nid_no_patch(combiner, sizeof(*combiner)))
+        throw std::invalid_argument("FrameCombiner constructor requires a writable object");
+    const auto host = std::make_unique<WebRtcFrameCombiner>();
     void* dataDumper = _Znwm_nid_postfix(1);
-    std::memset(static_cast<void*>(combiner), 0, sizeof(*combiner));
-    combiner->dataDumper = dataDumper;
-    combiner->limiter.interpGainCurve.apmDataDumper = dataDumper;
-    combiner->limiter.interpGainCurve.stats.region = RegionIdentity;
-    combiner->limiter.levelEstimator.apmDataDumper = dataDumper;
-    combiner->limiter.levelEstimator.filterStateLevel = InitialFilterStateLevel;
-    combiner->limiter.levelEstimator.samplesInFrame = static_cast<std::int32_t>(MaxChannelSize);
-    combiner->limiter.levelEstimator.samplesInSubFrame = static_cast<std::int32_t>(MaxChannelSize / WebRtcLimiterSubFrames);
-    combiner->limiter.apmDataDumper = dataDumper;
-    combiner->limiter.lastScalingFactor = 1.f;
-    combiner->useLimiter = useLimiter;
+    std::memset(static_cast<void*>(host.get()), 0, sizeof(*host));
+    host->dataDumper = dataDumper;
+    host->limiter.interpGainCurve.apmDataDumper = dataDumper;
+    host->limiter.interpGainCurve.stats.region = RegionIdentity;
+    host->limiter.levelEstimator.apmDataDumper = dataDumper;
+    host->limiter.levelEstimator.filterStateLevel = InitialFilterStateLevel;
+    host->limiter.levelEstimator.samplesInFrame = static_cast<std::int32_t>(MaxChannelSize);
+    host->limiter.levelEstimator.samplesInSubFrame = static_cast<std::int32_t>(MaxChannelSize / WebRtcLimiterSubFrames);
+    host->limiter.apmDataDumper = dataDumper;
+    host->limiter.lastScalingFactor = 1.f;
+    host->useLimiter = useLimiter;
+    if (!GuestPtr<WebRtcFrameCombiner>(combiner).CopyOut(*host)) {
+        _ZdlPv_nid_postfix(dataDumper);
+        throw std::invalid_argument("FrameCombiner constructor requires a writable object");
+    }
 }
 
 void APS5_VABI _ZN6webrtc13FrameCombinerD1Ev_nid_postfix(WebRtcFrameCombiner* combiner) {
     if (!combiner)
         throw std::invalid_argument("FrameCombiner destructor requires an object");
-    if (combiner->dataDumper)
-        _ZdlPv_nid_postfix(combiner->dataDumper);
-    combiner->dataDumper = nullptr;
+    void* const address = DataDumperAddress(combiner);
+    const GuestPtr<void*> field(address);
+    void* dataDumper = nullptr;
+    if (!field.CopyIn(dataDumper) || !GuestWritable_nid_no_patch(address, sizeof(dataDumper)))
+        throw std::invalid_argument("FrameCombiner destructor requires a writable object");
+    if (dataDumper)
+        _ZdlPv_nid_postfix(dataDumper);
+    void* const cleared = nullptr;
+    if (!field.CopyOut(cleared))
+        throw std::invalid_argument("FrameCombiner destructor requires a writable object");
 }
 
 void APS5_VABI _ZN6webrtc13FrameCombiner7CombineEN3rtc9ArrayViewIKPNS_10AudioFrameELln4711EEEmimS4__nid_postfix(
     WebRtcFrameCombiner* combiner, WebRtcAudioFrameList mixList, std::size_t numberOfChannels, int sampleRate, std::size_t numberOfStreams,
     WebRtcAudioFrame* output) {
     numberOfChannels = std::min(numberOfChannels, MaxChannels);
-    Validate(combiner, mixList, numberOfChannels, sampleRate, numberOfStreams, output);
+    if (!combiner || !output)
+        throw std::invalid_argument(CombinerMessage);
+    const auto hostCombiner = std::make_unique<WebRtcFrameCombiner>();
+    const auto hostOutput = std::make_unique<WebRtcAudioFrame>();
+    const auto frame = std::make_unique<WebRtcAudioFrame>();
+    if (!GuestPtr<WebRtcFrameCombiner>(combiner).CopyIn(*hostCombiner) || !GuestPtr<WebRtcAudioFrame>(output).CopyIn(*hostOutput) ||
+        !GuestWritable_nid_no_patch(output, sizeof(*output)))
+        throw std::invalid_argument(CombinerMessage);
+    const MixTiming timing = Validate(*hostCombiner, mixList, numberOfChannels, sampleRate, numberOfStreams, output, *hostOutput, *frame);
+    if (numberOfStreams > 1 && !GuestWritable_nid_no_patch(combiner, sizeof(*combiner)))
+        throw std::invalid_argument(CombinerMessage);
     const std::size_t samplesPerChannel = static_cast<std::size_t>(sampleRate) / BuffersPerSecond;
     _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(
-        output, 0, nullptr, samplesPerChannel, sampleRate, WebRtcAudioFrameSpeechUndefined, WebRtcAudioFrameVadUnknown, numberOfChannels);
+        hostOutput.get(), 0, nullptr, samplesPerChannel, sampleRate, WebRtcAudioFrameSpeechUndefined, WebRtcAudioFrameVadUnknown, numberOfChannels);
     if (mixList.size == 0) {
-        output->elapsedTimeMs = -1;
+        hostOutput->elapsedTimeMs = -1;
     } else {
-        output->timestamp = mixList.data[0]->timestamp;
-        output->elapsedTimeMs = mixList.data[0]->elapsedTimeMs;
-        output->ntpTimeMs = mixList.data[0]->ntpTimeMs;
-        for (std::size_t i = 0; i < mixList.size; ++i) {
-            const WebRtcAudioFrame* frame = mixList.data[i];
-            output->timestamp = std::min(output->timestamp, frame->timestamp);
-            output->ntpTimeMs = std::min(output->ntpTimeMs, frame->ntpTimeMs);
-            output->elapsedTimeMs = std::max(output->elapsedTimeMs, frame->elapsedTimeMs);
-        }
+        hostOutput->timestamp = timing.timestamp;
+        hostOutput->elapsedTimeMs = timing.elapsedTimeMs;
+        hostOutput->ntpTimeMs = timing.ntpTimeMs;
     }
-    for (std::size_t i = 0; i < mixList.size; ++i)
-        RemixFrame(numberOfChannels, mixList.data[i]);
+    ForEachFrame(mixList, [&](std::size_t, WebRtcAudioFrame* guestFrame) {
+        ReadFrame(guestFrame, *frame);
+        const std::size_t channels = frame->numChannels;
+        RemixFrame(numberOfChannels, frame.get());
+        if (frame->numChannels != channels)
+            WriteFrame(guestFrame, *frame);
+    });
     if (numberOfStreams <= 1) {
         if (mixList.size == 0) {
-            output->muted = true;
-            return;
+            hostOutput->muted = true;
+        } else {
+            WebRtcAudioFrame* first = nullptr;
+            if (!GuestPtr<WebRtcAudioFrame*>(mixList.data).CopyIn(first))
+                throw std::invalid_argument("FrameCombiner::Combine requires a readable mix list");
+            ReadFrame(first, *frame);
+            const std::size_t total = frame->samplesPerChannel * frame->numChannels;
+            const std::int16_t* source = FrameData(frame.get());
+            const WebRtcMutableInterleavedView16 destination = MutableData(hostOutput.get(), frame->samplesPerChannel, frame->numChannels);
+            if (total != 0)
+                std::memcpy(destination.data, source, total * sizeof(std::int16_t));
         }
-        const WebRtcAudioFrame* first = mixList.data[0];
-        const std::size_t total = first->samplesPerChannel * first->numChannels;
-        const std::int16_t* source = FrameData(first);
-        const WebRtcMutableInterleavedView16 destination = MutableData(output, first->samplesPerChannel, first->numChannels);
-        if (total != 0)
-            std::memcpy(destination.data, source, total * sizeof(std::int16_t));
+        WriteFrame(output, *hostOutput);
         return;
     }
     const std::size_t mixSamples = std::min(samplesPerChannel, MaxChannelSize);
-    float* mixing = combiner->mixingBuffer;
+    float* mixing = hostCombiner->mixingBuffer;
     std::fill(mixing, mixing + mixSamples * numberOfChannels, 0.0f);
-    for (std::size_t i = 0; i < mixList.size; ++i) {
-        const std::int16_t* frameData = FrameData(mixList.data[i]);
+    ForEachFrame(mixList, [&](std::size_t, const WebRtcAudioFrame* guestFrame) {
+        ReadFrame(guestFrame, *frame);
+        const std::int16_t* frameData = FrameData(frame.get());
         for (std::size_t j = 0; j < numberOfChannels; ++j) {
             float* channel = mixing + j * mixSamples;
             for (std::size_t k = 0; k < mixSamples; ++k)
                 channel[k] += frameData[numberOfChannels * k + j];
         }
-    }
-    if (combiner->useLimiter)
-        ProcessLimiter(combiner->limiter, mixing, mixSamples, numberOfChannels);
-    const WebRtcMutableInterleavedView16 destination = MutableData(output, mixSamples, numberOfChannels);
+    });
+    if (hostCombiner->useLimiter)
+        ProcessLimiter(hostCombiner->limiter, mixing, mixSamples, numberOfChannels);
+    const WebRtcMutableInterleavedView16 destination = MutableData(hostOutput.get(), mixSamples, numberOfChannels);
     for (std::size_t i = 0; i < numberOfChannels; ++i) {
         const float* channel = mixing + i * mixSamples;
         for (std::size_t j = 0; j < mixSamples; ++j)
             destination.data[numberOfChannels * j + i] = FloatS16ToS16(channel[j]);
     }
+    if (!GuestPtr<WebRtcFrameCombiner>(combiner).CopyOut(*hostCombiner))
+        throw std::invalid_argument(CombinerMessage);
+    WriteFrame(output, *hostOutput);
 }
 
 }

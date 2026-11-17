@@ -41,24 +41,27 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <stdexcept>
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 
 namespace {
 
 constexpr std::size_t DeletingDestructorSlot = 1;
 
 void DeleteFrame(void* frame) {
-    const void* const* vtable;
-    std::memcpy(&vtable, frame, sizeof(vtable));
-    if (!vtable || !vtable[DeletingDestructorSlot])
-        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a frame with a virtual destructor");
+    constexpr const char* message = "AudioDecoder::ParseResult destructor requires a frame with a virtual destructor";
+    const void* const* vtable = nullptr;
+    if (!GuestPtr<const void* const*>(frame).CopyIn(vtable) || !vtable)
+        throw std::invalid_argument(message);
+    const void* destructor = nullptr;
+    if (!GuestPtr<const void*>(vtable + DeletingDestructorSlot).CopyIn(destructor) || !destructor)
+        throw std::invalid_argument(message);
     using Destructor = void(APS5_VABI*)(void*);
-    reinterpret_cast<Destructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(frame);
+    reinterpret_cast<Destructor>(const_cast<void*>(destructor))(frame);
 }
 
 }
@@ -84,18 +87,25 @@ void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(WebRtcAu
         throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a result");
     if (!other)
         throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a source");
-    void* frame = other->frame;
-    other->frame = nullptr;
-    result->timestamp = other->timestamp;
-    result->priority = other->priority;
-    result->frame = frame;
+    WebRtcAudioDecoderParseResult source{};
+    if (!GuestPtr<WebRtcAudioDecoderParseResult>(other).CopyIn(source))
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a readable source");
+    if (!GuestWritable_nid_no_patch(other, sizeof(*other)) || !GuestWritable_nid_no_patch(result, sizeof(*result)))
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires writable objects");
+    void* const cleared = nullptr;
+    const auto otherFrame = reinterpret_cast<std::uintptr_t>(other) + offsetof(WebRtcAudioDecoderParseResult, frame);
+    if (!GuestPtr<void*>(reinterpret_cast<void*>(otherFrame)).CopyOut(cleared) || !GuestPtr<WebRtcAudioDecoderParseResult>(result).CopyOut(source))
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires writable objects");
 }
 
 void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudioDecoderParseResult* result) {
     if (!result)
         throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a result");
-    if (result->frame)
-        DeleteFrame(result->frame);
+    WebRtcAudioDecoderParseResult host{};
+    if (!GuestPtr<WebRtcAudioDecoderParseResult>(result).CopyIn(host))
+        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a readable result");
+    if (host.frame)
+        DeleteFrame(host.frame);
 }
 
 }
