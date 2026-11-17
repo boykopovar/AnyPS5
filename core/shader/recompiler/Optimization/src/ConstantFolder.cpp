@@ -822,9 +822,9 @@ IrValue& sampleNumber(IrProgram& program, IrBuilder& builder, IrValue& next) {
     return program.Metadata().pixelIteratesSamples ? insertBuiltin(program, builder, next, StageInputKind::SampleId) : builder.Constant(0u);
 }
 
-void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancillary) {
+bool lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancillary) {
     if (!isPackedAncillary(ancillary)) {
-        return;
+        return false;
     }
     const IrUseList uses = ancillary.OperandUses();
     std::vector<IrUse> direct;
@@ -893,6 +893,7 @@ void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
         user.ReplaceArgument(0, &field(index));
         user.ReplaceArgument(1, &builder.Constant(offset.ImmediateU32() - packedFields[index].first));
     }
+    return !forwarded.empty() || !direct.empty();
 }
 
 bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
@@ -1362,29 +1363,32 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
 } // namespace
 
 void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) const {
-    OperandFacts facts;
-    for (IrBlock* block : blocks) {
-        for (IrValue* inst : block->Instructions()) {
-            const auto success = tryFoldValue(program, *inst, facts);
-        }
-    }
-    std::vector<IrValue*> phis;
-    for (IrBlock* block : blocks) {
-        for (IrValue* inst : block->Instructions()) {
-            if (inst->Opcode() == IrOpcode::Phi) {
-                phis.push_back(inst);
+    const auto foldValues = [&] {
+        OperandFacts facts;
+        for (IrBlock* block : blocks) {
+            for (IrValue* inst : block->Instructions()) {
+                const auto success = tryFoldValue(program, *inst, facts);
             }
         }
-    }
-    bool folded = true;
-    while (folded) {
-        folded = false;
-        for (IrValue* phi : phis) {
-            if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
-                folded = true;
+        std::vector<IrValue*> phis;
+        for (IrBlock* block : blocks) {
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::Phi) {
+                    phis.push_back(inst);
+                }
             }
         }
-    }
+        bool folded = true;
+        while (folded) {
+            folded = false;
+            for (IrValue* phi : phis) {
+                if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
+                    folded = true;
+                }
+            }
+        }
+    };
+    foldValues();
     std::vector<IrValue*> words;
     for (IrBlock* block : blocks) {
         for (IrValue* inst : block->Instructions()) {
@@ -1394,9 +1398,11 @@ void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) 
         }
     }
     IrBuilder builder(program);
+    bool lowered = false;
     for (IrValue* word : words) {
-        lowerPackedAncillary(program, builder, *word);
+        lowered = lowerPackedAncillary(program, builder, *word) || lowered;
     }
+    if (lowered) foldValues();
 }
 
 void ConstantFolder::Fold(IrProgram& program) const {

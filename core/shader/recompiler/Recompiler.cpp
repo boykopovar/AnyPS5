@@ -341,13 +341,13 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             deadCodeEliminator.Eliminate(program);
         }
 
-        if (maskedSelectEliminator.Eliminate(program).removedSelects != 0u) {
+        if (const auto maskedSelects = maskedSelectEliminator.Eliminate(program); maskedSelects.removedSelects != 0u) {
             const bool liveAncillary = std::ranges::any_of(program.Blocks(), [](const auto& block) {
                 return std::ranges::any_of(block->Instructions(), [](const IrValue* value) {
                     return value->Opcode() == IrOpcode::GetBuiltin && value->HasUses() && value->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::PackedAncillary);
                 });
             });
-            if (liveAncillary) {
+            if (liveAncillary || maskedSelects.immediateSelects != 0u) {
                 constantFolder.Fold(program);
                 ResolveControlFlowIdentities(program);
                 deadCodeEliminator.RemoveIdentities(program);
