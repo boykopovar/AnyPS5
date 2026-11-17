@@ -1,6 +1,8 @@
 import copy
+import ctypes
 import json
 import os
+import ntpath
 from pathlib import Path
 import shutil
 import struct
@@ -8,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 import unittest.mock
 
@@ -668,6 +671,73 @@ class PadTests(unittest.TestCase):
         self.assertEqual(env["SDL_AUDIODRIVER"], "wasapi")
 
 
+class WindowsExitMetadataTests(unittest.TestCase):
+    def exit_code(self, owned, records, fallback=5):
+        session = title_run.Session.__new__(title_run.Session)
+        session.owned = ntpath.normcase(ntpath.normpath(owned))
+        session.handles = {index: index for index in range(1, len(records) + 1)}
+        session.images = {index: ntpath.normcase(ntpath.normpath(record["image"])) if record["image"] else ""
+                          for index, record in enumerate(records, 1)}
+        session.process_ids = lambda: set()
+        session.process = types.SimpleNamespace(poll=lambda: fallback)
+
+        def code(handle, output):
+            record = records[handle - 1]
+            output._obj.value = record["code"]
+            return record.get("code_ok", True)
+
+        def times(handle, created, exited, kernel, user):
+            record = records[handle - 1]
+            for output, value in zip((created, exited, kernel, user), (record["created"], record["created"] + 1, 0, 0)):
+                output._obj.value = value
+            return record.get("times_ok", True)
+
+        with unittest.mock.patch.object(title_run, "os", types.SimpleNamespace(name="nt")), \
+                unittest.mock.patch.object(title_run, "ctypes", ctypes, create=True), \
+                unittest.mock.patch.object(title_run, "wintypes", types.SimpleNamespace(DWORD=ctypes.c_uint32), create=True), \
+                unittest.mock.patch.object(title_run, "kernel32", types.SimpleNamespace(GetExitCodeProcess=code, GetProcessTimes=times), create=True):
+            return session.exit_code()
+
+    def test_later_sibling_prefix_helper_does_not_hide_title_failure(self):
+        records = [{"image": r"C:\runs\PPSA00001\title.exe", "created": 1, "code": 7},
+                   {"image": r"C:\runs\PPSA00001-tools\helper.exe", "created": 2, "code": 0}]
+        self.assertEqual(self.exit_code(r"C:\runs\PPSA00001", records), 7)
+
+    def test_exit_selection_respects_windows_path_components(self):
+        cases = ((r"C:\runs\Title", r"C:\runs\Title\child.exe", 9),
+                 (r"C:\runs\Title", r"C:\runs\Title\nested\child.exe", 9),
+                 (r"C:\RUNS\Title", "c:/runs/TITLE/child.exe", 9),
+                 (r"C:\runs\Title", r"C:\runs\Title-tools\child.exe", 7),
+                 (r"C:\runs\Title", r"D:\runs\Title\child.exe", 7),
+                 (r"C:\runs\Title", r"C:\runs\Title\..\Title-tools\child.exe", 7),
+                 (r"C:\runs\Title\nested\..", "C:/runs/Title/nested/../child.exe", 9),
+                 ("C:\\", r"C:\runs\child.exe", 9),
+                 (r"\\server\share\Title", r"\\SERVER\SHARE\TITLE\nested\child.exe", 9),
+                 (r"\\server\share\Title", r"\\server\share\Title-tools\child.exe", 7),
+                 (r"\\server\share\Title", r"\\server\share-other\Title\child.exe", 7),
+                 (r"\\server\share\Title", r"\\other-server\share\Title\child.exe", 7),
+                 ("\\\\server\\share\\", r"\\server\share\child.exe", 9))
+        for owned, image, expected in cases:
+            with self.subTest(owned=owned, image=image):
+                records = [{"image": ntpath.join(owned, "title.exe"), "created": 1, "code": 7},
+                           {"image": image, "created": 2, "code": 9}]
+                self.assertEqual(self.exit_code(owned, records), expected)
+
+    def test_unknown_image_names_preserve_owned_or_parent_exit(self):
+        title = {"image": r"C:\runs\Title\title.exe", "created": 1, "code": 7}
+        unknown = {"image": "", "created": 2, "code": 0}
+        self.assertEqual(self.exit_code(r"C:\runs\Title", [title, unknown]), 7)
+        self.assertEqual(self.exit_code(r"C:\runs\Title", [unknown]), 5)
+        self.assertEqual(self.exit_code(r"C:\runs\Title", []), 5)
+
+    def test_active_or_unreadable_process_metadata_does_not_replace_owned_exit(self):
+        for extra in ({"code": 259}, {"code_ok": False}, {"times_ok": False}):
+            with self.subTest(extra=extra):
+                records = [{"image": r"C:\runs\Title\title.exe", "created": 1, "code": 7},
+                           {"image": r"C:\runs\Title\child.exe", "created": 2, "code": 0, **extra}]
+                self.assertEqual(self.exit_code(r"C:\runs\Title", records), 7)
+
+
 class SessionTests(unittest.TestCase):
     WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
               "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
@@ -695,6 +765,51 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "native Windows process image ownership")
+    def test_exit_code_ignores_a_later_sibling_prefix_interpreter(self):
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        with tempfile.TemporaryDirectory(prefix="title-run-owner-") as directory:
+            root = Path(directory)
+            owned, sibling = root / "title", root / "title-tools"
+            owned.mkdir()
+            sibling.mkdir()
+            title_python, helper_python = owned / interpreter.name, sibling / interpreter.name
+            shutil.copy2(interpreter, title_python)
+            shutil.copy2(interpreter, helper_python)
+            launch, spawn, finish = (root / name for name in ("launch", "spawn", "finish"))
+            title_pid, helper_pid = root / "title.pid", root / "helper.pid"
+            helper = (f"import os, pathlib, time\npathlib.Path({str(helper_pid)!r}).write_text(str(os.getpid()))\n"
+                      f"while not pathlib.Path({str(finish)!r}).exists(): time.sleep(0.01)\n")
+            title = (f"import os, pathlib, subprocess, time\npathlib.Path({str(title_pid)!r}).write_text(str(os.getpid()))\n"
+                     f"while not pathlib.Path({str(spawn)!r}).exists(): time.sleep(0.01)\n"
+                     f"subprocess.run([{str(helper_python)!r}, '-c', {helper!r}])\nraise SystemExit(7)\n")
+            parent = ("import pathlib, subprocess, time\n"
+                      f"while not pathlib.Path({str(launch)!r}).exists(): time.sleep(0.01)\n"
+                      f"subprocess.run([{str(title_python)!r}, '-c', {title!r}])\n")
+            env = dict(os.environ, PYTHONHOME=sys.base_prefix,
+                       PATH=str(interpreter.parent) + os.pathsep + os.environ.get("PATH", ""))
+            session = title_run.Session([sys.executable, "-c", parent], root, env, subprocess.DEVNULL, subprocess.DEVNULL,
+                                        owned=owned, interactive=True)
+            def tracked(path):
+                try:
+                    pid = int(path.read_text())
+                except (FileNotFoundError, ValueError):
+                    return False
+                return pid in session.process_ids()
+
+            try:
+                launch.touch()
+                self.assertTrue(wait_until(lambda: tracked(title_pid), seconds=5))
+                spawn.touch()
+                self.assertTrue(wait_until(lambda: tracked(helper_pid), seconds=5))
+                self.assertEqual(session.images[int(title_pid.read_text())], os.path.normcase(os.path.realpath(title_python)))
+                self.assertEqual(session.images[int(helper_pid.read_text())], os.path.normcase(os.path.realpath(helper_python)))
+                finish.touch()
+                self.assertTrue(wait_until(lambda: not session.alive(), seconds=5))
+                self.assertEqual(session.exit_code(), 7)
+            finally:
+                session.kill()
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):

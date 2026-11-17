@@ -894,7 +894,7 @@ class Session:
             last = None
             for pid, handle in self.handles.items():
                 code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
-                if (handle and self.images[pid].startswith(self.owned) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
+                if (handle and PureWindowsPath(self.images[pid]).is_relative_to(self.owned) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
                         and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
                     last = (times[0].value, code.value)
             if last:
