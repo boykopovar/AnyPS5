@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [A single-texel, single-level image's sampler](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) is replaced by a normalized point clamp-to-last-texel sampler when every image it is paired with is a direct, sampled 2D access without comparison or gather of a 1x1 2D or 1x1x1 3D T# with one mip level, and its X and Y address modes do not read the border; any other filter, anisotropy, LOD, MC_COORD_TRUNC or unnormalized setting is then ignored. Border X or Y addressing, gathers, comparisons, tables and min/max reduction keep the guest sampler; gfx1013 is unmeasured. On an RX 6650 XT (gfx1032, `tools/hw-oracle`, wave32), `image_sample` and `image_sample_lz` DIM 2D through such 2D and 3D T#s return the texel at 12 coordinates from -2.2 to 100.25 for nine samplers, including unnormalized anisotropic, MC_COORD_TRUNC and buffer or image descriptor words read as a sampler; unnormalized border X and Y addressing returns it at one.

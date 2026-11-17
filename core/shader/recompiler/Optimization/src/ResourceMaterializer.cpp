@@ -1656,6 +1656,34 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
     }
 }
 
+bool singleTexelPlane(const DescriptorValue& descriptor) {
+    if (descriptor.dwordCount != 8u) return false;
+    const auto& words = descriptor.dwords;
+    const auto type = words[3] >> 28u;
+    const bool oneTexel = ((words[1] >> 30u) & 3u) == 0u && (words[2] & 0x0fffffffu) == 0u;
+    const bool oneSlice = type == 9u || (type == 10u && (words[4] & 0x1fffu) == 0u);
+    return oneTexel && oneSlice && (words[3] & 0xff000u) == 0u && (words[5] & 0xf0u) == 0u;
+}
+
+void materializeSingleTexelSamplers(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    constexpr std::array<std::uint32_t, 4> PointClampToLastTexel{0x92u, 0u, 0u, 0u};
+    for (std::uint32_t index = 0; index < plan.info.samplers.size() && index < snapshot.samplers.size(); ++index) {
+        auto& sampler = snapshot.samplers[index];
+        if (plan.info.samplers[index].table != NoTable || sampler.dwordCount != 4u) continue;
+        if ((sampler.dwords[0] & 7u) > 3u || ((sampler.dwords[0] >> 3u) & 7u) > 3u || ((sampler.dwords[0] >> 29u) & 3u) != 0u) continue;
+        bool paired = false;
+        bool singleTexel = true;
+        for (const auto& pair : plan.info.sampledPairs) {
+            if (pair.sampler != index) continue;
+            paired = true;
+            const auto& image = plan.info.images.at(pair.image);
+            singleTexel = singleTexel && image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.dimension == RdnaImageDimension::Dim2D && !image.depthCompare && !image.gathered && pair.image < snapshot.images.size() && singleTexelPlane(snapshot.images[pair.image]);
+        }
+        if (!paired || !singleTexel) continue;
+        std::copy(PointClampToLastTexel.begin(), PointClampToLastTexel.end(), sampler.dwords.begin());
+    }
+}
+
 void materializeForcedDegamma(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t index = 0; index < plan.info.images.size(); ++index) {
         auto& descriptor = snapshot.images.at(index);
@@ -2982,6 +3010,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeSingleTexelSamplers(plan, nextSnapshot);
                 materializeForcedDegamma(plan, nextSnapshot);
                 materializeTables(plan, nextSnapshot);
                 materializeSrtGuards(plan, nextSnapshot);
