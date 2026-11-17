@@ -1,3 +1,5 @@
+// Derived from WebKit/WebKit/Source/WebCore/html/parser/HTMLParserIdioms.cpp@c55364d53f971f63a709976f168d932d558b8909
+// Derived from WebKit/WebKit/Source/WebCore/html/parser/HTMLParserIdioms.h@c55364d53f971f63a709976f168d932d558b8909
 /*
  * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
  *
