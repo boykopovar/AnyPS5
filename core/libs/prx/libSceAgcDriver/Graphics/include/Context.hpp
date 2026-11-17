@@ -224,11 +224,13 @@ struct Context {
     TextureCache* textureCache = nullptr;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     bool depthClamp = false;
-    // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
+    mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
+    std::size_t drawInputsInPlaceBelow = 0;
     bool discreteGpu = false;
     bool integratedGpu = false;
+    bool hostPointerImport = true;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
@@ -293,10 +295,12 @@ struct Context {
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
@@ -309,6 +313,7 @@ struct Context {
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
+    VkDeviceAddress atomicLockTable = 0;
     const PlaceholderImages* placeholderImages = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
@@ -321,11 +326,13 @@ struct Context {
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool pushDescriptors = false;
+    bool depthUploadImage = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
+    std::uint32_t scaledSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;

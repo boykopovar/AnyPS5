@@ -16,10 +16,8 @@
 #endif
 #include <windows.h>
 #elif defined(__linux__)
-#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include "ProcessParametersFixture.hpp"
 #include <dlfcn.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #elif defined(__APPLE__)
 #include "ProcessParametersFixture.hpp"
 #endif
@@ -80,30 +78,7 @@ void installProcessParameters(bool present = true) {
     target->Misc.VirtualSize = sizeof(processParameterMetadata);
     DWORD restored = 0;
     VirtualProtect(target, sizeof(*target), oldProtect, &restored);
-#elif defined(__linux__)
-    bool installed = false;
-    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
-        if (image->dlpi_name != nullptr && image->dlpi_name[0] != '\0') return 0;
-        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
-            const auto& header = image->dlpi_phdr[index];
-            if (header.p_type == PT_LOAD || header.p_type == PT_GNU_EH_FRAME || header.p_type < 0x60000000u) continue;
-            auto* mutableHeader = const_cast<Elf64_Phdr*>(&header);
-            const auto pageSize = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
-            const auto pageStart = reinterpret_cast<std::uintptr_t>(mutableHeader) & ~(pageSize - 1);
-            const auto pageEnd = (reinterpret_cast<std::uintptr_t>(mutableHeader + 1) + pageSize - 1) & ~(pageSize - 1);
-            if (mprotect(reinterpret_cast<void*>(pageStart), pageEnd - pageStart, PROT_READ | PROT_WRITE) != 0) return 1;
-            mutableHeader->p_type = 0x61000001;
-            mutableHeader->p_vaddr = reinterpret_cast<std::uintptr_t>(process.data()) - image->dlpi_addr;
-            mutableHeader->p_paddr = mutableHeader->p_vaddr;
-            mutableHeader->p_filesz = process.size();
-            mutableHeader->p_memsz = process.size();
-            *static_cast<bool*>(data) = true;
-            return 1;
-        }
-        return 1;
-    }, &installed);
-    require(installed);
-#elif defined(__APPLE__)
+#elif defined(__linux__) || defined(__APPLE__)
     require(ProcessParametersFixture::Install(process.data(), process.size()));
 #endif
 }

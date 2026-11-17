@@ -18,12 +18,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <sys/stat.h>
-#endif
 
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_INITIALIZED = static_cast<int>(0x80D90001);
 static constexpr int SCE_APP_CONTENT_ERROR_PARAMETER = static_cast<int>(0x80D90002);
@@ -92,6 +86,7 @@ bool IsTemporaryMountPoint(const AppContentMountPoint& mountPoint) {
     return std::strncmp(mountPoint.data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint.data)) == 0;
 }
 
+std::atomic<std::uint64_t> download0ExpandedMiB{0};
 std::atomic<std::uint64_t> download1QuotaBytes{0};
 std::atomic<std::uint64_t> download2QuotaBytes{0};
 
@@ -163,37 +158,7 @@ int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const
 int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* mountPoint, size_t* blockSize) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !blockSize) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    const auto mount = CopyMountPoint(mountPoint);
-    if (!mount) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (!IsDownloadMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const auto directory = ResolvePath_nid_no_patch(mount->data);
-    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
-    std::uint64_t block = 0;
-#ifdef _WIN32
-    const auto root = std::filesystem::absolute(directory).root_path();
-    DWORD sectorsPerCluster = 0;
-    DWORD bytesPerSector = 0;
-    DWORD freeClusters = 0;
-    DWORD totalClusters = 0;
-    if (root.empty() || !GetDiskFreeSpaceW(root.wstring().c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters)) {
-        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host volume did not report a cluster size");
-    }
-    block = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
-#else
-    struct stat status {};
-    if (stat(directory.c_str(), &status) != 0 || status.st_blksize <= 0) {
-        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host filesystem did not report a block size");
-    }
-    block = static_cast<std::uint64_t>(status.st_blksize);
-#endif
-    if (block == 0 || block > std::numeric_limits<size_t>::max()) {
-        throw std::runtime_error("sceAppContentDownloadDataGetBlockSize: the host block size does not fit the output");
-    }
-    const std::size_t result = static_cast<std::size_t>(block);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(blockSize, &result, sizeof(result));
-    errno = savedErrno;
-    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
@@ -343,7 +308,7 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     const int savedErrno = errno;
     std::uint64_t quotaKb = 0;
     if (std::strncmp(mount->data, DOWNLOAD_MOUNT_POINT, sizeof(mount->data)) == 0) {
-        const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+        const std::uint64_t quotaMiB = std::max(GetAppDownloadDataSizeMiB_nid_postfix(), download0ExpandedMiB.load());
         if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
         quotaKb = quotaMiB * 1024u;
     } else if (std::strncmp(mount->data, "/download1", sizeof(mount->data)) == 0) {
@@ -499,14 +464,20 @@ int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAppContentDownload0Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentDownload0Expand(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    std::uint64_t current = download0ExpandedMiB.load();
+    while (size > current && !download0ExpandedMiB.compare_exchange_weak(current, size)) {}
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload0Shrink(void) {
+int APS5_VABI sceAppContentDownload0Shrink(size_t size) {
+    (void)size;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload1Expand(size_t size) {
@@ -519,9 +490,10 @@ int APS5_VABI sceAppContentDownload1Expand(size_t size) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload1Shrink(void) {
+int APS5_VABI sceAppContentDownload1Shrink(size_t size) {
+    (void)size;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload2Expand(size_t size) {
@@ -534,9 +506,10 @@ int APS5_VABI sceAppContentDownload2Expand(size_t size) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload2Shrink(void) {
+int APS5_VABI sceAppContentDownload2Shrink(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);

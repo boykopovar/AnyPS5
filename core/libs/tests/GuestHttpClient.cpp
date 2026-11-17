@@ -90,6 +90,8 @@ void CheckInputValidation(const std::string& base) {
     try { Aps5HttpClient_Read_nid_postfix(client.get(), &byte, 1); } catch (const std::exception&) { failed = true; }
     Check(failed && byte == 0xa5, "closed read did not reject without writing");
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/payload.bin").c_str()) == 1, "validation source open failed");
+    Invalid([&] { Aps5HttpClient_Read_nid_postfix(client.get(), reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10}), 1); });
+    Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 1) == 0, "invalid read changed the source position");
     Read(client.get(), 0, 13);
     Invalid([&] { Aps5HttpClient_Open_nid_postfix(client.get(), nullptr); });
     Invalid([&] { Aps5HttpClient_Read_nid_postfix(client.get(), &byte, -1); });
