@@ -6,4 +6,5 @@ configure_windows_unwind(agc_relocation_runs_tests)
 
 if(BUILD_TESTING)
     agc_add_default_test(agc_relocation_runs_tests)
+    set_tests_properties(agc_relocation_runs PROPERTIES TIMEOUT 30)
 endif()
