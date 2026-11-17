@@ -1948,6 +1948,7 @@ PFN_vkEndCommandBuffer passedEndCommandBuffer = nullptr;
 PFN_vkQueueSubmit passedQueueSubmit = nullptr;
 std::atomic<unsigned> failingEnds{0};
 std::atomic<std::uint64_t> countedSubmits{0};
+std::atomic<bool> refusedSubmits{false};
 
 VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands) {
     if (failingEnds.load() != 0) {
@@ -1959,6 +1960,7 @@ VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands)
 
 VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
     countedSubmits.fetch_add(1);
+    if (refusedSubmits.load()) return VK_ERROR_OUT_OF_HOST_MEMORY;
     return passedQueueSubmit(queue, count, submits, fence);
 }
 
@@ -2072,6 +2074,7 @@ void deferredBatchTests(const Device& device) {
         Require(submitted != 0, "the counting submit wrapper was not used");
         recordBarrierThrough(failing, recorder.Commands());
         static_cast<void>(recorder.AfterRecordedWork([&] { ran = true; }));
+        refusedSubmits.store(true);
         failingEnds.store(1);
         bool failed = false;
         try {
@@ -2091,6 +2094,7 @@ void deferredBatchTests(const Device& device) {
         } catch (const std::exception&) {
             cancelled = true;
         }
+        refusedSubmits.store(false);
         Require(cancelled && countedSubmits.load() == submitted, "a batch after a failed replay was submitted");
     }
     std::cout << "deferred batch tests passed\n";
