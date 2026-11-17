@@ -483,6 +483,8 @@ int main() {
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 1, nullptr) == ErrorParameter);
+    errno = EBUSY;
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter && errno == EBUSY);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
 }
