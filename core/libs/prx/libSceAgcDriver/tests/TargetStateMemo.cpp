@@ -1680,6 +1680,7 @@ int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "16") == 0, "cannot set the test cache budget");
+        Require(_putenv_s("APS5_NO_REWATCH_UNDER_IMAGES", "1") == 0, "cannot keep settled imports under live images outside the write watch");
 #else
         Require(setenv("APS5_TEXTURE_CACHE_MIB", "16", 1) == 0, "cannot set the test cache budget");
 #endif
