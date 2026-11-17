@@ -74,13 +74,13 @@ int APS5_VABI OverflowWide(GuestLocale::Streambuf* self, int character) {
 const GuestLocale::StreambufVtable g_narrowOutVtable{{}, OverflowNarrow};
 const GuestLocale::StreambufVtable g_wideOutVtable{{}, OverflowWide};
 
-void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
-void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
-void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
-void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
-void* APS5_VABI HeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
-void* APS5_VABI HeapRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
-int APS5_VABI HeapPosixAlign(void** pointer, std::size_t, std::size_t size) {
+void* APS5_VABI TestHeapAllocate(std::size_t size) { return std::malloc(size); }
+void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
+void* APS5_VABI TestHeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+void* APS5_VABI TestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI TestHeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI TestHeapRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer != nullptr ? 0 : 12;
 }
@@ -880,13 +880,13 @@ void WarmUpHostExceptionRuntime() {
 
 int main() {
     std::array<void*, 10> api{
-        reinterpret_cast<void*>(&HeapAllocate),
-        reinterpret_cast<void*>(&HeapFree),
-        reinterpret_cast<void*>(&HeapCalloc),
-        reinterpret_cast<void*>(&HeapReallocate),
-        reinterpret_cast<void*>(&HeapAlign),
-        reinterpret_cast<void*>(&HeapRealign),
-        reinterpret_cast<void*>(&HeapPosixAlign),
+        reinterpret_cast<void*>(&TestHeapAllocate),
+        reinterpret_cast<void*>(&TestHeapFree),
+        reinterpret_cast<void*>(&TestHeapCalloc),
+        reinterpret_cast<void*>(&TestHeapReallocate),
+        reinterpret_cast<void*>(&TestHeapAlign),
+        reinterpret_cast<void*>(&TestHeapRealign),
+        reinterpret_cast<void*>(&TestHeapPosixAlign),
     };
     ApplicationHeapRegister_nid_no_patch(api.data());
     CheckGroup1ConstructionAndLifetime();
