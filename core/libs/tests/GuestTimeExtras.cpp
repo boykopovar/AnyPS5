@@ -40,10 +40,12 @@ static void CheckTimegm(const TimegmCase& test) {
     time.tm_yday = 999;
     time.tm_isdst = 5;
     time.tm_gmtoff = 77;
+    *__error_nid_postfix() = 0;
     if (timegm_nid_postfix(&time) != test.expected) {
         std::fprintf(stderr, "timegm(%d-%d-%d) returned the wrong time\n", test.year, test.mon, test.mday);
         std::abort();
     }
+    if (test.expected == -1) Require(*__error_nid_postfix() == 0, "valid timestamp -1 reported an error");
     Require(time.tm_mday == test.normalizedMday && time.tm_mon == test.normalizedMon && time.tm_year == test.normalizedYear
         && time.tm_wday == test.wday && time.tm_yday == test.yday && time.tm_isdst == 0 && time.tm_gmtoff == 0,
         "timegm did not normalize the calendar fields");
@@ -66,8 +68,13 @@ static void CheckReentrantConversions() {
     Require(gmtime_r_nid_postfix(&epoch, nullptr) == nullptr, "gmtime_r accepted a null result");
     Require(localtime_r_nid_postfix(&epoch, nullptr) == nullptr, "localtime_r accepted a null result");
     const std::int64_t underflow = std::numeric_limits<std::int64_t>::min();
+    const std::int64_t overflow = std::numeric_limits<std::int64_t>::max();
     GuestTm scratch{};
-    Require(gmtime_r_nid_postfix(&underflow, &scratch) == nullptr, "gmtime_r accepted an unrepresentable time");
+    for (const auto timer : {underflow, overflow}) {
+        *__error_nid_postfix() = 0;
+        Require(gmtime_r_nid_postfix(&timer, &scratch) == nullptr && *__error_nid_postfix() == 84,
+            "gmtime_r did not report guest EOVERFLOW for an unrepresentable time");
+    }
 }
 
 static void CheckTimegmCases() {
@@ -92,7 +99,9 @@ static void CheckTimegmCases() {
     beyond.tm_mon = 12;
     beyond.tm_mday = 1;
     const GuestTm before = beyond;
+    *__error_nid_postfix() = 0;
     Require(timegm_nid_postfix(&beyond) == -1 && Equal(beyond, before), "timegm accepted a year past the int range");
+    Require(*__error_nid_postfix() == 84, "timegm did not report guest EOVERFLOW");
 
     std::mt19937_64 random(7);
     for (int iteration = 0; iteration < 100000; ++iteration) {
