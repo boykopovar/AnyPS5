@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 static constexpr int SCE_OK = 0;
@@ -19,7 +20,6 @@ static constexpr std::uint16_t RTP_PRIO_NORMAL = 3;
 static constexpr std::uint16_t RTP_PRIO_FIFO = 10;
 static constexpr std::uint16_t RTP_PRIO_IDLE = 4;
 static constexpr std::uint16_t RTP_PRIO_IDLE_FIFO = 12;
-static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EFAULT = 14;
@@ -53,6 +53,15 @@ static int LookupError(int function, int lwpid, GuestRtPrio* priority) {
     return *__error_nid_postfix();
 }
 
+static std::string SetFailure(int lwpid, GuestRtPrio request) {
+    try {
+        rtprio_thread_nid_postfix(RTP_SET, lwpid, &request);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    return {};
+}
+
 static void CheckThread(int policy, int priority, std::uint16_t expectedType) {
     Report report{policy, priority};
     PthreadAttr attr = nullptr;
@@ -73,7 +82,11 @@ static void CheckThread(int policy, int priority, std::uint16_t expectedType) {
     GuestRtPrio fromCreator{7, 7};
     Require(rtprio_thread_nid_postfix(RTP_LOOKUP, report.tid.load(), &fromCreator) == 0);
     Require(fromCreator.type == expectedType && fromCreator.prio == priority);
-    Require(LookupError(RTP_SET, report.tid.load(), &fromCreator) == GUEST_EPERM);
+    GuestRtPrio outOfRange{expectedType, 0};
+    Require(LookupError(RTP_SET, report.tid.load(), &outOfRange) == GUEST_EINVAL);
+    GuestRtPrio normal{RTP_PRIO_NORMAL, 31};
+    Require(LookupError(RTP_SET, report.tid.load(), &normal) == GUEST_EINVAL);
+    Require(SetFailure(report.tid.load(), fromCreator) == "rtprio_thread: a real-time priority change not implemented");
     report.release.store(true, std::memory_order_release);
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     Require(LookupError(RTP_LOOKUP, report.tid.load(), &fromCreator) == GUEST_ESRCH);
@@ -114,12 +127,46 @@ int main() {
     Require(readOnly->type == 7 && readOnly->prio == 7);
     Require(LookupError(RTP_LOOKUP, 1, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 999999, &self) == GUEST_ESRCH);
-    Require(LookupError(RTP_SET, 0, &self) == GUEST_EPERM);
-    Require(LookupError(RTP_SET, scePthreadGetthreadid(), &self) == GUEST_EPERM);
+    Require(SetFailure(0, self) == "rtprio_thread: a real-time priority change not implemented");
+    Require(SetFailure(scePthreadGetthreadid(), self) == "rtprio_thread: a real-time priority change not implemented");
+    for (const std::uint16_t type : {RTP_PRIO_REALTIME, RTP_PRIO_FIFO}) {
+        for (const std::uint16_t prio : {256, 767}) {
+            Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority change not implemented");
+        }
+        for (const std::uint16_t prio : {896, 959}) {
+            Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority from 896 to 959, which needs the caller's system credentials not implemented");
+        }
+        for (const std::uint16_t prio : {255, 768, 895, 960}) {
+            GuestRtPrio request{type, prio};
+            Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
+        }
+    }
+    for (const std::uint16_t type : {RTP_PRIO_IDLE, RTP_PRIO_IDLE_FIFO}) {
+        Require(SetFailure(0, {type, 960}) == "rtprio_thread: an idle-class set not implemented");
+        for (const std::uint16_t prio : {959, 961}) {
+            GuestRtPrio request{type, prio};
+            Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
+        }
+    }
+    Require(SetFailure(0, {RTP_PRIO_NORMAL, 615}) == "rtprio_thread: a normal-class set, which needs the caller's system credentials not implemented");
+    Require(SetFailure(0, {RTP_PRIO_NORMAL, 895}) == "rtprio_thread: a normal-class set, which needs the caller's system credentials not implemented");
+    Require(SetFailure(0, {RTP_PRIO_NORMAL | 8, 700}) == "rtprio_thread: a normal-class set with the FIFO bit not implemented");
+    for (const std::uint16_t type : {std::uint16_t{RTP_PRIO_NORMAL}, std::uint16_t{RTP_PRIO_NORMAL | 8}}) {
+        for (const std::uint16_t prio : {614, 896}) {
+            GuestRtPrio request{type, prio};
+            Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
+        }
+    }
+    for (const std::uint16_t type : {0, 1, 5, 9, 13}) {
+        GuestRtPrio request{type, 512};
+        Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
+    }
+    Require(LookupError(RTP_LOOKUP, 999999, nullptr) == GUEST_ESRCH);
+    Require(LookupError(RTP_SET, 999999, nullptr) == GUEST_ESRCH);
     for (const std::uint16_t type : {RTP_PRIO_REALTIME, RTP_PRIO_IDLE, RTP_PRIO_FIFO, RTP_PRIO_IDLE_FIFO}) {
         for (const std::uint16_t prio : {0, 15, 31, 32, 999}) {
             GuestRtPrio request{type, prio};
-            Require(LookupError(RTP_SET, 0, &request) == GUEST_EPERM);
+            Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
             Require(request.type == type && request.prio == prio);
         }
     }
