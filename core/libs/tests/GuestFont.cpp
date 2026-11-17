@@ -1223,6 +1223,9 @@ int main() {
     CheckTextCodes(&memory, font);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
 
+    errno = EBUSY;
+    Require(sceFontDestroyRenderer(reinterpret_cast<FontRenderer*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
+    Require(sceFontDestroyLibrary(reinterpret_cast<FontLibrary*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_ERROR_INVALID_RENDERER);
     CheckOutlineBuffer();
