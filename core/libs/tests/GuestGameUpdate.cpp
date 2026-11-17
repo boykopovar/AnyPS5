@@ -142,6 +142,7 @@ int main() {
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, reinterpret_cast<const NpUnifiedEntitlementLabel*>(std::uintptr_t{0x10}), &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
@@ -150,6 +151,10 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
+
+    errno = 71;
+    Require(sceGameUpdateGetAddcontLatestVersion(0, reinterpret_cast<const NpUnifiedEntitlementLabel*>(std::uintptr_t{0x10}), &info) == invalidArgument);
+    Require(errno == 71);
 
     errno = 71;
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == invalidArgument);

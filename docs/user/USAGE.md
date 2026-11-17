@@ -95,7 +95,7 @@ The executable and the module libraries carry an ad-hoc code signature, so they 
 
 Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host.
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host. Without it, the first such instruction on a CPU that lacks it ends the run, and the crash report names the instruction on Linux and Windows.
 - The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
 ### Security warning
@@ -445,6 +445,10 @@ This is a host-side convenience, not console behaviour: the game does not send t
 
 Set `APS5_VIDEOOUT_TELEMETRY_DIR` to a directory before launching the application to write the run's presents and pad changes to `<directory>/videoout.jsonl`, one JSON object per line, appended when the file already exists. Every line starts with `"v":1`, the host's steady-clock nanoseconds in `t_ns` and the event name in `ev`. A run starts with a `contract` line, `{"v":1,"t_ns":<ns>,"ev":"contract","contract":"v1-pad","commit":"<12 hex>","pid":<pid>,"prx":"libSceVideoOut"}`: `commit` is the source commit the libraries were built from (`unknown` when Git was not found at configuration) and `pid` tells apart the runs that appended to the same file. A `pad` line is written when the pad state the title reads changes in its buttons, sticks or triggers, `{"v":1,"t_ns":<ns>,"ev":"pad","n":<present>,"buttons":<bits>,"sticks":[<left x>,<left y>,<right x>,<right y>],"triggers":[<L2>,<R2>]}`, where `n` is the number of presents completed when the change was published, the count the window title shows. `buttons` is the button bit field in decimal, stick axes run 0-255 with 128 at the centre, and both triggers run 0-255. Motion, touch and the device kind are not compared, so a run that only moves the controller writes no `pad` line. The state a `pad` line reports is the controller and keyboard/mouse input read through SDL; input fed by `APS5_PAD_INPUT_FILE` is applied later, in `libScePad`, so a scripted run writes no `pad` line. A `present` line is written after the first present and every 30 presents after that, `{"v":1,"t_ns":<ns>,"ev":"present","n":<present>,"fps":<rate>}`, with the count and rate the window title shows. A background thread writes the lines and the title is not waited for: when it falls behind, the line is dropped and a `drops` line with the number dropped so far, `{"v":1,"t_ns":<ns>,"ev":"drops","dropped":<count>}`, is written every ten seconds while the count grows, and once at a normal exit, only when lines were dropped; an exit that skips static destructors writes no last line. A pad line the full queue refused counts as dropped even though a later publish writes the change. Without the variable no file is opened and no thread is started; an empty value is the same as an unset one, and a directory that cannot be written stops the title when video output starts, with an error naming the file.
 
+To measure completed guest flip cadence, set `APS5_VIDEOOUT_FLIP_TIMING=FIRST:COUNT` and use a fresh `APS5_VIDEOOUT_TELEMETRY_DIR` for each run. For example, `601:600` records flips 601 through 1200. The first flip number is positive and the count is 2–100000. The capture uses the first main output that completes a flip. The contract adds `flip_start` and `flip_count`, and each `flip_complete` line gives the completion sequence `n`, output `generation`, and guest flip status timestamp `process_us` in monotonic microseconds since process start. Adjacent `process_us` values measure the interval between completed flips, including cleared frames.
+
+Use one ordered, contiguous sequence covering the contract’s entire window in a single generation. Missing records indicate an incomplete capture, for example after a queue drop, output reopen, or early exit. Use the existing `drops` event to inspect lost telemetry records.
+
 ### Controller-speaker fallback audio
 
 Set `APS5_PAD_SPEAKER_FALLBACK_DB` before launching the application to change the gain for AudioOut2 controller-speaker ports that are folded into the main stereo output when no controller speaker is present. The value is read once when a title creates its AudioOut2 context. The default is `0` dB, which leaves the mix unchanged. It accepts a number from `-60` to `0`, or `mute`, `off` or `-inf` for silence, with surrounding whitespace ignored. Any other value, including an empty one, an out-of-range number, a non-finite number or trailing text, stops the title with an error naming the variable and the value. It does not affect main-mix ports or a real controller speaker, and it does not apply to the legacy AudioOut controller-speaker port.
@@ -604,7 +608,51 @@ An empty value of either variable is the same as an unset one. The start fails o
 
 ### Benchmark reports
 
-To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. Only completed intervals are saved, keeping the most recent 240; `intervals_dropped` counts older intervals removed from the file. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+
+Read a capture with Python 3 from the source checkout:
+
+```sh
+python3 tools/benchmark_compare.py summarize captures/run.json.gz
+python3 tools/benchmark_compare.py summarize captures/run.json.gz --intervals 1:2 --json
+```
+
+`--intervals START:COUNT` selects whole completed intervals by their zero-based position in the retained file: `1:2` selects positions 1 and 2. Without it, all retained intervals are included. An interval recorded during loading or shader compilation stays included unless you select a later range. The report shows the selected intervals' recorded times and global present numbers, including when earlier history was dropped. A selected range that crosses a gap is refused.
+
+FPS uses the frame count divided by the sum of the selected intervals' elapsed times. Mean frame time and p50, p90, p99 and maximum frame time pool their recorded frame durations, which are truncated to microseconds. Those values can differ from the reciprocal of FPS. Saturated durations produce a warning and make affected raw-duration metrics unavailable.
+
+For repeated A/B runs, write a series JSON beside the captures. List attempts in the order they ran, using `baseline` and `candidate` as the arms. Give each intended matched pair the same `pair` value. This example records A, B, B, A, then two unsuccessful attempts:
+
+```json
+{
+  "format": "aps5-bench-series/1",
+  "recipe": {
+    "scene": "Load the same save and stand still after loading",
+    "save": "Local save slot 1",
+    "input": "No input during the selected intervals",
+    "cache": "Warm caches"
+  },
+  "runs": [
+    {"id": "A1", "arm": "baseline", "pair": "1", "capture": "captures/base-1.json.gz", "intervals": [1, 2]},
+    {"id": "B1", "arm": "candidate", "pair": "1", "capture": "captures/change-1.json.gz", "intervals": [1, 2]},
+    {"id": "B2", "arm": "candidate", "pair": "2", "capture": "captures/change-2.json.gz", "intervals": [1, 2]},
+    {"id": "A2", "arm": "baseline", "pair": "2", "capture": "captures/base-2.json.gz", "intervals": [1, 2]},
+    {"id": "B3", "arm": "candidate", "pair": "3", "status": "failed", "reason": "No benchmark was produced"},
+    {"id": "A3", "arm": "baseline", "pair": "3", "status": "excluded", "reason": "The display slept during the run"}
+  ]
+}
+```
+
+Capture paths are relative to the series file. `intervals` is `[START, COUNT]` and may be omitted to include all retained intervals. An included run may supply `sha256` to require that the original capture bytes match that digest. Failed and excluded attempts require a reason and have no capture. Keep them in the series so the report shows every supplied attempt. Reusing the same capture, including a renamed or recompressed copy, is refused as duplicate evidence.
+
+```sh
+python3 tools/benchmark_compare.py compare series.json
+python3 tools/benchmark_compare.py compare series.json --require-matching-context --json
+```
+
+The comparison preserves run order, reports each pair and counts complete pairs separately. Changes are candidate minus baseline; the aggregate reports the mean and range of paired percentage changes. A pair with a failed, excluded or missing arm contributes no paired change.
+
+Recorded context differences, dirty builds and missing identity fields appear in the report. `--require-matching-context` rejects recorded context differences. The recipe records the operator's account of the scene, save, input and caches. Check that the runs reached the same scene: matching metadata and hashes do not prove independent runs or that a code change caused a speed difference. The tool reads existing files and prints Markdown, or JSON with `--json`.
 
 ### Run report
 

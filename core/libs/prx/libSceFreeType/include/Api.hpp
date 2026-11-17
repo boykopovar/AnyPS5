@@ -150,13 +150,18 @@ int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const Fr
 int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
 int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates);
 int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetMMDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetMMBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetVarBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Get_MM_Var_nid_postfix(FreeType::GuestFaceRec* face, void** master);
 int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
+int APS5_VABI FreeTypeSetVarDesignCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates);
 int APS5_VABI FT_Get_Multi_Master_nid_postfix(FreeType::GuestFaceRec* face, void* master);
 int APS5_VABI FT_Done_MM_Var_nid_postfix(FreeType::GuestLibrary* library, void* master);
 int APS5_VABI FT_Set_Renderer_nid_postfix(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
+int APS5_VABI FreeTypeSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);

@@ -707,6 +707,27 @@ class ImportAuditTests(unittest.TestCase):
                 with self.assertRaisesRegex(import_audit.AuditError, "invalid import symbol"):
                     import_audit.read_registry(registry)
 
+    def test_lone_surrogate_registry_import_is_invalid(self):
+        registry = self.work.root / "homebrew.registry.json"
+        registry.write_text('[{"nid": "bad\\ud800name", "library": ""}]\n', encoding="utf-8")
+        with self.assertRaisesRegex(import_audit.AuditError, "invalid import symbol"):
+            import_audit.read_registry(registry)
+
+    def test_module_import_name_that_is_not_utf8_is_absent(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        image = build_elf([("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("bad_name", 0, GLOBAL_FUNCTION)], ["libSceA.prx"])
+        (work.modules / "main.prx").write_bytes(image.replace(b"bad_name", b"bad\xffname"))
+        registry = work.root / "game.json"
+        write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["unique_by_class"], {"implemented": 1, "partial": 0, "stub": 0, "absent": 1, "module": 0})
+        record = next(record for record in data["imports"] if record["class"] == "absent")
+        self.assertEqual((record["nid"], record["providers"], record["symbol_mismatch"]), ("bad\udcffname", [], False))
+
     def test_failed_json_write_preserves_existing_report_and_leaves_no_partial_report(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
@@ -3670,6 +3691,151 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class TakeTests(unittest.TestCase):
+    def test_take_returns_slice_or_raises_outside_file(self):
+        data = b"abcdef"
+        self.assertEqual(import_audit.take(data, 1, 3, "f", "what"), b"bcd")
+        for offset, size in ((-1, 2), (4, 3), (0, -1)):
+            with self.assertRaisesRegex(import_audit.AuditError, "lies outside the file"):
+                import_audit.take(data, offset, size, "f", "what")
+
+
+class CStringTests(unittest.TestCase):
+    def test_cstring_reads_terminated_text_inside_limit(self):
+        data = b"xx" + b"name\0" + b"tail"
+        self.assertEqual(import_audit.cstring(data, 2, len(data), "f", "what"), "name")
+        with self.assertRaisesRegex(import_audit.AuditError, "NUL-terminated"):
+            import_audit.cstring(b"no-terminator", 0, 13, "f", "what")
+
+class PureHelperTests(unittest.TestCase):
+    def test_origin_name_keeps_only_the_basename_after_origin(self):
+        self.assertEqual(import_audit.origin_name("$ORIGIN/lib/libfoo.prx"), "libfoo.prx")
+        self.assertEqual(import_audit.origin_name("${ORIGIN}/a/../libbar.sprx"), "libbar.sprx")
+
+    def test_origin_name_leaves_other_names_unchanged(self):
+        self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
+        self.assertIsNone(import_audit.origin_name(None))
+
+    def test_module_stem_strips_the_known_suffix(self):
+        self.assertEqual(import_audit.module_stem("Foo.sprx", fold=False), "Foo")
+        self.assertEqual(import_audit.module_stem("Foo.debug_prx", fold=False), "Foo")
+
+    def test_module_stem_folds_case_only_when_asked(self):
+        self.assertEqual(import_audit.module_stem("Foo.PRX", fold=True), "foo")
+        self.assertIsNone(import_audit.module_stem("Foo.PRX", fold=False))
+
+    def test_module_stem_refuses_a_bare_suffix(self):
+        self.assertIsNone(import_audit.module_stem(".prx", fold=False))
+        self.assertIsNone(import_audit.module_stem("plain.txt", fold=False))
+
+    def test_macho_uleb_decodes_a_multi_byte_value(self):
+        data = bytes([0xe5, 0x8e, 0x26, 0x99])
+        self.assertEqual(import_audit.macho_uleb(data, 0, len(data), "x"), (624485, 3))
+
+    def test_macho_uleb_refuses_a_truncated_value(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "truncated uleb128"):
+            import_audit.macho_uleb(bytes([0x80]), 0, 1, "x")
+
+    def test_macho_uleb_refuses_an_overflowing_value(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "overflow"):
+            import_audit.macho_uleb(bytes([0x80] * 11 + [0x01]), 0, 12, "x")
+
+    def test_nids_of_prefers_an_explicit_alias(self):
+        self.assertEqual(import_audit.nids_of("sceFoo", {"sceFoo": {"ABC"}}), {"ABC"})
+
+    def test_nids_of_computes_the_nid_without_an_alias(self):
+        name = "sceMsgDialogProgressBarSetValue"
+        self.assertEqual(import_audit.nids_of(name, {}), {nid_names.compute_nid(name)})
+
+    def test_top_level_statements_splits_on_semicolons_at_top_level(self):
+        statements = [text for _, text in import_audit.top_level_statements("{a; b(1; 2);}")]
+        self.assertEqual(statements[:2], ["a;", " b(1; 2);"])
+class RegistryAndLabelTests(unittest.TestCase):
+    def test_read_needed_registry_accepts_a_list_of_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            path.write_text('["libA.prx", "libB.prx"]', encoding="utf-8")
+            self.assertEqual(import_audit.read_needed_registry(path), ["libA.prx", "libB.prx"])
+
+    def test_read_needed_registry_refuses_a_non_list_or_empty_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            for text in ('{"a": 1}', '["", "x"]', '[1]'):
+                with self.subTest(text=text):
+                    path.write_text(text, encoding="utf-8")
+                    with self.assertRaisesRegex(import_audit.AuditError, "JSON list of nonempty strings"):
+                        import_audit.read_needed_registry(path)
+
+    def test_read_needed_registry_refuses_unreadable_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            path.write_text("[not json", encoding="utf-8")
+            with self.assertRaisesRegex(import_audit.AuditError, "cannot read needed libraries"):
+                import_audit.read_needed_registry(path)
+
+    def test_label_names_the_import_and_its_module(self):
+        record = {"nid": "abc", "name": "sceFoo", "weak": False, "module": "libA"}
+        self.assertEqual(import_audit.label(record), "abc  sceFoo  (imported by libA)")
+        self.assertEqual(import_audit.label({"nid": "abc", "name": None, "weak": True}), "abc  (weak import)")
+        self.assertEqual(import_audit.label({"nid": "abc", "name": "sceFoo", "weak": False,
+                                             "name_verified": False}),
+                         "abc  sceFoo (name does not hash to this NID)")
+
+    def test_directory_files_lists_matching_files_only_and_refuses_non_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "b.txt").write_text("", encoding="utf-8")
+            (root / "a.txt").write_text("", encoding="utf-8")
+            (root / "c.bin").write_text("", encoding="utf-8")
+            (root / "sub.txt").mkdir()
+            self.assertEqual([path.name for path in import_audit.directory_files(root, "*.txt")], ["a.txt", "b.txt"])
+            with self.assertRaisesRegex(import_audit.AuditError, "not a directory"):
+                import_audit.directory_files(root / "a.txt", "*")
+class ClassifyTests(unittest.TestCase):
+    def test_classify_gives_guest_absent_and_stub_states(self):
+        self.assertEqual(import_audit.classify('n', 'libX', set(), set(), {'g'}), 'module')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, set(), {'g'}), 'implemented')
+        self.assertEqual(import_audit.classify('n', '', set(), set(), set()), 'absent')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set()), 'stub')
+
+    def test_classify_gives_partial_and_implemented_states(self):
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, {('p', 'n')}), 'implemented')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set(), partial={('p', 'n')}), 'partial')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, set(), set()), 'implemented')
+class VariantCallTests(unittest.TestCase):
+    def test_unconditional_calls_skip_calls_inside_a_conditional(self):
+        self.assertEqual(import_audit.unconditional_calls('{ foo(1); if (x) { bar(); } baz(); }'), {'foo', 'baz'})
+
+    def test_variant_calls_give_one_call_list_per_arm(self):
+        body = '{\n#if X\n b();\n#else\n c();\n#endif\n}'
+        self.assertEqual([sorted(calls) for calls in import_audit.variant_calls(body)], [['b'], ['c']])
+class FunctionExitTests(unittest.TestCase):
+    def test_function_exit_detects_an_explicit_return(self):
+        self.assertTrue(import_audit.function_exit('{ foo(); return 1; }'))
+        self.assertFalse(import_audit.function_exit('{ foo(); }'))
+class AttachNameTests(unittest.TestCase):
+    def test_attach_names_marks_whether_the_name_hashes_to_the_nid(self):
+        nid = nid_names.compute_nid('sceFoo')
+        records = [{'nid': nid, 'name': None, 'class': 'absent'}, {'nid': 'AAAAAAAAAAA', 'name': None, 'class': 'absent'}, {'nid': nid, 'name': None, 'class': 'stub'}]
+        import_audit.attach_names(records, {nid: 'sceFoo', 'AAAAAAAAAAA': 'sceBar'})
+        self.assertEqual((records[0]['name'], records[0]['name_verified']), ('sceFoo', True))
+        self.assertEqual((records[1]['name'], records[1]['name_verified']), ('sceBar', False))
+        self.assertIsNone(records[2]['name'])
+class LocateAndNamesTests(unittest.TestCase):
+    def test_locate_missing_finds_only_the_names_present_in_a_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            found = import_audit.locate_missing(['libA.prx', 'libB.prx'], [root])
+            self.assertIn('libA.prx', found)
+            self.assertNotIn('libB.prx', found)
+
+    def test_load_names_refuses_a_missing_file_without_downloading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
+                import_audit.load_names(Path(directory) / 'missing.csv')
 
 
 if __name__ == "__main__":

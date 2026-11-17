@@ -375,6 +375,15 @@ short ClassifyValue(TFloat value) {
 }
 
 template<typename TFloat>
+short ScaledResult(short result, TFloat value, const std::fexcept_t& entryFlags, int entryErrno) {
+    if (result == Finite && std::fpclassify(value) == FP_SUBNORMAL) {
+        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+        errno = entryErrno;
+    }
+    return result;
+}
+
+template<typename TFloat>
 short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, long exponent) {
     std::fexcept_t saved;
     std::fegetexceptflag(&saved, FE_ALL_EXCEPT);
@@ -539,11 +548,7 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
             return Finite;
         }
         const short result = ScaleProduct(*value, 1.0, y, offset);
-        if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
-            std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
-            errno = entryErrno;
-        }
-        return result;
+        return ScaledResult(result, *value, entryFlags, entryErrno);
     }
     if (offset == 0 && x == 1.0 && y == 1.0) {
         *value = E;
@@ -572,11 +577,7 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
         factor = (w + g + 1.0) / (w - g + 1.0);
     }
     const short result = ScaleProduct(*value, factor, y, exponent + offset);
-    if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
-        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
-        errno = entryErrno;
-    }
-    return result;
+    return ScaledResult(result, *value, entryFlags, entryErrno);
 }
 
 short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
@@ -634,11 +635,7 @@ short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
             return Finite;
         }
         const short result = ScaleProduct(*value, 1.0f, y, offset);
-        if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
-            std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
-            errno = entryErrno;
-        }
-        return result;
+        return ScaledResult(result, *value, entryFlags, entryErrno);
     }
     if (offset == 0 && x == 1.0f && y == 1.0f) {
         *value = E;
@@ -667,11 +664,7 @@ short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
         factor = (w + g + 1.0f) / (w - g + 1.0f);
     }
     const short result = ScaleProduct(*value, factor, y, exponent + offset);
-    if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
-        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
-        errno = entryErrno;
-    }
-    return result;
+    return ScaledResult(result, *value, entryFlags, entryErrno);
 }
 
 double APS5_VABI _Sin_nid_postfix(double x, unsigned int quadrant) {
