@@ -303,6 +303,12 @@ constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
 constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
+constexpr std::uint32_t VertexRoundModeMask = 0x6u;
+constexpr std::uint32_t HalfPixelCenterSubpixel256 = 0x29u;
+
+bool vertexControlSupported(std::uint32_t word) {
+    return (word & ~VertexRoundModeMask) == HalfPixelCenterSubpixel256;
+}
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
@@ -1795,7 +1801,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
     Require((read(cx, 0x8c) & 0xfu) == 0xau, "nonstandard triangle edge rules are unsupported");
-    Require(read(cx, 0x2f9) == 0x2du, "nonstandard pixel center or vertex quantization is unsupported");
+    Require(vertexControlSupported(read(cx, 0x2f9)), "nonstandard pixel center or vertex quantization is unsupported");
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
@@ -2924,7 +2930,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (auto reason = nonzero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits"); !reason.empty()) return reason;
     if (value(cx, 0x83, word) && word != 0xffffu) return require(false, "clip rectangles are unsupported");
     if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau) return require(false, "nonstandard triangle edge rules are unsupported");
-    if (value(cx, 0x2f9, word) && word != 0x2du) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
+    if (value(cx, 0x2f9, word) && !vertexControlSupported(word)) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
     if (value(cx, 0x313, word) && (word & ~0x001f6000u) != 0 && word != 0x6001u) return conservativeMessage(word);
     std::uint32_t config = 0, other = 0;
     if (value(cx, 0x2f8, config) && value(cx, 0x30e, word) && value(cx, 0x30f, other)) {

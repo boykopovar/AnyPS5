@@ -241,6 +241,27 @@ void PolygonPrimitiveTests() {
     Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
+void VertexControlTests() {
+    const auto vertexControl = [](std::uint32_t word) {
+        auto queue = makeState();
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        queue.context[0x2f9] = word;
+        return queue;
+    };
+    for (const auto word : {0x29u, 0x2bu, 0x2du, 0x2fu}) {
+        const auto queue = vertexControl(word);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a PA_SU_VTX_CNTL rounding mode failed the draw precheck: " + rejection);
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    }
+    for (const auto word : {0x28u, 0x2cu, 0x21u, 0x25u, 0x31u, 0x39u, 0x69u}) {
+        const auto queue = vertexControl(word);
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("nonstandard pixel center or vertex quantization") != std::string::npos, "the draw precheck accepted an unsupported PA_SU_VTX_CNTL");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "nonstandard pixel center or vertex quantization");
+    }
+}
+
 void vertexPointListTests() {
     const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
         auto queue = makeState();
@@ -15336,6 +15357,11 @@ int main(int argc, char** argv) {
             DualSourceBlendTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-control-state") {
+            VertexControlTests();
+            std::cout << "Vertex control state checks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
             DepthBoundsBiasTests();
             ReadOnlyDepthBoundsComparisonTests();
@@ -15457,6 +15483,7 @@ int main(int argc, char** argv) {
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         PolygonPrimitiveTests();
+        VertexControlTests();
         vertexPointListTests();
         TuningFieldTests();
         ShaderDeclaredPixelInputTests();
