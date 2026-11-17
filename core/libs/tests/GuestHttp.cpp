@@ -16,6 +16,7 @@
 #include <exception>
 #include <string>
 #include <thread>
+#include <type_traits>
 
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
@@ -25,6 +26,8 @@ static bool Equal(const char* left, const char* right) { return std::strcmp(left
 
 
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
+static_assert(sizeof(SceHttpUriElement) == 80 && offsetof(SceHttpUriElement, scheme) == 8 && offsetof(SceHttpUriElement, port) == 64);
+static_assert(std::has_unique_object_representations_v<SceHttpUriElement>);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -1012,6 +1015,14 @@ int main(int argc, char** argv) {
         Require(copy.scheme == pool && copy.hostname == pool + 5 && copy.path == pool + 17 && copy.username == pool + 22 && copy.password == pool + 27);
         Require(allBytes(pool + 30, 34, 0) && pool[64] == '~' && copy.query == nullptr && copy.fragment == nullptr);
         Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 4, 4, 0) && allBytes(copy.reserved, sizeof(copy.reserved), 0));
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 76, 4, 0));
+
+        SceHttpUriElement parsed;
+        char parsedPadPool[256];
+        std::memset(&parsed, 0xa5, sizeof(parsed));
+        Require(sceHttpUriParse(&parsed, "http://user:pw@example.com:8080/a/b?q=1#frag", parsedPadPool, nullptr, sizeof(parsedPadPool)) == 0);
+        Require(std::strcmp(parsed.hostname, "example.com") == 0 && parsed.port == 8080 && allBytes(parsed.reserved, sizeof(parsed.reserved), 0));
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&parsed) + 4, 4, 0) && allBytes(reinterpret_cast<const unsigned char*>(&parsed) + 76, 4, 0));
 
         std::memset(pool, '~', sizeof(pool));
         std::memset(&copy, 0x5a, sizeof(copy));
