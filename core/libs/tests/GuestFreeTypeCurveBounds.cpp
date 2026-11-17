@@ -102,6 +102,7 @@ int main() {
     GuestOutline empty{0, 3, reinterpret_cast<GuestVector*>(std::uintptr_t{1}),
         reinterpret_cast<unsigned char*>(std::uintptr_t{1}), reinterpret_cast<std::uint16_t*>(std::uintptr_t{1}), 123};
     Require(FT_Outline_Get_BBox_nid_postfix(&empty, &invalid.box) == 0 && Equal(invalid.box, {}));
+    Require(FT_Outline_Get_BBox_nid_postfix(&empty, reinterpret_cast<GuestBBox*>(std::uintptr_t{1})) == FT_Err_Invalid_Argument);
     empty.n_contours = 1;
     empty.n_points = 0;
     Require(FT_Outline_Get_BBox_nid_postfix(&empty, &invalid.box) == 0 && Equal(invalid.box, {}));
