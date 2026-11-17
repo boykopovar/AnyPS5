@@ -511,35 +511,31 @@ int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std
     }
     const size_t total = length + 3;
     if (!cookie) {
-        *required = total;
+        if (!guestWrite(required, total)) return ERROR_INVALID_VALUE;
         return 0;
     }
     if (prepared < total) {
-        size_t written = 0;
+        std::string partial;
         for (const std::string& item : items) {
-            const size_t next = written + (written != 0 ? 2 : 0) + item.size();
+            const size_t next = partial.size() + (!partial.empty() ? 2 : 0) + item.size();
             if (next + 1 > prepared) break;
-            if (written != 0) {
-                std::memcpy(cookie + written, "; ", 2);
-                written += 2;
-            }
-            std::memcpy(cookie + written, item.data(), item.size());
-            written += item.size();
+            if (!partial.empty()) partial += "; ";
+            partial += item;
         }
-        if (prepared != 0) cookie[written] = '\0';
+        if (prepared != 0) {
+            partial.push_back('\0');
+            if (!HttpGuest::CopyOut(cookie, partial.data(), partial.size())) return ERROR_INVALID_VALUE;
+        }
         return ERROR_OUT_OF_SIZE;
     }
-    size_t written = 0;
+    std::string joined;
     for (const std::string& item : items) {
-        if (written != 0) {
-            std::memcpy(cookie + written, "; ", 2);
-            written += 2;
-        }
-        std::memcpy(cookie + written, item.data(), item.size());
-        written += item.size();
+        if (!joined.empty()) joined += "; ";
+        joined += item;
     }
-    std::memcpy(cookie + written, "\0 \0", 3);
-    if (required) *required = total;
+    joined.append("\0 \0", 3);
+    if (!HttpGuest::CopyOut(cookie, joined.data(), joined.size())) return ERROR_INVALID_VALUE;
+    if (required && !guestWrite(required, total)) return ERROR_INVALID_VALUE;
     return 0;
 }
 

@@ -1464,7 +1464,12 @@ int APS5_VABI scePadBondUpdateGetStatus(std::int32_t deviceId, std::int32_t* sta
 int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
     (void)deviceId;
     if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
-    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    std::size_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, data, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != 0x8000) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadBondUpdateSendData: the bond-update ioctl");
     return 0;
 }
@@ -1535,7 +1540,12 @@ int APS5_VABI scePadControllerUpdateGetStatus(std::int32_t deviceId, std::int32_
 int APS5_VABI scePadControllerUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
     (void)deviceId;
     if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
-    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    std::size_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, data, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != 0x8000) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadControllerUpdateSendData: the controller-update ioctl");
     return 0;
 }
