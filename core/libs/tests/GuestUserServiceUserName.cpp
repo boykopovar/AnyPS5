@@ -29,6 +29,7 @@ bool Filled(const char* buffer, std::size_t from, std::size_t to, char value) {
 } // namespace
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     char name[64];
 
     for (int userIndex = 0; userIndex < USER_SERVICE_MAX_USERS; ++userIndex) {
@@ -100,7 +101,6 @@ int main() {
         Require(sceUserServiceGetUserName(invalidUser, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceGetUserName(invalidUser, nullptr, 0) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
-
     char exactBuffer[SCE_USER_SERVICE_MAX_USER_NAME_LENGTH + 1];
     std::memset(exactBuffer, 'Z', sizeof(exactBuffer));
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, exactBuffer, sizeof(exactBuffer)) == USER_SERVICE_OK);
@@ -108,5 +108,6 @@ int main() {
     Require(exactBuffer[SCE_USER_SERVICE_MAX_USER_NAME_LENGTH] == '\0');
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     return 0;
 }

@@ -418,6 +418,9 @@ int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  const int initialUser = USER_SERVICE_INITIAL_USER_ID;
  const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(user_id, &initialUser, sizeof(initialUser));
@@ -456,6 +459,9 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
 int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
  if (name == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
  }
  const int index = UserIndex(user_id);
  if (index < 0) {
