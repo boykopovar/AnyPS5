@@ -73,6 +73,30 @@ class Tests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
+    def test_absent_license_file_fails_without_json(self):
+        self.fixture()
+        (self.root / "LICENSE").unlink()
+        result = self.run_tool("--root", self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("license", result.stderr.lower())
+
+    def test_missing_root_fails_without_json(self):
+        result = self.run_tool("--root", self.root / "absent")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+
+    def test_manifest_entries_are_sorted_by_destination_with_license_first(self):
+        directory = self.fixture()
+        (directory / "Zeta.hpp").write_bytes(b"struct Zeta {};\n")
+        (directory / "libExample.hpp").write_bytes(b'#include "Api.hpp"\n#include "Zeta.hpp"\n')
+        result = self.run_tool("--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        paths = [entry["path"] for entry in json.loads(result.stdout)["entries"]]
+        self.assertEqual(paths, sorted(paths))
+        self.assertEqual(paths[0], "LICENSE")
+        self.assertIn("include/anyps5/prx/libExample/Zeta.hpp", paths)
+
     def test_linked_header_directories_keep_the_package_manifest(self):
         self.fixture()
         expected = self.run_tool("--root", self.root)
