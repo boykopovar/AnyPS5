@@ -944,6 +944,20 @@ static void TestSleepSeconds() {
     _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
     _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
     Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+
+    auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) _ZN3WTF5sleepENS_7SecondsE(Seconds{0.002});
+    auto shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
+
+    shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) {
+        TimeWithDynamicClockType wake = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+        wake.m_value += 0.002;
+        _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(wake);
+    }
+    shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
 }
 
 static void TestMakeAllDirectories() {
