@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -92,6 +93,7 @@ int main() {
         handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
     } catch (const std::runtime_error& error) {
         if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return 77;
     }
 
