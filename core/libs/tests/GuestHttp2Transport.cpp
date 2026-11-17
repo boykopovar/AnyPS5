@@ -1699,11 +1699,10 @@ void Cancellation(int ssl, Mode mode, int teardown) {
     if (teardown) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "deleted request stays invalid");
 }
 
-std::atomic<bool> stopBetweenLoadsArmed{false};
+std::atomic<bool> cancelBetweenLoadsArmed{false};
 
-void StopBetweenLoads(std::atomic<bool>& stopped, std::atomic<bool>& cancelled) {
-    if (!stopBetweenLoadsArmed.exchange(false)) return;
-    stopped.store(true);
+void CancelBetweenLoads(std::atomic<bool>&, std::atomic<bool>& cancelled) {
+    if (!cancelBetweenLoadsArmed.exchange(false)) return;
     cancelled.store(true);
 }
 
@@ -1719,12 +1718,13 @@ void DeleteBetweenCheckLoads(int ssl) {
     });
     server.WaitStage(2);
     Require(pending.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout, "operation is pending");
-    Http2SetCheckHook_nid_no_patch(StopBetweenLoads);
-    stopBetweenLoadsArmed.store(true);
+    Http2SetCheckHook_nid_no_patch(CancelBetweenLoads);
+    cancelBetweenLoadsArmed.store(true);
     Require(pending.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "the pending call returns after the delete");
     Http2SetCheckHook_nid_no_patch(nullptr);
     const int result = pending.get();
-    Require(result != static_cast<int>(0x817b1080), "a delete between the two loads is reported as an abort");
+    // Measured on a PS5 (firmware 13.590.001): a request deleted during an operation returns 0x817B1080.
+    Require(result == static_cast<int>(0x817b1080), "a delete between the two loads is reported as the measured abort");
     Require(sceHttp2DeleteRequest(client.request) == 0, "delete the request");
 }
 
