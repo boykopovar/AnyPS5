@@ -3,10 +3,204 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+import vulkan_validation_gate as command_lifecycle
+
+
+REPLAY_DRAIN_SECONDS = 10
+
+
+class ReplayCleanupError(RuntimeError):
+    pass
+
+
+if os.name == "nt":
+    ctypes = command_lifecycle.ctypes
+    wintypes = command_lifecycle.wintypes
+
+    class CompletionPort(ctypes.Structure):
+        _fields_ = [("key", ctypes.c_void_p), ("port", wintypes.HANDLE)]
+
+    for name, restype, *argtypes in (
+            ("CreateIoCompletionPort", wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE, ctypes.c_size_t, wintypes.DWORD),
+            ("GetQueuedCompletionStatus", wintypes.BOOL, wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+             ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_void_p), wintypes.DWORD),
+            ("IsProcessInJob", wintypes.BOOL, wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)),
+            ("WaitForSingleObject", wintypes.DWORD, wintypes.HANDLE, wintypes.DWORD)):
+        function = getattr(command_lifecycle.KERNEL32, name)
+        function.restype, function.argtypes = restype, argtypes
+
+    class ReplayJob:
+        def __init__(self, process):
+            self.process = process
+            self.port = None
+            self.job = None
+            self.observed = 1
+            self.root_notified = False
+            self.handles = []
+
+        def prepare(self, job):
+            self.job = job
+            self.port = command_lifecycle.win32("CreateIoCompletionPort", command_lifecycle.INVALID_HANDLE_VALUE, None, 0, 1)
+            association = CompletionPort(1, self.port)
+            command_lifecycle.win32("SetInformationJobObject", job, 7, ctypes.byref(association), ctypes.sizeof(association))
+
+        def collect(self):
+            for _ in range(1024):
+                message, key, pid = wintypes.DWORD(), ctypes.c_size_t(), ctypes.c_void_p()
+                if not command_lifecycle.KERNEL32.GetQueuedCompletionStatus(self.port, ctypes.byref(message), ctypes.byref(key), ctypes.byref(pid), 0):
+                    if ctypes.get_last_error() == 258:
+                        return
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if key.value != 1:
+                    raise RuntimeError("replay job returned an unknown completion key")
+                if message.value != 6:
+                    continue
+                if pid.value == self.process.pid and not self.root_notified:
+                    self.root_notified = True
+                    continue
+                handle = command_lifecycle.KERNEL32.OpenProcess(0x101000, False, pid.value)
+                if not handle:
+                    if ctypes.get_last_error() == 87:
+                        self.observed += 1
+                        continue
+                    raise ctypes.WinError(ctypes.get_last_error())
+                try:
+                    member = wintypes.BOOL()
+                    command_lifecycle.win32("IsProcessInJob", handle, self.job, ctypes.byref(member))
+                    if member.value:
+                        self.handles.append(handle)
+                        handle = None
+                    elif command_lifecycle.KERNEL32.WaitForSingleObject(handle, 0) != 0:
+                        raise RuntimeError("replay notification no longer identifies a terminated job member")
+                    self.observed += 1
+                finally:
+                    command_lifecycle.close(handle)
+
+        def close(self):
+            for handle in self.handles:
+                command_lifecycle.close(handle)
+            command_lifecycle.close(self.port)
+
+
+def drain_replay_job(job, process, tracker):
+    deadline = time.monotonic() + REPLAY_DRAIN_SECONDS
+    try:
+        limits = command_lifecycle.Limits(flags=command_lifecycle.KILL_ON_JOB_CLOSE | 8, active_limit=0)
+        try:
+            command_lifecycle.win32("SetInformationJobObject", job, command_lifecycle.LIMITS,
+                                    command_lifecycle.ctypes.byref(limits), command_lifecycle.ctypes.sizeof(limits))
+            tracker.collect()
+        finally:
+            command_lifecycle.win32("TerminateJobObject", job, 1)
+        waited = 0
+        while True:
+            tracker.collect()
+            for handle in tracker.handles[waited:]:
+                result = command_lifecycle.KERNEL32.WaitForSingleObject(handle, max(0, int((deadline - time.monotonic()) * 1000)))
+                if result != 0:
+                    raise RuntimeError(f"replay descendant termination is unconfirmed (wait result {result})")
+                waited += 1
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            accounting = command_lifecycle.Accounting()
+            command_lifecycle.win32("QueryInformationJobObject", job, command_lifecycle.ACCOUNTING,
+                                    command_lifecycle.ctypes.byref(accounting), command_lifecycle.ctypes.sizeof(accounting), None)
+            if accounting.total == tracker.observed and accounting.active == 0:
+                return
+            if accounting.total < tracker.observed or time.monotonic() >= deadline:
+                raise RuntimeError("replay job membership or termination is unconfirmed")
+            time.sleep(0.02)
+    except BaseException as error:
+        raise ReplayCleanupError(f"cannot confirm replay process job cleanup: {error}") from error
+    finally:
+        command_lifecycle.close(job)
+        tracker.close()
+
+
+def wait_replay_job(process, tracker, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        tracker.collect()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        try:
+            return process.wait(timeout=min(remaining, 0.25))
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def drain_replay_group(process):
+    deadline = time.monotonic() + REPLAY_DRAIN_SECONDS
+    try:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except BaseException:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except BaseException:
+                pass
+            raise
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("replay process group remains after termination")
+            time.sleep(0.02)
+    except BaseException as error:
+        raise ReplayCleanupError(f"cannot confirm replay process group cleanup: {error}") from error
+
+
+def run_replay(command, stdout, stderr, timeout):
+    if sys.platform in ("cygwin", "msys") or os.name not in ("nt", "posix"):
+        raise RuntimeError("use native Windows Python or a POSIX host to contain replay processes")
+    try:
+        command_lifecycle.positive(timeout)
+    except argparse.ArgumentTypeError as error:
+        raise RuntimeError("replay timeout must be finite and positive") from error
+    if os.name == "nt":
+        command_lifecycle.guard()
+        process = subprocess.Popen(command, stdout=stdout, stderr=stderr,
+                                   creationflags=command_lifecycle.CREATE_SUSPENDED)
+        tracker = ReplayJob(process)
+        try:
+            job = command_lifecycle.contain(process.pid, tracker.prepare)
+        except BaseException as error:
+            tracker.close()
+            try:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                process.wait(timeout=REPLAY_DRAIN_SECONDS)
+            except BaseException as cleanup:
+                raise ReplayCleanupError(f"replay containment failed and its process could not be reaped: {cleanup}") from error
+            raise ReplayCleanupError(f"replay containment failed; descendant cleanup is unconfirmed: {error}") from error
+        try:
+            return wait_replay_job(process, tracker, timeout)
+        finally:
+            drain_replay_job(job, process, tracker)
+    process = subprocess.Popen(command, stdout=stdout, stderr=stderr,
+                               start_new_session=True)
+    try:
+        return process.wait(timeout=timeout)
+    finally:
+        drain_replay_group(process)
 
 
 class TrialLimitReached(Exception):
@@ -31,6 +225,13 @@ class Minimizer:
         self.capture = Path(args.capture).resolve()
         self.output = Path(os.path.abspath(args.output))
         self.output_created = False
+        self.cleanup_failed = False
+
+    def cleanup(self, path, ignore_errors=False):
+        if self.cleanup_failed:
+            print(f"replay cleanup is unconfirmed; retaining {path}", file=sys.stderr)
+            return
+        shutil.rmtree(path, ignore_errors=ignore_errors)
 
     @staticmethod
     def command(path):
@@ -115,20 +316,24 @@ class Minimizer:
         stderr_path = workdir / "replay.stderr"
         try:
             with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-                completed = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=self.args.replay_timeout)
+                try:
+                    returncode = run_replay(command, stdout, stderr, self.args.replay_timeout)
+                except ReplayCleanupError:
+                    self.cleanup_failed = True
+                    raise
         except subprocess.TimeoutExpired:
             return False, f"replay timed out after {self.args.replay_timeout:g}s"
         stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
         stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
-        matched = completed.returncode == self.args.expect_exit_code and self.pattern.search(stdout_text + "\n" + stderr_text) is not None
-        return matched, f"exit={completed.returncode}, predicate={'matched' if matched else 'not matched'}"
+        matched = returncode == self.args.expect_exit_code and self.pattern.search(stdout_text + "\n" + stderr_text) is not None
+        return matched, f"exit={returncode}, predicate={'matched' if matched else 'not matched'}"
 
     def predicate(self, calls, chunks):
         if self.trials >= self.args.max_trials:
             raise TrialLimitReached
         self.trials += 1
-        with tempfile.TemporaryDirectory(prefix="aps5-frame-minimize-", dir=self.args.temp_dir) as temporary:
-            root = Path(temporary)
+        root = Path(tempfile.mkdtemp(prefix="aps5-frame-minimize-", dir=self.args.temp_dir))
+        try:
             capture = root / "candidate"
             plan = root / "candidate.plan"
             self.write_plan(plan, calls, chunks)
@@ -144,6 +349,8 @@ class Minimizer:
                     return False
             print(f"trial {self.trials}: predicate confirmed {self.args.confirm_runs} times", file=sys.stderr)
             return True
+        finally:
+            self.cleanup(root)
 
     def minimize(self, units, removed_calls, removed_chunks, is_call):
         current = list(units)
@@ -270,7 +477,7 @@ def main(argv=None):
             try:
                 matched, detail = minimizer.replay_once(minimizer.capture, workdir)
             finally:
-                shutil.rmtree(workdir, ignore_errors=True)
+                minimizer.cleanup(workdir, ignore_errors=True)
             if not matched:
                 print(f"baseline did not reproduce the requested predicate ({detail}); no output was created", file=sys.stderr)
                 return 1
@@ -285,7 +492,7 @@ def main(argv=None):
             try:
                 matched, detail = minimizer.replay_once(minimizer.output, workdir)
             finally:
-                shutil.rmtree(workdir, ignore_errors=True)
+                minimizer.cleanup(workdir, ignore_errors=True)
             if not matched:
                 print(f"final capture failed confirmation ({detail}): {minimizer.output}", file=sys.stderr)
                 shutil.rmtree(minimizer.output, ignore_errors=True)
@@ -294,10 +501,15 @@ def main(argv=None):
         completeness = "minimality search completed" if calls_complete and chunks_complete else "trial limit reached; result is reduced but may not be minimal"
         print(f"wrote {minimizer.output}; removed {len(removed_calls)} calls and {len(removed_chunks | auto_removed_chunks)} chunks in {minimizer.trials} trials; final predicate confirmed {args.confirm_runs} times; {completeness}")
         return 0
+    except KeyboardInterrupt:
+        print("frame capture minimization interrupted", file=sys.stderr)
+        if minimizer.output_created:
+            minimizer.cleanup(minimizer.output, ignore_errors=True)
+        return 130
     except (OSError, RuntimeError, subprocess.SubprocessError, KeyError, TypeError) as error:
         print(str(error), file=sys.stderr)
         if "minimizer" in locals() and minimizer.output_created:
-            shutil.rmtree(minimizer.output, ignore_errors=True)
+            minimizer.cleanup(minimizer.output, ignore_errors=True)
         return 2
 
 

@@ -663,6 +663,9 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME frame_capture_minimize_replay COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/tests/test_frame_capture_minimize_replay.py)
+        set_tests_properties(frame_capture_minimize_replay PROPERTIES TIMEOUT 20)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
