@@ -1,5 +1,6 @@
 #include "Jsc.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -1285,12 +1286,14 @@ JSObjectRef APS5_VABI JSObjectMakeDeferredPromise(JSContextRef ctx, JSObjectRef*
         return nullptr;
     }
     if (resolve) {
-        *resolve = mutCtx->group->ToHandle(mutCtx, funcs[0]);
+        const JSObjectRef handle = mutCtx->group->ToHandle(mutCtx, funcs[0]);
+        GuestCopyOut_nid_no_patch(resolve, &handle, sizeof(handle));
     } else {
         JS_FreeValue(mutCtx->qctx, funcs[0]);
     }
     if (reject) {
-        *reject = mutCtx->group->ToHandle(mutCtx, funcs[1]);
+        const JSObjectRef handle = mutCtx->group->ToHandle(mutCtx, funcs[1]);
+        GuestCopyOut_nid_no_patch(reject, &handle, sizeof(handle));
     } else {
         JS_FreeValue(mutCtx->qctx, funcs[1]);
     }
