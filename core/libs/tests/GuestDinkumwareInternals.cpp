@@ -393,6 +393,40 @@ void TestIntegerErrors() {
     Require(_Stoulx_nid_postfix("-1", &end, 0, &error) == 18446744073709551615ull && error == 0, "_Stoulx wraps a negative value");
     Require(_Stoullx_nid_postfix("-18446744073709551615", &end, 10, &error) == 1 && error == 0 && *__error_nid_postfix() == 0, "_Stoullx wraps a negated maximum");
     Require(_Stoullx_nid_postfix("18446744073709551616", &end, 10, &error) == 18446744073709551615ull && error == RangeError && *__error_nid_postfix() == RangeError, "_Stoullx overflow");
+    const struct {
+        const char* text;
+        int base;
+        unsigned long long value;
+        std::size_t consumed;
+        int error;
+    } unsignedCases[] = {
+        {"-18446744073709551616!", 10, UINT64_MAX, 21, RangeError},
+        {"18446744073709551616!", 10, UINT64_MAX, 20, RangeError},
+        {"-0x10000000000000000!", 0, UINT64_MAX, 20, RangeError},
+        {"-0x10000000000000000!", 16, UINT64_MAX, 20, RangeError},
+        {"-18446744073709551615!", 10, 1, 21, 0},
+        {"42!", 10, 42, 2, 0},
+        {"", 10, 0, 0, 0},
+        {" \t-!", 10, 0, 0, 0}
+    };
+    const auto checkUnsigned = [&](auto parse) {
+        for (const auto& test : unsignedCases) {
+            for (const int saved : {0, 5, RangeError}) {
+                const int expectedError = test.error != 0 ? test.error : saved;
+                char* parsedEnd = nullptr;
+                int parseError = 99;
+                *__error_nid_postfix() = saved;
+                Require(parse(test.text, &parsedEnd, test.base, &parseError) == test.value, "unsigned integer value before sign on overflow");
+                Require(parsedEnd == test.text + test.consumed, "unsigned integer end pointer");
+                Require(parseError == test.error, "unsigned integer error output reports only this parse");
+                Require(*__error_nid_postfix() == expectedError, "unsigned integer errno preserves incoming errors on success");
+                *__error_nid_postfix() = saved;
+                Require(parse(test.text, nullptr, test.base, nullptr) == test.value && *__error_nid_postfix() == expectedError, "unsigned integer null outputs preserve value and errno");
+            }
+        }
+    };
+    checkUnsigned(_Stoulx_nid_postfix);
+    checkUnsigned(_Stoullx_nid_postfix);
 }
 
 void TestFloatingRounds() {
@@ -632,6 +666,9 @@ long double Extended(std::uint64_t mantissa, std::uint16_t signExponent) {
     unsigned char bytes[sizeof(long double)]{};
     std::memcpy(bytes, &mantissa, sizeof(mantissa));
     std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    volatile unsigned char opaque[sizeof(long double)]{};
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) opaque[index] = bytes[index];
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) bytes[index] = opaque[index];
     long double value;
     std::memcpy(&value, bytes, sizeof(value));
     return value;

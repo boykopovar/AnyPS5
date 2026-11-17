@@ -9,6 +9,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -83,6 +84,68 @@ void TestDestructor() {
     _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(&builder, 5);
     _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
     Require(builder.id == 5);
+}
+
+struct RefBuffer {
+    const void* const* vtable;
+    int addRefs = 0;
+    int releases = 0;
+};
+
+std::vector<int> g_order;
+const void* g_refVtable[4];
+
+void APS5_VABI RefAddRef(const void* buffer) {
+    ++const_cast<RefBuffer*>(static_cast<const RefBuffer*>(buffer))->addRefs;
+    g_order.push_back(1);
+}
+
+int APS5_VABI RefRelease(const void* buffer) {
+    ++const_cast<RefBuffer*>(static_cast<const RefBuffer*>(buffer))->releases;
+    g_order.push_back(2);
+    return 1;
+}
+
+void TestSetVideoFrameBuffer() {
+    g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
+    g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
+    RefBuffer first{g_refVtable};
+    RefBuffer second{g_refVtable};
+    WebRtcVideoFrameBuilder builder = Filled();
+    _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(&builder);
+    void* firstReference = &first;
+    void* secondReference = &second;
+    g_order.clear();
+    Require(_ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(&builder, &firstReference) == &builder);
+    Require(builder.videoFrameBuffer == &first && first.addRefs == 1 && first.releases == 0);
+    Require(g_order == std::vector<int>{1});
+    g_order.clear();
+    _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(&builder, &secondReference);
+    Require(builder.videoFrameBuffer == &second && second.addRefs == 1 && first.releases == 1 && second.releases == 0);
+    Require(g_order == std::vector<int>({1, 2}));
+    g_order.clear();
+    _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(&builder, &secondReference);
+    Require(builder.videoFrameBuffer == &second && second.addRefs == 2 && second.releases == 1);
+    Require(g_order == std::vector<int>({1, 2}));
+    void* nothing = nullptr;
+    _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(&builder, &nothing);
+    Require(builder.videoFrameBuffer == nullptr && second.releases == 2 && second.addRefs == 2);
+}
+
+void TestVideoFrameBuffer() {
+    g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
+    g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
+    RefBuffer buffer{g_refVtable};
+    WebRtcVideoFrame frame;
+    std::memset(&frame, 0, sizeof(frame));
+    frame.videoFrameBuffer = &buffer;
+    void* result = nullptr;
+    Require(_ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(&result, &frame) == &result);
+    Require(result == &buffer && buffer.addRefs == 1 && buffer.releases == 0 && frame.videoFrameBuffer == &buffer);
+    frame.videoFrameBuffer = nullptr;
+    result = &buffer;
+    Require(_ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(&result, &frame) == &result);
+    Require(result == nullptr && buffer.addRefs == 1);
 }
 
 int releaseCalls = 0;
@@ -191,6 +254,8 @@ int main() {
     TestId();
     TestConstructor();
     TestDestructor();
+    TestSetVideoFrameBuffer();
+    TestVideoFrameBuffer();
     TestDestructorReleasesBuffer();
     TestDestructorWithoutBufferReleasesNothing();
     TestDestructorWithoutReleaseThrows();
