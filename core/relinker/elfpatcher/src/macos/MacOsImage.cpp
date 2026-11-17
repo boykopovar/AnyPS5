@@ -167,7 +167,7 @@ std::vector<ProtectedRange> RelroRanges(const std::vector<Domain::ProgramHeader>
         const auto start = header.MappedAddress & ~(PageSize - 1);
         const auto end = (header.MappedAddress + header.MemorySize) & ~(PageSize - 1);
         if (start >= end) continue;
-        const auto rva = image.GetRva(header.MappedAddress, header.MemorySize);
+        const auto rva = image.GetRva(header.MappedAddress);
         if ((rva & (PageSize - 1)) != (header.MappedAddress & (PageSize - 1)))
             throw Domain::RelinkerException("PT_SCE_RELRO is not page-congruent in the Mach-O image", header.MappedAddress);
         if (end - start > std::numeric_limits<std::uint32_t>::max())
