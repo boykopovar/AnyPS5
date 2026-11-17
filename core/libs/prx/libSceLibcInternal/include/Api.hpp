@@ -31,6 +31,11 @@ using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 
 extern "C" {
 
+bool APS5_VABI sceLibcInternalWideCtypeDoIs_nid_no_patch(const GuestLocale::Facet* self, short mask, char16_t character);
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoIsRange_nid_no_patch(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination);
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
+char16_t APS5_VABI sceLibcInternalWideCtypeDoToupper_nid_no_patch(const GuestLocale::Facet* self, char16_t character);
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last);
 int APS5_VABI sigblock_nid_postfix(int mask);
 int APS5_VABI sigsetmask_nid_postfix(int mask);
 
@@ -67,6 +72,7 @@ int APS5_VABI utime_nid_postfix(const char* path, const LibcUtimbuf* times);
 int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* options);
 int APS5_VABI getopt_long_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
 int APS5_VABI getopt_long_only_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
+std::uint16_t APS5_VABI __truncdfhf2_nid_postfix(double value);
 int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address);
 std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
@@ -133,6 +139,9 @@ int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path)
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
 void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPadConstructorWithName_nid_no_patch(void* self, const char* name);
+void APS5_VABI sceLibcInternalPadLaunchWithName_nid_no_patch(void* self, const char* name, void** thread);
+void APS5_VABI sceLibcInternalPadLaunchWithNameAttr_nid_no_patch(void* self, const char* name, void** attrSlot, void** thread);
 int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
 GuestLocale::String* APS5_VABI sceLibcInternalCollateDoTransform_nid_no_patch(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last);
 std::int64_t APS5_VABI sceLibcInternalCollateDoHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
@@ -238,6 +247,13 @@ int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE2inERS0_PKcS4_RS4_PcS6_RS6__nid_postfi
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE3outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first2, char* last2, char** next2);
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE7unshiftERS0_PcS3_RS3__nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, char* first2, char* last2, char** next2);
 std::size_t APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE6lengthERS0_PKcS4_m_nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix(GuestLocale::Facet* self);
+const char* APS5_VABI _ZSt22_Get_future_error_whati_nid_postfix(int code) noexcept;
+const char* APS5_VABI sceLibcInternalFutureErrorMap_nid_no_patch(int code) noexcept;
 char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
@@ -261,6 +277,13 @@ GuestLocale::String* APS5_VABI sceLibcInternalWideNumpunctTruename_nid_no_patch(
 GuestLocale::InputIterator APS5_VABI _ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, bool international, GuestLocale::IosBase* stream, std::int32_t* state, long double* value);
 GuestLocale::InputIterator APS5_VABI _ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, bool international, GuestLocale::IosBase* stream, std::int32_t* state, long double* value);
 GuestLocale::InputIterator APS5_VABI _ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSbIwS2_SaIwEE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, bool international, GuestLocale::IosBase* stream, std::int32_t* state, void* value);
+void APS5_VABI _ZNSt8messagesIcEC1EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC1ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC2ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC2Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC1EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC1ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC2Em_nid_postfix(void* self, std::size_t references);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, long double units);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, const GuestLocale::String* digits);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, std::uint16_t fill, long double units);
@@ -297,13 +320,25 @@ void APS5_VABI sceLibcInternalUnknown6_140_iZCHNahjpp4_nid_no_patch(void* self, 
 void APS5_VABI sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnknown6_150_cXLpLN0lSwc_nid_no_patch(void* self, const void* locinfo);
 bool APS5_VABI sceLibcInternalPending3_016_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_017_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char32_t* first2, char32_t* last2, char32_t** mid2);
+int APS5_VABI sceLibcInternalPending3_018_nid_no_patch(const void* self, void* state, const char32_t* first1, const char32_t* last1, const char32_t** mid1, char* first2, char* last2, char** mid2);
+int APS5_VABI sceLibcInternalPending3_019_nid_no_patch(const void* self, void* state, const char* first, const char* last, std::size_t count);
 int APS5_VABI sceLibcInternalPending3_021_nid_no_patch(const void* self);
 bool APS5_VABI sceLibcInternalPending3_023_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_024_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char16_t* first2, char16_t* last2, char16_t** mid2);
+int APS5_VABI sceLibcInternalPending3_025_nid_no_patch(const void* self, void* state, const char16_t* first1, const char16_t* last1, const char16_t** mid1, char* first2, char* last2, char** mid2);
+int APS5_VABI _ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix(const void* self, void* state, const char* first, const char* last, std::size_t count);
 int APS5_VABI sceLibcInternalPending3_037_nid_no_patch(const void* self);
 int APS5_VABI sceLibcInternalPending3_038_nid_no_patch(const void* self);
 bool APS5_VABI sceLibcInternalPending3_039_nid_no_patch(const void* self);
+void APS5_VABI sceLibcInternalPending4_005_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_006_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
 int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_009_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
+int APS5_VABI sceLibcInternalPending4_010_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_011_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_012_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
 int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
 
