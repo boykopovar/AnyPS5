@@ -218,10 +218,25 @@ public:
     Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
+public:
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    mutable Retained<BundleInspector> inspector;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
     bool wasUserInitiated = false;
     bool isCancelled = false;
 };

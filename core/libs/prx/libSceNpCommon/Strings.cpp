@@ -375,6 +375,39 @@ const XmlEntity* XmlEntityAt(const char* text) {
     return nullptr;
 }
 
+bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    constexpr std::size_t Tail = 8;
+    host.clear();
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t step = std::min(Chunk, length - done);
+        host.resize(done + step);
+        if (!GuestCopyIn_nid_no_patch(host.data() + done, src + done, step)) return false;
+        done += step;
+    }
+    char tail[Tail]{};
+    if (!GuestCopyIn_nid_no_patch(tail, src + length, Tail)) {
+        for (std::size_t index = 0; index < Tail && GuestCopyIn_nid_no_patch(tail + index, src + length + index, 1); ++index) {}
+    }
+    host.append(tail, Tail);
+    return true;
+}
+
+bool ReadNpIdText(const char* text, std::size_t limit, std::string& host) {
+    constexpr std::uintptr_t Page = 4096;
+    auto address = reinterpret_cast<std::uintptr_t>(text);
+    char chunk[Page];
+    while (host.size() < limit) {
+        const std::size_t size = std::min<std::size_t>(Page - address % Page, limit - host.size());
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return true;
+        address += size;
+    }
+    return true;
+}
+
 bool IsUrlSafe(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
         || c == '*';
@@ -701,42 +734,50 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
         encoded[0] = src[0];
     }
     if (status == 0 && dst != nullptr && dstSize < decoded) status = NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (status == 0 && dst != nullptr) std::memcpy(dst, encoded, decoded);
-    if (dstLength != nullptr) *dstLength = decoded;
-    if (consumed != nullptr) *consumed = used;
+    if (status == 0 && dst != nullptr && !GuestCopyOut_nid_no_patch(dst, encoded, decoded)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &decoded, sizeof(decoded))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (consumed != nullptr && !GuestCopyOut_nid_no_patch(consumed, &used, sizeof(used))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
 int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
     if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    const char* const end = src + srcLength;
+    std::string source;
+    if (!ReadXmlSource(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
+    const char* text = source.data();
+    const char* const end = text + srcLength;
     std::size_t length = 0;
     do {
-        const auto lead = static_cast<unsigned char>(*src);
-        const char* piece = src;
+        const auto lead = static_cast<unsigned char>(*text);
+        const char* piece = text;
         std::size_t pieceLength = 1;
         std::size_t consumed = 1;
         if (lead < 0x80) {
-            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-            if (const char* entity = XmlEntityOf(*src)) {
+            if (!IsAllowedTextByte(lead)) return flush(NP_UTIL_ERROR_INVALID_CHARACTER);
+            if (const char* entity = XmlEntityOf(*text)) {
                 piece = entity;
                 pieceLength = std::strlen(entity);
             }
         } else {
             consumed = pieceLength = Utf8SequenceLength(lead);
-            if (pieceLength == 0 || !IsValidSequence(src, pieceLength)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            if (pieceLength == 0 || !IsValidSequence(text, pieceLength)) return flush(NP_UTIL_ERROR_INVALID_CHARACTER);
         }
         if (dst != nullptr) {
-            if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-            if (!GuestCopyOut_nid_no_patch(dst + length, piece, pieceLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+            if (length + pieceLength > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+            out.append(piece, pieceLength);
         }
         length += pieceLength;
-        src += consumed;
-    } while (src < end);
+        text += consumed;
+    } while (text < end);
     if (dst != nullptr) {
-        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        const char terminator = '\0';
-        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
     const std::size_t needed = length + 1;
     if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
@@ -745,26 +786,34 @@ int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src
 
 int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
     if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    const char* const end = src + srcLength;
+    std::string source;
+    if (!ReadXmlSource(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
+    const char* text = source.data();
+    const char* const end = text + srcLength;
     std::size_t length = 0;
     do {
-        if (dst != nullptr && length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        char character = *src;
+        if (dst != nullptr && length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        char character = *text;
         std::size_t consumed = 1;
         if (character == '&') {
-            if (const XmlEntity* entity = XmlEntityAt(src)) {
+            if (const XmlEntity* entity = XmlEntityAt(text)) {
                 character = entity->character;
                 consumed = std::strlen(entity->text);
             }
         }
-        if (dst != nullptr && !GuestCopyOut_nid_no_patch(dst + length, &character, sizeof(character))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (dst != nullptr) out.push_back(character);
         ++length;
-        src += consumed;
-    } while (src < end);
+        text += consumed;
+    } while (text < end);
     if (dst != nullptr) {
-        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        const char terminator = '\0';
-        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
     const std::size_t needed = length + 1;
     if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
@@ -772,7 +821,7 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 }
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
-    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const char* position = text;
     for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
         const auto lead = static_cast<unsigned char>(*position);
@@ -785,7 +834,7 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
         }
         position += length;
     }
-    *character = position;
+    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -828,32 +877,45 @@ int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std:
 
 int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {
     if (npId == nullptr || jid == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    if (jid->user == nullptr || jid->domain == nullptr) return NP_UTIL_ERROR_INVALID_JID;
-    const std::size_t userLength = std::strlen(jid->user);
-    if (userLength == 0 || userLength > NP_ONLINE_ID_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
-    const char* domain = jid->domain;
+    const int savedErrno = errno;
+    const auto finish = [savedErrno](int result) {
+        errno = savedErrno;
+        return result;
+    };
+    NpJid copy{};
+    if (!GuestCopyIn_nid_no_patch(&copy, jid, sizeof(copy))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    if (copy.user == nullptr || copy.domain == nullptr) return finish(NP_UTIL_ERROR_INVALID_JID);
+    std::string user;
+    std::string domainText;
+    std::string resource;
+    if (!ReadNpIdText(copy.user, NP_ONLINE_ID_MAX_LENGTH + 1, user) || !ReadNpIdText(copy.domain, SIZE_MAX, domainText)
+        || (copy.resource != nullptr && !ReadNpIdText(copy.resource, NP_ID_RESOURCE_MAX_LENGTH + 1, resource)))
+        return finish(NP_UTIL_ERROR_INVALID_JID);
+    const std::size_t userLength = user.size();
+    if (userLength == 0 || userLength > NP_ONLINE_ID_MAX_LENGTH) return finish(NP_UTIL_ERROR_INVALID_JID);
+    const char* domain = domainText.c_str();
     if (!IsAsciiAlnum(domain[0]) || !IsAsciiAlnum(domain[1]) || domain[2] != '.' || !IsAsciiAlnum(domain[3]) || !IsAsciiAlnum(domain[4])
         || domain[5] != '.') {
-        return NP_UTIL_ERROR_INVALID_JID;
+        return finish(NP_UTIL_ERROR_INVALID_JID);
     }
     const char* label = domain + 6;
     while (*label != '.') {
-        if (*label == '\0') return NP_UTIL_ERROR_INVALID_JID;
+        if (*label == '\0') return finish(NP_UTIL_ERROR_INVALID_JID);
         ++label;
     }
-    if (std::strcmp(label + 1, "playstation.net") != 0) return NP_UTIL_ERROR_INVALID_JID;
-    const std::size_t resourceLength = jid->resource != nullptr ? std::strlen(jid->resource) : 0;
-    if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
+    if (std::strcmp(label + 1, "playstation.net") != 0) return finish(NP_UTIL_ERROR_INVALID_JID);
+    const std::size_t resourceLength = resource.size();
+    if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return finish(NP_UTIL_ERROR_INVALID_JID);
     NpIdFull local{};
-    std::memcpy(local.handle.data, jid->user, userLength);
+    std::memcpy(local.handle.data, user.data(), userLength);
     local.opt[0] = static_cast<std::uint8_t>(domain[0]);
     local.opt[1] = static_cast<std::uint8_t>(domain[1]);
     local.opt[2] = static_cast<std::uint8_t>(domain[3]);
     local.opt[3] = static_cast<std::uint8_t>(domain[4]);
-    if (resourceLength != 0) std::memcpy(local.opt + 4, jid->resource, resourceLength);
+    if (resourceLength != 0) std::memcpy(local.opt + 4, resource.data(), resourceLength);
     local.reserved[0] = 1;
-    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return 0;
+    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    return finish(0);
 }
 
 int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength,
