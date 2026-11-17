@@ -428,10 +428,13 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
     const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
     if (!context) {
         Http2MemoryPoolStats zero{};
+        std::memset(&zero, 0, sizeof(zero));
         if (!GuestCopyOut_nid_no_patch(stats, &zero, sizeof(zero))) return ERROR_NULL_POINTER;
         return ERROR_INVALID_ID;
     }
-    Http2MemoryPoolStats localStats{context->poolSize, 0, 0, 0};
+    Http2MemoryPoolStats localStats{};
+    std::memset(&localStats, 0, sizeof(localStats));
+    localStats.pool_size = context->poolSize;
     if (!GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats))) return ERROR_NULL_POINTER;
     return 0;
 }
