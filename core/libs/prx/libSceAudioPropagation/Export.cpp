@@ -126,12 +126,16 @@ void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32
 
 std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
     require(count == 0 || attributes != nullptr, function);
-    std::vector<Attribute> copied(count);
-    if (count != 0) {
+    constexpr std::uint32_t Chunk = 2048;
+    std::vector<Attribute> copied;
+    for (std::uint32_t done = 0; done < count;) {
+        const std::uint32_t step = std::min(Chunk, count - done);
+        copied.resize(done + step);
         const int savedErrno = errno;
-        const bool read = GuestCopyIn_nid_no_patch(copied.data(), attributes, copied.size() * sizeof(Attribute));
+        const bool read = GuestCopyIn_nid_no_patch(copied.data() + done, attributes + done, step * sizeof(Attribute));
         errno = savedErrno;
         require(read, function);
+        done += step;
     }
     for (const auto& attribute : copied) require(attribute.value != nullptr && attribute.valueSize != 0, function);
     return copied;
