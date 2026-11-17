@@ -1436,6 +1436,10 @@ void rewatchSettledImports(HostImports& state) {
             ++state.settlesKeptCompared;
             continue;
         }
+        if (DepthSurfacePendingResultsOverlap(first, stop)) {
+            ++state.settlesKeptCompared;
+            continue;
+        }
         bases.push_back(base);
         ranges.emplace_back(base & ~(settlePageBytes - 1), (base + import->second.bytes + settlePageBytes - 1) & ~(settlePageBytes - 1));
     }

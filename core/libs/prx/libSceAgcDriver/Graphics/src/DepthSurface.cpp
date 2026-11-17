@@ -4179,6 +4179,14 @@ bool DepthPlanesStale() {
     return planes.begin.load(std::memory_order_acquire) < planes.end.load(std::memory_order_acquire);
 }
 
+bool DepthSurfacePendingResultsOverlap(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) {
+        const bool pending = surface->pendingClear != 0u || surface->AnyStale() || surface->stencilStale || surface->stencilFill.has_value() || surface->depthFill.has_value();
+        return surface->active->load(std::memory_order_acquire) && !surface->retired && pending && surface->Overlaps(address, bytes);
+    });
+}
+
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope) {
     struct FlushingSlot {};
     const bool flushing = HostThreadSlot<bool, FlushingSlot>::Get();
