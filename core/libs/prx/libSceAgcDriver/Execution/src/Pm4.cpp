@@ -711,9 +711,10 @@ bool PredicationPasses(const QueueState& queue) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
     if (predication.operation == 1) {
         constexpr std::uint64_t ready = 1ull << 63u;
+        require(queue.sampleDumpBlocks != 0, "Z-pass predication with no counter block enabled by PIXEL_PIPE_STAT_CONTROL is not implemented");
         std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
         const auto pairs = static_cast<std::size_t>(std::bit_width(queue.sampleDumpBlocks));
-        if (pairs != 0) GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(pairs * SampleDumpStride), 8);
+        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(pairs * SampleDumpStride), 8);
         std::uint64_t samples = 0;
         for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
             if (((queue.sampleDumpBlocks >> db) & 1u) == 0) continue;

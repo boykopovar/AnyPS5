@@ -1205,6 +1205,8 @@ void testPredication() {
     check(AgcDriver::Pm4::PredicationPasses(state), "samples in the last enabled block must run draw-visible packets");
     counters[15] &= ~ready;
     expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    execute(state, makePacket(0x46, {0x138, 2u << 9u, 0}));
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "no counter block enabled");
     execute(state, makePacket(0x46, {0x138, (AgcDriver::AllSampleDumpBlocks << 11u) | (2u << 9u), 0}));
     execute(state, setPredication(0, false, nullptr));
     expectFailure([&] { AgcDriver::Pm4::Validate(setPredication(2, true, &flag[0]), 0); }, "primitive-count predication");
