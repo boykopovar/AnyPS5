@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 contributors to a KytyPS5 fork
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include "Recompiler.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
