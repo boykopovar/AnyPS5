@@ -182,11 +182,25 @@ char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, in
         if (!address) throw std::invalid_argument("X509_NAME_oneline: null name entry or value");
         const NameEntry entry = CopyGuestInPreservingErrno(address, __func__);
         if (!entry.value) throw std::invalid_argument("X509_NAME_oneline: null name entry or value");
-        const int nid = LibreSslObjectNid_nid_no_patch(entry.object);
+        LibreSslAsn1Object object{};
+        const LibreSslAsn1Object* copied = nullptr;
+        if (entry.object) {
+            object = CopyGuestInPreservingErrno(entry.object, __func__);
+            copied = &object;
+        }
+        std::vector<unsigned char> objectData;
+        const auto copyObjectData = [&] {
+            if (!object.data || object.length <= 0 || !objectData.empty()) return;
+            objectData = CopyGuestBytesInPreservingErrno(object.data, object.length, __func__);
+            object.data = objectData.data();
+        };
+        if (object.nid == 0) copyObjectData();
+        const int nid = LibreSslObjectNid_nid_no_patch(copied);
         const char* shortName = nullptr;
         char text[80];
         if (nid == 0 || !(shortName = LibreSslObjectShortName_nid_no_patch(nid))) {
-            i2t_ASN1_OBJECT_nid_postfix(text, sizeof(text), entry.object);
+            copyObjectData();
+            i2t_ASN1_OBJECT_nid_postfix(text, sizeof(text), copied);
             shortName = text;
         }
         const int nameLength = static_cast<int>(std::strlen(shortName));

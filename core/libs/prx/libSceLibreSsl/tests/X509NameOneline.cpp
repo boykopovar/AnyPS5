@@ -261,6 +261,23 @@ void GuestPointers() {
     std::memset(buffer, 'Z', sizeof(buffer));
     RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "unreadable value bytes");
     Require(buffer[0] == 'Z', "a rejected call leaves the caller buffer unchanged");
+    Builder object;
+    object.Add(Object(13), "a").Add(static_cast<const LibreSslAsn1Object*>(unmapped), "b");
+    built = object.Build();
+    std::memset(buffer, 'Z', sizeof(buffer));
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "an unreadable object");
+    Require(buffer[0] == 'Z', "a rejected object leaves the caller buffer unchanged");
+    LibreSslAsn1Object unreadableData{nullptr, nullptr, 0, 3, static_cast<const unsigned char*>(unmapped), 0};
+    Builder objectData;
+    objectData.Add(Object(13), "a").Add(&unreadableData, "b");
+    built = objectData.Build();
+    std::memset(buffer, 'Z', sizeof(buffer));
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "unreadable object data");
+    Require(buffer[0] == 'Z', "rejected object data leaves the caller buffer unchanged");
+    LibreSslAsn1Object knownNid{nullptr, nullptr, 13, 3, static_cast<const unsigned char*>(unmapped), 0};
+    Builder known;
+    known.Add(&knownNid, "c");
+    Require(Allocated(known.Build()) == "/CN=c", "an object with a known NID does not read its data");
 }
 
 std::vector<std::size_t> allocated;
