@@ -49,7 +49,7 @@ ninja -C build -f select.ninja selected
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
-`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
 
 ## Requirements
 
@@ -91,6 +91,8 @@ therefore tests the previous binaries and can show no effect at all.
 The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
 
 For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
+
+Checking out another branch changes the timestamps of every file that differs, so the next build compiles those files again even if they were built before. With MSYS2, install `mingw-w64-ucrt-x86_64-ccache` and configure with `-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache`. On a Ryzen 5 5600 with 12 jobs, switching a build directory back to a branch it had built before took 126 s with 98.5 % of 1,638 compilations served from the cache, against 622 s without it; the first build of a tree is not faster. LLD cannot replace the default linker here: the runtime libraries link against each other's `.prx` files directly, which GNU ld accepts and `ld.lld` rejects with `unknown file type`.
 
 Configuration rejects MinGW libstdc++ builds that combine atomic `weak_ptr::lock()` with mutex-based reference-count updates ([GCC PR125312](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125312)). Concurrent ownership changes can otherwise destroy live objects. Use a corrected distribution or the supported WinLibs GCC 15.2.0 release above, and configure in a new build directory.
 

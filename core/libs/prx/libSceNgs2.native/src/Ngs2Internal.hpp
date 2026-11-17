@@ -139,6 +139,11 @@ struct Ngs2VoiceCustomGain {
     bool lifecycleUnknown = false;
 };
 
+struct Ngs2VoiceCustomChannelMixer {
+    std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> level{};
+    bool configured = false;
+};
+
 struct Ngs2SubmixerCompressor {
     bool configured = false;
     Ngs2SubmixerVoiceCompressorParam param{};
@@ -229,6 +234,7 @@ struct Ngs2Voice {
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
+    std::vector<Ngs2VoiceCustomChannelMixer> customChannelMixer;
     Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
@@ -238,8 +244,6 @@ struct Ngs2Voice {
     std::vector<float> samples;
     std::vector<std::vector<float>> customBuffers;
     std::vector<std::vector<float>> peakMeterHistory;
-    std::vector<float> mixMatrix;
-    std::vector<float> mixScratch;
     std::uint32_t peakMeterMode = 0;
     std::uint32_t peakMeterCount = 0;
     std::uint32_t peakMeterCursor = 0;

@@ -86,6 +86,7 @@ static Ngs2CustomSubmixerRackOption RackOption(const Ngs2CustomUserFx2ModuleOpti
     common.max_matrices = 1;
     common.max_ports = 1;
     option.custom_rack_option.num_buffers = 1;
+    option.custom_rack_option.state_size = 16;
     option.custom_rack_option.num_modules = count;
     for (std::uint32_t m = 0; m < count; m++) {
         option.custom_rack_option.module[m].option = &modules[m].custom_module_option;
@@ -586,10 +587,52 @@ static void TestCustomRackChecks() {
     option.custom_rack_option.module[0].dest_buffer_id = SCE_NGS2_CUSTOM_MAX_BUFFERS;
     Require(create(option) == SCE_NGS2_ERROR_INVALID_BUFFER_INDEX);
     option = good;
-    option.max_inputs = 0;
-    Require(CreateThrows<std::runtime_error>(option));
     option.max_inputs = SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS + 1;
     Require(CreateThrows<std::runtime_error>(option));
+
+    option = good;
+    option.max_inputs = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_INPUTS);
+    Require(CreateThrows<std::invalid_argument>(option));
+    option.custom_rack_option.num_buffers = 0;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_INPUTS);
+    option = good;
+    option.custom_rack_option.num_buffers = 0;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_NUM_BUFFERS);
+    option = good;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_PORTS);
+    Require(CreateThrows<std::invalid_argument>(option));
+    option = good;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_MATRICES);
+    option = good;
+    for (const std::uint32_t stateSize : {0u, 4u, 12u, 15u}) {
+        option.custom_rack_option.state_size = stateSize;
+        Require(create(option) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+        Require(CreateThrows<std::invalid_argument>(option));
+    }
+    option.custom_rack_option.num_modules = 0;
+    option.custom_rack_option.state_size = 16;
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    option.custom_rack_option.state_size = 17;
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    option.custom_rack_option.state_size = 0;
+    option.custom_rack_option.rack_option.max_matrices = 2;
+    Require(CreateThrows<std::runtime_error>(option));
+    option.custom_rack_option.state_size = 15;
+    Require(CreateThrows<std::runtime_error>(option));
+    for (const std::uint32_t stateSize : {16u, 17u}) {
+        option.custom_rack_option.state_size = stateSize;
+        Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    }
 
     option = good;
     option.custom_rack_option.module[0].source_buffer_id = 1;
@@ -733,6 +776,7 @@ static Ngs2CustomSubmixerRackOption LegacyRackOption(const Ngs2CustomModuleOptio
     common.max_matrices = 1;
     common.max_ports = 1;
     rack.custom_rack_option.num_buffers = 1;
+    rack.custom_rack_option.state_size = 16;
     rack.custom_rack_option.num_modules = moduleIndex + 1;
     for (std::uint32_t index = 0; index <= moduleIndex; ++index) {
         rack.custom_rack_option.module[index].option = option;
@@ -1335,11 +1379,11 @@ static Ngs2CustomMasteringRackOption ModulesRackOption(std::uint32_t channels, s
 }
 
 static Ngs2CustomMasteringRackOption TitleRackOption(std::uint32_t channels) {
-    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_MIX_MATRIX, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}});
+    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}});
 }
 
 static Ngs2CustomMasteringRackOption OutputRackOption(std::uint32_t channels) {
-    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_MIX_MATRIX, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}, {SCE_NGS2_CUSTOM_MODULE_ID_OUTPUT, 0, 0}});
+    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}, {SCE_NGS2_CUSTOM_MODULE_ID_OUTPUT, 0, 0}});
 }
 
 static int MasteringQuery(const Ngs2CustomMasteringRackOption& option) {
@@ -1481,57 +1525,57 @@ static void TestCustomMasteringCreation() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-static Ngs2CustomVoiceMixMatrixParam SixBySixMatrix() {
-    Ngs2CustomVoiceMixMatrixParam matrix{};
+static Ngs2CustomVoiceChannelMixerParam SixBySixMixer() {
+    Ngs2CustomVoiceChannelMixerParam matrix{};
     for (std::uint32_t o = 0; o < 6; o++) {
-        for (std::uint32_t i = 0; i < 6; i++) matrix.levels[o][i] = 0.1f * static_cast<float>(o + 1) + 0.01f * static_cast<float>(i + 1);
+        for (std::uint32_t i = 0; i < 6; i++) matrix.level[o][i] = 0.1f * static_cast<float>(o + 1) + 0.01f * static_cast<float>(i + 1);
     }
     return matrix;
 }
 
-static void TestMixMatrixModule() {
+static void TestMasteringChannelMixer() {
     for (std::uint32_t impulse = 0; impulse < 6; impulse++) {
         const MasteringFixture fixture(TitleRackOption(6), 6, impulse);
         auto out = RenderChannels(fixture.system, 6);
         for (std::uint32_t i = 0; i < Grain; i++) {
             for (std::uint32_t o = 0; o < 6; o++) Require(out[i * 6 + o] == (i >= 3 && o == impulse ? 0.5f : 0.0f));
         }
-        const auto matrix = SixBySixMatrix();
-        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, matrix) == SCE_NGS2_OK);
+        const auto matrix = SixBySixMixer();
+        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_CHANNEL_MIXER | 0, matrix) == SCE_NGS2_OK);
         out = RenderChannels(fixture.system, 6);
         for (std::uint32_t i = 0; i < Grain; i++) {
-            for (std::uint32_t o = 0; o < 6; o++) Require(out[i * 6 + o] == matrix.levels[o][impulse] * 0.5f);
+            for (std::uint32_t o = 0; o < 6; o++) Require(out[i * 6 + o] == matrix.level[o][impulse] * 0.5f);
         }
         fixture.Destroy();
     }
 
     const MasteringFixture fixture(TitleRackOption(2), 2, 0);
-    Ngs2CustomVoiceMixMatrixParam extremes{};
-    extremes.levels[0][1] = std::numeric_limits<float>::quiet_NaN();
-    extremes.levels[1][0] = -100.0f;
-    Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, extremes) == SCE_NGS2_OK);
+    Ngs2CustomVoiceChannelMixerParam extremes{};
+    extremes.level[0][1] = std::numeric_limits<float>::quiet_NaN();
+    extremes.level[1][0] = -100.0f;
+    Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_CHANNEL_MIXER | 0, extremes) == SCE_NGS2_OK);
     auto out = RenderChannels(fixture.system, 2);
     Require(std::isnan(out[(Grain - 1) * 2]) && out[(Grain - 1) * 2 + 1] == -16.0f);
     for (const auto [level, expected] : {std::pair{100.0f, 16.0f}, std::pair{32.0f, 16.0f}, std::pair{-32.5f, -16.0f}}) {
-        Ngs2CustomVoiceMixMatrixParam matrix{};
-        matrix.levels[0][0] = level;
-        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, matrix) == SCE_NGS2_OK);
+        Ngs2CustomVoiceChannelMixerParam matrix{};
+        matrix.level[0][0] = level;
+        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_CHANNEL_MIXER | 0, matrix) == SCE_NGS2_OK);
         out = RenderChannels(fixture.system, 2);
         Require(out[(Grain - 1) * 2] == expected);
     }
 
-    struct ShortMatrixParam {
+    struct ShortMixerParam {
         Ngs2VoiceParamHeader header;
-        float levels[2];
+        float level[2];
     };
-    Require(ControlThrows<std::runtime_error>(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, ShortMatrixParam{}));
+    Require(ControlThrows<std::runtime_error>(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_CHANNEL_MIXER | 0, ShortMixerParam{}));
     fixture.Destroy();
 }
 
 static void TestMasteringModuleParams() {
     const MasteringFixture fixture(OutputRackOption(2), 2, 0);
     const auto voice = fixture.voice;
-    Require(MasteringControl(voice, 0x40001700, Ngs2CustomVoiceMixMatrixParam{}) == SCE_NGS2_OK);
+    Require(MasteringControl(voice, 0x40001700, Ngs2CustomVoiceChannelMixerParam{}) == SCE_NGS2_OK);
     for (const std::uint32_t id : {0x40001801u, 0x40001a02u}) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_OK);
     for (const std::uint32_t id : {0x40001701u, 0x40001800u, 0x40001802u, 0x40001a00u, 0x40001a01u, 0x40001a03u, 0x40001600u, 0x40001500u}) {
         Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
@@ -1614,7 +1658,7 @@ static void TestMasteringOutputModule() {
 
 static void TestCustomMasteringModules() {
     TestCustomMasteringCreation();
-    TestMixMatrixModule();
+    TestMasteringChannelMixer();
     TestMasteringModuleParams();
     TestMasteringPeakMeterState();
     TestMasteringPeakMeterStateLargerThanTheBuffer();

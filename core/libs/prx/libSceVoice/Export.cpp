@@ -306,7 +306,11 @@ int APS5_VABI sceVoiceGetVolume(std::uint32_t portId, float* volume) {
     if (!volume) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *volume = found->second.volume;
+    const float localVolume = found->second.volume;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(volume, &localVolume, sizeof(localVolume));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 
@@ -499,7 +503,11 @@ int APS5_VABI sceVoiceGetMemorySize(std::uint32_t, std::uint32_t, std::uint32_t,
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (!size) return InvalidArgument;
-    *size = 0;
+    const std::uint32_t localSize = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &localSize, sizeof(localSize));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return MemorySizeVersion;
 }
 
