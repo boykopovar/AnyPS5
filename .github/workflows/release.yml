@@ -66,7 +66,7 @@ jobs:
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
       - if: matrix.platform == 'windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@v1.2.25
         with:
           key: ${{ matrix.platform }}
           save: false

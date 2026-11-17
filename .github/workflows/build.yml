@@ -781,7 +781,7 @@ jobs:
           echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@v1.2.25
         with:
           key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}
           restore-keys: ${{ github.event_name == 'workflow_dispatch' && 'windows' || '' }}
