@@ -437,10 +437,17 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             const auto address = awaited;
             {
                 std::lock_guard historyLock(writeHistoryMutex());
+                std::vector<std::pair<WriteRecord, std::size_t>> writers;
                 for (const auto& record : writeHistory()) {
-                    if (record.length != 0 && record.target <= address && address < record.target + std::max<std::uint64_t>(record.length, 4))
-                        std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length));
+                    if (record.length == 0 || record.target > address || address >= record.target + std::max<std::uint64_t>(record.length, 4)) continue;
+                    const auto same = std::ranges::find_if(writers, [&](const auto& writer) {
+                        return writer.first.queue == record.queue && writer.first.opcode == record.opcode && writer.first.target == record.target && writer.first.length == record.length;
+                    });
+                    if (same == writers.end()) writers.emplace_back(record, 1u);
+                    else ++same->second;
                 }
+                for (const auto& [record, count] : writers)
+                    std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count);
             }
 
             if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
