@@ -190,8 +190,16 @@ std::size_t Run(AgcDriver::VulkanDevice& device, bool ieee) {
                 const auto y = v2 & 0xffffu;
                 const auto z = v1 & 0xffffu;
                 const auto low = actual[word] & 0xffffu;
-                matches = low == (reference[lane * Words + word] & 0xffffu);
-                if (!Nan(x) && !Nan(y) && !Nan(z)) matches = matches && low == (Arithmetic(HalfOperation::Fma, x, y, z, ieee) & 0xffffu);
+                // v_fma_mixlo_f16 does not repair NaNs (writeF16 gets no invalid-operation value for it), so with a NaN
+                // operand the payload is whatever the host fma returns. Which operand's payload a host picks depends on how
+                // the compiler orders the commutative operands, so two compilations of the same shader can differ
+                // (llvmpipe on LLVM 21 returned a source payload where LLVM 20 returned the first NaN, quieted). The program
+                // must still produce a NaN, and without a NaN operand it must match the exact path and the model bit for bit.
+                if (Nan(x) || Nan(y) || Nan(z)) {
+                    matches = Nan(low);
+                } else {
+                    matches = low == (reference[lane * Words + word] & 0xffffu) && low == (Arithmetic(HalfOperation::Fma, x, y, z, ieee) & 0xffffu);
+                }
             }
             if (matches) continue;
             if (failures++ < 12u) std::cerr << (ieee ? "IEEE 1" : "IEEE 0") << " lane " << lane << " sources " << Hex(a) << " " << Hex(b) << " " << Hex(c) << " word " << word << ": " << Hex(actual[word]) << ", expected " << Hex(expected[word]) << '\n';
