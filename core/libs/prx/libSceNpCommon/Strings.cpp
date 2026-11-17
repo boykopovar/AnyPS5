@@ -734,9 +734,9 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
         encoded[0] = src[0];
     }
     if (status == 0 && dst != nullptr && dstSize < decoded) status = NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (status == 0 && dst != nullptr) std::memcpy(dst, encoded, decoded);
-    if (dstLength != nullptr) *dstLength = decoded;
-    if (consumed != nullptr) *consumed = used;
+    if (status == 0 && dst != nullptr && !GuestCopyOut_nid_no_patch(dst, encoded, decoded)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &decoded, sizeof(decoded))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (consumed != nullptr && !GuestCopyOut_nid_no_patch(consumed, &used, sizeof(used))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
@@ -821,7 +821,7 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 }
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
-    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const char* position = text;
     for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
         const auto lead = static_cast<unsigned char>(*position);
@@ -834,7 +834,7 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
         }
         position += length;
     }
-    *character = position;
+    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
