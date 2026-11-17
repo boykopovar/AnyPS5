@@ -815,6 +815,11 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py" "EnvReferenceDiffTests.${test_case}")
             set_tests_properties(conventions_env_reference_${test_case} PROPERTIES TIMEOUT 30)
         endforeach()
+        foreach(ctest_bundle_compare_class IN ITEMS BundleValidationTests OutcomeTests ObservationTests FingerprintTests CliTests CTestIntegrationTests)
+            add_test(NAME ctest_bundle_compare_${ctest_bundle_compare_class} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ctest_bundle_compare.py ${ctest_bundle_compare_class})
+            set_tests_properties(ctest_bundle_compare_${ctest_bundle_compare_class} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME tools_annotation_symbols_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_json.py)
         set_tests_properties(tools_annotation_symbols_json PROPERTIES TIMEOUT 20)

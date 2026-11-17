@@ -471,6 +471,21 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 - `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
 - `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
 
+## CTest bundle comparison
+
+[`tools/ctest_bundle_compare.py`](../../tools/ctest_bundle_compare.py) reads two extracted `anyps5-ctest-bundle/1` artifact directories from the [CTest bundle publisher](https://github.com/boykopovar/AnyPS5/pull/22004). Point each directory at its collected `manifest.json` and allowlisted `ctest.xml` and `ctest.log`, rather than the publisher's prepared directory. The reader makes no network requests and runs no tests or commands from the reports.
+
+```sh
+python tools/ctest_bundle_compare.py --baseline baseline-bundle --candidate candidate-bundle
+python tools/ctest_bundle_compare.py --baseline baseline-bundle --candidate candidate-bundle --json
+```
+
+`--expect-baseline-head` and `--expect-candidate-head` can be supplied together with full Git commit IDs. These refer to the manifest's actual checked-out source heads, which can differ from its PR, event and workflow SHAs. The requested identities must be recorded consistently with a clean, unchanged source. Without expected heads the report shows the bundle's recorded identities and their verification gaps.
+
+The reader checks the original report sizes and SHA-256 hashes before parsing available evidence. Missing or omitted reports remain gaps; malformed inputs, changed report bytes and failed expected-head checks return 2. Exit 0 means an observation report was produced, including any failures, skips or unknowns. It is not a test gate result.
+
+The report lists observed per-case outcomes, added and missing names, diagnostic and output changes, provenance differences and unavailable context. Original report hashes identify the file bytes; parsed-case fingerprints describe the retained XML content. Equal names or diagnostic fingerprints do not prove equal test semantics or the same failure cause. Different selections leave unobserved cases, not passing tests. The producer does not pin per-test commands, effective environments, fixture plans or runtime binaries, and repeated CTest runs can retain only their final JUnit result. These limits remain visible; the reader does not exonerate failures or change existing gates.
+
 ## Checker scripts
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
