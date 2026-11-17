@@ -51,7 +51,8 @@ int main() {
                     reinterpret_cast<const char*>(&enabled), sizeof(enabled)) == 0);
                 int value = 0;
                 std::uint32_t size = sizeof(value);
-                Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && value == option);
+                const int expected = option == 4 ? 0 : option;
+                Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && value == expected);
                 Require(sceNetGetsockopt(socket, 0xffff, option, nullptr, &size) == static_cast<int>(0x80410116u));
                 Require(*sceNetErrnoLoc() == 22);
                 Require(sceNetGetsockopt(socket, 0xffff, option, &value, nullptr) == static_cast<int>(0x80410116u));

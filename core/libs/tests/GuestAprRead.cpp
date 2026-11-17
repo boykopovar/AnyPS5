@@ -59,13 +59,27 @@ public:
 
     void Read(void* destination, std::uint64_t bytes, std::uint64_t offset) const { ReadFile(id, destination, bytes, offset); }
 
+    int ReadStatus(void* destination, std::uint64_t bytes, std::uint64_t offset) const { return ReadStatus(id, destination, bytes, offset); }
+
+    std::uint32_t Id() const { return id; }
+
     static void ReadFile(std::uint32_t fileId, void* destination, std::uint64_t bytes, std::uint64_t offset) {
+        const int status = ReadStatus(fileId, destination, bytes, offset);
+        if (status != 0) throw std::runtime_error("APR read failed with " + std::to_string(static_cast<unsigned>(status)));
+    }
+
+    static int ReadStatus(std::uint32_t fileId, void* destination, std::uint64_t bytes, std::uint64_t offset) {
         const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, fileId, 0,
             reinterpret_cast<std::uint64_t>(destination), bytes, offset};
         alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
         std::memcpy(memory.data(), &command, sizeof(command));
         Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
-        Require(sceKernelAprSubmitCommandBuffer(&buffer, 0) == 0, "APR read submission failed");
+        std::uint32_t result = 0xFFFFFFFFu;
+        std::uint32_t id = 0;
+        Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &id) == 0 && id != 0, "APR read submission failed");
+        const int waited = sceKernelAprWaitCommandBuffer(id);
+        Require(result == 0 && sceKernelAprWaitCommandBuffer(id) == waited, "APR reported different results for one read");
+        return waited;
     }
 
 private:
@@ -164,38 +178,42 @@ void TestLongEof() {
 #endif
 
 void TestErrors(const Fixture& fixture) {
+    constexpr int Enoent = static_cast<int>(0x80020002);
+    constexpr int Eio = static_cast<int>(0x80020005);
+    constexpr int Efault = static_cast<int>(0x8002000E);
     std::array<std::uint8_t, 8> data;
     data.fill(0xA5);
-    bool rejected = false;
-    try {
-        fixture.Read(data.data(), data.size(), std::uint64_t{1} << 63u);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected, "APR accepted an unseekable offset");
+    Require(fixture.ReadStatus(data.data(), data.size(), std::uint64_t{1} << 63u) == Eio, "APR did not fail an unseekable offset with EIO");
     for (const auto byte : data) Require(byte == 0xA5, "failed APR read modified the destination");
+    Require(Fixture::ReadStatus(0xFFFFFFFFu, data.data(), data.size(), 0) == Enoent, "APR did not fail an invalid file id with ENOENT");
+    Require(fixture.ReadStatus(data.data(), data.size(), 0) == 0 && data[0] == FileByte(0), "a failed APR read broke the next one");
+    {
+        std::array<std::uint8_t, 8> second;
+        second.fill(0xA5);
+        const Apr::ReadFileCommand failing{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, 0xFFFFFFFFu, 0, reinterpret_cast<std::uint64_t>(data.data()), data.size(), 0};
+        const Apr::ReadFileCommand working{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, fixture.Id(), 0, reinterpret_cast<std::uint64_t>(second.data()), second.size(), 0};
+        alignas(8) std::array<std::uint8_t, sizeof(failing) + sizeof(working)> memory{};
+        std::memcpy(memory.data(), &failing, sizeof(failing));
+        std::memcpy(memory.data() + sizeof(failing), &working, sizeof(working));
+        Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
+        std::uint32_t result = 0;
+        std::uint32_t id = 0;
+        Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &id) == 0, "APR rejected a buffer with a failing read");
+        Require(result == 0 && sceKernelAprWaitCommandBuffer(id) == Enoent, "APR did not report the failing read of a buffer");
+        for (std::size_t index = 0; index < second.size(); ++index) Require(second[index] == FileByte(index), "APR stopped a buffer at its failing read");
+        Require(sceKernelAprWaitCommandBuffer(id + 1000) == 0, "APR reported a failure for a submission that never happened");
+    }
 #ifdef _WIN32
     {
         const DirectBuffer storage;
         storage.Data()[17] = 0xA5;
         Require(sceKernelMprotect(storage.Data(), MappingBytes, 0x11) == 0, "cannot protect the direct read buffer");
-        rejected = false;
-        try {
-            fixture.Read(storage.Data() + 17, 65537, 0);
-        } catch (const std::runtime_error& error) {
-            rejected = std::string(error.what()).find("not writable guest memory") != std::string::npos;
-        }
-        Require(rejected && storage.Data()[17] == 0xA5, "APR did not reject a read-only guest destination");
+        Require(fixture.ReadStatus(storage.Data() + 17, 65537, 0) == Efault && storage.Data()[17] == 0xA5, "APR did not reject a read-only guest destination");
     }
 #endif
     Require(std::filesystem::remove(FilePath), "cannot remove the synthetic APR file");
-    rejected = false;
-    try {
-        fixture.Read(data.data(), data.size(), 0);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected, "APR accepted a missing file");
+    data.fill(0xA5);
+    Require(fixture.ReadStatus(data.data(), data.size(), 0) == Enoent, "APR did not fail a missing file with ENOENT");
     for (const auto byte : data) Require(byte == 0xA5, "missing-file APR read modified the destination");
 }
 
@@ -225,6 +243,7 @@ void TestQueries() {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
     constexpr int GuestEfault = 14;
+    constexpr int GuestEnotsup = 45;
     const char* names[] = {"generated.bin", "missing.bin"};
     std::array<std::uint32_t, 2> ids{0, 0};
     std::array<std::uint64_t, 2> sizes{1, 1};
@@ -236,12 +255,34 @@ void TestQueries() {
     sizes = {1, 1};
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
     Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed id array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed size array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed error index");
+    const char* paths[] = {"apr_read_generated.bin", "apr_read_missing.bin"};
+    ids = {0, 0};
+    sizes = {1, 1};
+    failed = 7;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing path");
+    Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing path");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable id array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable size array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable error index");
     std::uint64_t size = 0;
     Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
     Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
     FileStat stat{};
     Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
     Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    for (const std::uint32_t badId : {0xFFFFFFFFu, 0x7FFFFFFFu}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, &size) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, &stat) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the stat");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the stat");
+    }
     for (const bool readable : {true, false}) {
 #ifdef _WIN32
         void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
@@ -354,6 +395,26 @@ void TestPriorities() {
     Require(LoadValue(&waiterDone) == 1 && LoadValue(&behindDone) == 1, "the released APR buffers did not finish in order");
 }
 
+void TestSubmitOrder() {
+    alignas(8) static std::uint64_t idSlot = 0;
+    alignas(8) static std::uint64_t resultSlot = 0;
+    constexpr std::uint64_t written = 0xA5A5A5A5A5A5A5A5ull;
+    std::vector<std::uint8_t> commands;
+    Append(commands, WriteValue(&idSlot, written));
+    Append(commands, WriteValue(&resultSlot, written));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, static_cast<std::uint32_t>(commands.size()), 2, static_cast<std::uint32_t>(commands.size()), commands.data()};
+    auto* id = reinterpret_cast<std::uint32_t*>(&idSlot);
+    auto* result = reinterpret_cast<std::uint32_t*>(&resultSlot);
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 3, result, id) == 0, "the APR buffer that writes its own id and result was not submitted");
+    for (int poll = 0; poll < 5000 && (LoadValue(&idSlot) != written || LoadValue(&resultSlot) != written); ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+    Require(LoadValue(&resultSlot) == written, "APR wrote the submission result after the commands that write the same memory ran");
+    idSlot = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&buffer, 3, id) == 0, "the APR buffer that writes its own id was not submitted");
+    for (int poll = 0; poll < 5000 && LoadValue(&idSlot) != written; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -452,6 +513,8 @@ int main(int argc, char** argv) {
             TestStreams(fixture);
         } else if (mode == "priorities") {
             TestPriorities();
+        } else if (mode == "order") {
+            TestSubmitOrder();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;

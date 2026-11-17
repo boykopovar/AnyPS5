@@ -1,7 +1,7 @@
 target_sources(libSceFreeType PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libSceFreeType/src/PostScriptPrivate.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_postscript_private_tests
+    add_test_executable(guest_freetype_postscript_private_tests NO_RUNTIME_DLL_STAGING
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestFreeTypePostScriptPrivate.cpp
     )
     target_include_directories(guest_freetype_postscript_private_tests PRIVATE ${LIBS_INCLUDE_DIR})
