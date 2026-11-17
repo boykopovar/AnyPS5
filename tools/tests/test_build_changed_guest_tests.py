@@ -603,6 +603,25 @@ class ArtifactOwnerNames(unittest.TestCase):
         self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
 
 
+class ChangeClassification(unittest.TestCase):
+    def test_reaches_libs_only_for_library_and_build_inputs(self):
+        for path in ("CMakeLists.txt", "core/libs/a.cpp", ".github/workflows/build.yml", "tools/x.py"):
+            self.assertTrue(build_changed_guest_tests.reaches_libs([path]), path)
+        self.assertFalse(build_changed_guest_tests.reaches_libs(["docs/readme.md", "core/other/a.cpp"]))
+        self.assertFalse(build_changed_guest_tests.reaches_libs([]))
+
+    def test_script_test_patterns_follow_the_changed_inputs(self):
+        patterns = build_changed_guest_tests.script_test_patterns
+        self.assertEqual(patterns(["docs/readme.md"]), [])
+        self.assertEqual(patterns(["core/libs/nid/a.cpp"]), [build_changed_guest_tests.NID_TESTS])
+        self.assertEqual(
+            patterns(["CMakeLists.txt"]),
+            [build_changed_guest_tests.PUBLIC_HEADER_TESTS, build_changed_guest_tests.NID_TESTS])
+
+    def test_test_owner_of_an_empty_command_is_none(self):
+        self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
+
+
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
