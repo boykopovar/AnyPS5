@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +17,12 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static_assert(sizeof(LibreSslX509StoreContext) == 240);
 static_assert(offsetof(LibreSslX509StoreContext, param) == 40);
@@ -43,6 +50,66 @@ bool Throws(Function function) {
         return true;
     }
     return false;
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename Function>
+void Rejects(Function function, std::source_location location = std::source_location::current()) {
+    errno = EINVAL;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::overflow_error&) {
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && errno == EINVAL, location);
 }
 
 std::unordered_map<void*, std::size_t> allocations;
@@ -187,6 +254,41 @@ void TestUpRefRace() {
     Require(shared.references == 1 + Threads * Increments);
 }
 
+void TestGuestPointers() {
+    auto* const unmappedContext = reinterpret_cast<LibreSslX509StoreContext*>(std::uintptr_t{0x10});
+    auto* const unmappedStore = reinterpret_cast<LibreSslX509Store*>(std::uintptr_t{0x10});
+    Rejects([&] { X509_STORE_CTX_init_nid_postfix(unmappedContext, nullptr, nullptr, nullptr); });
+    Rejects([&] { X509_STORE_CTX_free_nid_postfix(unmappedContext); });
+    Rejects([&] { X509_STORE_CTX_get0_param_nid_postfix(unmappedContext); });
+    Rejects([&] { X509_STORE_up_ref_nid_postfix(unmappedStore); });
+
+    auto* context = X509_STORE_CTX_new_nid_postfix();
+    Require(context != nullptr);
+    std::memset(context, 0x5A, sizeof(*context));
+    LibreSslX509StoreContext before;
+    std::memcpy(&before, context, sizeof(before));
+    Rejects([&] { X509_STORE_CTX_init_nid_postfix(context, unmappedStore, nullptr, nullptr); });
+    Require(std::memcmp(&before, context, sizeof(before)) == 0);
+    std::memset(context, 0, sizeof(*context));
+    X509_STORE_CTX_free_nid_postfix(context);
+
+    LibreSslX509StoreContext contextValue;
+    std::memset(&contextValue, 0x6B, sizeof(contextValue));
+    ReadOnlyPage contextPage;
+    auto* const readOnlyContext = contextPage.Set(contextValue);
+    contextPage.Protect();
+    Rejects([&] { X509_STORE_CTX_init_nid_postfix(readOnlyContext, nullptr, nullptr, nullptr); });
+    Require(std::memcmp(readOnlyContext, &contextValue, sizeof(contextValue)) == 0);
+    Require(X509_STORE_CTX_get0_param_nid_postfix(readOnlyContext) == contextValue.param);
+
+    LibreSslX509Store storeValue{};
+    storeValue.references = 3;
+    ReadOnlyPage storePage;
+    auto* const readOnlyStore = storePage.Set(storeValue);
+    storePage.Protect();
+    Rejects([&] { X509_STORE_up_ref_nid_postfix(readOnlyStore); });
+    Require(readOnlyStore->references == 3);
+}
 
 constexpr std::uint64_t MallocFailure = 0x0bfff041;
 constexpr std::uint64_t TrustedFirst = 0x8000;
@@ -539,6 +641,7 @@ int main() {
     TestAllocationFailures();
     TestSetBytesNulTermination();
     TestTimeNewBorrowedData();
+    TestGuestPointers();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509_STORE_CTX tests passed");
     return 0;
