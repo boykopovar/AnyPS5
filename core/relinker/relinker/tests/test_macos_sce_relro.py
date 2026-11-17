@@ -13,7 +13,7 @@ from test_guest_symbol_names import guest_module
 from test_guest_intel_trampolines import main_fixture
 from test_macos_output import MachO
 from test_macos_trace_imports import HOOK, PROVIDER, library, run_binary
-from test_sce_relro import PT_LOAD, PT_SCE_RELRO, fixture
+from test_sce_relro import PT_GNU_RELRO, PT_LOAD, PT_SCE_RELRO, fixture
 
 START = "#include <unistd.h>\nvoid Aps5StartGuest_nid_no_patch(int (*entry)(void)) { _exit(entry()); }\n"
 PLAIN = "int Unrelated(void) { return 0; }\n"
@@ -37,6 +37,12 @@ def relro_fixture(covered, write=None):
     if write is not None:
         write_then_jump(image, 0x200, write, 0x1000)
     return image
+
+
+def rounded_relro_fixture():
+    return fixture([(PT_LOAD, 6, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000),
+                    (PT_LOAD, 6, 0x1000, 0x1000, 0xea0, 0xea0, 0x1000),
+                    (PT_GNU_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)])
 
 
 def short_relro_fixture():
@@ -113,7 +119,8 @@ def check_executables(relinker, work, native):
         cases += [(f"{layout}-read", relro_fixture(covered), (), 42),
                   (f"{layout}-write-relro", relro_fixture(covered, 0x1008), (), FAULTS),
                   (f"{layout}-write-data", relro_fixture(covered, 0x2008), (), 42)]
-    cases += [("got-untraced", traced_fixture(False), (), 11),
+    cases += [("rounded-relro", rounded_relro_fixture(), (), 42),
+              ("got-untraced", traced_fixture(False), (), 11),
               ("got-traced", traced_fixture(False), ("--trace-imports",), 77),
               ("got-traced-write", traced_fixture(True), ("--trace-imports",), FAULTS)]
     for name, image, options, expected in cases:
