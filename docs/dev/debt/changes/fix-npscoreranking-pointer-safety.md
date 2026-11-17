@@ -1,5 +1,5 @@
 # libSceNpScoreRanking
 
-## add Functional
+## change [sceNpScorePollAsync and sceNpScoreWaitAsync]
 
-- [sceNpScorePollAsync](../../../core/libs/prx/libSceNpScoreRanking/Export.cpp) (libSceNpScoreRanking) - destination result pointer is validated upfront with GuestWritable_nid_no_patch and npId is read via GuestCopyIn_nid_no_patch preserving caller errno; rejection of unmapped memory is host safety fallback with console behavior unmeasured.
+- [sceNpScorePollAsync, sceNpScoreWaitAsync and sceNpScoreGetGameData](../../../core/libs/prx/libSceNpScoreRanking/Export.cpp) (libSceNpScoreRanking) - an unwritable `result` pointer, checked before the request state so `sceNpScoreWaitAsync` does not block, or an unreadable `npId` returns `0x80550704` (`SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT`) as a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
