@@ -73,7 +73,7 @@ static constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
 static constexpr std::uint64_t CloseOnExecRequest = 0x20006601;
 static constexpr std::uint64_t KeepOnExecRequest = 0x20006602;
 static constexpr std::uint64_t MalformedRequests[] = {0, 123, 0x5401, 0x5413, 0x40007468, 0x20087468, 0x00087468};
-static constexpr std::uint64_t IntegerArgumentRequest = 0x20046601;
+static constexpr std::uint64_t IntegerArgumentRequest = 0x20047801;
 static constexpr std::uint64_t EmptyInputRequest = 0x8000667f;
 static constexpr int SceEbadf = static_cast<int>(0x80020009u);
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
@@ -221,7 +221,7 @@ static void SocketsKeepTheirPath() {
     Require(ioctl_nid_postfix(socket, KeepOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     Require(ioctl_nid_postfix(socket, KeepOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     RequireMalformedRequestsFail(socket);
-    RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEaddrnotavail);
     RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEnotty);
     char windowSize[8] = {};
     RequireFailure(ioctl_nid_postfix(socket, WindowSizeRequest, windowSize), GuestEaddrnotavail);
