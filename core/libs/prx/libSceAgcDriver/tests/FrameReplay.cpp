@@ -299,6 +299,7 @@ void testSubpageRanges(const std::filesystem::path& tool) {
     const auto layout = allocate();
     constexpr std::size_t LooseBytes = 65536;
     constexpr std::size_t First = 0x20;
+    constexpr std::size_t Shared = 0x40;
     constexpr std::size_t Second = 0x1010;
     auto* const loose = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(LooseBytes, 65536));
     check(loose != nullptr, "cannot allocate the guest block of the sub-page ranges");
@@ -307,10 +308,12 @@ void testSubpageRanges(const std::filesystem::path& tool) {
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(loose, LooseBytes);
 #endif
     loose[First] = std::byte{0x5a};
+    std::memset(loose + Shared, 0x6e, 0x10);
     std::memset(loose + Second, 0x3c, 0x30);
     {
         GuestAllocations::Mutation mutation;
         mutation.Add(loose + First, 1, true, true, false);
+        mutation.Add(loose + Shared, 0x10, true, true, false);
         mutation.Add(loose + Second, 0x30, true, true, false);
     }
     const auto bytes = pattern(29);
@@ -332,13 +335,14 @@ void testSubpageRanges(const std::filesystem::path& tool) {
             return chunk.kind == FrameMemoryKind::Range && chunk.address == at(pointer) && chunk.bytes == size;
         });
     };
-    check(recorded(loose + First, 1) && recorded(loose + Second, 0x30), "the sub-page registrations are not ranges of the capture");
+    check(recorded(loose + First, 1) && recorded(loose + Shared, 0x10) && recorded(loose + Second, 0x30), "the sub-page registrations are not ranges of the capture");
     const auto targetDump = capture / "subpage target.bin";
     const auto firstDump = capture / "subpage first.bin";
     const auto secondDump = capture / "subpage second.bin";
+    const auto sharedDump = capture / "subpage shared.bin";
     const auto result = capture / "subpage output.json";
     auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.secondTarget)) + ":" + std::to_string(DataBytes) + ":\"" + targetDump.string() +
-                   "\" --dump " + std::to_string(at(loose + First)) + ":1:\"" + firstDump.string() + "\" --dump " + std::to_string(at(loose + Second)) + ":48:\"" + secondDump.string() + "\" > \"" + result.string() +
+                   "\" --dump " + std::to_string(at(loose + First)) + ":1:\"" + firstDump.string() + "\" --dump " + std::to_string(at(loose + Shared)) + ":16:\"" + sharedDump.string() + "\" --dump " + std::to_string(at(loose + Second)) + ":48:\"" + secondDump.string() + "\" > \"" + result.string() +
                    "\" 2> \"" + result.string() + ".log\"";
 #ifdef _WIN32
     command = "\"" + command + "\"";
@@ -347,6 +351,7 @@ void testSubpageRanges(const std::filesystem::path& tool) {
     check(code == 0, "agc_frame_replay of a capture with sub-page ranges exited with " + std::to_string(code));
     check(readFile(targetDump) == bytes, "the replay did not reproduce the copy");
     check(readFile(firstDump) == std::vector<std::byte>{std::byte{0x5a}}, "the replay did not restore the one-byte range");
+    check(readFile(sharedDump) == std::vector<std::byte>(0x10, std::byte{0x6e}), "the replay did not restore the 16-byte range in the page of the one-byte range");
     check(readFile(secondDump) == std::vector<std::byte>(0x30, std::byte{0x3c}), "the replay did not restore the 48-byte range");
 }
 
