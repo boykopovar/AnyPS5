@@ -1,4 +1,5 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -36,6 +37,9 @@ SceImeBackendParam MakeParam() {
 void CheckValidation() {
     SceImeBackendParam param = MakeParam();
     Require(sceImeBackendOpen(nullptr, nullptr) == kNullArgument);
+    errno = 71;
+    Require(sceImeBackendOpen(reinterpret_cast<const SceImeBackendParam*>(0x10), nullptr) == kNullArgument);
+    Require(errno == 71);
     Require(sceImeBackendOpen(&param, &param) == kInvalidReservedArgument);
 
     param.mode = -1;
@@ -88,6 +92,23 @@ void CheckLifecycle() {
     std::uint16_t selected = noCandidates;
     Require(sceImeBackendGetCandidateList(&selected, text) == 0 && selected == 0 && text[0] == 0);
     Require(sceImeBackendGetCandidateSelect(&selected) == 0 && selected == 0);
+    errno = 71;
+    Require(sceImeBackendGetString(0, reinterpret_cast<char16_t*>(0x10), 0x20) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetConvertString(reinterpret_cast<char16_t*>(0x10)) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetConfirmString(reinterpret_cast<char16_t*>(0x10)) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetConvertMode(reinterpret_cast<int*>(0x10)) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetCandidateSelect(reinterpret_cast<std::uint16_t*>(0x10)) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetCandidateList(reinterpret_cast<std::uint16_t*>(0x10), text) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendGetCandidateList(&selected, reinterpret_cast<char16_t*>(0x10)) == kNullArgument);
+    Require(errno == 71);
+    Require(sceImeBackendEnterCharacter('x', reinterpret_cast<char16_t*>(0x10)) == kNullArgument);
+    Require(errno == 71);
 
     Require(sceImeBackendClose() == 0);
     Require(sceImeBackendGetStatus() == 0);
