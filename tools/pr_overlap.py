@@ -189,7 +189,72 @@ def json_pages(out):
     return decode_pages(repair_escapes(out))
 
 
-def open_prs(base):
+def _pr_cache_path(base):
+    try:
+        root = _repository_root()
+        common_dir = git("rev-parse", "--path-format=relative", "--git-common-dir").strip()
+        safe_repo = quote(REPO, safe="")
+        return root / common_dir / f"pr_overlap-prs-{safe_repo}-{base}.json"
+    except Exception:
+        return None
+
+
+def _load_pr_cache(base, ttl_seconds=600):
+    cache_file = _pr_cache_path(base)
+    if cache_file is None or not cache_file.is_file():
+        return None
+    try:
+        stat = cache_file.stat()
+        if time.time() - stat.st_mtime > ttl_seconds:
+            return None
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        if data.get("version") == 1 and isinstance(data.get("prs"), dict):
+            prs = {}
+            for k, v in data["prs"].items():
+                prs[int(k)] = {
+                    "ref": v["ref"],
+                    "sha": v["sha"],
+                    "author": v["author"],
+                    "title": v.get("title", ""),
+                    "depends": set(v.get("depends", ())),
+                }
+            return prs
+    except (OSError, ValueError, RecursionError):
+        pass
+    return None
+
+
+def _save_pr_cache(base, prs):
+    cache_file = _pr_cache_path(base)
+    if cache_file is None:
+        return
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            n: {
+                "ref": p["ref"],
+                "sha": p["sha"],
+                "author": p["author"],
+                "title": p["title"],
+                "depends": sorted(p["depends"]),
+            }
+            for n, p in prs.items()
+        }
+        data = {"version": 1, "prs": serializable}
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_file.parent, delete=False, prefix=".pr-") as tmp:
+            json.dump(data, tmp)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, cache_file)
+    except OSError:
+        pass
+
+
+def open_prs(base, refresh=False, cache=False):
+    if cache and not refresh and not globals().get("FORCE_REFRESH_PRS", False):
+        cached = _load_pr_cache(base)
+        if cached is not None:
+            progress(f"{len(cached)} open pull requests against {base}")
+            return cached
     query = urlencode({"state": "open", "base": base, "per_page": 100})
     url = f"repos/{REPO}/pulls?{query}"
     head, out = page(f"{url}&page=1")
@@ -231,6 +296,8 @@ def open_prs(base):
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
         }
+    if cache:
+        _save_pr_cache(base, prs)
     progress(f"{len(prs)} open pull requests against {base}")
     return prs
 
@@ -243,12 +310,27 @@ def base_commit(base):
     return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
 
 
-def fetch_heads(base_sha, prs):
+def fetch_heads(base_sha, prs, check_existing=False):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
-    for start in range(0, len(commits), FETCH_REFS):
-        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
-        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+    if check_existing:
+        try:
+            p = subprocess.Popen(
+                ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                cwd=_repository_root(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            out, _ = p.communicate("\n".join(commits) + "\n")
+            missing = [line.split()[0] for line in out.splitlines() if line.endswith(" missing")]
+            commits = missing
+        except Exception:
+            pass
+    if commits:
+        for start in range(0, len(commits), FETCH_REFS):
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+            progress(f"fetched {min(start + FETCH_REFS, len(commits)) - (1 if not check_existing else 0)}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
@@ -864,6 +946,7 @@ def main(argv=None):
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
+    parser.add_argument("--refresh-prs", action="store_true", help="force re-fetching open pull request metadata")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
@@ -872,10 +955,10 @@ def main(argv=None):
     global REPO
     try:
         REPO = args.repo or upstream()
-        prs = open_prs(args.base)
+        prs = open_prs(args.base, refresh=args.refresh_prs, cache=not args.refresh_prs)
         BASE_REF = base_commit(args.base)
         branch_sha = resolve_branch(args.branch) if args.branch else None
-        fetch_heads(BASE_REF, prs)
+        fetch_heads(BASE_REF, prs, check_existing=bool(args.names))
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
             status = main_status(args.names, BASE_REF)
