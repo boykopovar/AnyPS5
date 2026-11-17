@@ -1232,7 +1232,7 @@ struct HeldOutsideTheWatch {
 };
 
 void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
-    const HeldOutsideTheWatch held;
+    const HeldOutsideTheWatch outsideWatch;
     auto color = colorTarget();
     auto* memory = allocateWatched(PlaneBytes);
     color.address = color.surfaceAddress = address(memory);
@@ -1263,7 +1263,7 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
 }
 
 void heldBaselineUnits(AgcDriver::VulkanDevice& device) {
-    const HeldOutsideTheWatch held;
+    const HeldOutsideTheWatch outsideWatch;
     auto color = colorTarget();
     auto* memory = allocateWatched(2 * PlaneBytes);
     color.address = color.surfaceAddress = color.arrayAddress = address(memory);
