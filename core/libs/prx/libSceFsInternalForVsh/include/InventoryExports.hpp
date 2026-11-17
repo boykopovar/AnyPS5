@@ -87,7 +87,7 @@ int APS5_VABI sceFsTransactionSaveDataWriteParam();
 int APS5_VABI sceFsUfsCoerceCryptMode();
 int APS5_VABI sceFsUfsMkfsProsperoApplicationTemporaryData();
 int APS5_VABI sceFsUfsMkfsProsperoDownloadData();
-int APS5_VABI sceFsUmountPprPkg();
+int APS5_VABI sceFsUmountPprPkg(const void* opt);
 int APS5_VABI sceFsUpdatePackageMetadataApp0();
 int APS5_VABI sceFsWorkspaceCoreDump();
 int APS5_VABI sceFsWsWriteFile();
