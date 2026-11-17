@@ -103,6 +103,14 @@ class BundleTests(unittest.TestCase):
             self.bundle()
         self.assertEqual((self.root / "bundle.zip").read_bytes(), b"keep")
 
+    def test_bundle_created_after_absence_check_is_not_overwritten(self):
+        target = self.root / "bundle.zip"
+        target.write_bytes(b"keep")
+        with patch.object(Path, "exists", return_value=False):
+            with self.assertRaises(FileExistsError):
+                self.bundle()
+        self.assertEqual(target.read_bytes(), b"keep")
+
 
 class MainTests(unittest.TestCase):
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}

@@ -447,6 +447,8 @@ def discover(directories, wanted=(), packages=None):
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
+                if package.samefile(found[title_id]["package"]):
+                    continue
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
             name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)

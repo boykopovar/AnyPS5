@@ -29,6 +29,7 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
@@ -232,7 +233,7 @@ bool write_file_replace(const std::string& path, const std::vector<char>& data) 
     return savedata::replace_file(path, data.data(), data.size());
 }
 
-bool read_file_all(const std::string& path, std::vector<char>& out) {
+bool read_file_all(const std::filesystem::path& path, std::vector<char>& out) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) {
         return false;
@@ -242,7 +243,10 @@ bool read_file_all(const std::string& path, std::vector<char>& out) {
         return false;
     }
     f.seekg(0, std::ios::end);
-    const auto n = static_cast<std::size_t>(f.tellg());
+    const auto end = f.tellg();
+    if (end < 0 || static_cast<std::uintmax_t>(end) > out.max_size() ||
+        static_cast<std::uintmax_t>(end) > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) return false;
+    const auto n = static_cast<std::size_t>(end);
     f.seekg(0);
     out.resize(n);
     if (n != 0) {
@@ -1488,12 +1492,43 @@ int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const S
 }
 
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, const char* path) {
-    (void)path;
     SaveDataMountPoint localPoint{};
-    if (!copy_mount_point(mount_point, &localPoint)) {
+    std::string guestPath;
+    if (!copy_mount_point(mount_point, &localPoint) ||
+        CopyGuestPath_nid_no_patch(path, guestPath) != 0 || guestPath.empty()) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    return SAVE_DATA_OK;
+    std::lock_guard lock(g_slots_mutex);
+    const int slot = find_slot_by_mount_point(localPoint.data);
+    if (slot == -1) return SAVE_DATA_ERROR_NOT_MOUNTED;
+
+    try {
+        const auto source = ResolveArchivedPath_nid_no_patch(guestPath.c_str(), false);
+        std::vector<char> bytes;
+        std::error_code error;
+        const auto status = std::filesystem::status(source, error);
+        if (status.type() == std::filesystem::file_type::not_found) {
+            AppArchiveNode node{};
+            if (!AppArchiveLookup_nid_no_patch(source, &node) || node.Directory) return SAVE_DATA_ERROR_NOT_FOUND;
+            if (node.Size > bytes.max_size()) return SAVE_DATA_ERROR_INTERNAL;
+            bytes.resize(static_cast<std::size_t>(node.Size));
+            if (!bytes.empty() && AppArchiveRead_nid_no_patch(node.Handle, 0, bytes.data(), node.Size) != node.Size) {
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+        } else {
+            if (error) return SAVE_DATA_ERROR_INTERNAL;
+            if (!std::filesystem::is_regular_file(status)) return SAVE_DATA_ERROR_NOT_FOUND;
+            if (!read_file_all(source, bytes)) return SAVE_DATA_ERROR_INTERNAL;
+        }
+        const auto destination = ResolveDiskPath_nid_no_patch((g_slots[slot].mount_point + "/sce_sys/icon0.png").c_str());
+        return savedata::replace_file(destination, bytes.data(), bytes.size()) ? SAVE_DATA_OK : SAVE_DATA_ERROR_INTERNAL;
+    } catch (const std::filesystem::filesystem_error& error) {
+        if (error.code() == std::errc::no_such_file_or_directory || error.code() == std::errc::not_a_directory) {
+            return SAVE_DATA_ERROR_NOT_FOUND;
+        }
+        if (error.code() == std::errc::filename_too_long) return SAVE_DATA_ERROR_PARAMETER;
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
 }
 
 static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size, std::string* tracePoint) {

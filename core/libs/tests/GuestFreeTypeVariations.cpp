@@ -122,6 +122,8 @@ static void TestDoneMMVar() {
     }
     Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, nullptr) == FT_Done_MM_Var(Shared().native, nullptr));
     Require(FT_Done_MM_Var_nid_postfix(nullptr, nullptr) == FT_Done_MM_Var(nullptr, nullptr));
+    auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
+    Require(ThrowsWith([&] { FT_Done_MM_Var_nid_postfix(unreadableLibrary, nullptr); }, "FT_Done_MM_Var_nid_postfix not implemented"));
 }
 
 static void TestSetDesign() {

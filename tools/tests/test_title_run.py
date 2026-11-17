@@ -421,6 +421,16 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
 
+    def test_overlapping_game_directories_find_each_package_once(self):
+        games = self.root / "games"
+        homebrew = games / "homebrew"
+        package(homebrew / "PPSA00001", "PPSA00001")
+        package(games / "PPSA00002", "PPSA00002")
+        expected = title_run.discover([games])
+        for directories in ([games, homebrew], [homebrew, games], [games, games]):
+            with self.subTest(directories=directories):
+                self.assertEqual(title_run.discover(directories), expected)
+
     def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
