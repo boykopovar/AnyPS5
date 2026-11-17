@@ -51,6 +51,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -153,16 +155,14 @@ void APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(WebRtcRtcpCompoun
     if (!compound || !GuestWritable_nid_no_patch(compound, sizeof(*compound)))
         throw std::invalid_argument(message);
     WebRtcRtcpCompoundPacket host = ReadCompound(compound, message);
-    ForEachAppended(host, [](void* appended) {
+    std::vector<std::pair<void*, DeletingDestructor>> destructors;
+    ForEachAppended(host, [&](void* appended) {
         if (appended)
-            Slot<DeletingDestructor>(appended, DeletingDestructorSlot);
+            destructors.emplace_back(appended, Slot<DeletingDestructor>(appended, DeletingDestructorSlot));
         return true;
     });
-    ForEachAppended(host, [](void* appended) {
-        if (appended)
-            Slot<DeletingDestructor>(appended, DeletingDestructorSlot)(appended);
-        return true;
-    });
+    for (const auto& [appended, destroy] : destructors)
+        destroy(appended);
     const auto capacity = static_cast<std::size_t>(host.appendedCapacity - host.appendedBegin) * sizeof(void*);
     WebRtcModuleStorage::Free(host.appendedBegin, capacity);
     host.appendedBegin = nullptr;
