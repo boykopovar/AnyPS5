@@ -245,5 +245,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(head, MAIN)
 
 
+class PaginationTests(unittest.TestCase):
+    def test_pagination_cursor_returns_each_new_cursor_once(self):
+        seen = set()
+        self.assertEqual(pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
+        with self.assertRaisesRegex(ValueError, 'did not advance'):
+            pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x')
+        with self.assertRaisesRegex(ValueError, 'has no cursor'):
+            pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
+
+    def test_listed_returns_nodes_and_refuses_other_shapes(self):
+        self.assertEqual(pr_unchanged.listed({'nodes': [1, 2]}), [1, 2])
+        with self.assertRaisesRegex(ValueError, 'expected a connection'):
+            pr_unchanged.listed([])
+class CommentTextTests(unittest.TestCase):
+    def test_comment_starts_with_the_marker_and_names_the_base(self):
+        base = 'a' * 40
+        text = pr_unchanged.comment(base)
+        self.assertTrue(text.startswith(pr_unchanged.MARKER))
+        self.assertIn('at ' + 'a' * 10, text)
+        self.assertIn('Nothing is closed automatically', text)
+
+
 if __name__ == "__main__":
     unittest.main()
