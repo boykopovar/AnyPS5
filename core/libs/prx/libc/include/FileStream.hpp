@@ -334,15 +334,15 @@ public:
         PublishStatus(endOfFile, error || guestError);
     }
 
-    bool SwitchToReading() {
+    bool SwitchToReading(bool reportMode = true) {
 #ifdef _WIN32
         ::_lock_file(GetHandle());
-        const bool switched = SwitchToReadingUnlocked();
+        const bool switched = SwitchToReadingUnlocked(reportMode);
         ::_unlock_file(GetHandle());
         return switched;
 #else
         ::flockfile(GetHandle());
-        const bool switched = SwitchToReadingUnlocked();
+        const bool switched = SwitchToReadingUnlocked(reportMode);
         ::funlockfile(GetHandle());
         return switched;
 #endif
@@ -361,7 +361,20 @@ public:
 #endif
     }
 
-    bool SwitchToReadingUnlocked() {
+    bool OpenForWriting() {
+#ifdef _WIN32
+        constexpr long UcrtWriting = 0x0002;
+        constexpr long UcrtUpdate = 0x0004;
+        std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
+        return (state.load() & (UcrtWriting | UcrtUpdate)) != 0;
+#elif defined(__GLIBC__)
+        return ::__fwritable(GetHandle()) != 0;
+#else
+        return true;
+#endif
+    }
+
+    bool SwitchToReadingUnlocked(bool reportMode = true) {
 #ifdef _WIN32
         constexpr long UcrtReading = 0x0001;
         constexpr long UcrtWriting = 0x0002;
@@ -369,7 +382,7 @@ public:
         auto* native = GetHandle();
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(native)->flags);
         if ((state.load() & (UcrtReading | UcrtUpdate)) == 0) {
-            errno = 9;
+            if (reportMode) errno = 9;
             guestError = true;
             SyncUnlockedStatus();
             return false;
@@ -385,7 +398,7 @@ public:
 #elif defined(__GLIBC__)
         auto* native = GetHandle();
         if (!::__freadable(native)) {
-            errno = 9;
+            if (reportMode) errno = 9;
             guestError = true;
             SyncUnlockedStatus();
             return false;
@@ -399,10 +412,10 @@ public:
 #endif
     }
 
-    bool SwitchToWriting() {
+    bool SwitchToWriting(bool reportMode = true) {
 #ifdef _WIN32
         ::_lock_file(GetHandle());
-        const bool switched = SwitchToWritingUnlocked();
+        const bool switched = SwitchToWritingUnlocked(reportMode);
         ::_unlock_file(GetHandle());
         return switched;
 #else
@@ -410,7 +423,7 @@ public:
 #endif
     }
 
-    bool SwitchToWritingUnlocked() {
+    bool SwitchToWritingUnlocked(bool reportMode = true) {
 #ifdef _WIN32
         constexpr long UcrtReading = 0x0001;
         constexpr long UcrtWriting = 0x0002;
@@ -420,7 +433,7 @@ public:
         auto* native = reinterpret_cast<UcrtStreamState*>(GetHandle());
         std::atomic_ref<long> state(native->flags);
         if ((state.load() & (UcrtWriting | UcrtUpdate)) == 0) {
-            errno = 9;
+            if (reportMode) errno = 9;
             guestError = true;
             SyncUnlockedStatus();
             return false;
