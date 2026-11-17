@@ -29,7 +29,7 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {key: redact_report(item, identity) for key, item in value.items()}
+        return {redact_report(key, identity): redact_report(item, identity) for key, item in value.items()}
     return value
 
 
