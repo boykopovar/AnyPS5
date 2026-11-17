@@ -410,7 +410,8 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     SecondOffsetTable[2] = data;
     const auto moved2 = draw(&SecondOffsetTable[2]);
     std::printf("%s: a draw through a second moved table at the same alignment: %llu lookups, %llu hits, %llu stage data hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(moved2.lookups - again.lookups), static_cast<unsigned long long>(moved2.hits - again.hits), static_cast<unsigned long long>(moved2.stageDataHits - again.stageDataHits), static_cast<unsigned long long>(moved2.inserts - again.inserts));
-    Require(moved2.hits == again.hits + 1 && moved2.inserts == again.inserts, mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
+    const auto capturedAgain = std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr || std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    Require(moved2.hits == again.hits + 1 && (capturedAgain ? moved2.inserts == again.inserts + 1 : moved2.inserts == again.inserts), mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
     const auto second = pixels({64, 255, 255, 64});
     Require(second.empty(), mode + ": a draw through a second moved table drew wrong pixels: " + second);
 }
