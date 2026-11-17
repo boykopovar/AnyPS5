@@ -96,6 +96,7 @@ static void CheckGeometryErrors(const Api& api, FreeType::GuestLibrary* library)
     Require(api.geometry(nullptr, nullptr) == FT_Err_Invalid_Library_Handle);
     Require(api.geometry(nullptr, geometry.data()) == FT_Err_Invalid_Library_Handle);
     Require(api.geometry(library, nullptr) == FT_Err_Invalid_Argument);
+    Require(api.geometry(library, reinterpret_cast<const FreeType::GuestVector*>(std::uintptr_t{0x10})) == FT_Err_Invalid_Argument);
 }
 
 static Rendered RenderGuest(const Api& api, FreeType::GuestFaceRec* face, std::int32_t mode) {
@@ -203,6 +204,11 @@ static void CheckAxisFlags(const Api& api) {
         Require(api.axisFlags(&buffer.master, 0, nullptr) == FT_Get_Var_Axis_Flags(&buffer.master, 0, nullptr));
         Require(api.axisFlags(&buffer.master, 0, nullptr) == FT_Err_Invalid_Argument);
         Require(api.axisFlags(nullptr, 0, nullptr) == FT_Err_Invalid_Argument);
+        if (axes > 0) {
+            static const std::uint32_t readOnly = sentinel;
+            Require(api.axisFlags(&buffer.master, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == FT_Err_Invalid_Argument);
+            Require(api.axisFlags(&buffer.master, 0, const_cast<std::uint32_t*>(&readOnly)) == FT_Err_Invalid_Argument && readOnly == sentinel);
+        }
     }
 }
 

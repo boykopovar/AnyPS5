@@ -87,6 +87,30 @@ class BundleTests(unittest.TestCase):
                 details["path"] = f"opened ~{suffix}"
                 self.assertEqual(archived, report)
 
+    def test_json_object_keys_are_redacted(self):
+        report = {
+            "/home/ana/games/title.elf": {
+                "ana": "opened by ana",
+                "serverfestivo": {"10.0.0.7": "/home/ana/save.bin"},
+            }
+        }
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            raw = bundle.read("anyps5-report.json").decode("utf-8")
+            archived = json.loads(raw)
+        self.assertEqual(
+            archived,
+            {
+                "~/games/title.elf": {
+                    "<user>": "opened by <user>",
+                    "<host>": {"<ip>": "~/save.bin"},
+                }
+            },
+        )
+        for secret in ("/home/ana", "ana", "serverfestivo", "10.0.0.7"):
+            self.assertNotIn(secret, raw)
+
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
@@ -102,6 +126,14 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.bundle()
         self.assertEqual((self.root / "bundle.zip").read_bytes(), b"keep")
+
+    def test_bundle_created_after_absence_check_is_not_overwritten(self):
+        target = self.root / "bundle.zip"
+        target.write_bytes(b"keep")
+        with patch.object(Path, "exists", return_value=False):
+            with self.assertRaises(FileExistsError):
+                self.bundle()
+        self.assertEqual(target.read_bytes(), b"keep")
 
 
 class MainTests(unittest.TestCase):
