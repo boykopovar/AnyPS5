@@ -2,8 +2,11 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "ProcessParametersFixture.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +31,12 @@ constexpr int INVALID_INPUT_RATE = static_cast<int>(0x815D0004);
 constexpr int INVALID_OUTPUT_RATE = static_cast<int>(0x815D0005);
 constexpr int HANDLE_SIZE = 0x9678;
 constexpr std::uint64_t MAGIC = 0xDEADBEEFBAADF00Dull;
+
+std::array<std::byte, 64> process{};
+
+void SetProsperoSdkVersion(std::uint32_t version) {
+    std::memcpy(process.data() + 0x14, &version, sizeof(version));
+}
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -184,16 +193,34 @@ void CheckDelaySamples() {
     Require(sceSrcUtilityGetDelaySamples(44100, 44100) == 0 && sceSrcUtilityGetDelaySamples(48000, 48000) == 0, "an equal rate pair has a delay");
     Require(sceSrcUtilityGetDelaySamples(32000, 192000) == 136 && sceSrcUtilityGetDelaySamples(64000, 48000) == 12, "a table delay is wrong");
     Require(sceSrcUtilityGetDelaySamples(192000, 44100) == 84 && sceSrcUtilityGetDelaySamples(128000, 44100) == 77, "a table delay is wrong");
-    int expected = 159;
+    struct Override {
+        std::int32_t inputRate;
+        std::int32_t outputRate;
+        int table;
+        int sdk500;
+    };
+    constexpr Override overrides[] = {
+        {22050, 96000, 159, 160}, {22050, 192000, 330, 324}, {24000, 44100, 61, 60},
+        {44100, 192000, 159, 160}, {176400, 44100, 50, 22}, {192000, 48000, 50, 22}};
+    const bool ps4 = sceKernelIsPs4Process() != 0;
     std::int32_t version = 0;
-    if (sceKernelIsPs4Process() == 0) {
-        const int status = sceKernelGetProsperoCompiledSdkVersion(&version);
-        expected = status != 0 ? status : static_cast<std::uint32_t>(version) >= 0x5000000 ? 160 : 159;
+    SetProsperoSdkVersion(0x04FFFFFFu);
+    Require(sceKernelGetProsperoCompiledSdkVersion(&version) == 0 && version == 0x04FFFFFF, "the compiled SDK version was not read from the process parameters");
+    for (const auto& item : overrides) {
+        Require(sceSrcUtilityGetDelaySamples(item.inputRate, item.outputRate) == item.table, "an SDK below 5.00 took an SDK 5.00 delay");
     }
-    Require(sceSrcUtilityGetDelaySamples(22050, 96000) == expected, "the SDK 5.00 override of 22050 to 96000 does not follow the compiled SDK version");
+    SetProsperoSdkVersion(0x05000000u);
+    for (const auto& item : overrides) {
+        Require(sceSrcUtilityGetDelaySamples(item.inputRate, item.outputRate) == (ps4 ? item.table : item.sdk500), "an SDK 5.00 override does not follow the compiled SDK version");
+    }
+    Require(sceSrcUtilityGetDelaySamples(22050, 48000) == 76 && sceSrcUtilityGetDelaySamples(48000, 96000) == 41, "a pair without an SDK 5.00 override changed with the SDK version");
 }
 
 int main() {
+    if (!ProcessParametersFixture::Install(process.data(), process.size())) {
+        std::fprintf(stderr, "the process parameters fixture could not be installed\n");
+        return 2;
+    }
     CheckDelaySamples();
     CheckHandleSize();
     CheckPriority();
