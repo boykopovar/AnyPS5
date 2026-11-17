@@ -6,6 +6,8 @@
 #include <iterator>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace {
 
@@ -28,6 +30,65 @@ constexpr std::uint32_t SRC_UTILITY_MAX_CHANNELS = 8;
 constexpr std::uint32_t SRC_UTILITY_MAX_MODE = 2;
 constexpr std::uint32_t SRC_UTILITY_INPUT_RATES[] = {22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000, 128000, 176400, 192000};
 constexpr std::uint32_t SRC_UTILITY_OUTPUT_RATES[] = {44100, 48000, 96000, 192000};
+
+struct DelayEntry {
+    std::int32_t inputRate;
+    std::int32_t outputRate;
+    int delay;
+};
+
+constexpr DelayEntry SRC_UTILITY_DELAYS[] = {
+    {22050, 44100, 41},
+    {22050, 48000, 76},
+    {22050, 96000, 159},
+    {22050, 192000, 330},
+    {24000, 44100, 61},
+    {24000, 48000, 41},
+    {24000, 96000, 90},
+    {24000, 192000, 184},
+    {32000, 44100, 22},
+    {32000, 48000, 29},
+    {32000, 96000, 47},
+    {32000, 192000, 136},
+    {44100, 44100, 0},
+    {44100, 48000, 17},
+    {44100, 96000, 76},
+    {44100, 192000, 159},
+    {48000, 44100, 63},
+    {48000, 48000, 0},
+    {48000, 96000, 41},
+    {48000, 192000, 90},
+    {64000, 44100, 74},
+    {64000, 48000, 12},
+    {64000, 96000, 29},
+    {64000, 192000, 47},
+    {88200, 44100, 20},
+    {88200, 48000, 29},
+    {88200, 96000, 17},
+    {88200, 192000, 76},
+    {96000, 44100, 82},
+    {96000, 48000, 20},
+    {96000, 96000, 0},
+    {96000, 192000, 41},
+    {128000, 44100, 77},
+    {128000, 48000, 19},
+    {128000, 96000, 12},
+    {128000, 192000, 29},
+    {176400, 44100, 50},
+    {176400, 48000, 31},
+    {176400, 96000, 29},
+    {176400, 192000, 17},
+    {192000, 44100, 84},
+    {192000, 48000, 50},
+    {192000, 96000, 20},
+    {192000, 192000, 0}
+};
+
+constexpr DelayEntry SRC_UTILITY_DELAYS_SDK_500[] = {
+    {22050, 96000, 160}, {22050, 192000, 324}, {24000, 44100, 60}, {44100, 192000, 160}, {176400, 44100, 22}, {192000, 48000, 22}
+};
+
+constexpr std::uint32_t SRC_UTILITY_DELAY_OVERRIDE_SDK = 0x5000000;
 
 template <std::size_t N>
 bool IsRate(const std::uint32_t (&rates)[N], std::uint32_t rate) {
@@ -108,9 +169,19 @@ int APS5_VABI sceSrcUtilityGetAjmContext(const void* handle, std::uint32_t* cont
     return 0;
 }
 
-int APS5_VABI sceSrcUtilityGetDelaySamples() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSrcUtilityGetDelaySamples(int inputRate, int outputRate) {
+    const auto first = std::find_if(std::begin(SRC_UTILITY_DELAYS), std::end(SRC_UTILITY_DELAYS), [&](const DelayEntry& entry) { return entry.inputRate == inputRate; });
+    if (first == std::end(SRC_UTILITY_DELAYS)) return SRC_UTILITY_ERROR_INVALID_INPUT_RATE;
+    const auto entry = std::find_if(first, std::end(SRC_UTILITY_DELAYS), [&](const DelayEntry& item) { return item.inputRate != inputRate || item.outputRate == outputRate; });
+    if (entry == std::end(SRC_UTILITY_DELAYS) || entry->inputRate != inputRate) return SRC_UTILITY_ERROR_INVALID_OUTPUT_RATE;
+    if (sceKernelIsPs4Process() != 0) return entry->delay;
+    std::int32_t version = 0;
+    if (const int status = sceKernelGetProsperoCompiledSdkVersion(&version)) return status;
+    if (static_cast<std::uint32_t>(version) < SRC_UTILITY_DELAY_OVERRIDE_SDK) return entry->delay;
+    for (const auto& item : SRC_UTILITY_DELAYS_SDK_500) {
+        if (item.inputRate == inputRate && item.outputRate == outputRate) return item.delay;
+    }
+    return entry->delay;
 }
 
 int APS5_VABI sceSrcUtilityGetHandleSize(std::uint32_t channels, std::uint32_t mode, std::uint32_t input_rate, std::uint32_t output_rate) {

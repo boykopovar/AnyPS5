@@ -1,5 +1,7 @@
 #include "prx/libSceSrcUtl/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -173,7 +175,26 @@ void CheckEarlyAnswers() {
 
 }
 
+void CheckDelaySamples() {
+    constexpr int InvalidInputRate = static_cast<int>(0x815D0004u);
+    constexpr int InvalidOutputRate = static_cast<int>(0x815D0005u);
+    Require(sceSrcUtilityGetDelaySamples(16000, 48000) == InvalidInputRate, "an unknown input rate was not refused first");
+    Require(sceSrcUtilityGetDelaySamples(16000, 12345) == InvalidInputRate, "the input rate was not checked before the output rate");
+    Require(sceSrcUtilityGetDelaySamples(48000, 32000) == InvalidOutputRate, "an unknown output rate was taken");
+    Require(sceSrcUtilityGetDelaySamples(44100, 44100) == 0 && sceSrcUtilityGetDelaySamples(48000, 48000) == 0, "an equal rate pair has a delay");
+    Require(sceSrcUtilityGetDelaySamples(32000, 192000) == 136 && sceSrcUtilityGetDelaySamples(64000, 48000) == 12, "a table delay is wrong");
+    Require(sceSrcUtilityGetDelaySamples(192000, 44100) == 84 && sceSrcUtilityGetDelaySamples(128000, 44100) == 77, "a table delay is wrong");
+    int expected = 159;
+    std::int32_t version = 0;
+    if (sceKernelIsPs4Process() == 0) {
+        const int status = sceKernelGetProsperoCompiledSdkVersion(&version);
+        expected = status != 0 ? status : static_cast<std::uint32_t>(version) >= 0x5000000 ? 160 : 159;
+    }
+    Require(sceSrcUtilityGetDelaySamples(22050, 96000) == expected, "the SDK 5.00 override of 22050 to 96000 does not follow the compiled SDK version");
+}
+
 int main() {
+    CheckDelaySamples();
     CheckHandleSize();
     CheckPriority();
     CheckUnwritablePriorityOutput();
