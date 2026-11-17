@@ -1195,3 +1195,31 @@ class CheckCompileLauncherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckCompileHelperTests(CheckCompileFixture):
+    def test_positive_integer_accepts_positive_values_and_rejects_the_rest(self):
+        import argparse
+
+        self.assertEqual(check_compile.positive_integer("4"), 4)
+        for value in ("0", "-3"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                check_compile.positive_integer(value)
+        with self.assertRaises(ValueError):
+            check_compile.positive_integer("many")
+
+    def test_entry_key_is_relative_inside_the_checkout_and_absolute_outside(self):
+        inside = {"directory": str(self.build), "file": "../src/a.cpp"}
+        self.assertEqual(check_compile.entry_key(inside, self.root), "src/a.cpp")
+        with tempfile.TemporaryDirectory() as other:
+            outside = {"directory": str(self.build), "file": str(Path(other) / "b.cpp")}
+            key = check_compile.entry_key(outside, self.root)
+            self.assertEqual(key, check_compile.real(Path(other) / "b.cpp").as_posix())
+
+    def test_resolve_source_names_files_relative_to_the_root_when_they_do_not_exist(self):
+        source, name = check_compile.resolve_source(self.root / "src" / "missing.cpp", self.root)
+        self.assertEqual(name, "src/missing.cpp")
+        self.assertEqual(source, check_compile.real(self.root / "src" / "missing.cpp"))
+        with tempfile.TemporaryDirectory() as other:
+            _, outside = check_compile.resolve_source(Path(other) / "c.cpp", self.root)
+            self.assertEqual(outside, check_compile.real(Path(other) / "c.cpp").as_posix())
