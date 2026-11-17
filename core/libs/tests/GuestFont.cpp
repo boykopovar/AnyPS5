@@ -824,7 +824,13 @@ int main() {
 
     std::vector<unsigned char> callerCache(0x2000);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), 0x1000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontAttachDeviceCacheBuffer(library, reinterpret_cast<void*>(0x10), 0x2000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontClearDeviceCache(library) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_OK);
+    const std::uint32_t attachedCacheHeader[6] = {0x2000, 1, 0, 1, 0x1000, 0xFF8};
+    Require(std::memcmp(callerCache.data(), attachedCacheHeader, sizeof(attachedCacheHeader)) == 0);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_ERROR_ALREADY_ATTACHED);
     Require(sceFontClearDeviceCache(library) == SCE_FONT_OK);
     errno = 71;
