@@ -139,6 +139,7 @@ VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysic
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
+void SetHeapMirrorRetry(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
@@ -284,6 +285,9 @@ struct AddressSpaceStats {
     std::uint64_t waiterDrops = 0;
     std::uint64_t patchedEpoch = 0;
     std::uint64_t rebuiltGrowth = 0;
+    std::uint64_t heapRetries = 0;
+    std::uint64_t heapRetryImports = 0;
+    std::uint64_t heapRetryOwed = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
