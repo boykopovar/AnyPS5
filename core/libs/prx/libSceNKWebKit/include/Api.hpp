@@ -116,7 +116,6 @@ int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationD0Ev();
 int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi();
 int APS5_VABI _ZN7WebCore8JSDOMURL9toWrappedERN3JSC2VMENS1_7JSValueE();
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxC1Ev();
 int APS5_VABI _ZN7WebCore18PlatformTimeRangesnaEm();
 int APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatchernwEm();

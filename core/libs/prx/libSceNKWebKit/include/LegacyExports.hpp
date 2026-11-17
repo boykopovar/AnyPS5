@@ -1307,7 +1307,6 @@ int APS5_VABI _ZN7Nicosia5Scene5StateC2Ev();
 int APS5_VABI _ZNK7WebCore12EventHandler20hitTestResultAtPointERKNS_11LayoutPointEN3WTF9OptionSetINS_14HitTestRequest11RequestTypeEEERKNS_10LayoutSizeE();
 int APS5_VABI _ZNK7WebCore9FrameView35convertFromRendererToContainingViewEPKNS_13RenderElementERKNS_8IntPointE();
 int APS5_VABI _ZNK7WebCore8Document4viewEv();
-int APS5_VABI _ZN7WebCore21ISOTrackEncryptionBoxaSERKS0_();
 int APS5_VABI _ZN7WebCore26HTMLTextFormControlElement15setSelectionEndEi();
 int APS5_VABI _ZN7WebCore9FrameView17addScrollableAreaEPNS_14ScrollableAreaE();
 int APS5_VABI _ZN7WebCore20SharedBufferDataViewD2Ev();
