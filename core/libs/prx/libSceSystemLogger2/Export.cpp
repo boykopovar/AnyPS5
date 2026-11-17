@@ -152,9 +152,13 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!timestamp) return INVALID_ARGUMENT;
-    std::memset(timestamp, 0, sizeof(*timestamp));
-    timestamp->tick = currentNetworkTick();
-    std::memcpy(timestamp->clockSource, "networkClock", sizeof("networkClock"));
+    SceSystemLogger2Timestamp local{};
+    local.tick = currentNetworkTick();
+    std::memcpy(local.clockSource, "networkClock", sizeof("networkClock"));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(timestamp, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return 0;
 }
 
@@ -166,9 +170,16 @@ int APS5_VABI sceSystemLogger2IsAvailableMonitor(void) {
 int APS5_VABI sceSystemLogger2GetEventStatus(const char* eventName, std::uint64_t* status) {
     std::lock_guard lock(loggerMutex);
     if (!eventName || !status) return INVALID_ARGUMENT;
-    const std::size_t length = strnlen(eventName, EVENT_STATUS_NAME_LIMIT + 1);
-    if (length == 0 || length > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
-    *status = 0;
+    std::string name;
+    const int savedErrno = errno;
+    const int result = CopyGuestString_nid_no_patch(eventName, EVENT_STATUS_NAME_LIMIT + 1, name);
+    errno = savedErrno;
+    if (result != 0 || name.empty() || name.size() > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
+    constexpr std::uint64_t zero = 0;
+    const int savedErrnoOut = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &zero, sizeof(zero));
+    errno = savedErrnoOut;
+    if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
@@ -178,7 +189,11 @@ int APS5_VABI sceSystemLogger2SetEventAsyncInternal(const void* event, std::uint
     if (!event || !status) return INVALID_ARGUMENT;
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));
     if (result != 0) return result;
-    *status = 0;
+    constexpr std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
