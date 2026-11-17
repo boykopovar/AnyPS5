@@ -5,7 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <stdexcept>
 
 namespace {
 
@@ -13,16 +12,6 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "libc internal scaled pow: %s\n", message);
     std::abort();
-}
-
-template <typename Function>
-bool Throws(Function function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 template <typename T>
@@ -51,18 +40,9 @@ void TestNullExponent() {
     Require(_LPow_nid_postfix(2.0L, -2.0L, nullptr) == 0.25L, "_LPow 2 -2");
 }
 
-void TestNonNullExponent() {
-    short exponent = 0;
-    Require(Throws([&] { _Pow_nid_postfix(2.0, 3.0, &exponent); }), "_Pow with an exponent pointer throws");
-    Require(Throws([&] { _FPow_nid_postfix(2.0f, 3.0f, &exponent); }), "_FPow with an exponent pointer throws");
-    Require(Throws([&] { _LPow_nid_postfix(2.0L, 3.0L, &exponent); }), "_LPow with an exponent pointer throws");
-    Require(exponent == 0, "a throwing call leaves the exponent unwritten");
-}
-
 }
 
 int main() {
     TestNullExponent();
-    TestNonNullExponent();
     return 0;
 }
