@@ -18,6 +18,8 @@ namespace {
 
 constexpr int Ok = 0;
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
+constexpr int Range = -2139029501;
 constexpr int Invalid = -2139029500;
 constexpr int Permission = -2139029499;
 constexpr int Again = -2139029496;
@@ -98,6 +100,26 @@ void MutexAndRuntimeOptParams() {
     for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
+void UnreadableOptParams() {
+    const auto* unreadable = reinterpret_cast<const UltMutexOptParam*>(0x10);
+    Object mutex{};
+    Object pool{};
+    Object object{};
+    alignas(8) std::uint8_t runtime[4096]{};
+    std::uint8_t workArea[2048];
+    errno = 71;
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(0x10), 0) == Null);
+    CHECK(sceUltMutexCreate(&mutex, "unreadable", nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltMutexCreate(&mutex, "unreadable", &pool, unreadable) == Null);
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, "unreadable", 2, 1, nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(&pool, "unreadable", 2, 2, workArea, unreadable) == Null);
+    CHECK(_sceUltSemaphoreCreate(&object, "unreadable", 1, nullptr, unreadable) == Null);
+    CHECK(_sceUltQueueDataResourcePoolCreate(&object, "unreadable", 8, 64, 2, nullptr, workArea, unreadable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+}
+
 void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
@@ -108,6 +130,9 @@ void OptParams() {
         alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
         CHECK(initialize(nullptr, 0) == Null);
+        errno = 71;
+        CHECK(initialize(reinterpret_cast<UltOptParam*>(0x10), 0) == Null);
+        CHECK(errno == 71);
         CHECK(initialize(reinterpret_cast<UltOptParam*>(bytes), 0) == Ok);
         for (std::size_t index = 0; index < 128; ++index) CHECK(bytes[index] == 0);
         for (std::size_t index = 128; index < sizeof(bytes); ++index) CHECK(bytes[index] == 0xa5);
@@ -739,6 +764,26 @@ void WaitForInfoWaiters(TQuery query, void* object) {
     CHECK(false);
 }
 
+void SemaphoreValidation() {
+    Object pool{};
+    Object semaphore{};
+    Object unknown{};
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "validation-pool", 4, 4, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltSemaphoreCreate(&semaphore, "validation-semaphore", 1, &pool, nullptr, 0) == Ok);
+    using Call = decltype(&sceUltSemaphoreAcquire);
+    for (const Call call : {sceUltSemaphoreAcquire, sceUltSemaphoreTryAcquire, sceUltSemaphoreRelease}) {
+        CHECK(call(nullptr, 0) == Null);
+        CHECK(call(semaphore.bytes + 1, 0) == Alignment);
+        CHECK(call(&semaphore, 0) == Range);
+        CHECK(call(&semaphore, -1) == Range);
+        CHECK(call(&unknown, 1) == State);
+    }
+    CHECK(sceUltSemaphoreTryAcquire(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreRelease(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
 void InfoWaiters() {
     Object pool{};
     Object mutex{};
@@ -798,10 +843,19 @@ void InfoWaiters() {
         CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
     });
     WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckWaiterRecord<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
     CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
     reader.join();
+
+    CHECK(sceUltReaderWriterLockLockRead(&rwlock) == Ok);
+    std::thread writer([&] {
+        CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == Ok);
+        CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
+    });
+    WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckWaiterRecord<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 2);
+    CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
+    writer.join();
 
     CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
     CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
@@ -895,6 +949,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "opt-params") == 0) {
         OptParams();
         MutexAndRuntimeOptParams();
+        UnreadableOptParams();
     }
     else if (std::strcmp(argv[1], "rwlock-validation") == 0) ReaderWriterValidation();
     else if (std::strcmp(argv[1], "rwlock-readers") == 0) ReaderWriterReaders();
@@ -906,6 +961,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else if (std::strcmp(argv[1], "info-waiters") == 0) InfoWaiters();
+    else if (std::strcmp(argv[1], "semaphore-validation") == 0) SemaphoreValidation();
     else if (std::strcmp(argv[1], "guest-pointers") == 0) UnreadableNamesAndObjects();
     else return 2;
     CHECK(sceUltFinalize() == Ok);
