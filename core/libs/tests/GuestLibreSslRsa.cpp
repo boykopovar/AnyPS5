@@ -1056,6 +1056,17 @@ static void TestGenerateKey() {
     rsa->n = nullptr;
     RSA_free_nid_postfix(rsa);
 
+    std::uint64_t exponentWords[1] {};
+    TestBignum fixedExponent {exponentWords, 0, 0, 0, BignumStaticData};
+    rsa = RSA_new_nid_postfix();
+    rsa->e = &fixedExponent;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 0);
+    RequireErrors({RsaBignumFailure});
+    Require(rsa->e == &fixedExponent && fixedExponent.top == 0 && fixedExponent.d == exponentWords);
+    Require(static_cast<TestBignum*>(rsa->p)->top == 0 && static_cast<TestBignum*>(rsa->q)->top == 0 && static_cast<TestBignum*>(rsa->n)->top == 0);
+    rsa->e = nullptr;
+    RSA_free_nid_postfix(rsa);
+
     for (TestBignum* number : {exponent, even, one, three}) BN_free_nid_postfix(reinterpret_cast<Bignum*>(number));
 }
 

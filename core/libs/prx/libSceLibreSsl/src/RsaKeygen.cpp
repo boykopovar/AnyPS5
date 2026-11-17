@@ -187,7 +187,7 @@ int BuiltinKeygen(LibreSslRsa& rsa, int bits, const Bignum* exponentValue, const
     for (void** field : {&rsa.n, &rsa.d, &rsa.e, &rsa.p, &rsa.q, &rsa.dmp1, &rsa.dmq1, &rsa.iqmp}) {
         if (!*field && !(*field = BN_new_nid_postfix())) return fail();
     }
-    Store(rsa.e, exponent, function);
+    if (!Store(rsa.e, exponent, function)) return fail();
     Mpi p, q;
     do {
         if (!GeneratePrime(p, bitsP, function) || !Store(rsa.p, p, function)) return fail();
