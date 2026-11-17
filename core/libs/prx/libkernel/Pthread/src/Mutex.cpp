@@ -219,13 +219,16 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
     PthreadMutexattr handle = nullptr;
     if (attr && !GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle)))
         return SCE_KERNEL_ERROR_EFAULT;
-    if (handle && (handle->type < MutexType::ErrorCheck || handle->type > MutexType::Adaptive))
+    PthreadMutexattrPrivate attributes{};
+    if (handle && !GuestCopyIn_nid_no_patch(&attributes, handle, sizeof(attributes)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (handle && (attributes.type < MutexType::ErrorCheck || attributes.type > MutexType::Adaptive))
         return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
     if (handle) {
-        replacement->SetType(handle->type);
-        replacement->_protocol = handle->protocol;
-        replacement->_ceiling = handle->ceiling;
+        replacement->SetType(attributes.type);
+        replacement->_protocol = attributes.protocol;
+        replacement->_ceiling = attributes.ceiling;
     }
     std::lock_guard lock(InitializationMutex());
     PthreadMutex current = nullptr;

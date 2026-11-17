@@ -82,7 +82,9 @@ int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadM
     if (attr) {
         PthreadMutexattr handle = nullptr;
         if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
-        if (handle && (handle->type < MutexType::ErrorCheck || handle->type > MutexType::Adaptive)) return POSIX_EINVAL;
+        PthreadMutexattrPrivate attributes{};
+        if (handle && !GuestCopyIn_nid_no_patch(&attributes, handle, sizeof(attributes))) return PosixThread::GUEST_EFAULT;
+        if (handle && (attributes.type < MutexType::ErrorCheck || attributes.type > MutexType::Adaptive)) return POSIX_EINVAL;
     }
     if (mutex && !_slotUsable(mutex)) return PosixThread::GUEST_EFAULT;
     const int result = scePthreadMutexInit(mutex, attr, nullptr);

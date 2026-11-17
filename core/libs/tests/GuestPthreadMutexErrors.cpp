@@ -88,6 +88,9 @@ static void CheckBadPointers(PthreadMutex* valid) {
         PthreadMutex fresh = nullptr;
         Require(scePthreadMutexInit(&fresh, static_cast<const PthreadMutexattr*>(pointer), "unreadable attr") == SCE_KERNEL_ERROR_EFAULT && fresh == nullptr);
         Require(scePthreadMutexInit(static_cast<PthreadMutex*>(pointer), nullptr, "unwritable slot") == SCE_KERNEL_ERROR_EFAULT);
+        const PthreadMutexattr unreadableAttributes = static_cast<PthreadMutexattr>(pointer);
+        Require(scePthreadMutexInit(&fresh, &unreadableAttributes, "unreadable attribute object") == SCE_KERNEL_ERROR_EFAULT && fresh == nullptr);
+        Require(pthread_mutex_init_nid_postfix(&fresh, &unreadableAttributes) == 14 && fresh == nullptr);
     }
 }
 
