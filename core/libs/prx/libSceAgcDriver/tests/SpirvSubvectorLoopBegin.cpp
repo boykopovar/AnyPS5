@@ -1,6 +1,7 @@
 #define SPV_ENABLE_UTILITY_CODE
 #include <spirv/unified1/spirv.hpp>
 #undef SPV_ENABLE_UTILITY_CODE
+#include "BdaAbi.hpp"
 #include "Recompiler.hpp"
 #include "SubvectorLoopFixture.hpp"
 #include <array>
@@ -37,7 +38,7 @@ std::vector<std::uint32_t> recompile(bool robustBufferAccess2) {
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 64;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};

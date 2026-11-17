@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILER_BDAABI_HPP
 #define CORE_SHADER_RECOMPILER_BDAABI_HPP
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +9,7 @@
 
 namespace ShaderRecompiler::BdaAbi {
 
-inline constexpr std::uint32_t Version = 1;
+inline constexpr std::uint32_t Version = 2;
 inline constexpr std::uint32_t Read = 1;
 inline constexpr std::uint32_t Write = 2;
 
@@ -24,7 +25,7 @@ struct Range {
     std::uint64_t end;
     std::uint64_t deviceAddress;
     std::uint32_t permissions;
-    std::uint32_t reserved;
+    std::uint32_t written;
 };
 
 inline bool RangesOrdered(const Range* ranges, std::size_t count) {
@@ -63,48 +64,125 @@ static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<F
 static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24 && offsetof(Fault, claim) == 28 && offsetof(Fault, discard) == 32);
 
 inline constexpr std::uint32_t WrittenPageShift = 12;
-inline constexpr std::uint32_t WrittenChunkShift = 17;
-inline constexpr std::uint32_t WrittenChunkPages = 1u << (WrittenChunkShift - WrittenPageShift);
-inline constexpr std::uint32_t WrittenPageSlots = 2048;
-inline constexpr std::uint32_t WrittenPageProbes = 8;
-inline constexpr std::uint64_t WrittenAddressLimit = std::uint64_t{0xffffffffu} << WrittenChunkShift;
-inline constexpr std::uint32_t WrittenOverflowWord = sizeof(Fault) / sizeof(std::uint32_t);
-inline constexpr std::uint32_t WrittenCountWord = WrittenOverflowWord + 1;
-inline constexpr std::uint32_t WrittenSlotsWord = WrittenCountWord + 1;
-inline constexpr std::uint32_t WrittenListWord = WrittenSlotsWord + 2 * WrittenPageSlots;
-inline constexpr std::uint32_t SrtGuardWord = WrittenListWord + WrittenPageSlots;
+inline constexpr std::uint32_t WrittenDirtyWord = sizeof(Fault) / sizeof(std::uint32_t);
+inline constexpr std::uint32_t WrittenPoolWord = WrittenDirtyWord + 1;
+inline constexpr std::uint32_t WrittenPoolWords = 6145;
+inline constexpr std::uint32_t SrtGuardWord = WrittenPoolWord + WrittenPoolWords;
 inline constexpr std::uint32_t SrtGuardStageShift = 24;
 inline constexpr std::size_t FaultBufferBytes = (SrtGuardWord + 1) * sizeof(std::uint32_t);
-static_assert((WrittenPageSlots & (WrittenPageSlots - 1)) == 0);
-static_assert(WrittenChunkPages == 32);
+inline constexpr std::uint32_t WrittenBlockBits = 16;
+inline constexpr std::uint32_t WrittenMaxShift = 47;
+static_assert(SrtGuardWord < (1u << WrittenBlockBits));
 
-inline constexpr std::uint32_t WrittenChunkKey(std::uint64_t address) {
-    return static_cast<std::uint32_t>(address >> WrittenChunkShift) + 1u;
+struct WrittenBlock {
+    std::uint32_t word;
+    std::uint32_t shift;
+};
+
+inline constexpr std::uint32_t EncodeWrittenBlock(WrittenBlock block) {
+    return block.word | (block.shift << WrittenBlockBits);
 }
 
-template<typename TMark>
-bool ForEachWrittenRange(const std::uint32_t* words, TMark&& mark) {
-    const auto count = words[WrittenCountWord];
-    if (count > WrittenPageSlots) return false;
-    for (std::uint32_t claim = 0; claim < count; ++claim) {
-        const auto slot = words[WrittenListWord + claim];
-        if (slot >= WrittenPageSlots || words[WrittenSlotsWord + 2 * slot] == 0) return false;
-    }
-    for (std::uint32_t claim = 0; claim < count; ++claim) {
-        const auto slot = words[WrittenListWord + claim];
-        const auto key = words[WrittenSlotsWord + 2 * slot];
-        auto mask = words[WrittenSlotsWord + 2 * slot + 1];
-        const auto base = static_cast<std::uint64_t>(key - 1u) << WrittenChunkShift;
-        while (mask != 0) {
-            const auto first = static_cast<std::uint32_t>(std::countr_zero(mask));
-            const auto pages = static_cast<std::uint32_t>(std::countr_one(mask >> first));
-            mark(base + (static_cast<std::uint64_t>(first) << WrittenPageShift), static_cast<std::size_t>(pages) << WrittenPageShift);
-            mask = pages + first >= 32u ? 0u : mask & ~((1u << (first + pages)) - 1u);
+inline constexpr WrittenBlock DecodeWrittenBlock(std::uint32_t written) {
+    return {written & ((1u << WrittenBlockBits) - 1u), written >> WrittenBlockBits};
+}
+
+inline constexpr std::uint64_t WrittenGranules(std::uint64_t begin, std::uint64_t end, std::uint32_t shift) {
+    return ((end - 1u) >> shift) - (begin >> shift) + 1u;
+}
+
+inline constexpr std::uint64_t WrittenBlockWords(std::uint64_t begin, std::uint64_t end, std::uint32_t shift) {
+    return (WrittenGranules(begin, end, shift) + 31u) / 32u;
+}
+
+struct WrittenAssignment {
+    std::uint32_t writable = 0;
+    std::uint32_t words = 0;
+    std::uint32_t coarse = 0;
+    std::uint32_t maxShift = 0;
+};
+
+inline bool AssignWrittenBlocks(Range* ranges, std::size_t count, WrittenAssignment* assignment = nullptr) {
+    const auto shiftWithin = [](const Range& range, std::uint64_t cap) {
+        auto shift = WrittenPageShift;
+        while (shift < WrittenMaxShift && WrittenBlockWords(range.begin, range.end, shift) > cap) ++shift;
+        return shift;
+    };
+    const auto total = [&](std::uint64_t cap) {
+        std::uint64_t words = 0;
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto& range = ranges[index];
+            if ((range.permissions & Write) == 0 || range.begin >= range.end) continue;
+            words += WrittenBlockWords(range.begin, range.end, shiftWithin(range, cap));
         }
+        return words;
+    };
+    std::uint64_t low = 1;
+    std::uint64_t high = WrittenPoolWords;
+    if (total(high) <= WrittenPoolWords) low = high;
+    else if (total(low) > WrittenPoolWords) return false;
+    while (low < high) {
+        const auto middle = low + (high - low + 1) / 2;
+        if (total(middle) <= WrittenPoolWords) low = middle;
+        else high = middle - 1;
     }
+    WrittenAssignment used{};
+    auto word = WrittenPoolWord;
+    for (std::size_t index = 0; index < count; ++index) {
+        auto& range = ranges[index];
+        range.written = 0;
+        if ((range.permissions & Write) == 0 || range.begin >= range.end) continue;
+        const auto shift = shiftWithin(range, low);
+        range.written = EncodeWrittenBlock({word, shift});
+        word += static_cast<std::uint32_t>(WrittenBlockWords(range.begin, range.end, shift));
+        ++used.writable;
+        if (shift > WrittenPageShift) ++used.coarse;
+        used.maxShift = std::max(used.maxShift, shift);
+    }
+    used.words = word - WrittenPoolWord;
+    if (assignment != nullptr) *assignment = used;
     return true;
 }
 
+template<typename TMark>
+bool ForEachWrittenRange(const std::uint32_t* words, std::size_t wordCount, const Range& range, TMark&& mark) {
+    if (range.written == 0) return true;
+    const auto block = DecodeWrittenBlock(range.written);
+    if (range.begin >= range.end || block.shift < WrittenPageShift || block.shift > WrittenMaxShift || block.word < WrittenPoolWord) return false;
+    const auto count = WrittenBlockWords(range.begin, range.end, block.shift);
+    if (block.word + count > SrtGuardWord || block.word + count > wordCount) return false;
+    const auto granules = WrittenGranules(range.begin, range.end, block.shift);
+    const auto first = range.begin >> block.shift;
+    std::uint64_t run = 0;
+    std::uint64_t length = 0;
+    const auto flush = [&] {
+        if (length == 0) return;
+        const auto begin = std::max(range.begin, (first + run) << block.shift);
+        const auto stop = first + run + length;
+        const auto end = stop > (~std::uint64_t{0} >> block.shift) ? range.end : std::min(range.end, stop << block.shift);
+        mark(begin, static_cast<std::size_t>(end - begin));
+        length = 0;
+    };
+    for (std::uint64_t word = 0; word < count; ++word) {
+        auto bits = words[block.word + word];
+        if (word + 1 == count && granules % 32u != 0) bits &= (1u << (granules % 32u)) - 1u;
+        if (bits == 0) {
+            flush();
+            continue;
+        }
+        for (std::uint32_t bit = 0; bit < 32; ++bit) {
+            const auto granule = word * 32u + bit;
+            if ((bits >> bit) & 1u) {
+                if (length == 0) run = granule;
+                ++length;
+            } else {
+                flush();
+            }
+        }
+    }
+    flush();
+    return true;
+}
 }
 
 #endif

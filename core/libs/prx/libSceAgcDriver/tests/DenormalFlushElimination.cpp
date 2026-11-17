@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/DenormalFlushEliminator.hpp"
 #include "Recompiler.hpp"
@@ -102,7 +103,7 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 32u;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};

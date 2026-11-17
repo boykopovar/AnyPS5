@@ -1152,7 +1152,7 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
 static std::uint32_t RuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, bool split, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t, std::uint32_t)>& operation) {
     auto& state = context.state;
     if (bits != 32u && bits != 64u) context.Fail(instruction, "unsupported runtime buffer atomic width");
-    if (context.Memory(instruction).gpuDescriptor && (state.bdaAtomicPointerFunction == 0u || state.bdaNoteWriteFunction == 0u)) context.Fail(instruction, "BDA atomic functions are missing");
+    if (context.Memory(instruction).gpuDescriptor && (state.bdaAtomicPointerFunction == 0u)) context.Fail(instruction, "BDA atomic functions are missing");
     if (!context.Memory(instruction).gpuDescriptor) {
         if (state.program.Resources().stage == IrShaderStage::TessellationControl) context.Fail(instruction, "BDA fault termination requires a barrier-safe tessellation-control execution protocol");
         if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "buffer atomic fault addresses require shaderInt64");
@@ -1208,7 +1208,6 @@ static std::uint32_t RuntimeBufferAtomic(SpirvValueEmitContext& context, const I
                         state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, scalar), highPointer, high);
                         result = operation(highPointer, 1u);
                     }
-                    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, guest);
                     return result;
                 });
             };
@@ -1233,7 +1232,7 @@ void EmitRuntimeBufferAtomicHalves(SpirvValueEmitContext& context, const IrValue
 
 std::uint32_t EmitRuntimeBufferAtomicPair(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t, std::uint32_t)>& operation) {
     auto& state = context.state;
-    if (context.Memory(instruction).gpuDescriptor && (state.bdaAtomicPointerFunction == 0u || state.bdaNoteWriteFunction == 0u)) context.Fail(instruction, "BDA atomic functions are missing");
+    if (context.Memory(instruction).gpuDescriptor && (state.bdaAtomicPointerFunction == 0u)) context.Fail(instruction, "BDA atomic functions are missing");
     if (!context.Memory(instruction).gpuDescriptor && state.program.Resources().stage == IrShaderStage::TessellationControl) context.Fail(instruction, "BDA fault termination requires a barrier-safe tessellation-control execution protocol");
     const auto type = TypeU64(state);
     const auto zero = ConstantU64(state, 0u);
@@ -1273,7 +1272,6 @@ std::uint32_t EmitRuntimeBufferAtomicPair(SpirvValueEmitContext& context, const 
                     const auto highPointer = state.module.AllocateId();
                     state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), highPointer, Binary(state, spv::OpIAdd, u64, physical, BdaConstant(state, 4u)));
                     const auto result = lockedAtQword(state, access.guest, type, zero, [&] { return operation(lowPointer, highPointer); });
-                    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, access.guest);
                     return result;
                 });
             });

@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -32,7 +33,7 @@ RecompileRequest ComputeRequest(std::span<const std::uint32_t> code, std::span<c
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 64u;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};

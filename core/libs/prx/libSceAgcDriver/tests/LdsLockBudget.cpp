@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "Recompiler.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -92,7 +93,7 @@ RecompileResult compile(std::uint32_t waveSize, std::uint32_t limit, bool int64A
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 32;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = std::span(capabilities).first(int64Atomics ? 8u : 7u);
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
@@ -114,7 +115,7 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     const bool native = int64Atomics && limit < 68u;
     require(widths.contains(64u) == native, native ? "device-memory LDS did not use a 64-bit compare exchange" : "a 64-bit compare exchange appeared without device-memory LDS and shaderBufferInt64Atomics");
     require(widths.contains(32u) != native, native ? "device-memory LDS with shaderBufferInt64Atomics kept the workgroup lock" : "the 64-bit LDS atomic lost its workgroup lock");
-    require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
+    require(result.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
 alignas(256) std::array<std::uint8_t, 32768> Texture{};

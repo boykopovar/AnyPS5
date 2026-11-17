@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "ControlFlow/ControlFlowHelpers.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
@@ -295,7 +296,7 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = subgroupSize;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
