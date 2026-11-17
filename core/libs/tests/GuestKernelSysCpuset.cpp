@@ -37,6 +37,7 @@ int Error() {
 } // namespace
 
 int main() {
+    const int foreignPid = getpid_nid_postfix() == 1 ? 2 : 1;
     int setid = -1;
     Require(cpuset_nid_postfix(nullptr) == -1 && Error() == Efault);
     Require(cpuset_nid_postfix(reinterpret_cast<int*>(0x10)) == -1 && Error() == Efault);
@@ -63,7 +64,7 @@ int main() {
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, nullptr) == -1 && Error() == Efault);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, reinterpret_cast<int*>(0x10)) == -1 && Error() == Efault);
     Require(cpuset_getid_nid_postfix(LevelWhich, WhichProcess, -1, nullptr) == -1 && Error() == Einval);
-    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, 999999, nullptr) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, foreignPid, nullptr) == -1 && Error() == Esrch);
     Require(cpuset_getid_nid_postfix(LevelCpuset, 7, -1, nullptr) == -1 && Error() == Einval);
 
     for (const int level : {0, 4, -1}) {
@@ -74,7 +75,7 @@ int main() {
         setid = -1;
         Require(cpuset_getid_nid_postfix(level, WhichCpuset, set2, &setid) == 0 && setid == set2);
     }
-    Require(cpuset_getid_nid_postfix(4, WhichProcess, getpid_nid_postfix() == 1 ? 2 : 1, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(4, WhichProcess, foreignPid, &setid) == -1 && Error() == Esrch);
     Require(cpuset_getid_nid_postfix(LevelCpuset, 0, -1, &setid) == -1 && Error() == Einval);
     Require(cpuset_getid_nid_postfix(LevelCpuset, 7, -1, &setid) == -1 && Error() == Einval);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichIrq, -1, &setid) == -1 && Error() == Einval);
@@ -86,7 +87,7 @@ int main() {
     int pid = getpid_nid_postfix();
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, pid, &setid) == 0);
     Require(setid == set2);
-    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, 999999, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, foreignPid, &setid) == -1 && Error() == Esrch);
 
     const int tid = scePthreadGetthreadid();
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, -1, &setid) == 0);
@@ -115,7 +116,7 @@ int main() {
 
     Require(cpuset_setid_nid_postfix(WhichThread, -1, 1) == -1 && Error() == Einval);
     Require(cpuset_setid_nid_postfix(WhichCpuset, -1, 1) == -1 && Error() == Einval);
-    Require(cpuset_setid_nid_postfix(WhichProcess, 999999, 1) == -1 && Error() == Esrch);
+    Require(cpuset_setid_nid_postfix(WhichProcess, foreignPid, 1) == -1 && Error() == Esrch);
     Require(cpuset_setid_nid_postfix(WhichProcess, -1, -1) == -1 && Error() == Esrch);
     Require(cpuset_setid_nid_postfix(WhichProcess, -1, 999999) == -1 && Error() == Esrch);
 
