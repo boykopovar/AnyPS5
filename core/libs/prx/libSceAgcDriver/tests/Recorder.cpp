@@ -1965,6 +1965,9 @@ std::atomic<unsigned> failingEnds{0};
 std::atomic<std::uint64_t> countedSubmits{0};
 std::atomic<bool> refusedSubmits{false};
 std::atomic<unsigned> lostSubmits{0};
+std::atomic<unsigned> failingBarriers{0};
+VkDevice commandsDevice = VK_NULL_HANDLE;
+std::atomic<std::int64_t> liveCommandBuffers{0};
 
 VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands) {
     if (failingEnds.load() != 0) {
@@ -1984,7 +1987,34 @@ VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit(VkQueue queue, std::uint32_t 
     return passedQueueSubmit(queue, count, submits, fence);
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL countingAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
+    const auto result = reinterpret_cast<PFN_vkAllocateCommandBuffers>(passedDeviceProc(device, "vkAllocateCommandBuffers"))(device, info, buffers);
+    if (result == VK_SUCCESS) liveCommandBuffers.fetch_add(info->commandBufferCount);
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL countingFreeCommandBuffers(VkDevice device, VkCommandPool pool, std::uint32_t count, const VkCommandBuffer* buffers) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (buffers[index] != VK_NULL_HANDLE) liveCommandBuffers.fetch_sub(1);
+    }
+    reinterpret_cast<PFN_vkFreeCommandBuffers>(passedDeviceProc(device, "vkFreeCommandBuffers"))(device, pool, count, buffers);
+}
+
+VKAPI_ATTR void VKAPI_CALL failingPipelineBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    if (failingBarriers.load() != 0) {
+        failingBarriers.fetch_sub(1);
+        throw std::runtime_error("vkCmdPipelineBarrier: injected failure");
+    }
+    reinterpret_cast<PFN_vkCmdPipelineBarrier>(passedDeviceProc(commandsDevice, "vkCmdPipelineBarrier"))(commands, source, destination, flags, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL replayFailingDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkAllocateCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(countingAllocateCommandBuffers);
+    if (std::strcmp(name, "vkFreeCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(countingFreeCommandBuffers);
+    if (std::strcmp(name, "vkCmdPipelineBarrier") == 0) {
+        commandsDevice = device;
+        return reinterpret_cast<PFN_vkVoidFunction>(failingPipelineBarrier);
+    }
     if (std::strcmp(name, "vkEndCommandBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(failingEndCommandBuffer);
     if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(countingQueueSubmit);
     return passedDeviceProc(device, name);
@@ -2167,6 +2197,50 @@ void deferredBatchTests(const Device& device) {
             refused = true;
         }
         Require(refused && countedSubmits.load() == submitted, "a direct batch reached vkQueueSubmit after the device was lost");
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool = context.pool;
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+        allocation.commandBufferCount = 1;
+        VkCommandBuffer secondary = VK_NULL_HANDLE;
+        Require(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &secondary) == VK_SUCCESS, "no secondary command buffer");
+        VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.pInheritanceInfo = &inheritance;
+        Require(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(secondary, &begin) == VK_SUCCESS, "the secondary command buffer did not begin");
+        Require(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(secondary) == VK_SUCCESS, "the secondary command buffer did not end");
+        const auto live = liveCommandBuffers.load();
+        {
+            Recorder recorder(failing, false, true, context.queueFamily);
+            const auto commands = recorder.Commands();
+            recordBarrierThrough(failing, commands);
+            Require(recorder.Deferred(), "the batch opened direct");
+            failingBarriers.store(1);
+            bool demotionFailed = false;
+            try {
+                reinterpret_cast<PFN_vkCmdExecuteCommands>(CommandThunk("vkCmdExecuteCommands", context.deviceProc(context.device, "vkCmdExecuteCommands")))(commands, 1, &secondary);
+            } catch (const std::runtime_error&) {
+                demotionFailed = true;
+            }
+            Require(demotionFailed && failingBarriers.load() == 0, "a replay failure while demoting the stream did not surface");
+            const auto submitted = countedSubmits.load();
+            bool refused = false;
+            try {
+                recorder.Submit();
+            } catch (const std::exception&) {
+                refused = true;
+            }
+            Require(refused && countedSubmits.load() == submitted, "a batch whose demotion failed was submitted");
+            recordBarrierThrough(failing, recorder.Commands());
+            recorder.Submit();
+            recorder.Sync();
+            Require(countedSubmits.load() == submitted + 1, "the batch after a failed demotion was not submitted");
+        }
+        Require(liveCommandBuffers.load() == live, "a command buffer allocated for a failed demotion was not freed: " + std::to_string(liveCommandBuffers.load() - live) + " still allocated");
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
     }
     if (!device.TimelineSemaphores()) {
