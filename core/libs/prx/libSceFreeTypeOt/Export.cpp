@@ -154,19 +154,9 @@ int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch() {
 }
 APS5_EXPORT("GiuNQjoj4fs", sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("4LY5pyZ5IQk", sceFreeTypeOtUnknown_4LY5pyZ5IQk_nid_no_patch);
-
 int APS5_VABI FT_New_GlyphSlot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI sceFreeTypeOtNewLibrary_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("yrtsLmTfa48", sceFreeTypeOtNewLibrary_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_C_PpdS5zris_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -188,11 +178,6 @@ int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary*
     return FreeTypeOutlineGetBitmap_nid_no_patch(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_qAPXM5DN62Q_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("qAPXM5DN62Q", sceFreeTypeOtUnknown_qAPXM5DN62Q_nid_no_patch);
 
 int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode) {
     if (!library || !slot || !slot->face || slot->library != library) NotImplemented_nid_no_patch(__func__);

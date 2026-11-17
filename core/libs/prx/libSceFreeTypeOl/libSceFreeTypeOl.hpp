@@ -3,6 +3,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 
 extern "C" {
+int APS5_VABI FT_Attach_Stream_nid_postfix(FreeType::GuestFaceRec* face, const FreeType::GuestOpenArgs* parameters);
 void APS5_VABI sceFreeTypeOlDoneGlyphSlot_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
 int APS5_VABI sceFreeTypeOlFtaSupportFormatBdf_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaSupportFormatPcf_nid_postfix(void* library);

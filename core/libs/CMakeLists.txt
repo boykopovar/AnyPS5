@@ -1769,6 +1769,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
+    if(NOT ANYPS5_USE_SYSTEM_DEPS)
+        add_test_executable(guest_freetype_library_object_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestFreeTypeLibraryObject.cpp)
+        target_include_directories(guest_freetype_library_object_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(guest_freetype_library_object_tests PRIVATE libSceFreeTypeOt libSceFreeTypeOl libSceFreeType freetype libc)
+        configure_windows_unwind(guest_freetype_library_object_tests)
+        add_test(NAME guest_freetype_library_object COMMAND guest_freetype_library_object_tests)
+        set_tests_properties(guest_freetype_library_object PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_freetype_library_object PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+        endif()
+    endif()
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)

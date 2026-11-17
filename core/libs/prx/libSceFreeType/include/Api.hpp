@@ -22,6 +22,9 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, co
 int APS5_VABI FT_Reference_Face_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Done_Face_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Attach_File_nid_postfix(FreeType::GuestFaceRec* face, const char* filepathname);
+int APS5_VABI FreeTypeAttachStream_nid_no_patch(FreeType::GuestFaceRec* face, const FreeType::GuestOpenArgs* parameters);
+int APS5_VABI FreeTypeNewLibrary_nid_no_patch(FreeType::GuestMemoryRec* memory, FreeType::GuestLibrary** alibrary);
+int APS5_VABI FreeTypeReferenceLibrary_nid_no_patch(FreeType::GuestLibrary* library);
 std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t key, std::uint32_t index, void* value, std::int64_t valueLength);
 int APS5_VABI FT_Outline_Render_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, FreeType::GuestRasterParams* params);
 int APS5_VABI FT_Select_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t strikeIndex);

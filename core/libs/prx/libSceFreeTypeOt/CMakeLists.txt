@@ -155,7 +155,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceFreeTypeOt PRIVATE src/SizeMetrics.cpp)
+target_sources(libSceFreeTypeOt PRIVATE src/SizeMetrics.cpp src/Library.cpp)
 if(ANYPS5_USE_SYSTEM_DEPS)
     target_compile_definitions(libSceFreeTypeOt PRIVATE ANYPS5_FREETYPEOT_SYSTEM_DEPS)
 endif()

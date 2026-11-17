@@ -8,6 +8,7 @@
 #include FT_FREETYPE_H
 #include FT_SYSTEM_H
 
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <vector>
@@ -19,6 +20,9 @@ struct GuestFace;
 struct GuestLibrary {
     FT_Library host = nullptr;
     std::list<std::unique_ptr<GuestFace>> faces;
+    std::uint64_t references = 1;
+    GuestMemoryRec* guestMemory = nullptr;
+    std::unique_ptr<FT_MemoryRec_> memory;
 };
 
 extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);

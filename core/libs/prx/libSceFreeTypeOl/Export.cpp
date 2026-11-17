@@ -1,3 +1,4 @@
+#include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -105,10 +106,9 @@ int APS5_VABI sceFreeTypeOlFtaSupportRendererSmoothLcdv_nid_no_patch() {
 }
 APS5_EXPORT("Ns9a-LjOcDw", sceFreeTypeOlFtaSupportRendererSmoothLcdv_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOlAttachStream_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI FT_Attach_Stream_nid_postfix(FreeType::GuestFaceRec* face, const FreeType::GuestOpenArgs* parameters) {
+    return FreeTypeAttachStream_nid_no_patch(face, parameters);
 }
-APS5_EXPORT("ZqvTX8u1bEc", sceFreeTypeOlAttachStream_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOlCMapDone_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
