@@ -20,11 +20,10 @@
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cerrno>
 #include <climits>
-#include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 extern "C" {
 
@@ -34,26 +33,19 @@ bool APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_(const char* ex
 
     if (!extension)
         NotImplemented_nid_no_patch(__func__);
-    const int savedErrno = errno;
-    char probe = 0;
-    std::size_t safeLength = 0;
-    bool terminated = false;
-    while (GuestCopyIn_nid_no_patch(&probe, extension + safeLength, sizeof(probe))) {
-        if (!probe) {
-            terminated = true;
-            break;
-        }
-        ++safeLength;
-    }
-    errno = savedErrno;
-    if (!terminated)
+    std::string localExtension;
+    if (CopyGuestString_nid_no_patch(extension, 65536, localExtension) != 0)
         throw std::invalid_argument(std::string(__func__) + ": unreadable extension string");
-    auto length = safeLength;
+    auto length = localExtension.size();
     if (length > INT_MAX || (!length && *extensionList != ' ' && *extensionList != '\0'))
         NotImplemented_nid_no_patch(__func__);
     int extensionLen = static_cast<int>(length);
+    const char* extensionText = localExtension.c_str();
+    if (!extensionText[0]) {
+        return true;
+    }
     const char* extensionListPtr = extensionList;
-    while ((extensionListPtr = std::strstr(extensionListPtr, extension))) {
+    while ((extensionListPtr = std::strstr(extensionListPtr, extensionText))) {
         if (extensionListPtr[extensionLen] == ' ' || extensionListPtr[extensionLen] == '\0')
             return true;
         extensionListPtr += extensionLen;
