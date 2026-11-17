@@ -12,9 +12,11 @@
 #include FT_RENDER_H
 #include <freetype/internal/ftobjs.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -56,6 +58,7 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec*, std::int64_t size) {
 void APS5_VABI RecordFree(GuestMemoryRec* memory, void* block) {
     auto* recorder = static_cast<Recorder*>(memory->user);
     if (block == memory) {
+        Require(recorder->selfFrees == 0);
         ++recorder->selfFrees;
         return;
     }
@@ -108,21 +111,23 @@ void NewLibrary() {
     Require(FT_New_Memory_Face(oracle, font.data(), static_cast<FT_Long>(font.size()), 0, &oracleFace) == 0);
     Require(face->num_glyphs == oracleFace->num_glyphs);
     Require(FT_Reference_Library_nid_postfix(library) == 0 && FT_Reference_Library(oracle) == 0);
-    Require(FT_Done_FreeType_nid_postfix(library) == 0 && recorder.selfFrees == 1);
+    Require(FT_Reference_Library_nid_postfix(library) == 0 && FT_Reference_Library(oracle) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && recorder.selfFrees == 0);
+    Require(FT_Done_Library(oracle) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && recorder.selfFrees == 0);
     Require(FT_Done_Library(oracle) == 0);
     Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(oracleFace, 'A'));
     Require(FT_Load_Glyph_nid_postfix(face, 1, FT_LOAD_NO_SCALE) == FT_Load_Glyph(oracleFace, 1, FT_LOAD_NO_SCALE));
     Require(FT_Get_Renderer_nid_postfix(library, FT_GLYPH_FORMAT_OUTLINE));
-    Require(FT_Done_FreeType_nid_postfix(library) == 0 && recorder.selfFrees == 2 && recorder.otherFrees == 0);
-    Require(FT_Done_Library(oracle) == 0);
-
-    Recorder broken;
-    InitRecorder(broken);
-    Require(FT_New_Library_nid_postfix(&broken.memory, &library) == 0);
-    broken.memory.free = nullptr;
+    Require(library->references == 1);
     Require(Throws([&] { FT_Done_FreeType_nid_postfix(library); }));
-    broken.memory.free = RecordFree;
-    Require(FT_Done_FreeType_nid_postfix(library) == 0 && broken.selfFrees == 1);
+    Require(Throws([&] { FT_Done_FreeType_nid_postfix(library); }));
+    Require(library->references == 1 && library->host && recorder.selfFrees == 0 && recorder.otherFrees == 0);
+    Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(oracleFace, 'A'));
+    Require(FT_Done_Library(library->host) == 0);
+    delete library;
+    Require(FT_Done_Library(oracle) == 0);
+    Require(recorder.selfFrees == 0 && recorder.otherFrees == 0);
 }
 
 void ReferenceLibrary() {
@@ -225,6 +230,31 @@ struct AttachPair {
     }
 };
 
+int closes = 0;
+int nativeCloses = 0;
+
+std::uint64_t APS5_VABI GuestStreamRead(GuestStreamRec* stream, std::uint64_t offset, std::uint8_t* buffer, std::uint64_t count) {
+    if (offset > stream->size) return 0;
+    const std::uint64_t bytes = std::min(count, stream->size - offset);
+    if (bytes) std::memcpy(buffer, static_cast<const std::uint8_t*>(stream->descriptor) + offset, bytes);
+    return bytes;
+}
+
+void APS5_VABI GuestStreamClose(GuestStreamRec*) {
+    ++closes;
+}
+
+unsigned long NativeStreamRead(FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count) {
+    if (offset > stream->size) return 0;
+    const unsigned long bytes = std::min(count, stream->size - offset);
+    if (bytes) std::memcpy(buffer, static_cast<const unsigned char*>(stream->descriptor.pointer) + offset, bytes);
+    return bytes;
+}
+
+void NativeStreamClose(FT_Stream) {
+    ++nativeCloses;
+}
+
 void AttachStream(const std::filesystem::path& root) {
     const std::string afm = Type1Fixture::Afm();
     const std::string afmPath = (root / "app0" / "fixture.afm").string();
@@ -250,10 +280,12 @@ void AttachStream(const std::filesystem::path& root) {
         guest.flags = native.flags = FT_OPEN_STREAM;
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
         GuestStreamRec stream{};
+        FT_StreamRec nativeStream{};
         guest.stream = &stream;
-        Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }));
-        guest.flags = FT_OPEN_MEMORY | FT_OPEN_STREAM;
-        Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }));
+        native.stream = &nativeStream;
+        guest.flags = native.flags = FT_OPEN_MEMORY | FT_OPEN_STREAM;
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument && closes == 0);
         guest = {};
         guest.flags = FT_OPEN_PATHNAME;
         Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }));
@@ -277,6 +309,32 @@ void AttachStream(const std::filesystem::path& root) {
         native.pathname = const_cast<char*>(emptyPath.c_str());
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Cannot_Open_Stream);
+        pair.Matches();
+    }
+    for (const bool reader : {false, true}) {
+        AttachPair pair(Type1Fixture::Font());
+        auto* data = reinterpret_cast<std::uint8_t*>(const_cast<char*>(afm.data()));
+        GuestStreamRec stream{};
+        stream.base = reader ? nullptr : data;
+        stream.size = afm.size();
+        stream.descriptor = data;
+        stream.read = reader ? GuestStreamRead : nullptr;
+        stream.close = GuestStreamClose;
+        FT_StreamRec nativeStream{};
+        nativeStream.base = reader ? nullptr : data;
+        nativeStream.size = afm.size();
+        nativeStream.descriptor.pointer = data;
+        nativeStream.read = reader ? NativeStreamRead : nullptr;
+        nativeStream.close = NativeStreamClose;
+        GuestOpenArgs guest{};
+        FT_Open_Args native{};
+        guest.flags = native.flags = FT_OPEN_STREAM;
+        guest.stream = &stream;
+        native.stream = &nativeStream;
+        closes = nativeCloses = 0;
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == 0 && FT_Attach_Stream(pair.oracle, &native) == 0);
+        Require(closes == 1 && nativeCloses == 1 && stream.pos == nativeStream.pos);
+        Require(pair.face->face_flags & FT_FACE_FLAG_KERNING);
         pair.Matches();
     }
     {

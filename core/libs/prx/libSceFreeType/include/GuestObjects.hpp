@@ -72,6 +72,7 @@ extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
 void SyncFace(GuestFace& face);
+void SyncFaceMetrics(GuestFace& face);
 void SyncSize(GuestFace& face);
 void SyncSizePointer_nid_no_patch(GuestFace& face);
 void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);

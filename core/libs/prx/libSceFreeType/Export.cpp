@@ -145,28 +145,17 @@ void* HostRealloc(FT_Memory, long, long size, void* block) {
     return std::realloc(block, static_cast<std::size_t>(size));
 }
 
-GuestMemoryRec ReadGuestMemory(GuestMemoryRec* memory) {
-    GuestMemoryRec record{};
-    if (!CopyGuestIn(&record, memory, sizeof(record)) || !record.free) {
-        throw std::runtime_error("FT_Done_FreeType: an unreadable guest FT_Memory or one without a free callback is not implemented");
-    }
-    return record;
-}
-
-void SyncFaceMetrics(GuestFace& face) {
-    const FT_Face host = face.host;
-    auto& rec = face.rec;
-    rec.face_flags = host->face_flags;
-    rec.style_flags = host->style_flags;
-    rec.bbox = {host->bbox.xMin, host->bbox.yMin, host->bbox.xMax, host->bbox.yMax};
-    rec.units_per_EM = host->units_per_EM;
-    rec.ascender = host->ascender;
-    rec.descender = host->descender;
-    rec.height = host->height;
-    rec.max_advance_width = host->max_advance_width;
-    rec.max_advance_height = host->max_advance_height;
-    rec.underline_position = host->underline_position;
-    rec.underline_thickness = host->underline_thickness;
+bool BindGuestStream(GuestStreamBridge& bridge, GuestStreamRec* guest) {
+    if (guest->size > std::numeric_limits<FT_ULong>::max() || guest->pos > std::numeric_limits<FT_ULong>::max()) return false;
+    bridge.guest = guest;
+    bridge.host.base = guest->base;
+    bridge.host.size = static_cast<FT_ULong>(guest->size);
+    bridge.host.pos = static_cast<FT_ULong>(guest->pos);
+    bridge.host.descriptor.pointer = &bridge;
+    bridge.host.pathname.pointer = guest->pathname;
+    bridge.host.read = guest->read ? StreamRead : nullptr;
+    bridge.host.close = StreamClose;
+    return true;
 }
 
 }
@@ -209,19 +198,15 @@ int APS5_VABI FreeTypeReferenceLibrary_nid_no_patch(GuestLibrary* library) {
 
 int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
     if (!library) return FT_Done_FreeType(nullptr);
-    GuestMemoryRec* guestMemory = library->guestMemory;
-    const GuestMemoryRec record = guestMemory ? ReadGuestMemory(guestMemory) : GuestMemoryRec{};
     if (library->references > 1) {
         const FT_Error error = FT_Done_Library(library->host);
-        if (error != 0) return error;
-        --library->references;
-    } else {
-        const FT_Error error = guestMemory ? FT_Done_Library(library->host) : FT_Done_FreeType(library->host);
-        if (error != 0) return error;
-        delete library;
+        if (error == 0) --library->references;
+        return error;
     }
-    if (guestMemory) record.free(guestMemory, guestMemory);
-    return 0;
+    if (library->guestMemory) NotImplemented_nid_no_patch("FT_Done_FreeType");
+    const FT_Error error = FT_Done_FreeType(library->host);
+    if (error == 0) delete library;
+    return error;
 }
 
 int APS5_VABI FT_Select_Size_nid_postfix(GuestFaceRec* face, std::int32_t strikeIndex) {
@@ -275,22 +260,12 @@ int APS5_VABI FT_Open_Face_nid_postfix(GuestLibrary* library, const GuestOpenArg
             throw std::runtime_error("FT_Open_Face: mixed stream and other source flags are not implemented");
         }
         if (!args->stream) return FT_Err_Invalid_Argument;
-        auto* guest = static_cast<GuestStreamRec*>(args->stream);
-        if (guest->size > std::numeric_limits<FT_ULong>::max() || guest->pos > std::numeric_limits<FT_ULong>::max()) {
+        face->stream = std::make_unique<GuestStreamBridge>();
+        if (!BindGuestStream(*face->stream, static_cast<GuestStreamRec*>(args->stream))) {
             throw std::runtime_error("FT_Open_Face: a guest stream outside the host FT_ULong range is not implemented");
         }
-        face->stream = std::make_unique<GuestStreamBridge>();
-        auto& bridge = *face->stream;
-        bridge.guest = guest;
-        bridge.host.base = guest->base;
-        bridge.host.size = static_cast<FT_ULong>(guest->size);
-        bridge.host.pos = static_cast<FT_ULong>(guest->pos);
-        bridge.host.descriptor.pointer = &bridge;
-        bridge.host.pathname.pointer = guest->pathname;
-        bridge.host.read = guest->read ? StreamRead : nullptr;
-        bridge.host.close = StreamClose;
         native.flags = FT_OPEN_STREAM;
-        native.stream = &bridge.host;
+        native.stream = &face->stream->host;
     } else if (args->flags & FT_OPEN_MEMORY) {
         if (args->memory_size < std::numeric_limits<FT_Long>::min() || args->memory_size > std::numeric_limits<FT_Long>::max()) {
             throw std::runtime_error("FT_Open_Face: a font buffer size outside the host FT_Long range is not implemented");
@@ -337,10 +312,10 @@ int APS5_VABI FreeTypeAttachStream_nid_no_patch(GuestFaceRec* face, const GuestO
     if (!parameters) return FT_Attach_Stream(owner->host, nullptr);
     GuestOpenArgs args{};
     if (!CopyGuestIn(&args, parameters, sizeof(args))) NotImplemented_nid_no_patch("FT_Attach_Stream");
-    if ((args.flags & FT_OPEN_STREAM) && args.stream) NotImplemented_nid_no_patch("FT_Attach_Stream");
     const std::uint32_t mode = args.flags & (FT_OPEN_MEMORY | FT_OPEN_STREAM | FT_OPEN_PATHNAME);
     FT_Open_Args native{};
     std::vector<unsigned char> bytes;
+    GuestStreamBridge bridge;
     if (mode == FT_OPEN_MEMORY) {
         if (args.memory_size < std::numeric_limits<FT_Long>::min() || args.memory_size > std::numeric_limits<FT_Long>::max()) {
             NotImplemented_nid_no_patch("FT_Attach_Stream");
@@ -356,6 +331,10 @@ int APS5_VABI FreeTypeAttachStream_nid_no_patch(GuestFaceRec* face, const GuestO
         native.flags = FT_OPEN_MEMORY;
         native.memory_base = bytes.data();
         native.memory_size = static_cast<FT_Long>(bytes.size());
+    } else if (mode == FT_OPEN_STREAM && args.stream) {
+        if (!BindGuestStream(bridge, static_cast<GuestStreamRec*>(args.stream))) NotImplemented_nid_no_patch("FT_Attach_Stream");
+        native.flags = FT_OPEN_STREAM;
+        native.stream = &bridge.host;
     }
     const FT_Error error = FT_Attach_Stream(owner->host, &native);
     SyncFaceMetrics(*owner);
