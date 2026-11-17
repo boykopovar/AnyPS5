@@ -60,6 +60,11 @@ struct ViewEntry {
     std::vector<EncodedImageView> encoded;
 };
 
+struct SamplerEntry {
+    SamplerRecord record;
+    std::size_t creations = 0;
+};
+
 using ViewKey = DeviceHandle<VkImageView>;
 using SamplerKey = DeviceHandle<VkSampler>;
 
@@ -68,8 +73,8 @@ std::unordered_map<ViewKey, ViewEntry, DeviceHandleHash<VkImageView>>& views() {
     return map;
 }
 
-std::unordered_map<SamplerKey, SamplerRecord, DeviceHandleHash<VkSampler>>& samplers() {
-    static auto& map = *new std::unordered_map<SamplerKey, SamplerRecord, DeviceHandleHash<VkSampler>>();
+std::unordered_map<SamplerKey, SamplerEntry, DeviceHandleHash<VkSampler>>& samplers() {
+    static auto& map = *new std::unordered_map<SamplerKey, SamplerEntry, DeviceHandleHash<VkSampler>>();
     return map;
 }
 
@@ -133,7 +138,9 @@ VKAPI_ATTR VkResult VKAPI_CALL createSampler(VkDevice device, const VkSamplerCre
     if (result == VK_SUCCESS) {
         auto record = recordOf(*info);
         std::lock_guard lock(recordsMutex());
-        samplers()[{device, *sampler}] = std::move(record);
+        auto& entry = samplers()[{device, *sampler}];
+        entry.record = std::move(record);
+        ++entry.creations;
     }
     return result;
 }
@@ -141,7 +148,8 @@ VKAPI_ATTR VkResult VKAPI_CALL createSampler(VkDevice device, const VkSamplerCre
 VKAPI_ATTR void VKAPI_CALL destroySampler(VkDevice device, VkSampler sampler, const VkAllocationCallbacks* allocator) {
     {
         std::lock_guard lock(recordsMutex());
-        samplers().erase({device, sampler});
+        const auto found = samplers().find({device, sampler});
+        if (found != samplers().end() && --found->second.creations == 0u) samplers().erase(found);
     }
     if (const auto real = realFunction<PFN_vkDestroySampler>(device, Hook::DestroySampler)) real(device, sampler, allocator);
 }
@@ -233,7 +241,7 @@ std::optional<SamplerRecord> FindSampler(VkDevice device, VkSampler sampler) {
     std::lock_guard lock(recordsMutex());
     const auto found = samplers().find({device, sampler});
     if (found == samplers().end()) return std::nullopt;
-    return found->second;
+    return found->second.record;
 }
 
 }

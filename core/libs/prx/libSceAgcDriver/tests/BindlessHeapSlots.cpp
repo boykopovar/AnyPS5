@@ -315,6 +315,28 @@ bool dataPool(const Context& context) {
     }
     {
         BindlessHeap heap(context);
+        for (int index = 0; index < 3; ++index) static_cast<void>(heap.Allocate(blockWords - 64u));
+        const BindlessHeap::SpanScope spans(heap);
+        BindlessHeap::TableMark table;
+        static_cast<void>(heap.AllocateTable(spans, 40u, table));
+        const auto address = table.address;
+        heap.RetireTable(spans, table);
+        {
+            Recorder gone(context, true);
+            heap.Submitted(gone, gone.Submissions() + (1ull << 40u));
+            const auto made = heap.Statistics().poolBlocksMade;
+            static_cast<void>(heap.Allocate(blockWords - 64u));
+            require(heap.Statistics().poolBlocksRecycled == 0u && heap.Statistics().poolBlocksMade == made + 1u, "a block a live recorder's batch still reads is not reused");
+            heap.RecorderDestroyed(gone);
+        }
+        const auto made = heap.Statistics().poolBlocksMade;
+        static_cast<void>(heap.Allocate(blockWords - 64u));
+        require(heap.Statistics().poolBlocksRecycled == 1u && heap.Statistics().poolBlocksMade == made, "a destroyed recorder's blocks are released without dereferencing it");
+        BindlessHeap::TableMark after;
+        require(heap.AllocateTable(spans, 40u, after).has_value() && after.address == address, "a destroyed recorder's retired table is reusable without dereferencing it");
+    }
+    {
+        BindlessHeap heap(context);
         const BindlessHeap::SpanScope spans(heap);
         BindlessHeap::TableMark table;
         static_cast<void>(heap.AllocateTable(spans, 40u, table));

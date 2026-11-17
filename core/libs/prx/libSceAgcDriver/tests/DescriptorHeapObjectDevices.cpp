@@ -116,5 +116,14 @@ int main() {
     destroySampler(first.device, sampler, nullptr);
     Require(first.destroySamplers == 1 && second.destroySamplers == 0, "a sampler destroy reaches the owning device's function");
     Require(!FindSampler(first.device, sampler).has_value() && FindSampler(second.device, sampler).has_value(), "destroying a sampler on one device keeps the other's record");
+    destroySampler(second.device, sampler, nullptr);
+    Require(!FindSampler(second.device, sampler).has_value(), "the second device's sampler record is gone");
+    VkSampler twin = VK_NULL_HANDLE;
+    samplerInfo.maxLod = 7.0f;
+    Require(createSampler(second.device, &samplerInfo, nullptr, &twin) == VK_SUCCESS && createSampler(second.device, &samplerInfo, nullptr, &twin) == VK_SUCCESS, "a device creates one sampler handle twice");
+    destroySampler(second.device, twin, nullptr);
+    Require(FindSampler(second.device, twin).has_value() && FindSampler(second.device, twin)->info.maxLod == 7.0f, "destroying one of two creations of a sampler handle keeps its record");
+    destroySampler(second.device, twin, nullptr);
+    Require(!FindSampler(second.device, twin).has_value(), "destroying the last creation of a sampler handle drops its record");
     std::puts("descriptor heap objects per device: ok");
 }

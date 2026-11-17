@@ -117,6 +117,7 @@ public:
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
+    void RecorderDestroyed(Recorder& recorder);
     bool TakeSlotPressure();
 
     struct Counts {
@@ -248,6 +249,7 @@ private:
         std::uint32_t slot = 0;
         std::uint64_t serial = 0;
         bool sampler = false;
+        Recorder* recorder = nullptr;
     };
     std::deque<RetiringSlot> retiring;
     std::size_t retiringAssigned = 0;

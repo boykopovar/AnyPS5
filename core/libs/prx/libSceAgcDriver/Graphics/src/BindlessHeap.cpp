@@ -404,7 +404,12 @@ std::optional<std::uint32_t> BindlessHeap::imageSlot(std::uint32_t kind, const H
     auto slot = imagePool.Take();
     if (!slot && reclaimLocked(true)) slot = imagePool.Take();
     if (!slot) return std::nullopt;
-    writeImageSlot(kind, *slot, view, layout);
+    try {
+        writeImageSlot(kind, *slot, view, layout);
+    } catch (...) {
+        imagePool.Free(*slot);
+        throw;
+    }
     claimSlotLocked(key, *slot).texture = texture;
     touchLocked(*slot);
     owner->heapSlotted.store(true, std::memory_order_release);
@@ -603,26 +608,24 @@ void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
 
 bool BindlessHeap::reclaimLocked(bool wait) {
     bool reclaimed = false;
-    while (!retiring.empty() && retiring.front().serial != 0u && submitter != nullptr) {
-        const auto serial = retiring.front().serial;
-        if (!submitter->WaitSerialFor(serial, 0u)) {
-            if (!wait || reclaimed || serial > submitter->Submissions()) break;
-            submitter->WaitSerial(serial);
+    while (!retiring.empty() && retiring.front().serial != 0u) {
+        const auto& front = retiring.front();
+        if (front.recorder != nullptr && !front.recorder->WaitSerialFor(front.serial, 0u)) {
+            if (!wait || reclaimed || front.serial > front.recorder->Submissions()) break;
+            front.recorder->WaitSerial(front.serial);
             ++counts.evictionWaits;
         }
-        while (!retiring.empty() && retiring.front().serial != 0u && retiring.front().serial <= serial) {
-            const auto entry = retiring.front();
-            retiring.pop_front();
-            if (entry.sampler) {
-                samplerPool.free.push_back(entry.slot);
-                --retiringSamplers;
-                --samplerRetiringAssigned;
-            } else {
-                imagePool.free.push_back(entry.slot);
-                --retiringAssigned;
-            }
-            reclaimed = true;
+        const auto entry = front;
+        retiring.pop_front();
+        if (entry.sampler) {
+            samplerPool.free.push_back(entry.slot);
+            --retiringSamplers;
+            --samplerRetiringAssigned;
+        } else {
+            imagePool.free.push_back(entry.slot);
+            --retiringAssigned;
         }
+        reclaimed = true;
     }
     if (reclaimed) noteReleasedLocked();
     return reclaimed;
@@ -704,7 +707,12 @@ std::optional<std::uint32_t> BindlessHeap::samplerSlot(const std::shared_ptr<Sam
     auto slot = samplerPool.Take();
     if (!slot && reclaimLocked(true)) slot = samplerPool.Take();
     if (!slot) return std::nullopt;
-    writeSamplerSlot(*slot, sampler->Handle());
+    try {
+        writeSamplerSlot(*slot, sampler->Handle());
+    } catch (...) {
+        samplerPool.Free(*slot);
+        throw;
+    }
     const HeapSlotOwner* owner = sampler.get();
     samplerSlots.emplace(owner, *slot);
     if (samplerOwners.size() <= *slot) {
@@ -1616,6 +1624,7 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
         if (refused && samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(EvictIdleSubmissions);
         for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) {
             entry->serial = serial;
+            entry->recorder = &recorder;
             if (entry->sampler) ++samplerRetiringAssigned;
             else ++retiringAssigned;
         }
@@ -1639,6 +1648,29 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
     }
     reclaimTablesLocked();
     trimPoolLocked();
+}
+
+void BindlessHeap::RecorderDestroyed(Recorder& recorder) {
+    {
+        std::lock_guard lock(mutex);
+        if (submitter == &recorder) submitter = nullptr;
+        for (auto& entry : retiring) {
+            if (entry.recorder == &recorder) entry.recorder = nullptr;
+        }
+        if (!retiring.empty()) reclaimLocked(false);
+    }
+    SpanScope scope(*this);
+    for (auto& block : poolBlocks) {
+        if (block.recorder != &recorder) continue;
+        block.recorder = nullptr;
+        block.serial = 0u;
+    }
+    for (auto& entry : retiredTables) {
+        if (entry.recorder != &recorder) continue;
+        entry.recorder = nullptr;
+        entry.serial = 0u;
+    }
+    reclaimTablesLocked();
 }
 
 BindlessHeap::Counts& BindlessHeap::Counts::operator+=(const Counts& other) {

@@ -1442,6 +1442,9 @@ Recorder::~Recorder() {
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
     }
+    if (DescriptorHeapEnabled()) {
+        if (auto* heap = BindlessHeap::Existing(context)) heap->RecorderDestroyed(*this);
+    }
     ForgetHtileMasks_nid_no_patch(id);
     progressWatcher.reset();
     holdKept.clear();
