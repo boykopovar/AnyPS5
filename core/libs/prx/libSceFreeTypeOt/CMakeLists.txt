@@ -147,7 +147,7 @@ if(BUILD_TESTING)
     endif()
     configure_windows_unwind(guest_freetype_ot_outline_tests)
     add_custom_target(guest_freetype_ot_outline_libraries DEPENDS
-        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
     add_dependencies(guest_freetype_ot_outline_tests guest_freetype_ot_outline_libraries)
     add_test(NAME guest_freetype_ot_outline COMMAND guest_freetype_ot_outline_tests $<TARGET_FILE:libSceFreeTypeOt> raw)
     add_test(NAME guest_freetype_ot_outline_patched COMMAND guest_freetype_ot_outline_tests ${PATCHED_DIR}/libSceFreeTypeOt.prx patched)
@@ -157,6 +157,9 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
         set_tests_properties(guest_freetype_ot_outline_patched PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${PATCHED_DIR}")
+    else()
+        set_tests_properties(guest_freetype_ot_outline_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "LD_LIBRARY_PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
 endif()
 
