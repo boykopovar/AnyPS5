@@ -508,6 +508,9 @@ static void TestColorGuestPointers() {
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
     Require(source.m_colorAndFlags == 0x11223344ull);
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*readOnly)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
 
     target.m_colorAndFlags = 0x55667788ull;
     Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(unreadable, source); }, "_ZN7WebCore5ColoraSERKS0_"));
