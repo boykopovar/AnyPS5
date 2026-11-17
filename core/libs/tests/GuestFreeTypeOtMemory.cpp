@@ -367,6 +367,12 @@ void GuestPointers() {
     Require(RejectsKeepingErrno([&] { ft_mem_realloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, readOnlyError); }), "realloc refuses a read-only error");
     Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, unmappedError); }), "dup refuses an unmapped error");
     Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, "ab", readOnlyError); }), "strdup refuses a read-only error");
+    Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(&recorder.memory, 8, nullptr); }), "qalloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, nullptr); }), "alloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_qrealloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, nullptr); }), "qrealloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_realloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, nullptr); }), "realloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, nullptr); }), "dup refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, "ab", nullptr); }), "strdup refuses a null error");
     Require(recorder.allocs == 0 && recorder.reallocs == 0 && *readOnlyError == 0x5A5A5A5A, "an unwritable error is refused before any allocation");
 
     Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(unmappedMemory, 8, &error); }), "qalloc refuses an unmapped memory record");
