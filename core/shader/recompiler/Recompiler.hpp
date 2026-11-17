@@ -452,7 +452,7 @@ struct GeometryConfiguration {
     bool operator==(const GeometryConfiguration&) const = default;
 };
 
-[[nodiscard]] std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords);
+[[nodiscard]] std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords, std::optional<std::uint32_t> streamConfigSgpr);
 
 struct TessellationConfiguration {
     std::uint32_t inputControlPoints;

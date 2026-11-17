@@ -187,7 +187,10 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0x088, 6, Stage::Geometry, 0x08b, 0x08c, Role::Geometry);
             append(0x048, 2, Stage::Vertex, 0x04b, 0x04c, Role::Copy);
             auto& geometry = *graphics.stages.legacyGeometry;
-            geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(programs.back().binary.code, geometry.maxVertices, geometry.vertexDwords);
+            const auto copyResources = queue.shader.find(0x04bu);
+            const auto copyRsrc2 = copyResources == queue.shader.end() ? 0u : copyResources->second;
+            const auto streamConfig = (copyRsrc2 & 0x1000u) != 0u ? std::optional<std::uint32_t>((copyRsrc2 >> 1u) & 0x1fu) : std::nullopt;
+            geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(programs.back().binary.code, geometry.maxVertices, geometry.vertexDwords, streamConfig);
         } else if (graphics.stages.legacyVertex) {
             append(0x48, 2, Stage::Vertex, 0x4b, 0x4c, Role::Main);
         } else {

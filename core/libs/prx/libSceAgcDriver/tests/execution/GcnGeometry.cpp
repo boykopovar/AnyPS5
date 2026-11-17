@@ -62,6 +62,14 @@ alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyExec{
     0x34020082, 0xe0305000, 0x80400201, 0xbefe04c1, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyMovedIndex{
+    0x4a000081, 0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> GcnCopyStreams{
+    0x34000082, 0x900a9802, 0xb48a0000, 0xbf840005, 0xe0305000, 0x80400200, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0x060604f2, 0xf80008cf, 0x02020302, 0xbf810000,
 };
@@ -83,7 +91,7 @@ GeometryConfiguration Points() {
     geometry.instances = 1u;
     geometry.esgsItemDwords = 2u;
     geometry.vertexDwords = 5u;
-    geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, geometry.maxVertices, geometry.vertexDwords);
+    geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, geometry.maxVertices, geometry.vertexDwords, std::nullopt);
     return geometry;
 }
 
@@ -180,30 +188,39 @@ void RequireQuads(AgcDriver::VulkanDevice& device) {
 }
 
 void RequireCopyLayout() {
-    const auto exports = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, 4u, 5u);
+    const auto exports = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, 4u, 5u, std::nullopt);
     Require(exports.size() == 2u, "the copy program did not yield a position and a parameter export");
     Require(exports[0].target == 0x0cu && exports[0].enable == 0xfu && exports[0].done && exports[0].constants == 0u && exports[0].values == std::array<std::uint32_t, 4>{0u, 1u, 2u, 3u}, "the position export did not read GSVS dwords 0-3");
     Require(exports[1].target == 0x20u && exports[1].constants == 0xeu && exports[1].values == std::array<std::uint32_t, 4>{4u, 0u, 0u, 0x3f800000u}, "the parameter export did not read GSVS dword 4 beside the constants 0, 0 and 1.0");
-    const auto folded = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyFolded, 4u, 5u);
+    const auto folded = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyFolded, 4u, 5u, std::nullopt);
     Require(folded.size() == 1u && folded[0].constants == 0u && folded[0].values == std::array<std::uint32_t, 4>{3u, 1u, 4u, 3u}, "scalar offsets built by s_addk_i32, s_lshl_b32 and s_bfm_b32 did not select GSVS dwords 3, 1 and 4");
     bool refused = false;
     try {
-        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyComputed, 4u, 5u));
+        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyComputed, 4u, 5u, std::nullopt));
     } catch (const std::exception& error) {
         refused = std::string(error.what()).find("an exported value other than a GSVS ring dword or a constant") != std::string::npos;
     }
     Require(refused, "a copy program that exports a computed value was accepted");
     refused = false;
     try {
-        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, 3u, 5u));
+        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopy, 3u, 5u, std::nullopt));
     } catch (const std::exception& error) {
         refused = std::string(error.what()).find("which is not one of the 5 vertex dwords") != std::string::npos;
     }
     Require(refused, "a copy program read at a slot stride other than VGT_GS_MAX_VERT_OUT times 64 bytes was accepted");
-    for (const auto& [code, reason] : {std::pair{std::span<const std::uint32_t>(GcnCopyBranch), "control flow in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyExec), "a copy program that writes EXEC"}}) {
+    const auto streams = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyStreams, 4u, 5u, 2u);
+    Require(streams.size() == 1u && streams[0].constants == 0u && streams[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "the stream 0 block of a copy program that selects its stream from the stream-out configuration SGPR was not read");
+    refused = false;
+    try {
+        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyStreams, 4u, 5u, std::nullopt));
+    } catch (const std::exception& error) {
+        refused = std::string(error.what()).find("a copy program branch on a condition not known at draw time") != std::string::npos;
+    }
+    Require(refused, "a copy program branch on the stream ID was followed without the stream-out configuration SGPR");
+    for (const auto& [code, reason] : {std::pair{std::span<const std::uint32_t>(GcnCopyBranch), "control flow other than a scalar condition in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyExec), "a copy program that writes EXEC"}, std::pair{std::span<const std::uint32_t>(GcnCopyMovedIndex), "not addressed by the vertex index times 4"}}) {
         refused = false;
         try {
-            static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(code, 4u, 5u));
+            static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(code, 4u, 5u, std::nullopt));
         } catch (const std::exception& error) {
             refused = std::string(error.what()).find(reason) != std::string::npos;
         }

@@ -298,9 +298,40 @@ std::optional<std::uint32_t> FoldScalar(const RdnaInstruction& instruction, cons
     case RdnaOpcode::SMulI32:
     case RdnaOpcode::SMulkI32: return *first * *second;
     case RdnaOpcode::SLshlB32: return *first << (*second & 31u);
+    case RdnaOpcode::SLshrB32: return *first >> (*second & 31u);
+    case RdnaOpcode::SAndB32: return *first & *second;
+    case RdnaOpcode::SOrB32: return *first | *second;
     case RdnaOpcode::SBfmB32: return ((*first & 31u) == 0u ? 0u : (0xffffffffu >> (32u - (*first & 31u)))) << (*second & 31u);
     default: return std::nullopt;
     }
+}
+
+std::optional<std::optional<bool>> CompareScalar(const RdnaInstruction& instruction, const std::map<std::uint32_t, std::uint32_t>& scalars) {
+    const auto first = ScalarValue(instruction.source0, scalars);
+    const auto second = ScalarValue(instruction.source1, scalars);
+    const auto known = [&](auto compare) -> std::optional<bool> {
+        if (!first || !second) return std::nullopt;
+        return compare(*first, *second, static_cast<std::int32_t>(*first), static_cast<std::int32_t>(*second));
+    };
+    switch (instruction.op) {
+    case RdnaOpcode::SCmpEqU32:
+    case RdnaOpcode::SCmpEqI32: return known([](auto a, auto b, auto, auto) { return a == b; });
+    case RdnaOpcode::SCmpLgU32:
+    case RdnaOpcode::SCmpLgI32: return known([](auto a, auto b, auto, auto) { return a != b; });
+    case RdnaOpcode::SCmpGtU32: return known([](auto a, auto b, auto, auto) { return a > b; });
+    case RdnaOpcode::SCmpGeU32: return known([](auto a, auto b, auto, auto) { return a >= b; });
+    case RdnaOpcode::SCmpLtU32: return known([](auto a, auto b, auto, auto) { return a < b; });
+    case RdnaOpcode::SCmpLeU32: return known([](auto a, auto b, auto, auto) { return a <= b; });
+    case RdnaOpcode::SCmpGtI32: return known([](auto, auto, auto a, auto b) { return a > b; });
+    case RdnaOpcode::SCmpGeI32: return known([](auto, auto, auto a, auto b) { return a >= b; });
+    case RdnaOpcode::SCmpLtI32: return known([](auto, auto, auto a, auto b) { return a < b; });
+    case RdnaOpcode::SCmpLeI32: return known([](auto, auto, auto a, auto b) { return a <= b; });
+    default: return std::nullopt;
+    }
+}
+
+bool KeepsScc(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::SMovB32 || opcode == RdnaOpcode::SMovkI32 || opcode == RdnaOpcode::SBfmB32 || opcode == RdnaOpcode::SMulI32 || opcode == RdnaOpcode::SMulkI32;
 }
 
 void Forget(std::map<std::uint32_t, CopySource>& vectors, std::map<std::uint32_t, std::uint32_t>& scalars, const RdnaInstruction& instruction) {
@@ -319,26 +350,51 @@ void GeometryLowering::Lower(IrProgram& program, const ShaderGeometryInputInfo& 
     Lowering(program, geometry).Run();
 }
 
-std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords) {
+std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords, std::optional<std::uint32_t> streamConfigSgpr) {
     if (maxVertices == 0u || vertexDwords == 0u) throw std::runtime_error("geometry copy program: VGT_GS_MAX_VERT_OUT and VGT_GS_VERT_ITEMSIZE must be nonzero");
     const auto program = RdnaInstructionDecoder{}.Decode(code);
     std::map<std::uint32_t, CopySource> vectors;
     std::map<std::uint32_t, std::uint32_t> scalars;
+    if (streamConfigSgpr) scalars[*streamConfigSgpr] = 0u;
+    bool vertexIndex = true;
+    std::optional<bool> scc;
+    std::optional<std::uint32_t> skipTo;
     std::vector<GeometryCopyExport> exports;
     const auto slotBytes = maxVertices * GsVsVertexBytes;
     for (const auto& instruction : program.instructions) {
         const auto pc = instruction.programCounter;
+        if (skipTo) {
+            if (pc < *skipTo) continue;
+            if (pc > *skipTo) FailCopy("a branch into the middle of an instruction", pc);
+            skipTo.reset();
+        }
         if (instruction.op == RdnaOpcode::SEndpgm) break;
-        if (IsBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) FailCopy("control flow in a copy program", pc);
+        if (instruction.op == RdnaOpcode::SBranch || instruction.op == RdnaOpcode::SCbranchScc0 || instruction.op == RdnaOpcode::SCbranchScc1) {
+            if (instruction.branchTarget <= pc) FailCopy("a backward branch in a copy program", pc);
+            if (instruction.op != RdnaOpcode::SBranch && !scc) FailCopy("a copy program branch on a condition not known at draw time", pc);
+            if (instruction.op == RdnaOpcode::SBranch || *scc == (instruction.op == RdnaOpcode::SCbranchScc1)) skipTo = instruction.branchTarget;
+            continue;
+        }
+        if (IsBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) FailCopy("control flow other than a scalar condition in a copy program", pc);
+        if (const auto compared = CompareScalar(instruction, scalars)) {
+            scc = *compared;
+            continue;
+        }
+        const auto family = instruction.family;
+        if ((family == RdnaInstructionFamily::SOP1 || family == RdnaInstructionFamily::SOP2 || family == RdnaInstructionFamily::SOPK || family == RdnaInstructionFamily::SOPC) && !KeepsScc(instruction.op)) scc.reset();
         for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
             if (destination->kind == RdnaOperandKind::ExecLo || destination->kind == RdnaOperandKind::ExecHi) FailCopy("a copy program that writes EXEC", pc);
+        }
+        const bool indexLive = vertexIndex;
+        for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
+            if (destination->kind == RdnaOperandKind::VectorRegister && destination->reg == 0u) vertexIndex = false;
         }
         if (const auto folded = FoldScalar(instruction, scalars)) {
             Forget(vectors, scalars, instruction);
             if (instruction.destination.kind == RdnaOperandKind::ScalarRegister) scalars[instruction.destination.reg] = *folded;
             continue;
         }
-        if (instruction.op == RdnaOpcode::VLshlrevB32 && instruction.source1.kind == RdnaOperandKind::VectorRegister && instruction.source1.reg == 0u && OperandConstant(instruction.source0) == 2u && !vectors.contains(0u)) {
+        if (instruction.op == RdnaOpcode::VLshlrevB32 && instruction.source1.kind == RdnaOperandKind::VectorRegister && instruction.source1.reg == 0u && OperandConstant(instruction.source0) == 2u && indexLive) {
             Forget(vectors, scalars, instruction);
             vectors[instruction.destination.reg] = CopySource{true};
             continue;
