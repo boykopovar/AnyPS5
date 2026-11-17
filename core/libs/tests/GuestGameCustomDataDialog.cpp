@@ -330,6 +330,10 @@ void RequireVariant(OpenFn open, GetResultFn getResult, const void* ids, const v
     Require(result.sent == sent.data());
     for (std::size_t i = 0; i < sentListBytes; ++i) Require(sent[i] == 0);
     Require(sent[sentListBytes] == 0xA5);
+    result.sent = reinterpret_cast<void*>(0x10);
+    errno = 71;
+    Require(getResult(&result) == kErrArgNull);
+    Require(errno == 71);
     result.sent = nullptr;
     Require(getResult(&result) == kResultUserCanceled);
     errno = 71;
