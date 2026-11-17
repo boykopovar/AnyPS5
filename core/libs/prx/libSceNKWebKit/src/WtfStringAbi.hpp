@@ -97,6 +97,9 @@ struct String {
     String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
 
+StringView ViewOf(const StringImpl* impl);
+char16_t CodeUnitAt(const StringView& view, unsigned index);
+
 struct StringViewWithUnderlyingString {
     StringView view;
     String underlyingString;

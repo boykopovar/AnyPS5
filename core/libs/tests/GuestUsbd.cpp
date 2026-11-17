@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,12 @@
 #include <thread>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -48,6 +55,52 @@ bool Throws(TCall call) {
         return true;
     }
     return false;
+}
+
+void TimeoutGuestMemory() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "timeout allocation failed");
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0, "timeout protection failed");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "page size unavailable");
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED, "timeout allocation failed");
+    Require(mprotect(memory + page, page, PROT_NONE) == 0, "timeout protection failed");
+#endif
+    for (const auto invalid : {UsbdTimeval{-1, 0}, UsbdTimeval{0, -1}, UsbdTimeval{0, 1000000}}) {
+        errno = EDOM;
+        Require(sceUsbdHandleEventsTimeout(&invalid) == invalidArgument, "invalid timeout accepted");
+        Require(errno == EDOM, "invalid timeout changed errno");
+    }
+    const UsbdTimeval oversized{static_cast<std::int64_t>(INT_MAX) + 1, 0};
+    Require(Throws([&] { sceUsbdHandleEventsTimeout(&oversized); }), "oversized timeout accepted");
+    const UsbdTimeval zero{};
+    auto* exact = reinterpret_cast<UsbdTimeval*>(memory + page - sizeof(zero));
+    std::memcpy(exact, &zero, sizeof(zero));
+    for (const auto offset : {page, page - sizeof(zero) / 2}) {
+        errno = EDOM;
+        Require(sceUsbdHandleEventsTimeout(reinterpret_cast<const UsbdTimeval*>(memory + offset)) == invalidArgument, "unreadable timeout accepted");
+        Require(errno == EDOM, "timeout copy changed errno");
+    }
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "timeout read-only protection failed");
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0, "timeout read-only protection failed");
+#endif
+    Require(sceUsbdHandleEventsTimeout(exact) == 0, "exact read-only timeout failed after refused reads");
+    Require(std::memcmp(exact, &zero, sizeof(zero)) == 0, "timeout was modified");
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "timeout release failed");
+#else
+    Require(munmap(memory, page * 2) == 0, "timeout release failed");
+#endif
 }
 
 void APS5_VABI MarkDone(UsbdTransfer* transfer) {
@@ -443,6 +496,10 @@ void CheckTransferFillers() {
     Require(transfer->length == 0 && sceUsbdControlTransferGetData(transfer) == nullptr, "a control transfer without a buffer has data");
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
+    Require(Throws([] { sceUsbdFillControlSetup(reinterpret_cast<std::uint8_t*>(0x10), 0x80, 6, 0x0100, 0, 18); }), "filling an unwritable control setup did not throw");
+    transfer->length = 77;
+    Require(Throws([&] { sceUsbdFillControlTransfer(transfer, &device, reinterpret_cast<std::uint8_t*>(0x10), &MarkDone, &user, 100); }) && transfer->length == 77,
+        "filling a control transfer from an unreadable setup did not throw before touching the transfer");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
     auto* bulk = sceUsbdAllocTransfer(0);
     Require(bulk != nullptr, "transfer allocation failed");
@@ -464,8 +521,34 @@ void CheckTransferFillers() {
     sceUsbdFreeTransfer(transfer);
 }
 
+void EventTimeoutsWithoutContext() {
+    for (const std::int64_t micros : {0, 50, 1000}) {
+        UsbdTimeval timeout{0, micros};
+        const auto handlerStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) Require(sceUsbdHandleEventsTimeout(&timeout) == 0, "event handling without a context failed");
+        const auto handlerWait = std::chrono::steady_clock::now() - handlerStart;
+        Require(handlerWait >= std::chrono::microseconds(20 * micros), "event handling without a context returned early");
+        Require(handlerWait < std::chrono::milliseconds(200), "event handling without a context exceeded the timeout tolerance");
+
+        const auto waiterStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) {
+            sceUsbdLockEventWaiters();
+            Require(sceUsbdWaitForEvent(&timeout) == 1, "event waiter without a context did not time out");
+            Require(sceUsbdEventHandlingOk() == 1, "timed-out waiter did not take over event handling");
+            sceUsbdUnlockEvents();
+        }
+        const auto waiterWait = std::chrono::steady_clock::now() - waiterStart;
+        Require(waiterWait >= std::chrono::microseconds(20 * micros), "event waiter without a context returned early");
+        Require(waiterWait < std::chrono::milliseconds(200), "event waiter without a context exceeded the timeout tolerance");
+        std::printf("USBD: 20 x %lld us: handler %.3f ms, waiter %.3f ms\n", static_cast<long long>(micros),
+            std::chrono::duration<double, std::milli>(handlerWait).count(), std::chrono::duration<double, std::milli>(waiterWait).count());
+    }
+}
+
 int main(int argc, char** argv) {
+    EventTimeoutsWithoutContext();
     Require(sceUsbdInit() == 0, "initialization failed");
+    TimeoutGuestMemory();
     CheckTransferFillers();
     void** list = nullptr;
     const std::int64_t count = sceUsbdGetDeviceList(&list);
@@ -500,6 +583,10 @@ int main(int argc, char** argv) {
 
     Require(Throws([&] { sceUsbdClose(&foreign); }), "closing a handle that was never opened did not throw");
     Require(sceUsbdRefDevice(nullptr) == nullptr, "null device was referenced");
+    errno = 71;
+    Require(sceUsbdGetActiveConfigDescriptor(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable active config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptor(&foreign, 0, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptorByValue(&foreign, 1, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor by value output accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
@@ -521,11 +608,22 @@ int main(int argc, char** argv) {
     Require(sceUsbdControlTransfer(nullptr, 0x80, 6, 0x100, 0, descriptor, 18, 1000) == invalidArgument, "null handle control transfer accepted");
     Require(sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, nullptr, 18, 1000) == invalidArgument, "control transfer without data accepted");
     Require(Throws([&] { sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, 18, 1000); }), "control transfer on a handle that was never opened did not throw");
+    std::int32_t transferred = 0x5A5A;
+    Require(sceUsbdBulkTransfer(nullptr, 0x81, descriptor, 18, &transferred, 1000) == invalidArgument && transferred == 0x5A5A, "null handle bulk transfer accepted");
+    Require(Throws([&] { sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "bulk transfer on a handle that was never opened did not throw after clearing the count");
+    transferred = 0x5A5A;
+    Require(Throws([&] { sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "interrupt transfer on a handle that was never opened did not throw after clearing the count");
+    errno = 71;
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable bulk transfer count accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable interrupt transfer count accepted");
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
     descriptor[0] = 0x55;
     Require(sceUsbdGetStringDescriptorAscii(nullptr, 1, descriptor, 18) == invalidArgument, "null handle ASCII string descriptor accepted");
     Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, nullptr, 18) == invalidArgument && sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 0) == invalidArgument, "missing ASCII string buffer accepted");
+    errno = 71;
+    Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable string descriptor buffer accepted");
+    Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable ASCII string buffer accepted");
     Require(descriptor[0] == 0x55, "a rejected ASCII string request wrote the buffer");
     Require(Throws([&] { sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 18); }), "ASCII string request on a handle that was never opened did not throw");
     Require(sceUsbdGetDescriptor(nullptr, 1, 0, descriptor, 18) == invalidArgument, "null handle descriptor request accepted");
