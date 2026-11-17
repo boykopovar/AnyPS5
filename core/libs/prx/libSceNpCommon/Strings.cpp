@@ -169,18 +169,76 @@ char HexDigit(std::uint32_t value, bool uppercase) {
     return static_cast<char>((uppercase ? 'A' : 'a') + value - 10);
 }
 
-int ParseHex(const char* hex, std::size_t length, std::uint8_t* out, std::size_t capacity) {
+bool CopyHexIn(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return copied;
+}
+
+bool CopyHexOut(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return copied;
+}
+
+bool CopyHexText(const char* hex, std::string& text) {
+    constexpr std::size_t Chunk = 4096;
+    std::array<char, Chunk> bytes {};
+    auto address = reinterpret_cast<std::uintptr_t>(hex);
+    while (true) {
+        const std::size_t count = Chunk - address % Chunk;
+        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        if (const auto* end = static_cast<const char*>(std::memchr(bytes.data(), 0, count))) {
+            text.append(bytes.data(), static_cast<std::size_t>(end - bytes.data()));
+            return true;
+        }
+        text.append(bytes.data(), count);
+        address += count;
+    }
+}
+
+bool CopyHexRange(const char* hex, std::size_t length, std::string& text) {
+    constexpr std::size_t Chunk = 4096;
+    std::array<char, Chunk> bytes {};
+    auto address = reinterpret_cast<std::uintptr_t>(hex);
+    while (text.size() < length) {
+        const std::size_t count = std::min(Chunk - address % Chunk, length - text.size());
+        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        text.append(bytes.data(), count);
+        address += count;
+    }
+    return true;
+}
+
+int HexLengthError(std::size_t length, std::size_t capacity) {
     if ((length & 1) != 0) return NP_ERROR_INVALID_ARGUMENT;
     if (capacity < length / 2) return NP_ERROR_BUFFER_TOO_SMALL;
-    for (std::size_t i = 0; i < length; i += 2) {
-        const int high = HexValue(hex[i]);
-        if (high < 0) return NP_ERROR_INVALID_ARGUMENT;
-        out[i / 2] = static_cast<std::uint8_t>(high << 4);
-        const int low = HexValue(hex[i + 1]);
-        if (low < 0) return NP_ERROR_INVALID_ARGUMENT;
-        out[i / 2] = static_cast<std::uint8_t>((high << 4) | low);
-    }
     return 0;
+}
+
+int ParseHex(std::string_view hex, void* out, std::size_t capacity) {
+    if (const int error = HexLengthError(hex.size(), capacity)) return error;
+    std::string bytes(hex.size() / 2, '\0');
+    std::size_t stored = 0;
+    int result = 0;
+    for (std::size_t i = 0; i < hex.size(); i += 2) {
+        const int high = HexValue(hex[i]);
+        if (high < 0) {
+            result = NP_ERROR_INVALID_ARGUMENT;
+            break;
+        }
+        bytes[stored++] = static_cast<char>(high << 4);
+        const int low = HexValue(hex[i + 1]);
+        if (low < 0) {
+            result = NP_ERROR_INVALID_ARGUMENT;
+            break;
+        }
+        bytes[stored - 1] = static_cast<char>((high << 4) | low);
+    }
+    if (stored != 0 && !CopyHexOut(out, bytes.data(), stored)) return NP_ERROR_INVALID_ARGUMENT;
+    return result;
 }
 
 int FormatInteger(char* buf, std::size_t size, std::uint64_t magnitude, char sign, std::uint32_t radix,
@@ -545,11 +603,16 @@ int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std
 }
 
 int APS5_VABI sceNpStrParseHex(const char* hex, void* out, std::size_t capacity) {
-    return ParseHex(hex, std::strlen(hex), static_cast<std::uint8_t*>(out), capacity);
+    std::string text;
+    if (!CopyHexText(hex, text)) return NP_ERROR_INVALID_ARGUMENT;
+    return ParseHex(text, out, capacity);
 }
 
 int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, std::size_t capacity) {
-    return ParseHex(hex, length, static_cast<std::uint8_t*>(out), capacity);
+    if (const int error = HexLengthError(length, capacity)) return error;
+    std::string text;
+    if (!CopyHexRange(hex, length, text)) return NP_ERROR_INVALID_ARGUMENT;
+    return ParseHex(text, out, capacity);
 }
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
@@ -734,9 +797,9 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
         encoded[0] = src[0];
     }
     if (status == 0 && dst != nullptr && dstSize < decoded) status = NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (status == 0 && dst != nullptr) std::memcpy(dst, encoded, decoded);
-    if (dstLength != nullptr) *dstLength = decoded;
-    if (consumed != nullptr) *consumed = used;
+    if (status == 0 && dst != nullptr && !GuestCopyOut_nid_no_patch(dst, encoded, decoded)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &decoded, sizeof(decoded))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (consumed != nullptr && !GuestCopyOut_nid_no_patch(consumed, &used, sizeof(used))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
@@ -821,7 +884,7 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 }
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
-    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const char* position = text;
     for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
         const auto lead = static_cast<unsigned char>(*position);
@@ -834,7 +897,7 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
         }
         position += length;
     }
-    *character = position;
+    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

@@ -1,4 +1,6 @@
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libkernel/libkernel.hpp"
 
 #include <ft2build.h>
 #include FT_TRIGONOMETRY_H
@@ -60,10 +62,12 @@ std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t angle) {
 
 void APS5_VABI FT_Vector_Unit_nid_postfix(GuestVector* vector, std::int64_t angle) {
     if (!vector) return;
+    GuestArena::HostWrite write(vector, sizeof(*vector));
+    if (!write.Open() || !GuestWritable_nid_no_patch(vector, sizeof(*vector))) return;
     FT_Vector native{};
     FT_Vector_Unit(&native, NormalizeAngle_nid_no_patch(angle));
-    vector->x = native.x;
-    vector->y = native.y;
+    GuestVector result{native.x, native.y};
+    GuestCopyOut_nid_no_patch(vector, &result, sizeof(result));
 }
 
 std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t first, std::int64_t second) {
