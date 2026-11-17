@@ -62,3 +62,4 @@
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
+#include "prx/libSceNKWebKit/include/ScrollingConstraintsExports.hpp"
