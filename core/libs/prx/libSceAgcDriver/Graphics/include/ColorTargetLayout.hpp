@@ -104,6 +104,22 @@ private:
     std::size_t bytes;
 };
 
+class GcnCmaskLayout {
+public:
+    GcnCmaskLayout(std::uint32_t width, std::uint32_t height);
+    std::size_t Bytes() const { return bytes; }
+    std::uint32_t TilesX() const { return (width + 7u) / 8u; }
+    std::uint32_t TilesY() const { return (height + 7u) / 8u; }
+    std::size_t Nibble(std::uint32_t tileX, std::uint32_t tileY) const;
+
+private:
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t pitch;
+    std::uint32_t paddedHeight;
+    std::size_t bytes;
+};
+
 }
 
 #endif

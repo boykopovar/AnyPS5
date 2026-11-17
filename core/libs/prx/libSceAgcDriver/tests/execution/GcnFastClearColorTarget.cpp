@@ -29,6 +29,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -51,8 +52,14 @@ constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 128u;
 constexpr std::size_t Slot = 0x10000;
 constexpr std::size_t FmaskBytes = Width * Height;
-constexpr std::size_t BlockBytes = 24u * Slot;
-constexpr std::size_t Vertices = 23u * Slot;
+constexpr std::size_t BlockBytes = 80u * Slot;
+constexpr std::size_t Vertices = 79u * Slot;
+constexpr std::uint32_t Thin2D = 14u;
+constexpr std::uint32_t TiledWidth = 512;
+constexpr std::uint32_t TiledHeight = 512;
+constexpr std::size_t TiledColorBytes = TiledWidth * TiledHeight * 4u;
+constexpr std::size_t TiledCmaskBytes = 2048u;
+constexpr std::uint32_t SmallTiledSize = 128;
 constexpr std::uint64_t GcnAddressLimit = std::uint64_t{1} << 40u;
 constexpr std::uint32_t RedClear = 0xff0000ffu;
 constexpr Texel Red{0xff, 0x00, 0x00, 0xff};
@@ -148,6 +155,10 @@ constexpr Case OneExpanded{11u * Slot, 12u * Slot, 13u * Slot};
 constexpr Case OneUnknownCode{14u * Slot, 15u * Slot, 16u * Slot};
 constexpr Case SliceCleared{17u * Slot, 18u * Slot, 0u, 1u};
 constexpr Case OneSliceCleared{19u * Slot, 20u * Slot, 21u * Slot, 1u};
+constexpr Case TiledPartial{22u * Slot, 38u * Slot};
+constexpr Case TiledCodeOne{39u * Slot, 55u * Slot};
+constexpr Case TiledUnknownCode{56u * Slot, 72u * Slot};
+constexpr Case SmallTiledPartial{73u * Slot, 74u * Slot};
 
 AgcDriver::Graphics::ColorTarget DecodeTarget(const LowBlock& block, const Case& at) {
     AgcDriver::Registers cx;
@@ -168,6 +179,24 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const LowBlock& block, const Case&
     Require(target.samples == 1u && target.cmaskFastClear && target.cmaskAddress == block.At(at.cmask) + at.slice * CmaskBytes && target.cmaskBytes == CmaskBytes, "the fast-cleared GCN target did not decode with the CMASK of its slice");
     Require(!oneFragment || (target.coverageSamples == OneFragmentSamples && target.fmaskAddress == block.At(at.fmask) + at.slice * FmaskBytes && target.gcnFmaskBytes == FmaskBytes), "the fast-cleared 4-sample 1-fragment GCN target did not decode with its coverage samples and the FMASK of its slice");
     Require(target.format == VK_FORMAT_R8G8B8A8_UNORM && target.address == block.At(at.color) + at.slice * ColorBytes && target.bytes == ColorBytes && target.tileMode == AgcDriver::Graphics::ColorTileMode::GcnThin1D, "the 8_8_8_8 unorm GCN target did not decode as a thin 1D RGBA8 target at its slice");
+    return target;
+}
+
+AgcDriver::Graphics::ColorTarget DecodeTiledTarget(const LowBlock& block, const Case& at, std::uint32_t size = TiledWidth) {
+    const auto cmaskSlice = static_cast<std::size_t>((size + 511u) / 512u * 512u) * ((size + 255u) / 256u * 256u) / 128u;
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(block.At(at.color) >> 8u);
+    cx[0x319] = size / 8u - 1u;
+    cx[0x31a] = size * size / 64u - 1u;
+    cx[0x31b] = 0u;
+    cx[0x31c] = (Format8888 << 2u) | BlendClamp | FastClear;
+    cx[0x31d] = Thin2D;
+    cx[0x31f] = static_cast<std::uint32_t>(block.At(at.cmask) >> 8u);
+    cx[0x320] = static_cast<std::uint32_t>(cmaskSlice / 128u - 1u);
+    cx[0x323] = RedClear;
+    cx[0x324] = 0u;
+    const auto target = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(target.samples == 1u && target.cmaskFastClear && target.cmaskAddress == block.At(at.cmask) && target.cmaskBytes == cmaskSlice && target.bytes == static_cast<std::size_t>(size) * size * 4u && target.tileMode == AgcDriver::Graphics::ColorTileMode::GcnThin2D, "the fast-cleared GCN target did not decode as a 2D thin target with the CB_COLOR_CMASK_SLICE Mesa gives it");
     return target;
 }
 
@@ -254,6 +283,27 @@ void Draw(AgcDriver::VulkanDevice& device, const LowBlock& block, const AgcDrive
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Lower.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+}
+
+void Eliminate(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color) {
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::EliminateFastClear;
+    pass.targets = {color};
+    device.ColorMetadataPass(pass);
+    device.WaitIdle();
+}
+
+std::size_t TiledTexelsMismatching(std::span<const std::uint8_t> stored, const std::vector<std::pair<std::uint32_t, std::uint32_t>>& clearedTiles) {
+    const AgcDriver::Graphics::ColorTargetLayout surface(TiledWidth, TiledHeight, AgcDriver::Graphics::ColorTileMode::GcnThin2D, 4u);
+    std::size_t mismatches = 0;
+    for (std::uint32_t y = 0; y < TiledHeight; ++y) {
+        for (std::uint32_t x = 0; x < TiledWidth; ++x) {
+            const bool cleared = std::find(clearedTiles.begin(), clearedTiles.end(), std::pair{x / 8u, y / 8u}) != clearedTiles.end();
+            const auto& expected = cleared ? Red : Blue;
+            if (!std::equal(expected.begin(), expected.end(), stored.begin() + static_cast<std::ptrdiff_t>(surface.Offset(x, y)))) ++mismatches;
+        }
+    }
+    return mismatches;
 }
 
 bool AllBytes(std::span<const std::uint8_t> bytes, std::uint8_t value) {
@@ -356,7 +406,47 @@ int main() {
         }
         Require(Guarded(block.At(OneSliceCleared.fmask) + FmaskBytes) && !Guarded(block.At(OneSliceCleared.fmask)), "the FMASK guard of slice 1 of a 4-sample 1-fragment GCN array does not cover that slice's FMASK alone");
 
-        std::printf("GCN single-sample fast clear tests passed: a cleared CMASK materializes the clear color under a draw (%zu clear, %zu drawn texels), an expanded CMASK keeps the texels, mixed codes are refused, an eliminate stores the clear color, a 4-sample 1-fragment target clears under code 0, keeps its texels under code 0xc and refuses code 0x5, and a draw into slice 1 of a single-sample or 1-fragment array clears that slice through its own CMASK and keeps slice 0\n", clearedRed, clearedGreen);
+        std::array<std::uint8_t, TiledCmaskBytes> partial{};
+        partial.fill(0xffu);
+        partial[0] = 0x00u;
+        partial[1] = 0xf0u;
+        partial[256] = 0xf0u;
+        partial[1024] = 0xf0u;
+        Fill(block.At(TiledPartial.cmask), TiledCmaskBytes, partial);
+        Fill(block.At(TiledPartial.color), TiledColorBytes, Blue);
+        Eliminate(*device, DecodeTiledTarget(block, TiledPartial));
+        const auto partialMismatches = TiledTexelsMismatching(Stored(block.At(TiledPartial.color), TiledColorBytes), {{0u, 0u}, {1u, 1u}, {2u, 3u}, {1u, 0u}, {4u, 0u}});
+        Require(partialMismatches == 0u, "the fast clear eliminate of a 2D thin GCN target whose CMASK clears nibbles 0, 1, 2, 512 and 2048 did not store the clear color in tiles (0,0), (1,1), (2,3), (1,0) and (4,0) alone: " + std::to_string(partialMismatches) + " texels differ");
+        Require(AllBytes(Stored(block.At(TiledPartial.cmask), TiledCmaskBytes), 0xffu), "the fast clear eliminate of a partly cleared 2D thin GCN target did not expand its CMASK");
+
+        std::array<std::uint8_t, 256> codeOne{};
+        codeOne.fill(0x10u);
+        std::fill_n(codeOne.begin() + 128, 128, std::uint8_t{0x00});
+        Fill(block.At(TiledCodeOne.cmask), TiledCmaskBytes, codeOne);
+        Fill(block.At(TiledCodeOne.color), TiledColorBytes, Blue);
+        Eliminate(*device, DecodeTiledTarget(block, TiledCodeOne));
+        Require(Count(Stored(block.At(TiledCodeOne.color), TiledColorBytes), Red) == TiledWidth * TiledHeight, "the fast clear eliminate of a single-sample GCN target whose CMASK holds codes 0 and 1 did not store the clear color in every texel");
+        Require(AllBytes(Stored(block.At(TiledCodeOne.cmask), TiledCmaskBytes), 0xffu), "the fast clear eliminate of a single-sample GCN target under codes 0 and 1 did not expand its CMASK");
+
+        Fill(block.At(TiledUnknownCode.cmask), TiledCmaskBytes, std::array<std::uint8_t, 1>{0x55});
+        Fill(block.At(SmallTiledPartial.cmask), 1024u, partial);
+        std::string undersized;
+        try {
+            Eliminate(*device, DecodeTiledTarget(block, SmallTiledPartial, SmallTiledSize));
+        } catch (const std::runtime_error& error) {
+            undersized = error.what();
+        }
+        Require(undersized.find("CMASK_SLICE smaller than addrlib's padded CMASK") != std::string::npos, "a partial CMASK of a 128x128 2D thin target, whose 1024-byte CMASK_SLICE is smaller than addrlib's 2048-byte CMASK, was not refused by name: " + undersized);
+
+        std::string singleUnknown;
+        try {
+            Eliminate(*device, DecodeTiledTarget(block, TiledUnknownCode));
+        } catch (const std::runtime_error& error) {
+            singleUnknown = error.what();
+        }
+        Require(singleUnknown.find("CMASK code 0x5 of a single-sample GCN color target is not implemented") != std::string::npos, "CMASK code 0x5 of a single-sample GCN target was not refused by name: " + singleUnknown);
+
+        std::printf("GCN single-sample fast clear tests passed: a cleared CMASK materializes the clear color under a draw (%zu clear, %zu drawn texels), an expanded CMASK keeps the texels, mixed codes are refused, an eliminate stores the clear color, a 4-sample 1-fragment target clears under code 0, keeps its texels under code 0xc and refuses code 0x5, a draw into slice 1 of a single-sample or 1-fragment array clears that slice through its own CMASK and keeps slice 0, a partial CMASK of a 2D thin target clears only its tiles in the addrlib tile order, codes 1 to 3 of a single-sample target are fast clears, and code 0x5 and a partial CMASK smaller than addrlib's padded CMASK are refused\n", clearedRed, clearedGreen);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

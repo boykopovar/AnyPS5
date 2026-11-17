@@ -2456,6 +2456,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         color.cmaskBytes = (static_cast<std::size_t>(read(cx, 0x320 + stride) & 0x3fffu) + 1u) * 128u;
         color.cmaskAddress += static_cast<std::uint64_t>(slice) * color.cmaskBytes;
         color.cmaskFastClear = (info & 0x2000u) != 0;
+        color.cmaskLinear = (info & 0x80000u) != 0;
     }
     if (fragments < color.coverageSamples && (info & 0x4000u) != 0) {
         color.fmaskAddress = static_cast<std::uint64_t>(read(cx, 0x321 + stride)) << 8u;

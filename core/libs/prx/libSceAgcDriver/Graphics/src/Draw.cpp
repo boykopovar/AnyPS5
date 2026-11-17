@@ -51,6 +51,7 @@
 #include <mutex>
 #include <new>
 #include <set>
+#include <span>
 #include <unordered_map>
 #include <type_traits>
 #include <utility>
@@ -631,15 +632,14 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     return CmaskState::Partial;
 }
 
-void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, const std::vector<std::uint32_t>* tiles, const std::array<std::byte, 16>& texel) {
+void storeCmaskClearTexels(const ColorTarget& color, const ColorTargetLayout& surface, std::uint32_t tilesX, std::uint32_t tilesY, const std::vector<std::uint32_t>* tiles, const std::array<std::byte, 16>& texel) {
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
-    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     Require(surface.Bytes() == color.bytes, "CMASK fast clear over a color target whose layout differs from its surface");
     std::vector<std::byte> texels(surface.Bytes());
     GuestMemory::Read(color.address, texels, surface.Alignment());
     const auto fill = [&](std::uint32_t tile) {
-        const auto x0 = (tile % layout.TilesX()) * 8u;
-        const auto y0 = (tile / layout.TilesX()) * 8u;
+        const auto x0 = (tile % tilesX) * 8u;
+        const auto y0 = (tile / tilesX) * 8u;
         for (auto y = y0; y < std::min(y0 + 8u, color.extent.height); ++y) {
             for (auto x = x0; x < std::min(x0 + 8u, color.extent.width); ++x) std::memcpy(texels.data() + surface.Offset(x, y), texel.data(), color.elementBytes);
         }
@@ -647,7 +647,7 @@ void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, 
     if (tiles != nullptr) {
         for (const auto tile : *tiles) fill(tile);
     } else {
-        for (std::uint32_t tile = 0; tile < layout.TilesX() * layout.TilesY(); ++tile) fill(tile);
+        for (std::uint32_t tile = 0; tile < tilesX * tilesY; ++tile) fill(tile);
     }
     GuestMemory::Write(color.address, texels, surface.Alignment());
 }
@@ -666,23 +666,51 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
 
+bool gcnCmaskTileCleared(std::uint32_t code, bool oneFragment) {
+    if (code == 0u) return true;
+    if ((code >> 2u) == 3u) return false;
+    if (!oneFragment && (code >> 2u) == 0u) return true;
+    char text[128];
+    std::snprintf(text, sizeof(text), "AGC graphics: CMASK code 0x%x of a %s GCN color target is not implemented", code, oneFragment ? "one-fragment" : "single-sample");
+    throw std::runtime_error(text);
+}
+
+bool gcnCmaskTileOrdered(const ColorTarget& color, const GcnCmaskLayout& layout) {
+    return (color.tileMode == ColorTileMode::GcnThin2D || color.tileMode == ColorTileMode::GcnDisplay2D) && !color.cmaskLinear && layout.Bytes() <= color.cmaskBytes;
+}
+
+std::vector<std::uint32_t> gcnCmaskClearedTiles(const GcnCmaskLayout& layout, std::span<const std::byte> mask, bool oneFragment) {
+    std::vector<std::uint32_t> cleared;
+    for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
+        for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
+            const auto nibble = layout.Nibble(tileX, tileY);
+            const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
+            if (gcnCmaskTileCleared(code, oneFragment)) cleared.push_back(tileY * layout.TilesX() + tileX);
+        }
+    }
+    return cleared;
+}
+
 bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     constexpr std::size_t cmaskAlignment = 128;
+    const GcnCmaskLayout layout(color.extent.width, color.extent.height);
+    const bool ordered = gcnCmaskTileOrdered(color, layout);
     const auto bytes = color.cmaskBytes;
     if (cmaskProved(color.cmaskAddress, bytes)) return false;
     const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);
     const auto mask = readCmaskBytes(color.cmaskAddress, bytes, cmaskAlignment);
     const bool oneFragment = color.coverageSamples > color.samples;
+    std::vector<std::uint32_t> cleared;
     std::size_t clearedTiles = 0;
-    for (const auto entry : mask) {
-        for (const auto shift : {0u, 4u}) {
-            const auto code = (std::to_integer<std::uint32_t>(entry) >> shift) & 0xfu;
-            if (code == 0u) {
-                ++clearedTiles;
-            } else if (oneFragment && (code >> 2u) != 3u) {
-                char text[128];
-                std::snprintf(text, sizeof(text), "AGC graphics: CMASK code 0x%x of a one-fragment GCN color target is not implemented", code);
-                throw std::runtime_error(text);
+    std::size_t tiles = mask.size() * 2u;
+    if (ordered) {
+        cleared = gcnCmaskClearedTiles(layout, mask, oneFragment);
+        clearedTiles = cleared.size();
+        tiles = static_cast<std::size_t>(layout.TilesX()) * layout.TilesY();
+    } else {
+        for (const auto entry : mask) {
+            for (const auto shift : {0u, 4u}) {
+                if (gcnCmaskTileCleared((std::to_integer<std::uint32_t>(entry) >> shift) & 0xfu, oneFragment)) ++clearedTiles;
             }
         }
     }
@@ -690,8 +718,17 @@ bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<St
         proveCmask(color.cmaskAddress, bytes, collected);
         return false;
     }
-    Require(clearedTiles == mask.size() * 2u, "a GCN CMASK that fast clears only some tiles of its color target is not implemented (the GCN CMASK tile order is not modeled)");
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
+    const std::vector<std::byte> expanded(bytes, std::byte{0xff});
+    if (clearedTiles != tiles) {
+        Require(ordered, "a GCN CMASK that fast clears only some tiles of a color target that is not 2D tiled, through a linear CMASK (CB_COLOR_INFO CMASK_IS_LINEAR), or with a CMASK_SLICE smaller than addrlib's padded CMASK is not implemented");
+        const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
+        storeCmaskClearTexels(color, surface, layout.TilesX(), layout.TilesY(), &cleared, texel);
+        if (resident != nullptr) resident->Refresh();
+        GuestMemory::Write(color.cmaskAddress, expanded, cmaskAlignment);
+        proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+        return false;
+    }
     const char* refusal = nullptr;
     const bool filled = color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
     if (!filled) {
@@ -703,7 +740,6 @@ bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<St
         GuestMemory::Write(color.address, texels, surface.Alignment());
         if (resident != nullptr) resident->Refresh();
     }
-    const std::vector<std::byte> expanded(bytes, std::byte{0xff});
     GuestMemory::Write(color.cmaskAddress, expanded, cmaskAlignment);
     proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
     return filled;
@@ -742,7 +778,8 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     const char* refusal = nullptr;
     const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
     if (!filled) {
-        storeCmaskClearTexels(color, layout, state == CmaskState::Cleared ? nullptr : &cleared, texel);
+        const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+        storeCmaskClearTexels(color, surface, layout.TilesX(), layout.TilesY(), state == CmaskState::Cleared ? nullptr : &cleared, texel);
         if (resident != nullptr) resident->Refresh();
     }
     const std::vector<std::byte> expanded(bytes, std::byte{0xff});
@@ -3434,7 +3471,7 @@ void rememberShape(const Context& context, std::uint64_t shape, std::span<const 
 }
 
 bool sameColorTarget(const ColorTarget& a, const ColorTarget& b) {
-    return a.address == b.address && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.bytes == b.bytes && a.componentMapping == b.componentMapping && a.tileMode == b.tileMode && a.elementBytes == b.elementBytes && a.packing == b.packing && a.dccAddress == b.dccAddress && a.chainDccAddress == b.chainDccAddress && a.dccAlphaOnMsb == b.dccAlphaOnMsb && a.dccPipeAligned == b.dccPipeAligned && a.cmaskAddress == b.cmaskAddress && a.cmaskBytes == b.cmaskBytes && a.cmaskFastClear == b.cmaskFastClear && a.eqaaFragments == b.eqaaFragments && a.surfaceAddress == b.surfaceAddress && a.surfaceExtent.width == b.surfaceExtent.width && a.surfaceExtent.height == b.surfaceExtent.height && a.mipCount == b.mipCount && a.mip == b.mip && a.mipTail == b.mipTail && a.clearWords == b.clearWords && a.slot == b.slot && a.depth == b.depth && a.depthSlice == b.depthSlice && a.arrayAddress == b.arrayAddress && a.arrayLastSlice == b.arrayLastSlice && a.arraySlice == b.arraySlice && a.layers == b.layers && a.exportIndex == b.exportIndex && a.uintExport == b.uintExport && a.volume == b.volume && a.pipeBankXor == b.pipeBankXor && a.samples == b.samples && a.coverageSamples == b.coverageSamples && a.dccControl == b.dccControl && a.fmaskAddress == b.fmaskAddress && a.fmaskPipeBankXor == b.fmaskPipeBankXor && a.partialWriteMask == b.partialWriteMask && a.staged == b.staged && a.stagedMask == b.stagedMask && a.stagedFormat == b.stagedFormat;
+    return a.address == b.address && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.bytes == b.bytes && a.componentMapping == b.componentMapping && a.tileMode == b.tileMode && a.elementBytes == b.elementBytes && a.packing == b.packing && a.dccAddress == b.dccAddress && a.chainDccAddress == b.chainDccAddress && a.dccAlphaOnMsb == b.dccAlphaOnMsb && a.dccPipeAligned == b.dccPipeAligned && a.cmaskAddress == b.cmaskAddress && a.cmaskBytes == b.cmaskBytes && a.cmaskFastClear == b.cmaskFastClear && a.cmaskLinear == b.cmaskLinear && a.eqaaFragments == b.eqaaFragments && a.surfaceAddress == b.surfaceAddress && a.surfaceExtent.width == b.surfaceExtent.width && a.surfaceExtent.height == b.surfaceExtent.height && a.mipCount == b.mipCount && a.mip == b.mip && a.mipTail == b.mipTail && a.clearWords == b.clearWords && a.slot == b.slot && a.depth == b.depth && a.depthSlice == b.depthSlice && a.arrayAddress == b.arrayAddress && a.arrayLastSlice == b.arrayLastSlice && a.arraySlice == b.arraySlice && a.layers == b.layers && a.exportIndex == b.exportIndex && a.uintExport == b.uintExport && a.volume == b.volume && a.pipeBankXor == b.pipeBankXor && a.samples == b.samples && a.coverageSamples == b.coverageSamples && a.dccControl == b.dccControl && a.fmaskAddress == b.fmaskAddress && a.fmaskPipeBankXor == b.fmaskPipeBankXor && a.partialWriteMask == b.partialWriteMask && a.staged == b.staged && a.stagedMask == b.stagedMask && a.stagedFormat == b.stagedFormat;
 }
 
 bool sameDepthTarget(const DepthTarget& a, const DepthTarget& b) {

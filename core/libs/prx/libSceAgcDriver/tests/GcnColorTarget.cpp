@@ -19,6 +19,7 @@
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -46,6 +47,7 @@ constexpr std::uint32_t Format8888 = 10u;
 constexpr std::uint32_t BlendClamp = 1u << 15u;
 constexpr std::uint32_t FastClear = 1u << 13u;
 constexpr std::uint32_t Compression = 1u << 14u;
+constexpr std::uint32_t CmaskIsLinear = 1u << 19u;
 constexpr std::uint32_t Thin1D = 13u;
 constexpr std::uint32_t Display2D = 10u;
 constexpr std::uint32_t Thin2D = 14u;
@@ -120,6 +122,37 @@ void MultisampledTargetsDecode() {
     const auto plain = Decode(2u, 2u, 0u);
     Check(plain.samples == 2u && plain.cmaskAddress == 0u, "a 2x GCN color target without compression took a CMASK");
     Check(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
+}
+
+void CmaskLinearDecode() {
+    const auto tiled = Decode(1u, 1u, FastClear);
+    const auto linear = Decode(1u, 1u, FastClear | CmaskIsLinear);
+    Check(!tiled.cmaskLinear && linear.cmaskLinear, "CB_COLOR_INFO CMASK_IS_LINEAR did not decode into the color target");
+}
+
+void GcnCmaskTileOrder() {
+    using AgcDriver::Graphics::GcnCmaskLayout;
+    Check(GcnCmaskLayout(896u, 832u).Bytes() == 8192u, "an 896x832 GCN CMASK is not 8192 bytes (CB_COLOR_CMASK_SLICE 0x3f)");
+    Check(GcnCmaskLayout(128u, 128u).Bytes() == 2048u && GcnCmaskLayout(512u, 256u).Bytes() == 2048u && GcnCmaskLayout(1024u, 256u).Bytes() == 2048u, "a GCN CMASK of one or two 512x256 macro tiles is not padded to the 2048 bytes of one interleave of every pipe");
+    Check(GcnCmaskLayout(1920u, 1080u).Bytes() == 20480u, "a 1920x1080 GCN CMASK is not padded to 2048x1280");
+    const GcnCmaskLayout layout(896u, 832u);
+    Check(layout.Nibble(0u, 0u) == 0u && layout.Nibble(1u, 1u) == 1u && layout.Nibble(2u, 3u) == 2u && layout.Nibble(3u, 2u) == 3u, "the four pipe 0 tiles of the first 4x4 tile block are not the first four CMASK nibbles");
+    Check(layout.Nibble(1u, 0u) == 512u && layout.Nibble(0u, 1u) == 513u, "the first pipe 1 tiles do not start the second 256-byte pipe interleave");
+    Check(layout.Nibble(4u, 0u) == 2048u && layout.Nibble(0u, 4u) == 2080u, "a pipe 4 tile is not in the fifth pipe interleave");
+    Check(layout.Nibble(8u, 0u) == 4u, "the third 4x4 tile block of pipe 0 does not follow the first in its pipe");
+    Check(layout.Nibble(64u, 0u) == 256u && layout.Nibble(65u, 0u) == 768u, "the second macro tile of a row does not start 128 bytes into each pipe interleave");
+    Check(layout.Nibble(0u, 32u) == 4096u, "the second row of macro tiles does not start after the first 2048-byte pipe interleave group");
+    const GcnCmaskLayout full(1024u, 1024u);
+    std::vector<bool> seen(full.Bytes() * 2u);
+    bool distinct = true;
+    for (std::uint32_t tileY = 0; tileY < full.TilesY(); ++tileY) {
+        for (std::uint32_t tileX = 0; tileX < full.TilesX(); ++tileX) {
+            const auto nibble = full.Nibble(tileX, tileY);
+            if (nibble >= seen.size() || seen[nibble]) distinct = false;
+            else seen[nibble] = true;
+        }
+    }
+    Check(distinct, "the GCN CMASK tile order does not give every tile of a 1024x1024 target its own nibble");
 }
 
 void SingleSampleFastClearDecode() {
@@ -276,6 +309,8 @@ int main() {
         fmaskMemory = colorMemory + FmaskOffset;
         MultisampledTargetsDecode();
         SingleSampleFastClearDecode();
+        CmaskLinearDecode();
+        GcnCmaskTileOrder();
         FewerFragmentsDecode();
         MultisampledSlicesDecode();
         FastClearedSlicesDecode();
@@ -286,6 +321,6 @@ int main() {
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, a metadata pass over the visible rows of a padded target is covered, and the GCN CMASK tile order and size follow addrlib's P8_32x32_16x16 layout");
     return 0;
 }
