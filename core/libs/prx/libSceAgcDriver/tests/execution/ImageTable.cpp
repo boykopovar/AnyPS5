@@ -2199,17 +2199,6 @@ void RunRuntimeAddressTests(AgcDriver::VulkanDevice& device) {
     Keys = {};
     for (std::uint32_t group = 0; group < 3u; ++group) Keys[group] = group;
     const auto palette = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Root.data())) + PaletteOffset;
-    if (!BindlessHeap()) {
-        std::string reason;
-        try {
-            static_cast<void>(RunRuntimePointer(device, 3, palette));
-        } catch (const std::exception& error) {
-            reason = error.what();
-        }
-        Require(reason.find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, "runtime image address: without the bindless heap the T# behind a pointer read from a vector register was not refused: " + reason);
-        std::puts("runtime image address: refused without the bindless heap");
-        return;
-    }
     PixelRegistration registeredRoot(Root.data(), Root.size() * sizeof(std::uint32_t)), registeredKeys(Keys.data(), sizeof(Keys));
     Require(device.BindlessService() != nullptr, "runtime image address: the device has no texture service");
     const auto& service = *device.BindlessService();
@@ -2272,18 +2261,8 @@ void RunPixelRuntimeAddressTests(AgcDriver::VulkanDevice& device) {
         pointers[copy * 2u + 1u] = static_cast<std::uint32_t>(table >> 32u);
     }
     const auto scale = 1.0f / static_cast<float>(SampleSize);
-    if (!BindlessHeap()) {
-        std::string reason;
-        try {
-            static_cast<void>(DrawPixelTable(device, PixelRuntimePointerCode, pointers, 0u, SamplePointSampler, scale, scale));
-        } catch (const std::exception& error) {
-            reason = error.what();
-        }
-        Require(reason.find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, "runtime image address pixel: without the bindless heap the T# behind a waterfall pointer was not refused: " + reason);
-        std::puts("runtime image address pixel: refused without the bindless heap");
-        return;
-    }
     PixelRegistration registeredTable(SampleTable.data(), sizeof(SampleTable));
+    Require(device.BindlessService() != nullptr, "runtime image address pixel: the device has no texture service");
     const auto& service = *device.BindlessService();
     for (std::uint32_t base = 0; base + 1u < SampleTextures; ++base) {
         const auto what = "runtime image address pixel: per-pixel texture " + std::to_string(base) + " or " + std::to_string(base + 1u) + " behind a waterfall pointer";
