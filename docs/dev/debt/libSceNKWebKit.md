@@ -5,6 +5,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Silent stubs
 
 - [Navigation helpers](../../../core/libs/prx/libSceNKWebKit/src/NavigationHelpers.cpp) (libSceNKWebKit) - `WKNavigationActionShouldPerformDownload`, `WKNavigationDataCopyOriginalRequest` and `WKNavigationResponseCanShowMIMEType` answer the default object values (`false`, `nullptr` and `true` respectively) until navigation is modelled and creates populated `NavigationAction`, `NavigationData` and `NavigationResponse` objects.
+- [WKBundleInspector controls](../../../core/libs/prx/libSceNKWebKit/src/BundleInspector.cpp) (libSceNKWebKit) - `WKBundleInspectorShow`, `WKBundleInspectorClose`, `WKBundleInspectorSetPageProfilingEnabled` and `WKBundleInspectorEvaluateScriptForTest` record inspector state on the host object without forwarding messages to the UI process; `WKBundlePageGetInspector` provides access to the page's inspector.
 
 ### Unknown function info
 
@@ -142,6 +143,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [No-op exports](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - 203 exports whose 11.00 body is a bare `ret` still throw (152 C++, 51 C API): no evidence they return `void`. `JSRemoteInspectorServerStart`, `JSRemoteInspectorSetLogToSystemConsole` and `JSRemoteInspectorStart` also throw because upstream behaviour depends on build configuration or global state (JSRemoteInspector.cpp L53-58 and L72-75, JSRemoteInspectorServer.cpp L33-46). The other 154 bare-`ret` exports are empty: 113 destructors, 2 constructors and 39 declared `void`, measured only on 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`). `JSRemoteInspectorSetParentProcessInformation` is `void` by source only ([JSRemoteInspector.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/API/JSRemoteInspector.cpp#L60-L70)); its 11.00 body was not checked.
 
+- [Deprecated WKContext exports](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - `WKContextAllowSpecificHTTPSCertificateForHost`, `WKContextPreconnectToServer`, `WKContextSetCanHandleHTTPSServerTrustEvaluation`, `WKContextSetCustomWebContentServiceBundleIdentifier`, `WKContextSetDiskCacheSpeculativeValidationEnabled` and `WKContextSetMaximumNumberOfProcesses` are empty by source only: no console module was read or measured for them, so it is unknown whether they are among the 203 bare-`ret` exports of the No-op exports entry. The pinned [WKContext.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKContext.cpp#L314-L317) defines each as a `void` function with an empty body that reads no argument (L314-L317, L376-L378, L395-L405, L456-L458).
+
 - [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 275 exports are the same function under another name in the PS5 11.00 module: the body at their address is a `jmp rel32` into another export (26 distinct targets), implemented as an assembly tail jump. The jump keeps every register, so the return type and arguments are the target's: 201 reach an implemented export (104 delete-family to `WTF::fastFree`, 92 new-family to `WTF::fastMalloc`, 2 to `WKMutableArrayCreate`, 2 to a WebCore::Region constructor and 1 to `WebCore::MIMETypeRegistry::isSupportedImageMIMEType`) and 74 reach an export that still throws, so they throw too; no prototype is claimed. From the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`), each NID recomputed from the name; only 11.00 measured.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
@@ -275,10 +278,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleHitTestResultGetFrame` | `mGM-NRBuZvE` |
 | `WKBundleHitTestResultGetImageRect` | `CHPZFRIZO7o` |
 | `WKBundleHitTestResultGetTargetFrame` | `w32pxSSQ4Rs` |
-| `WKBundleInspectorClose` | `xTfnxYXtinY` |
-| `WKBundleInspectorEvaluateScriptForTest` | `b6+hAoAkJl8` |
-| `WKBundleInspectorSetPageProfilingEnabled` | `-r23ePSw30o` |
-| `WKBundleInspectorShow` | `KVehJeKp2gE` |
 | `WKBundleIsPageBoxVisible` | `ysYpNHM+f2U` |
 | `WKBundleIsProcessingUserGesture` | `flLt+xWYloc` |
 | `WKBundleNodeHandleCopySnapshotWithOptions` | `splXjoRt+jY` |
@@ -332,7 +331,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageForceRepaint` | `jaQ3h3J4zd4` |
 | `WKBundlePageGetAppCacheUsageForOrigin` | `qjrn0E95Tak` |
 | `WKBundlePageGetBackingScaleFactor` | `PS5n3xxFDXQ` |
-| `WKBundlePageGetInspector` | `Gl9UFzi54FQ` |
 | `WKBundlePageGetPageZoomFactor` | `bNfhkICjfEk` |
 | `WKBundlePageGetRenderTreeSize` | `U2LcSWAxv6I` |
 | `WKBundlePageGetTextZoomFactor` | `YYbrGICsiyQ` |
@@ -411,19 +409,14 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleSetServiceWorkerProxyCreationCallback` | `tow2sT8FF3c` |
 | `WKBundleSetTabKeyCyclesThroughElements` | `t7K3DznwwOU` |
 | `WKBundleSetWebNotificationPermission` | `-67rxYq1qZo` |
-| `WKContextAllowSpecificHTTPSCertificateForHost` | `Wb5DMLak0yg` |
 | `WKContextClearCurrentModifierStateForTesting` | `Yk2qJg3VRBY` |
 | `WKContextGarbageCollectJavaScriptObjects` | `MBIrQeS3ILw` |
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
-| `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
-| `WKContextSetCanHandleHTTPSServerTrustEvaluation` | `L205EzJvP-Q` |
 | `WKContextSetClient` | `s19dG0nY-dE` |
 | `WKContextSetConnectionClient` | `S4qCVFS2p1Y` |
-| `WKContextSetCustomWebContentServiceBundleIdentifier` | `HS0m+kyKMKc` |
-| `WKContextSetDiskCacheSpeculativeValidationEnabled` | `ukKiCHfFJVQ` |
 | `WKContextSetDomainRelaxationForbiddenForURLScheme` | `WxgH0vvD708` |
 | `WKContextSetFontAllowList` | `MhG9BMS7pSQ` |
 | `WKContextSetHistoryClient` | `voUp4sJ5mfU` |
@@ -431,7 +424,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetInjectedBundleClient` | `VULFTpwEXW0` |
 | `WKContextSetInvalidMessageFunction` | `v+TCMUBUWog` |
 | `WKContextSetJavaScriptConfigurationFileEnabled` | `NkDv+zQRTXw` |
-| `WKContextSetMaximumNumberOfProcesses` | `zgt5jBUZjPw` |
 | `WKContextSetMemoryCacheDisabled` | `Gy--AnYjtr8` |
 | `WKContextSetPrewarmsProcessesAutomatically` | `9LzZhiXxOL8` |
 | `WKContextSetUseSeparateServiceWorkerProcess` | `nd01aT+29+Y` |
@@ -1406,10 +1398,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE` | `yUU8KDyU5Xw` |
 | `_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_` | `1tXDV45yh2Y` |
 | `_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE` | `bmn8kprCF+U` |
-| `_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE` | `sxavOcVMOFA` |
-| `_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `k73D+1jaJZ0` |
 | `_ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi` | `bFLwUoQqNHM` |
-| `_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc` | `Q5IWykchiD8` |
 | `_ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_` | `PduV0fym+xE` |
 | `_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_` | `Pr98fHFIZlQ` |
 | `_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE` | `5DmxNjwctv4` |
@@ -5970,6 +5959,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - is source-guided by pinned [DateMath.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L345-L386), not console-measured; the device's WebKit revision is unverified. For local dates, it subtracts calculateLocalTimeOffset evaluated for the parsed date. A null argument faults in WebKit and throws invalid_argument.
 - [parseDateFromNullTerminatedCharacters(const char*, bool&)](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - is not measured on a device, and throws where pinned [DateMath.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L684-L988) overflows a signed integer, which is undefined there (the `YYYY/MM/DD` day count, the `GMT+hh:mm` minute total and comment nesting), and for a null argument, where WebKit faults.
+- [WTF::FileSystemImpl::fileSystemRepresentation, stringFromFileSystemRepresentation and pathByAppendingComponents](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - are source-guided by the non-Cocoa paths of pinned [FileSystemPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/posix/FileSystemPOSIX.cpp#L323-L330) and [FileSystemPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/posix/FileSystemPOSIX.cpp#L406-L419), not console-measured; the device's WebKit revision is unverified. The representation is the lenient UTF-8 of the path with no guest-to-host path mapping. The joined path is 16-bit whenever WebKit's `StringBuilder` would upconvert. A null `String` or `Vector` reference, null characters with a nonzero length and a result above 2^31-1 units throw where WebKit faults or crashes.
 - [WTF::RefCountedLeakCounter](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - the constructors, `increment`, `decrement`, `suppressMessages` and `cancelMessageSuppression` are not checked against a console binary. They are empty because they follow the release (`NDEBUG`) build of pinned [RefCountedLeakCounter.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/RefCountedLeakCounter.cpp#L24-L36); a debug build counts instances and logs leaks from the destructor. Release is assumed because the module's `RefCountedLeakCounter` destructors are bare `ret` bodies (see No-op exports), which only the release build produces, and the tree's other WTF layouts follow the release build.
 - [WTF::setNonBlock, dupCloseOnExec and sleep(Seconds)](../../../core/libs/prx/libSceNKWebKit/src/WtfUniStd.cpp) (libSceNKWebKit) - are source-guided by pinned [UniStdExtrasUnix.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/unix/UniStdExtrasUnix.cpp#L33-L75) and [Seconds.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/Seconds.cpp#L80-L91), not console-measured; the device's WebKit revision is unverified. The descriptor calls go through the guest `fcntl`, `dup` and `close`, so `F_DUPFD_CLOEXEC` (17) answers as the guest layer models it.
 - [WTF::FileSystemImpl::encodeForFileName, decodeFromFilename and lastComponentOfPathIgnoringTrailingSlash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) - are source-guided by pinned [FileSystem.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/FileSystem.cpp#L66-L210), not console-measured; the device's WebKit revision is unverified. A null `String` reference, or an encoded result above 2^31-1 units, throws where WebKit has undefined behaviour or a release assertion.
