@@ -1383,8 +1383,11 @@ int APS5_VABI sceUserServiceSetIPDLeft(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
- NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceGetKratosPrimaryUser(int* userId) {
+ if (userId == nullptr) {
+  NotImplemented_nid_no_patch(__func__);
+ }
+ return USER_SERVICE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI sceUserServiceLogout(void) {
@@ -1843,7 +1846,7 @@ int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
 }
 
 bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
- NotImplemented_nid_no_patch(__func__);
+ return false;
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {
