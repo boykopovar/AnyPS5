@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -19,6 +20,7 @@ namespace {
 constexpr std::size_t RingAlignment = 16384;
 constexpr std::int32_t WriteMask = ~8192;
 constexpr std::int32_t ReadMask = WriteMask & ~1;
+constexpr std::size_t PacketSize = 4096;
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -50,6 +52,128 @@ std::uint32_t Next() {
 
 std::uint32_t LoadBigEndian(const std::uint8_t* pointer) {
     return (std::uint32_t{pointer[0]} << 24) | (std::uint32_t{pointer[1]} << 16) | (std::uint32_t{pointer[2]} << 8) | pointer[3];
+}
+
+Jxr::BitIo Attach(Ring& ring, std::size_t offset, std::uint32_t bitsUsed, std::size_t reference);
+
+struct StreamState {
+    Jxr::BitIo* io = nullptr;
+    Jxr::Stream* replacement = nullptr;
+    std::vector<std::size_t> positions;
+    std::int64_t seekResult = 0;
+    std::int64_t readResult = 0;
+    bool throwRead = false;
+    std::vector<char> calls;
+};
+
+StreamState* State(Jxr::Stream* stream) {
+    return reinterpret_cast<StreamState*>(stream->state[0]);
+}
+
+std::int64_t APS5_VABI SetPosition(Jxr::Stream* stream, std::size_t position) {
+    auto* state = State(stream);
+    state->calls.push_back('s');
+    state->positions.push_back(position);
+    return state->seekResult;
+}
+
+std::int64_t APS5_VABI ReadPacket(Jxr::Stream* stream, void* buffer, std::size_t bytes) {
+    auto* state = State(stream);
+    state->calls.push_back('r');
+    if (state->throwRead) throw std::runtime_error("packet read");
+    Require(bytes == PacketSize, "detach read packet length");
+    std::memset(buffer, 0x5a, bytes);
+    state->io->stream = state->replacement;
+    return state->readResult;
+}
+
+Jxr::Stream MakeStream(StreamState& state) {
+    Jxr::Stream stream{};
+    stream.state[0] = reinterpret_cast<std::uintptr_t>(&state);
+    stream.read = ReadPacket;
+    stream.setPosition = SetPosition;
+    return stream;
+}
+
+void RunDetachRead() {
+    Ring ring;
+    std::memset(ring.base, 0xcc, RingAlignment);
+    StreamState state{};
+    auto stream = MakeStream(state);
+    auto io = Attach(ring, 128, 8, 20000);
+    io.stream = &stream;
+    state.io = &io;
+    state.seekResult = -0x123456789ll;
+    const auto expectedPosition = io.referenceOffset - (8192 - (128 + 1));
+    Require(detachISRead_nid_postfix(nullptr, &io) == 0, "detach without refill result");
+    Require(state.calls == std::vector<char>({'s'}) && state.positions == std::vector<std::size_t>({expectedPosition}),
+            "detach without refill seeks to buffered position");
+    Require(io.stream == nullptr && io.current == ring.base + 128 && io.bitsUsed == 8, "detach without refill state");
+    Require(ring.base[127] == 0xcc && ring.base[128] == 0xcc && ring.base[129] == 0xcc, "detach without refill keeps guards");
+
+    StreamState pastWindowState{};
+    auto pastWindowStream = MakeStream(pastWindowState);
+    auto pastWindow = Attach(ring, 16384 + 8190, 8, 10000);
+    pastWindow.start = ring.base + 16384 - 16;
+    pastWindow.stream = &pastWindowStream;
+    Require(detachISRead_nid_postfix(nullptr, &pastWindow) == 0, "detach permits a signed negative cached-byte difference");
+    Require(pastWindowState.positions == std::vector<std::size_t>({10015}),
+            "detach converts negative pointer difference to size_t as source does");
+
+    constexpr std::size_t GuestBytes = 0x4000;
+    auto* guest = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(GuestBytes, 16384));
+    Require(guest != nullptr, "allocate detach packet buffer");
+    GuestArena::GuestArenaCommit_nid_postfix(guest, GuestBytes, 4, 4096);
+    std::memset(guest, 0xcc, GuestBytes);
+    StreamState refillState{};
+    StreamState replacementState{};
+    auto refillStream = MakeStream(refillState);
+    auto replacement = MakeStream(replacementState);
+    auto refill = Jxr::BitIo{0x11223344, 0, 0, ReadMask, guest + PacketSize, guest + 2 * PacketSize, &refillStream, 9000};
+    refillState.io = &refill;
+    refillState.replacement = &replacement;
+    refillState.seekResult = 0x123456789ll;
+    refillState.readResult = -0x23456789ll;
+    Require(detachISRead_nid_postfix(reinterpret_cast<void*>(1), &refill) == 0, "detach with refill result");
+    Require(refillState.calls == std::vector<char>({'s', 'r', 's'}) &&
+                refillState.positions == std::vector<std::size_t>({9000, 4904}),
+            "detach refill callback order and positions");
+    Require(refill.stream == nullptr && refill.current == guest && refill.referenceOffset == 13096 &&
+                refill.start == guest && refill.shadow == 0x5a5a5a5a,
+            "detach refill state and callback stream mutation");
+    Require(guest[PacketSize - 1] == 0xcc && guest[PacketSize] == 0x5a && guest[2 * PacketSize - 1] == 0x5a &&
+                guest[2 * PacketSize] == 0xcc,
+            "detach refill respects packet guards");
+    Require(replacementState.calls.empty(), "detach final seek uses original stream");
+
+    StreamState exceptionState{};
+    auto exceptionStream = MakeStream(exceptionState);
+    auto exceptionIo = Jxr::BitIo{0, 0, 0, ReadMask, guest + PacketSize, guest + 2 * PacketSize, &exceptionStream, 5000};
+    exceptionState.io = &exceptionIo;
+    exceptionState.throwRead = true;
+    bool propagated = false;
+    try {
+        detachISRead_nid_postfix(nullptr, &exceptionIo);
+    } catch (const std::runtime_error&) {
+        propagated = true;
+    }
+    Require(propagated && exceptionState.calls == std::vector<char>({'s', 'r'}) && exceptionIo.stream == &exceptionStream,
+            "detach propagates refill exceptions before final seek");
+
+    GuestArena::GuestArenaReset_nid_postfix(guest, GuestBytes);
+    GuestArena::GuestArenaRelease_nid_postfix(guest, GuestBytes);
+
+    StreamState throwingState{};
+    auto throwingStream = MakeStream(throwingState);
+    auto invalid = Attach(ring, 128, 8, 10000);
+    invalid.stream = &throwingStream;
+    const auto lastRegion = UINTPTR_MAX & ~std::uintptr_t{8191};
+    const auto currentPacketBit = reinterpret_cast<std::uintptr_t>(invalid.current) & std::uintptr_t{4096};
+    invalid.start = reinterpret_cast<std::uint8_t*>(lastRegion | currentPacketBit);
+    throwingState.io = &invalid;
+    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, &invalid); }, "detach rejects overflowing packet end");
+    Require(invalid.stream == &throwingStream && throwingState.calls.empty(), "invalid detach leaves stream attached");
+    RequireInvalidArgument([] { detachISRead_nid_postfix(nullptr, nullptr); }, "null detach state");
 }
 
 Jxr::BitIo Attach(Ring& ring, std::size_t offset, std::uint32_t bitsUsed, std::size_t reference) {
@@ -435,6 +559,7 @@ int main() {
     RunAttachWrite();
     RunReads();
     RunWrites();
+    RunDetachRead();
     RunEdges();
     return 0;
 }

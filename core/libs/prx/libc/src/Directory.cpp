@@ -335,12 +335,14 @@ void OpenIndexed(Directory& directory) {
 }
 
 extern "C" {
-void* APS5_VABI opendir_nid_postfix(const char* path) {
+void* APS5_VABI OpenDirectory_nid_no_patch(const char* path) {
     if (!path) { errno = 14; return nullptr; }
-    if (!*path) { errno = 2; return nullptr; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return nullptr; }
+    if (copy.empty()) { errno = 2; return nullptr; }
     try {
         auto directory = std::make_unique<Directory>();
-        if (const int error = ResolvePathError_nid_no_patch(path, directory->path, false, true)) { errno = error; return nullptr; }
+        if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), directory->path, false, true)) { errno = error; return nullptr; }
         if (AppArchiveHasDirectory_nid_no_patch(directory->path)) {
             OpenIndexed(*directory);
         } else {
@@ -357,14 +359,14 @@ void* APS5_VABI opendir_nid_postfix(const char* path) {
       catch (const std::exception&) { errno = 5; return nullptr; }
 }
 
-GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
+GuestDirectoryEntry* APS5_VABI ReadDirectory_nid_no_patch(void* handle) {
     if (!handle) { errno = 9; return nullptr; }
     auto& directory = *static_cast<Directory*>(handle);
     std::lock_guard lock(directory.mutex);
     return ReadEntry(directory, 1);
 }
 
-int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
     if (!handle) return 9;
     if (!entry || !result) throw std::invalid_argument("readdir_r: null entry or result");
     auto& directory = *static_cast<Directory*>(handle);
@@ -374,15 +376,22 @@ int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, Gu
     {
         std::lock_guard lock(directory.mutex);
         next = ReadEntry(directory, 1);
-        if (next) std::memcpy(entry, next, next->recordLength);
+        if (next && !GuestCopyOut_nid_no_patch(entry, next, next->recordLength)) {
+            errno = savedError;
+            return 14;
+        }
     }
     if (!next && errno) return errno;
     errno = savedError;
-    *result = next ? entry : nullptr;
+    const GuestDirectoryEntry* const output = next ? entry : nullptr;
+    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output))) {
+        errno = savedError;
+        return 14;
+    }
     return 0;
 }
 
-int APS5_VABI closedir_nid_postfix(void* handle) {
+int APS5_VABI CloseDirectory_nid_no_patch(void* handle) {
     if (!handle) { errno = 9; return -1; }
     std::unique_ptr<Directory> directory(static_cast<Directory*>(handle));
     int result = directory->native ? CloseNative(directory->native) : 0;
@@ -390,6 +399,22 @@ int APS5_VABI closedir_nid_postfix(void* handle) {
     if (result) errno = DirectoryError(errno);
     if (directory->closeDescriptor && directory->closeDescriptor(directory->descriptor) != 0) result = -1;
     return result;
+}
+
+void* APS5_VABI opendir_nid_postfix(const char* path) {
+    return OpenDirectory_nid_no_patch(path);
+}
+
+GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
+    return ReadDirectory_nid_no_patch(handle);
+}
+
+int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+    return ReadDirectoryEntry_nid_no_patch(handle, entry, result);
+}
+
+int APS5_VABI closedir_nid_postfix(void* handle) {
+    return CloseDirectory_nid_no_patch(handle);
 }
 
 void APS5_VABI rewinddir_nid_postfix(void* handle) {

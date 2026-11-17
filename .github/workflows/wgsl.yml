@@ -26,6 +26,7 @@ jobs:
       ANYPS5_REQUIRE_VULKAN: '1'
       ANYPS5_NO_SHADER_CACHE: '1'
       VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+      VK_LOADER_DEBUG: layer
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,6 +70,7 @@ jobs:
           grep -q 'shader 0:' invalid-wgsl.log
           python3 - <<'PY'
           from pathlib import Path
+          assert 'Insert instance layer "VK_LAYER_KHRONOS_validation"' in Path('wgsl-validation.log').read_text()
           for name in ('main-validation.log', 'native-validation.log', 'wgsl-validation.log'):
               text = Path(name).read_text()
               assert 'VUID-' not in text, name

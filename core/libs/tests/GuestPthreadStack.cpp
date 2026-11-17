@@ -27,7 +27,7 @@ extern "C" {
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t FRAME_SIZE = 4096;
 static constexpr std::size_t FRAME_MARGIN = 2 * FRAME_SIZE;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(ANYPS5_ENABLE_ASAN)
 static constexpr std::size_t LOCAL_SLACK = 2 * FRAME_SIZE;
 #else
 static constexpr std::size_t LOCAL_SLACK = FRAME_SIZE;

@@ -12,15 +12,11 @@ using namespace FreeType;
 
 namespace {
 
-FT_Angle NormalizeAngle(std::int64_t angle) {
-    return static_cast<FT_Angle>(angle % (360ll << 16));
-}
-
 GuestVector TangentVector(std::int64_t angle) {
     constexpr std::array<std::int64_t, 22> angles{
         1740967, 919879, 466945, 234379, 117304, 58666, 29335, 14668, 7334, 3667, 1833,
         917, 458, 229, 115, 57, 29, 14, 7, 4, 2, 1};
-    std::int64_t remaining = NormalizeAngle(angle);
+    std::int64_t remaining = NormalizeAngle_nid_no_patch(angle);
     GuestVector vector{1ll << 24, 0};
     while (remaining < -(45ll << 16)) {
         vector = {vector.y, -vector.x};
@@ -47,11 +43,11 @@ GuestVector TangentVector(std::int64_t angle) {
 extern "C" {
 
 std::int64_t APS5_VABI FT_Cos_nid_postfix(std::int64_t angle) {
-    return FT_Cos(NormalizeAngle(angle));
+    return FT_Cos(NormalizeAngle_nid_no_patch(angle));
 }
 
 std::int64_t APS5_VABI FT_Sin_nid_postfix(std::int64_t angle) {
-    return FT_Sin(NormalizeAngle(angle));
+    return FT_Sin(NormalizeAngle_nid_no_patch(angle));
 }
 
 std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t angle) {
@@ -65,7 +61,7 @@ std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t angle) {
 void APS5_VABI FT_Vector_Unit_nid_postfix(GuestVector* vector, std::int64_t angle) {
     if (!vector) return;
     FT_Vector native{};
-    FT_Vector_Unit(&native, NormalizeAngle(angle));
+    FT_Vector_Unit(&native, NormalizeAngle_nid_no_patch(angle));
     vector->x = native.x;
     vector->y = native.y;
 }
@@ -75,7 +71,7 @@ std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t first, std::int64_
         (first < 0 && second > std::numeric_limits<std::int64_t>::max() + first)) {
         throw std::runtime_error("FT_Angle_Diff: overflowing signed angle subtraction is not implemented");
     }
-    return FT_Angle_Diff(0, NormalizeAngle(second - first));
+    return FT_Angle_Diff(0, NormalizeAngle_nid_no_patch(second - first));
 }
 
 }
