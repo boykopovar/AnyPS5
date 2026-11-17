@@ -62,9 +62,9 @@ agcbuild_DcbCopyData_c	diff	the recording passes six of the export's nine argume
 agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
-agcbuild_DcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
-agcbuild_DcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_a	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_b	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_c	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
 agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
