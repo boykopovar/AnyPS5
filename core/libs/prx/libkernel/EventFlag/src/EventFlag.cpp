@@ -165,6 +165,13 @@ static bool StoreWaitCount(int* destination, int value) {
     return stored;
 }
 
+bool StoreResultPattern(uint64_t* destination, uint64_t value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
     if (resultPattern) *resultPattern = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
@@ -320,18 +327,19 @@ int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EACCES;
     }
     if (!flag->_multipleWaiters && flag->_waiters != 0) {
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EPERM;
     }
     if (!IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) {
-        if (result_pat) *result_pat = flag->_pattern;
+        if (result_pat && !StoreResultPattern(result_pat, flag->_pattern)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EBUSY;
     }
-    Consume(flag, bit_pattern, wait_mode, result_pat);
+    if (result_pat && !StoreResultPattern(result_pat, flag->_pattern)) return SCE_KERNEL_ERROR_EFAULT;
+    Consume(flag, bit_pattern, wait_mode, nullptr);
     return SCE_OK;
 }
 
@@ -343,15 +351,16 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     std::unique_lock lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EACCES;
     }
     if (!flag->_multipleWaiters && flag->_waiters != 0) {
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EPERM;
     }
     if (IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) {
-        Consume(flag, bit_pattern, wait_mode, result_pat);
+        if (result_pat && !StoreResultPattern(result_pat, flag->_pattern)) return SCE_KERNEL_ERROR_EFAULT;
+        Consume(flag, bit_pattern, wait_mode, nullptr);
         return SCE_OK;
     }
     if (TraceSync()) std::fprintf(stderr, "[evf] wait %p '%s' want=0x%llx mode=0x%x have=0x%llx timeout=%d caller=%p outer=%p\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), wait_mode, static_cast<unsigned long long>(flag->_pattern), timeout ? static_cast<int>(*timeout) : -1, __builtin_return_address(0), static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
@@ -381,22 +390,22 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     }
     KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
     if (waiter.outcome == WaiterNode::Outcome::Satisfied) {
-        if (result_pat) *result_pat = waiter.resultPattern;
+        if (result_pat && !StoreResultPattern(result_pat, waiter.resultPattern)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
     if (waiter.outcome == WaiterNode::Outcome::Deleted) {
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EACCES;
     }
     if (waiter.outcome == WaiterNode::Outcome::Canceled) {
-        if (result_pat) *result_pat = 0;
+        if (result_pat && !StoreResultPattern(result_pat, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_ECANCELED;
     }
     if (timedOut) {
-        if (result_pat) *result_pat = flag->_pattern;
+        if (result_pat && !StoreResultPattern(result_pat, flag->_pattern)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
-    if (result_pat) *result_pat = waiter.resultPattern;
+    if (result_pat && !StoreResultPattern(result_pat, waiter.resultPattern)) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 

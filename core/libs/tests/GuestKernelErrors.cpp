@@ -561,6 +561,10 @@ int main() {
     Require(waitThreads == 0);
     errno = 71;
     Require(sceKernelCancelEventFlag(ef, 0x99, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    errno = 71;
+    Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, reinterpret_cast<uint64_t*>(std::uintptr_t{0x10})) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    errno = 71;
+    Require(sceKernelWaitEventFlag(ef, 0x42, EVF_WAITMODE_AND, reinterpret_cast<uint64_t*>(std::uintptr_t{0x10}), nullptr) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, &pattern) == SCE_OK);
     Require(pattern == 0x42);
 
