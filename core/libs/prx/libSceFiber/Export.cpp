@@ -383,9 +383,17 @@ static StackBounds FiberBounds(const Fiber* fiber) {
 
 #endif
 
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 static Fiber* AsFiber(FiberObject* object) {
     auto* fiber = reinterpret_cast<Fiber*>(object);
-    return fiber && fiber->magic == FIBER_MAGIC ? fiber : nullptr;
+    std::uint64_t magic = 0;
+    return fiber && CopyGuestIn(&magic, &fiber->magic, sizeof(magic)) && magic == FIBER_MAGIC ? fiber : nullptr;
 }
 
 extern "C" [[noreturn]] void Aps5FiberMain_nid_no_patch(Fiber* fiber) {
@@ -486,13 +494,6 @@ static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     Aps5FiberSwitchStack_nid_no_patch(save, target->context ? &target->savedStack : &ThreadState().threadStack, target->context ? nullptr : target);
 }
 
-static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
-    const auto preserved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = preserved;
-    return ok;
-}
-
 static bool CopyFiberName(char (&out)[FIBER_MAX_NAME_LENGTH + 1], const char* name) {
     std::memset(out, 0, sizeof(out));
     for (std::size_t i = 0; i < FIBER_MAX_NAME_LENGTH; ++i) {
@@ -511,6 +512,7 @@ static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiber
     if ((flags & ~(FIBER_FLAG_NO_ULOBJMGR | FIBER_FLAG_CONTEXT_SIZE_CHECK | FIBER_FLAG_SET_FPU_REGISTERS)) != 0) throw std::runtime_error("_sceFiberInitializeWithInternalOptionImpl: unsupported flags " + std::to_string(flags));
     char localName[FIBER_MAX_NAME_LENGTH + 1];
     if (!CopyFiberName(localName, name)) return SCE_FIBER_ERROR_INVALID;
+    if (!GuestWritable_nid_no_patch(object, FIBER_OBJECT_SIZE)) return SCE_FIBER_ERROR_INVALID;
     auto* fiber = reinterpret_cast<Fiber*>(object);
     if (fiber->magic == FIBER_MAGIC) {
         const auto state = fiber->state.load(std::memory_order_acquire);
