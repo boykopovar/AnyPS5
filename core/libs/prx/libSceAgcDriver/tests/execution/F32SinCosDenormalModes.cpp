@@ -216,12 +216,25 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
     return std::nullopt;
 }
 
+// A zero, one or NaN result is what tells a flushed input from a kept one and must match on the bits. Any other result goes through
+// the host's sin and cos, whose last bit differs between drivers, so it may be one ulp away.
+std::uint32_t Tolerance(std::uint32_t expected) {
+    const std::uint32_t magnitude = expected & 0x7fffffffu;
+    return magnitude == 0u || magnitude == 0x3f800000u || magnitude > 0x7f800000u ? 0u : 1u;
+}
+
+std::uint32_t Distance(std::uint32_t actual, std::uint32_t expected) {
+    if ((actual ^ expected) & 0x80000000u) return 0xffffffffu;
+    return actual > expected ? actual - expected : expected - actual;
+}
+
 void Check(std::uint32_t denormals, bool ieee) {
     const auto& expected = denormals == 1u ? Mode1Expected : Mode2Expected;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t i = 0; i < Results; ++i) {
             const std::uint32_t actual = Output[tid * Words + i];
-            Require(actual == expected[tid][i], std::string(Names[i]) + " f32 denormal mode " + std::to_string(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0") + " of " + Hex(Values[tid]) + " is " + Hex(actual) + ", expected " + Hex(expected[tid][i]));
+            const std::uint32_t tolerance = Tolerance(expected[tid][i]);
+            Require(Distance(actual, expected[tid][i]) <= tolerance, std::string(Names[i]) + " f32 denormal mode " + std::to_string(denormals) + (ieee ? ", IEEE=1" : ", IEEE=0") + " of " + Hex(Values[tid]) + " is " + Hex(actual) + ", expected " + Hex(expected[tid][i]) + " (tolerance " + std::to_string(tolerance) + " ulp)");
         }
     }
 }
