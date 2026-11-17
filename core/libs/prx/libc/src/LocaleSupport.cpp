@@ -1557,6 +1557,7 @@ struct NumpunctLocinfo {
 char* MakeNumpunctString(const char* text) {
     const std::size_t count = std::strlen(text) + 1;
     auto* copy = static_cast<char*>(_Znam_nid_postfix(count));
+    if (copy == nullptr) throw std::bad_alloc();
     std::memcpy(copy, text, count);
     return copy;
 }
