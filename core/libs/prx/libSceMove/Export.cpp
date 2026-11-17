@@ -107,7 +107,8 @@ int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
     const bool dataAccepted = data != nullptr || compiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
-    if (const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && outCount != nullptr); result != MOVE_OK) return result;
+    const bool countValid = outCount != nullptr && GuestWritable_nid_no_patch(outCount, sizeof(*outCount));
+    if (const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && countValid); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
@@ -129,7 +130,8 @@ int APS5_VABI sceMoveResetLightSphere(int32_t handle) {
     return checkHandle(handle);
 }
 int APS5_VABI sceMoveGetBluetoothAddress(int32_t handle, uint64_t* address) {
-    if (const int result = checkHandle(handle, address != nullptr); result != MOVE_OK) return result;
+    const bool valid = address != nullptr && GuestWritable_nid_no_patch(address, sizeof(*address));
+    if (const int result = checkHandle(handle, valid); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
@@ -139,7 +141,8 @@ int APS5_VABI sceMoveGetCalibrationInfo(int32_t handle, void* info) {
 }
 
 int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId) {
-    if (const int result = checkHandle(handle, deviceId != nullptr); result != MOVE_OK) return result;
+    const bool valid = deviceId != nullptr && GuestWritable_nid_no_patch(deviceId, sizeof(*deviceId));
+    if (const int result = checkHandle(handle, valid); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
