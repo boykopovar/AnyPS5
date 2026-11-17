@@ -1,4 +1,5 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
+#include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <cerrno>
@@ -72,6 +73,14 @@ int main() {
     Require(sceContentSearchOpenMetadataByContentId(1, &metadataId) == ErrorNotInitialized);
     Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
     Require(count == -1 && size == -1 && updateId == -1 && metadataId == -1);
+    std::uint64_t avContentId = 0xA5A5A5A5A5A5A5A5u;
+    unsigned char avEvent[12] = {0x1D, 0x00, 0x00, 0x10, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
+    Require(sceContentSearchAddAvContentCreatedEventCondition(1, 1) == ErrorNotInitialized);
+    Require(sceContentSearchEnableAvContentCreatedEvent() == ErrorNotInitialized);
+    Require(sceContentSearchDisableAvContentCreatedEvent() == ErrorNotInitialized);
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(nullptr, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(avEvent, &avContentId) == ErrorNotInitialized);
+    Require(avContentId == 0xA5A5A5A5A5A5A5A5u);
 
     Require(sceContentSearchTerm() == ErrorNotInitialized);
     Require(sceContentSearchInit(nullptr) == ErrorInvalidArgument);
@@ -86,6 +95,24 @@ int main() {
     Require(sceContentSearchInit(&param) == 0);
     Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
     Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
+
+    constexpr int ErrorAvEventState = static_cast<int>(0x809D1014u);
+    Require(sceContentSearchDisableAvContentCreatedEvent() == ErrorAvEventState);
+    Require(sceContentSearchEnableAvContentCreatedEvent() == ErrorAvEventState);
+    Require(sceContentSearchAddAvContentCreatedEventCondition(0, 1) == ErrorInvalidArgument);
+    Require(sceContentSearchAddAvContentCreatedEventCondition(1, 2) == ErrorInvalidArgument);
+    Require(sceContentSearchEnableAvContentCreatedEvent() == ErrorAvEventState);
+    Require(sceContentSearchAddAvContentCreatedEventCondition(1, 1) == 0);
+    Require(sceContentSearchAddAvContentCreatedEventCondition(1, 1) == 0);
+    Require(sceContentSearchDisableAvContentCreatedEvent() == ErrorAvEventState);
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(nullptr, &avContentId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(avEvent, nullptr) == ErrorInvalidArgument);
+    avEvent[0] = 0x1E;
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(avEvent, &avContentId) == ErrorInvalidArgument);
+    Require(avContentId == 0xA5A5A5A5A5A5A5A5u);
+    avEvent[0] = 0x1D;
+    Require(sceContentSearchGetContentIdByAvContentCreatedEvent(avEvent, &avContentId) == 0);
+    Require(avContentId == 0x1122334455667788u);
 
     const auto* invalidSets = reinterpret_cast<const ContentSearchContentColumnSet*>(0x10);
     const auto* invalidOrders = reinterpret_cast<const ContentSearchContentOrderByCondition*>(0x10);
