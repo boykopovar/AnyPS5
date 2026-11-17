@@ -1,8 +1,30 @@
+// Derived from Source/WTF/wtf/StackBounds.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
+ *  Copyright (C) 2007 Eric Seidel <eric@webkit.org>
+ *
+ *  This library is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU Lesser General Public
+ *  License as published by the Free Software Foundation; either
+ *  version 2 of the License, or (at your option) any later version.
+ *
+ *  This library is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public
+ *  License along with this library; if not, write to the Free Software
+ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <stdexcept>
+#include <string>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -10,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -38,6 +61,21 @@ std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv() {
 
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length) {
     NKWebKit::FillRandomBytes(buffer, length);
+}
+
+WTF::StackBounds APS5_VABI _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv() {
+    PthreadAttr attr = nullptr;
+    if (const int error = pthread_attr_init_nid_postfix(&attr))
+        throw std::runtime_error("currentThreadStackBoundsInternal: pthread_attr_init failed with " + std::to_string(error));
+    void* bound = nullptr;
+    std::size_t stackSize = 0;
+    int error = pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr);
+    if (!error) error = pthread_attr_getstack_nid_postfix(&attr, &bound, &stackSize);
+    pthread_attr_destroy_nid_postfix(&attr);
+    if (error)
+        throw std::runtime_error("currentThreadStackBoundsInternal: reading the thread stack failed with " + std::to_string(error));
+    if (!bound || !stackSize) throw std::runtime_error("currentThreadStackBoundsInternal: the thread has no stack record");
+    return WTF::StackBounds{static_cast<char*>(bound) + stackSize, bound};
 }
 
 std::size_t APS5_VABI _ZN3WTF8pageSizeEv() {
@@ -135,6 +173,22 @@ long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int
 
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset) {
     return ftruncate_nid_postfix(handle, offset) == 0;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto representation = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&path, 0);
+    if (!representation.buffer) return false;
+    const std::string full(reinterpret_cast<const char*>(representation.buffer + 1));
+    if (full.empty()) return false;
+    FileStat status{};
+    const auto exists = [&status](const std::string& candidate) { return stat_nid_postfix(candidate.c_str(), &status) == 0; };
+    if (exists(full)) return true;
+    for (std::size_t index = 1; index < full.size(); ++index) {
+        if (full[index] != '/') continue;
+        const std::string prefix = full.substr(0, index);
+        if (!exists(prefix) && mkdir_nid_postfix(prefix.c_str(), 0700) != 0) return false;
+    }
+    return exists(full) || mkdir_nid_postfix(full.c_str(), 0700) == 0;
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode) {
