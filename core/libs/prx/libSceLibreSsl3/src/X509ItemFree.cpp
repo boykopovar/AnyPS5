@@ -13,4 +13,9 @@ void APS5_VABI X509_CRL_free_nid_postfix(void* crl) {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI PKCS7_free_nid_postfix(void* pkcs7) {
+    if (!pkcs7) return;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
