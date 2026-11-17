@@ -10,6 +10,8 @@
 #include <cstring>
 #include <deque>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -40,6 +42,7 @@ struct Case {
     bool modeled;
     Wide wide;
     std::array<std::uint32_t, 4> literals;
+    std::uint32_t swizzleStride = 0;
 };
 
 constexpr std::array<std::uint32_t, 4> Small{0x20, 0x31, 0x42, 0x53};
@@ -97,6 +100,8 @@ const Case Cases[] = {
     {"dwordx4, records not a dword multiple", false, 4, 0, 16, 0, 0, 16 * (Lanes - 1) + 13, true, Wide::Quad, Large},
     {"format 16_16_16_16_UINT xyzw, records not a dword multiple", true, 4, Format16_16_16_16UInt, 8, 0, 0, 8 * (Lanes - 1) + 6, true, Wide::Pair, Large},
     {"dwordx3", false, 3, 0, 12, 0, 0, 12 * Lanes, true, Wide::None, Large},
+    {"dwordx2, swizzled V#", false, 2, 0, 8, 0, 0, 256, false, Wide::Pair, Large, 16},
+    {"dwordx4, swizzled V#", false, 4, 0, 16, 0, 0, 512, false, Wide::Quad, Large, 32},
 };
 
 std::uint32_t FormatBits(std::uint32_t format) {
@@ -143,7 +148,8 @@ std::vector<std::uint32_t> Code(const Case& test) {
 std::array<std::uint32_t, 4> Descriptor(const Case& test) {
     const auto address = reinterpret_cast<std::uintptr_t>(Output.data() + test.base);
     const std::uint32_t word3 = 0x31000facu | ((test.formatted ? test.format : 22u) << 12u);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), test.records, word3};
+    const std::uint32_t swizzle = test.swizzleStride != 0u ? (1u << 31u) | (test.swizzleStride << 16u) : 0u;
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | swizzle, test.records, word3};
 }
 
 void Fill() {

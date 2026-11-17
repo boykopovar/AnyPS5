@@ -1207,13 +1207,15 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
             return;
         }
         const auto values = storeValues(state, storeData(context, instruction), components);
+        std::array<RuntimeAddress, 4> accesses{};
+        bool addressed = false;
         if (wideStoresAllowed(context, instruction) && (components == 2u || components == 4u) && memory.dataBits == 32u) {
-            std::array<RuntimeAddress, 4> accesses{};
             auto allInBounds = ConstantBool(state, true);
             for (std::uint32_t component = 0; component < components; ++component) {
                 accesses[component] = address(context, instruction, resource, component * 4u, 4u);
                 allInBounds = both(state, allInBounds, accesses[component].inBounds);
             }
+            addressed = true;
             if (const auto wide = wideStore(context, instruction, resource, accesses[0].guest, components, allInBounds)) {
                 EmitIfCondition(state, wide->condition, [&] { emitWideStore(context, instruction, *wide, values); });
                 EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), wide->condition), [&] {
@@ -1226,7 +1228,7 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
         }
         const auto writeComponents = [&] {
             for (std::uint32_t component = 0; component < components; ++component) {
-                const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
+                const auto access = addressed ? accesses[component] : address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
                 EmitIfCondition(state, access.inBounds, [&] { writeBuffer(context, instruction, access.guest, values[component], memory.dataBits); });
             }
         };
