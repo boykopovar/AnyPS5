@@ -161,6 +161,8 @@ private:
     inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
+    std::uint64_t unwatchedReadBytes = 0;
+    double unwatchedReadSeconds = 0;
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
     std::vector<std::string> warnings;

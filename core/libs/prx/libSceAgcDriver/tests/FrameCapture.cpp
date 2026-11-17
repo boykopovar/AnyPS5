@@ -257,18 +257,24 @@ std::vector<AgcDriver::FrameMemoryChunk> deltaChunks(const FrameCaptureReader& r
     return deltas;
 }
 
-void testSharedDeltas(const std::filesystem::path& directory) {
+void checkDeltaCosts(const FrameCaptureWriter& writer, std::uint64_t compared, std::uint64_t readBack) {
+    const auto costs = writer.Costs();
+    check(costs.compared == compared && costs.readBack == readBack, "the writer compared " + std::to_string(costs.compared) + " repeated parts and read " + std::to_string(costs.readBack) + " back, not " + std::to_string(compared) + " and " + std::to_string(readBack));
+}
+
+void testSharedDeltas(const std::filesystem::path& directory, std::uint64_t cacheBudget) {
     constexpr std::uint64_t Address = 0x3000000000;
     const auto first = filled(FrameCaptureWriter::BlockBytes, 1);
     const auto second = filled(FrameCaptureWriter::BlockBytes, 2);
     {
-        FrameCaptureWriter writer(directory);
+        FrameCaptureWriter writer(directory, 1, nullptr, cacheBudget);
         writer.WriteDelta(1, 1, Address, first);
         writer.WriteDelta(2, 2, Address, first);
         writer.WriteDelta(3, 3, Address, second);
         writer.WriteDelta(4, 4, Address + 4096, second);
         writer.WriteDelta(5, 5, Address, second);
         check(writer.SharedBytes() == 2 * second.size(), "the writer shares " + std::to_string(writer.SharedBytes()) + " bytes, not the two repeated deltas");
+        checkDeltaCosts(writer, 2, cacheBudget == 0 ? 2 : 0);
         writer.Finish("{}");
     }
     const FrameCaptureReader reader(directory);
@@ -282,17 +288,18 @@ void testSharedDeltas(const std::filesystem::path& directory) {
     }
 }
 
-void testCollidingDeltas(const std::filesystem::path& directory) {
+void testCollidingDeltas(const std::filesystem::path& directory, std::uint64_t cacheBudget) {
     constexpr std::uint64_t Address = 0x3000000000;
     const auto first = filled(FrameCaptureWriter::BlockBytes, 3);
     const auto second = filled(FrameCaptureWriter::BlockBytes, 4);
     {
-        FrameCaptureWriter writer(directory, 1, collidingHash);
+        FrameCaptureWriter writer(directory, 1, collidingHash, cacheBudget);
         writer.WriteDelta(1, 1, Address, first);
         writer.WriteDelta(2, 2, Address, second);
         writer.WriteDelta(3, 3, Address, first);
         writer.WriteDelta(4, 4, Address, first);
         check(writer.SharedBytes() == first.size(), "the writer shared a delta whose hash collided with different bytes");
+        checkDeltaCosts(writer, 3, cacheBudget == 0 ? 3 : 0);
         writer.Finish("{}");
     }
     const FrameCaptureReader reader(directory);
@@ -507,8 +514,10 @@ int main(int argc, char** argv) {
     testOlderVersion(root / "capture", root / "version-two", "aps5-frame-calls 2\n", 2);
     testCorrupt(root / "capture", root / "corrupt");
     testWriter(root / "writer");
-    testSharedDeltas(root / "shared");
-    testCollidingDeltas(root / "colliding");
+    testSharedDeltas(root / "shared", FrameCaptureWriter::CachedDeltaBytes);
+    testSharedDeltas(root / "shared-read-back", 0);
+    testCollidingDeltas(root / "colliding", FrameCaptureWriter::CachedDeltaBytes);
+    testCollidingDeltas(root / "colliding-read-back", 0);
     testMemoryFormatOne(root / "capture", root / "memory-one");
     testMalformedReference(root / "shared", root / "malformed");
     std::filesystem::remove_all(root);

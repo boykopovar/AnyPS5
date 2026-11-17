@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstring>
 #include <future>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -206,7 +208,7 @@ std::string_view FrameCallName(FrameCallKind kind) {
     throw std::runtime_error("frame capture: unknown call kind " + std::to_string(static_cast<std::uint32_t>(kind)));
 }
 
-FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level, DeltaHash deltaHash) : directory(directory), level(level), deltaHash(deltaHash != nullptr ? deltaHash : hashDelta) {
+FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level, DeltaHash deltaHash, std::uint64_t cacheBudget) : directory(directory), level(level), cacheBudget(cacheBudget), deltaHash(deltaHash != nullptr ? deltaHash : hashDelta) {
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     requireCapture(!error && std::filesystem::is_directory(directory), "cannot create the directory " + directory.string());
@@ -294,20 +296,42 @@ void FrameCaptureWriter::WriteDelta(std::uint64_t group, std::uint64_t completed
         chunk.address = address + at;
         chunk.bytes = part.size();
         const auto key = std::pair{chunk.address, chunk.bytes};
+        const auto hashed = std::chrono::steady_clock::now();
         const auto [hash, check] = deltaHash(part);
+        const auto hashSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - hashed).count();
+        std::optional<DeltaPayload> earlier;
         {
             std::lock_guard lock(mutex);
-            if (const auto found = deltaPayloads.find(key); found != deltaPayloads.end() && found->second.hash == hash && found->second.check == check && storedEqual(found->second, part)) {
-                chunk.compressedBytes = found->second.compressedBytes;
-                writeChunk(chunk, {}, found->second.offset);
-                sharedBytes += chunk.bytes;
-                continue;
-            }
+            costs.hashSeconds += hashSeconds;
+            if (const auto found = deltaPayloads.find(key); found != deltaPayloads.end() && found->second.hash == hash && found->second.check == check) earlier = found->second;
         }
+        bool same = false;
+        if (earlier) {
+            const auto compared = std::chrono::steady_clock::now();
+            same = sameDelta(*earlier, part);
+            const auto compareSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - compared).count();
+            std::lock_guard lock(mutex);
+            ++costs.compared;
+            costs.compareSeconds += compareSeconds;
+        }
+        if (same) {
+            chunk.compressedBytes = earlier->compressedBytes;
+            std::lock_guard lock(mutex);
+            writeChunk(chunk, {}, earlier->offset);
+            sharedBytes += chunk.bytes;
+            continue;
+        }
+        earlier.reset();
         const auto payload = compress(part);
         chunk.compressedBytes = payload.size();
         std::lock_guard lock(mutex);
-        deltaPayloads[key] = {hash, check, writeChunk(chunk, payload), payload.size()};
+        auto& stored = deltaPayloads[key];
+        if (stored.bytes) cachedBytes -= stored.bytes->size();
+        stored = {hash, check, writeChunk(chunk, payload), payload.size(), nullptr};
+        if (cachedBytes + part.size() <= cacheBudget) {
+            cachedBytes += part.size();
+            stored.bytes = std::make_shared<const std::vector<std::byte>>(part.begin(), part.end());
+        }
     }
 }
 
@@ -353,6 +377,11 @@ std::uint64_t FrameCaptureWriter::SharedBytes() const {
     return sharedBytes;
 }
 
+FrameCaptureWriter::DeltaCosts FrameCaptureWriter::Costs() const {
+    std::lock_guard lock(mutex);
+    return costs;
+}
+
 const std::filesystem::path& FrameCaptureWriter::Directory() const {
     return directory;
 }
@@ -378,6 +407,13 @@ std::uint64_t FrameCaptureWriter::writeChunk(const FrameMemoryChunk& chunk, std:
     const auto payloadOffset = memoryOffset + ChunkHeaderBytes;
     memoryOffset = payloadOffset + payload.size();
     return payloadOffset;
+}
+
+bool FrameCaptureWriter::sameDelta(const DeltaPayload& payload, std::span<const std::byte> bytes) {
+    if (payload.bytes) return payload.bytes->size() == bytes.size() && std::memcmp(payload.bytes->data(), bytes.data(), bytes.size()) == 0;
+    std::lock_guard lock(mutex);
+    ++costs.readBack;
+    return storedEqual(payload, bytes);
 }
 
 bool FrameCaptureWriter::storedEqual(const DeltaPayload& payload, std::span<const std::byte> bytes) {

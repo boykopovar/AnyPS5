@@ -581,10 +581,17 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
+        const auto read = std::chrono::steady_clock::now();
         readGuest(begin, bytes);
-        if (accepted == completed && !GuestMemory::Watched(begin, bytes.size())) {
+        const bool unwatched = !GuestMemory::Watched(begin, bytes.size());
+        const bool sampled = accepted == completed && unwatched;
+        const auto sample = sampled ? std::pair{contentHash(bytes), accepted} : std::pair<std::uint64_t, std::uint64_t>{};
+        if (unwatched) {
+            unwatchedReadBytes += bytes.size();
+            unwatchedReadSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - read).count();
+        }
+        if (sampled) {
             const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
-            const auto sample = std::pair{contentHash(bytes), accepted};
             const auto found = unwatchedHashes.samples.find(key);
             if (found != unwatchedHashes.samples.end() && found->second == sample) continue;
             forget(begin, end);
@@ -863,6 +870,10 @@ void FrameRecorder::finish() {
     writer->WriteCall(end);
     writeReferenceFrames();
     writer->Finish(header());
+    const auto costs = writer->Costs();
+    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched blocks read in %.2f s, delta hashing %.2f s, %llu repeated parts compared in %.2f s (%llu read back from the file)\n",
+                 static_cast<double>(unwatchedReadBytes) / (1024.0 * 1024.0), unwatchedReadSeconds, costs.hashSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
+                 static_cast<unsigned long long>(costs.readBack));
     std::fprintf(stderr, "[frame-capture] %llu frames, %llu calls, %llu memory deltas (%.1f MiB), %.1f MiB raw, %.1f MiB stored in %s\n", static_cast<unsigned long long>(recordedFrames),
                  static_cast<unsigned long long>(recordedCalls), static_cast<unsigned long long>(deltaGroups), static_cast<double>(deltaBytes) / (1024.0 * 1024.0),
                  static_cast<double>(writer->RawBytes()) / (1024.0 * 1024.0), static_cast<double>(writer->StoredBytes()) / (1024.0 * 1024.0), directory.string().c_str());

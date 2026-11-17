@@ -88,10 +88,17 @@ public:
     static constexpr std::string_view MemoryMagicV1 = "aps5-frame-memory 1\n";
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
+    static constexpr std::uint64_t CachedDeltaBytes = 512u * 1024u * 1024u;
 
     using DeltaHash = std::array<std::uint64_t, 2> (*)(std::span<const std::byte> bytes);
+    struct DeltaCosts {
+        std::uint64_t compared = 0;
+        std::uint64_t readBack = 0;
+        double hashSeconds = 0;
+        double compareSeconds = 0;
+    };
 
-    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, DeltaHash deltaHash = nullptr);
+    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, DeltaHash deltaHash = nullptr, std::uint64_t cacheBudget = CachedDeltaBytes);
     FrameCaptureWriter(const FrameCaptureWriter&) = delete;
     FrameCaptureWriter& operator=(const FrameCaptureWriter&) = delete;
 
@@ -105,6 +112,7 @@ public:
     std::uint64_t RawBytes() const;
     std::uint64_t StoredBytes() const;
     std::uint64_t SharedBytes() const;
+    DeltaCosts Costs() const;
     const std::filesystem::path& Directory() const;
 
 private:
@@ -113,11 +121,13 @@ private:
         std::uint64_t check = 0;
         std::uint64_t offset = 0;
         std::uint64_t compressedBytes = 0;
+        std::shared_ptr<const std::vector<std::byte>> bytes;
     };
 
     std::uint64_t writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload, std::uint64_t sharedOffset = 0);
     std::vector<std::byte> compress(std::span<const std::byte> bytes) const;
     bool storedEqual(const DeltaPayload& payload, std::span<const std::byte> bytes);
+    bool sameDelta(const DeltaPayload& payload, std::span<const std::byte> bytes);
 
     std::filesystem::path directory;
     int level;
@@ -127,6 +137,9 @@ private:
     std::uint64_t rawBytes = 0;
     std::uint64_t storedBytes = 0;
     std::uint64_t sharedBytes = 0;
+    std::uint64_t cacheBudget = CachedDeltaBytes;
+    std::uint64_t cachedBytes = 0;
+    DeltaCosts costs;
     std::uint64_t memoryOffset = 0;
     std::map<std::pair<std::uint64_t, std::uint64_t>, DeltaPayload> deltaPayloads;
     DeltaHash deltaHash = nullptr;
