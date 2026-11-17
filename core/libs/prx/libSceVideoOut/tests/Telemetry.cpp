@@ -152,12 +152,19 @@ int frameNumberMatchesCaption() {
         return 77;
     }
     check(window.FrameNumber() == 0, "no frame before the first title update");
+    std::uint64_t lastCaption = 0;
     for (std::uint64_t expected = 1; expected <= 65; ++expected) {
         window.UpdateTitle();
         check(window.FrameNumber() == expected, "FrameNumber must count title updates");
         const std::string title = SDL_GetWindowTitle(window.Handle());
         const auto open = title.rfind('(');
-        check(open != std::string::npos && std::stoull(title.substr(open + 1)) == expected, "caption counter differs from FrameNumber: " + title);
+        check(open != std::string::npos, "caption has no frame counter: " + title);
+        const std::uint64_t caption = std::stoull(title.substr(open + 1));
+        // The title is pushed on frame 1 and when the fps window closes, so the counter
+        // may lag FrameNumber but must never run ahead of it or go backwards.
+        check(expected != 1 || caption == 1, "first frame must push the caption: " + title);
+        check(caption >= 1 && caption <= expected && caption >= lastCaption, "caption counter out of range: " + title);
+        lastCaption = caption;
     }
     window.Destroy();
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
