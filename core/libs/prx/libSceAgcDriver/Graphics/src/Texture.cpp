@@ -296,7 +296,7 @@ bool BlockWriteBackEach() {
 }
 
 bool StorageBlockUnits(const GuestTextureResource& descriptor, const SurfaceGeometry& geometry) {
-    return LayerTrackingEnabled() && BlockTrackingEnabled() && !geometry.thick && descriptor.tileMode != TextureTileMode::kLinear && descriptor.baseAddress % 65536 == 0
+    return LayerTrackingEnabled() && BlockTrackingEnabled() && !geometry.thick && !geometry.levelMajor && descriptor.tileMode != TextureTileMode::kLinear && descriptor.baseAddress % 65536 == 0
         && std::none_of(geometry.mips.begin(), geometry.mips.end(), [](const TileMipLayout& mip) { return mip.gcnSplitStride != 0; });
 }
 
@@ -1810,7 +1810,6 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
                      descriptor.depthOrLastArray, descriptor.baseArray, static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat));
 #endif
         geometry = DescribeSurface(descriptor);
-        Require(!geometry.levelMajor, "a storage image of a PS4 layered surface with several mip levels (stored level by level) is not implemented");
         mips = geometry.mips;
         arrayLayers = geometry.layers;
         const auto elementBytes = BytesPerElement(descriptor.format);
@@ -1818,7 +1817,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         // Storage images in heaps the guest commits on demand only read and store committed pages.
         Require(!GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), true).empty(), "storage texture has no committed guest pages");
         // Write stamps are per 64 KiB block, so only 64 KiB-aligned layer slices can be told apart.
-        const bool layered = geometry.layers >= 2 && !geometry.thick && geometry.imageDepth == 1 && geometry.layers == geometry.imageLayers && geometry.layerBytes * geometry.layers == guestBytes && geometry.layerBytes % 65536 == 0 && descriptor.baseAddress % 65536 == 0;
+        const bool layered = geometry.layers >= 2 && !geometry.thick && !geometry.levelMajor && geometry.imageDepth == 1 && geometry.layers == geometry.imageLayers && geometry.layerBytes * geometry.layers == guestBytes && geometry.layerBytes % 65536 == 0 && descriptor.baseAddress % 65536 == 0;
         // Tile blocks divide the stamp blocks, so at an aligned base every unit is whole tile blocks
         // of its (layer, mip) slices (sliceWindows).
         blockUnits = StorageBlockUnits(descriptor, geometry);
@@ -2508,7 +2507,7 @@ bool StorageTexture::Refresh() {
 
 std::pair<std::uint32_t, std::uint32_t> StorageTexture::refreshUnits(std::uint32_t first, std::uint32_t count) const {
     const std::pair whole{std::uint32_t{0}, trackedLayers};
-    if (count == 0 || geometry.thick || geometry.imageLayers <= 1 || first >= geometry.imageLayers || count > geometry.imageLayers - first || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) return whole;
+    if (count == 0 || geometry.thick || geometry.levelMajor || geometry.imageLayers <= 1 || first >= geometry.imageLayers || count > geometry.imageLayers - first || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) return whole;
     const auto begin = geometry.GuestLayerOffset(first);
     const auto end = geometry.GuestLayerOffset(first + count - 1) + geometry.layerBytes;
     const auto firstLayer = static_cast<std::uint32_t>(begin / trackedLayerBytes);
@@ -4664,7 +4663,7 @@ void StorageTexture::MarkDirty() {
 }
 
 void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
-    if (geometry.thick || geometry.imageLayers <= 1 || count == 0 || slice >= geometry.imageLayers || count > geometry.imageLayers - slice || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) {
+    if (geometry.thick || geometry.levelMajor || geometry.imageLayers <= 1 || count == 0 || slice >= geometry.imageLayers || count > geometry.imageLayers - slice || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) {
         MarkDirty();
         return;
     }
@@ -6456,7 +6455,7 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
         // One array layer of a thin surface: its guest bytes are one contiguous slice.
         const auto& geometry = texture->geometry;
         const auto base = texture->descriptor.baseAddress;
-        if (geometry.layers < 2 || geometry.thick || geometry.imageDepth != 1 || geometry.layers != geometry.imageLayers || geometry.layerBytes != bytes || geometry.layerBytes * geometry.layers != texture->guestBytes || address < base) continue;
+        if (geometry.layers < 2 || geometry.thick || geometry.levelMajor || geometry.imageDepth != 1 || geometry.layers != geometry.imageLayers || geometry.layerBytes != bytes || geometry.layerBytes * geometry.layers != texture->guestBytes || address < base) continue;
         if (layerMemo && texture->layerRefusedGeneration == texture->generation) continue;
         const auto offset = address - base;
         if (offset % bytes != 0 || offset / bytes >= geometry.layers) continue;

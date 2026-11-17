@@ -152,6 +152,72 @@ void detileVolume(const Context& context, TextureDetiler& detiler, TextureTileMo
     Require(range.type == VK_IMAGE_VIEW_TYPE_3D && range.levels == 3u && range.layers == 1u, what + ": the texture is not viewed as one 3D image of three levels");
 }
 
+void storageLayered(const Context& context, TextureDetiler& detiler, TextureTileMode mode) {
+    constexpr std::uint32_t bytes = 4u;
+    constexpr std::uint32_t layers = 3u;
+    const auto what = "PS4 layered storage in tile mode " + std::to_string(static_cast<int>(mode));
+    const auto block = GcnTiling(mode, bytes);
+    GuestTextureResource array{};
+    array.width = block.blockWidth * 2u;
+    array.height = block.blockHeight * 2u;
+    array.depthOrLastArray = layers - 1u;
+    array.mipCount = 3u;
+    array.allocatedMipCount = 3u;
+    array.lastLevel = 2u;
+    array.tileMode = mode;
+    array.dimension = TextureDimension::k2DArray;
+    array.format = 20u;
+    array.dstSelX = 4u;
+    array.dstSelY = 5u;
+    array.dstSelZ = 6u;
+    array.dstSelW = 7u;
+    array.gcnPitch = array.width;
+    const auto geometry = DescribeSurface(array);
+    Require(geometry.levelMajor && geometry.layers == layers && geometry.imageLayers == layers && geometry.imageDepth == 1u && geometry.mips.size() == 3u, what + ": the surface is not a level-major 2D array");
+    Buffer tiled(context, static_cast<std::size_t>(geometry.guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    array.baseAddress = reinterpret_cast<std::uint64_t>(tiled.Bytes().data());
+    const auto storage = StorageTexture::Create(context, detiler, array, 0u);
+    Require(storage != nullptr, what + ": failed to create storage texture for level-major 2D array");
+    Require(!storage->BlockUnits(), what + ": level-major layered storage image should not use block units");
+    Require(storage->TrackedUnits() == 1u, what + ": level-major layered storage image should have 1 tracked unit");
+    Require(storage->Refresh(), what + ": refresh failed");
+    storage->MarkDirty();
+    storage->WriteBack();
+}
+
+void storageVolume(const Context& context, TextureDetiler& detiler, TextureTileMode mode) {
+    constexpr std::uint32_t bytes = 4u;
+    constexpr std::uint32_t depth = 4u;
+    const auto what = "PS4 volume storage in tile mode " + std::to_string(static_cast<int>(mode));
+    const auto block = GcnTiling(mode, bytes);
+    GuestTextureResource volume{};
+    volume.width = block.blockWidth * 2u;
+    volume.height = block.blockHeight * 2u;
+    volume.depthOrLastArray = depth - 1u;
+    volume.mipCount = 3u;
+    volume.allocatedMipCount = 3u;
+    volume.lastLevel = 2u;
+    volume.tileMode = mode;
+    volume.dimension = TextureDimension::k3D;
+    volume.format = 20u;
+    volume.dstSelX = 4u;
+    volume.dstSelY = 5u;
+    volume.dstSelZ = 6u;
+    volume.dstSelW = 7u;
+    volume.gcnPitch = volume.width;
+    const auto geometry = DescribeSurface(volume);
+    Require(geometry.levelMajor && geometry.layers == depth && geometry.imageLayers == 1u && geometry.imageDepth == depth && geometry.mips.size() == 3u, what + ": the surface is not a level-major volume");
+    Buffer tiled(context, static_cast<std::size_t>(geometry.guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    volume.baseAddress = reinterpret_cast<std::uint64_t>(tiled.Bytes().data());
+    const auto storage = StorageTexture::Create(context, detiler, volume, 0u);
+    Require(storage != nullptr, what + ": failed to create storage texture for level-major volume");
+    Require(!storage->BlockUnits(), what + ": level-major volume storage image should not use block units");
+    Require(storage->TrackedUnits() == 1u, what + ": level-major volume storage image should have 1 tracked unit");
+    Require(storage->Refresh(), what + ": refresh failed");
+    storage->MarkDirty();
+    storage->WriteBack();
+}
+
 }
 
 int main() {
@@ -169,6 +235,8 @@ int main() {
             }
             for (const auto mode : {kGcnThin1D, kGcnDisplay1D, kGcnDisplay2D, kGcnThin2D}) {
                 for (const auto pow2Pad : {false, true}) detileVolume(context, detiler, mode, pow2Pad);
+                storageLayered(context, detiler, mode);
+                storageVolume(context, detiler, mode);
             }
             device->WaitIdle();
         }
