@@ -1,11 +1,14 @@
 #include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "FreeTypeFontFixture.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +17,9 @@
 #include <exception>
 #include <string>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -36,6 +42,16 @@ static void* APS5_VABI Allocate(GuestMemoryRec*, std::int64_t size) {
     return std::malloc(static_cast<std::size_t>(size));
 }
 
+static void* APS5_VABI AllocateMutatingErrno(GuestMemoryRec*, std::int64_t size) {
+    errno = EIO;
+    return std::malloc(static_cast<std::size_t>(size));
+}
+
+static void* APS5_VABI AllocateFailMutatingErrno(GuestMemoryRec*, std::int64_t) {
+    errno = EIO;
+    return nullptr;
+}
+
 static void APS5_VABI Release(GuestMemoryRec*, void* block) {
     std::free(block);
 }
@@ -44,6 +60,25 @@ static int gCountingFreeCalls = 0;
 
 static void APS5_VABI CountingRelease(GuestMemoryRec*, void*) {
     ++gCountingFreeCalls;
+}
+
+static std::uintptr_t gProtectArenaBase = 0;
+static std::size_t gProtectArenaBytes = 0;
+static void* gLastAllocatedBlock = nullptr;
+static void* gLastReleasedBlock = nullptr;
+static int gRollbackFreeCalls = 0;
+
+static void* APS5_VABI AllocateAndProtectOutput(GuestMemoryRec*, std::int64_t size) {
+    GuestArena::GuestArenaSetProtection_nid_postfix(gProtectArenaBase, gProtectArenaBytes, 0x02);
+    gLastAllocatedBlock = std::malloc(static_cast<std::size_t>(size));
+    return gLastAllocatedBlock;
+}
+
+static void APS5_VABI RollbackReleaseMutatingErrno(GuestMemoryRec*, void* block) {
+    errno = EIO;
+    gLastReleasedBlock = block;
+    ++gRollbackFreeCalls;
+    std::free(block);
 }
 
 static void TestModuleWrapperGuestPointers() {
@@ -161,11 +196,117 @@ int main() {
     memory.free = Release;
     void* block = nullptr;
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, &block) == 0);
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, reinterpret_cast<void**>(std::uintptr_t{0x10})) == 6);
+    REQUIRE(errno == 71);
     REQUIRE(block != nullptr);
     sceFreeTypeOlFree_nid_postfix(&memory, &block);
     REQUIRE(block == nullptr);
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, -1, &block) == 6);
     REQUIRE(block == nullptr);
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 0, &block) == 0);
+    REQUIRE(errno == 71 && block == nullptr);
+
+    GuestMemoryRec errnoMemory = memory;
+    errnoMemory.alloc = AllocateMutatingErrno;
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&errnoMemory, 16, &block) == 0);
+    REQUIRE(errno == 71 && block != nullptr);
+    sceFreeTypeOlFree_nid_postfix(&errnoMemory, &block);
+    REQUIRE(block == nullptr);
+
+    errnoMemory.alloc = AllocateFailMutatingErrno;
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&errnoMemory, 16, &block) == 64);
+    REQUIRE(errno == 71 && block == nullptr);
+
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const arena = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        REQUIRE(arena != nullptr);
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        REQUIRE(section != nullptr);
+        GuestArena::GuestArenaMap_nid_postfix(arena, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(arena, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(arena, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            bool any = false;
+            for (;;) {
+                std::array<void*, 64> pages{};
+                std::size_t count = pages.size();
+                REQUIRE(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(arena), kArenaBytes, pages.data(), &count, true));
+                if (count != 0) {
+                    any = true;
+                }
+                if (count < pages.size()) {
+                    break;
+                }
+            }
+            return any;
+#else
+            bool dirty = false;
+            REQUIRE(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(arena), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty));
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            REQUIRE(!collectDirty());
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            REQUIRE(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY);
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watchedOut = reinterpret_cast<void**>(arena);
+        *watchedOut = nullptr;
+        armWatch(watchedOut);
+        errno = 71;
+        REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, watchedOut) == 0);
+        REQUIRE(errno == 71 && *watchedOut != nullptr && collectDirty());
+        armWatch(watchedOut);
+        errno = 71;
+        sceFreeTypeOlFree_nid_postfix(&memory, watchedOut);
+        REQUIRE(errno == 71 && *watchedOut == nullptr && collectDirty());
+
+        gProtectArenaBase = reinterpret_cast<std::uintptr_t>(arena);
+        gProtectArenaBytes = kArenaBytes;
+        gLastAllocatedBlock = nullptr;
+        gLastReleasedBlock = nullptr;
+        gRollbackFreeCalls = 0;
+        GuestMemoryRec rollbackMemory = memory;
+        rollbackMemory.alloc = AllocateAndProtectOutput;
+        rollbackMemory.free = RollbackReleaseMutatingErrno;
+        errno = 71;
+        REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&rollbackMemory, 32, watchedOut) == 6);
+        REQUIRE(errno == 71 && *watchedOut == nullptr && gLastAllocatedBlock != nullptr && gRollbackFreeCalls == 1 && gLastReleasedBlock == gLastAllocatedBlock);
+        GuestArena::GuestArenaSetProtection_nid_postfix(gProtectArenaBase, kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(arena, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(arena, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(arena, kArenaBytes);
+    }
 
     const auto font = SquareGlyphFont('A', 700, true);
     GuestFaceRec* activeFace = nullptr;
