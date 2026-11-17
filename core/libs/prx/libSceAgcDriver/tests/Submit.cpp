@@ -162,6 +162,16 @@ void testChainedIndirectBuffers() {
     const auto message = expectFailure([&] { sceAgcDriverSubmitDcb(&loopPacket); });
     check(message.find("copy limit") != std::string::npos, "a chained indirect buffer that links to itself was not stopped by the copy limit");
 
+    std::vector<std::uint32_t> first(4);
+    std::vector<std::uint32_t> second(4);
+    const auto toSecond = link(second.data(), 4);
+    const auto toFirst = link(first.data(), 4);
+    std::copy(toSecond.begin(), toSecond.end(), first.begin());
+    std::copy(toFirst.begin(), toFirst.end(), second.begin());
+    Packet pairPacket{first.data(), static_cast<std::uint32_t>(first.size()), 0, {}};
+    const auto pairMessage = expectFailure([&] { sceAgcDriverSubmitDcb(&pairPacket); });
+    check(pairMessage.find("copy limit") != std::string::npos, "two chained indirect buffers that link to each other were not stopped by the copy limit");
+
     std::vector<std::vector<std::uint32_t>> chain(2000);
     chain.back() = {0xffff1000u};
     for (std::size_t index = chain.size() - 1; index-- > 0;) chain[index] = link(chain[index + 1].data(), static_cast<std::uint32_t>(chain[index + 1].size()));
