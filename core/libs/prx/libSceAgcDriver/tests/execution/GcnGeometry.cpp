@@ -49,6 +49,11 @@ alignas(256) constexpr std::array<std::uint32_t, 20> GcnCopy{
     0x05040302, 0xf800020f, 0x08070706, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 15> GcnCopyFolded{
+    0x34020082, 0xb0040200, 0xb7840100, 0x8f058881, 0x92068a81, 0xe0305000, 0x04400201, 0xe0305000,
+    0x05400301, 0xe0305000, 0x06400401, 0xbf8c0000, 0xf80008cf, 0x02040302, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0x060604f2, 0xf80008cf, 0x02020302, 0xbf810000,
 };
@@ -171,6 +176,8 @@ void RequireCopyLayout() {
     Require(exports.size() == 2u, "the copy program did not yield a position and a parameter export");
     Require(exports[0].target == 0x0cu && exports[0].enable == 0xfu && exports[0].done && exports[0].constants == 0u && exports[0].values == std::array<std::uint32_t, 4>{0u, 1u, 2u, 3u}, "the position export did not read GSVS dwords 0-3");
     Require(exports[1].target == 0x20u && exports[1].constants == 0xeu && exports[1].values == std::array<std::uint32_t, 4>{4u, 0u, 0u, 0x3f800000u}, "the parameter export did not read GSVS dword 4 beside the constants 0, 0 and 1.0");
+    const auto folded = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyFolded, 4u, 5u);
+    Require(folded.size() == 1u && folded[0].constants == 0u && folded[0].values == std::array<std::uint32_t, 4>{3u, 1u, 4u, 3u}, "scalar offsets built by s_addk_i32, s_lshl_b32 and s_bfm_b32 did not select GSVS dwords 3, 1 and 4");
     bool refused = false;
     try {
         static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyComputed, 4u, 5u));

@@ -278,6 +278,30 @@ std::optional<std::uint32_t> OperandConstant(const RdnaOperand& operand) {
     return std::nullopt;
 }
 
+std::optional<std::uint32_t> ScalarValue(const RdnaOperand& operand, const std::map<std::uint32_t, std::uint32_t>& scalars) {
+    if (const auto value = OperandConstant(operand)) return value;
+    if (operand.kind != RdnaOperandKind::ScalarRegister) return std::nullopt;
+    const auto found = scalars.find(operand.reg);
+    return found == scalars.end() ? std::nullopt : std::optional<std::uint32_t>(found->second);
+}
+
+std::optional<std::uint32_t> FoldScalar(const RdnaInstruction& instruction, const std::map<std::uint32_t, std::uint32_t>& scalars) {
+    if (instruction.is64Bit) return std::nullopt;
+    const auto first = ScalarValue(instruction.source0, scalars);
+    if (instruction.op == RdnaOpcode::SMovkI32 || instruction.op == RdnaOpcode::SMovB32) return first;
+    const auto second = ScalarValue(instruction.source1, scalars);
+    if (!first || !second) return std::nullopt;
+    switch (instruction.op) {
+    case RdnaOpcode::SAddI32:
+    case RdnaOpcode::SAddU32: return *first + *second;
+    case RdnaOpcode::SMulI32:
+    case RdnaOpcode::SMulkI32: return *first * *second;
+    case RdnaOpcode::SLshlB32: return *first << (*second & 31u);
+    case RdnaOpcode::SBfmB32: return ((*first & 31u) == 0u ? 0u : (0xffffffffu >> (32u - (*first & 31u)))) << (*second & 31u);
+    default: return std::nullopt;
+    }
+}
+
 void Forget(std::map<std::uint32_t, CopySource>& vectors, std::map<std::uint32_t, std::uint32_t>& scalars, const RdnaInstruction& instruction) {
     for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
         const auto count = std::max(instruction.dataDwordCount, 1u) + (instruction.is64Bit ? 1u : 0u);
@@ -304,10 +328,9 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
     for (const auto& instruction : program.instructions) {
         const auto pc = instruction.programCounter;
         if (instruction.op == RdnaOpcode::SEndpgm) break;
-        if (instruction.op == RdnaOpcode::SMovkI32 || instruction.op == RdnaOpcode::SMovB32) {
-            const auto value = OperandConstant(instruction.source0);
+        if (const auto folded = FoldScalar(instruction, scalars)) {
             Forget(vectors, scalars, instruction);
-            if (value && instruction.destination.kind == RdnaOperandKind::ScalarRegister) scalars[instruction.destination.reg] = *value;
+            if (instruction.destination.kind == RdnaOperandKind::ScalarRegister) scalars[instruction.destination.reg] = *folded;
             continue;
         }
         if (instruction.op == RdnaOpcode::VLshlrevB32 && instruction.source1.kind == RdnaOperandKind::VectorRegister && instruction.source1.reg == 0u && OperandConstant(instruction.source0) == 2u && !vectors.contains(0u)) {
@@ -328,11 +351,7 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
             Forget(vectors, scalars, instruction);
             const auto address = vectors.find(instruction.source0.reg);
             if (!instruction.offen || instruction.idxen || address == vectors.end() || !address->second.vertexOffset) FailCopy("a GSVS ring read not addressed by the vertex index times 4", pc);
-            std::optional<std::uint32_t> soffset = OperandConstant(instruction.source2);
-            if (instruction.source2.kind == RdnaOperandKind::ScalarRegister) {
-                const auto found = scalars.find(instruction.source2.reg);
-                if (found != scalars.end()) soffset = found->second;
-            }
+            const auto soffset = ScalarValue(instruction.source2, scalars);
             if (!soffset) FailCopy("a GSVS ring read whose scalar offset is not a constant", pc);
             const auto bytes = static_cast<std::uint64_t>(*soffset) + instruction.memoryOffset;
             if (bytes % slotBytes != 0u || bytes / slotBytes >= vertexDwords) FailCopy("a GSVS ring read at " + std::to_string(bytes) + " bytes, which is not one of the " + std::to_string(vertexDwords) + " vertex dwords of " + std::to_string(slotBytes) + " bytes each", pc);
