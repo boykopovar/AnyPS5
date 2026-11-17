@@ -23,63 +23,72 @@ struct Fake {
     VkDevice lastDevice = VK_NULL_HANDLE;
 };
 
-Fake first{reinterpret_cast<VkDevice>(0x1000)};
-Fake second{reinterpret_cast<VkDevice>(0x2000)};
-
-Fake& owner(VkDevice device) {
-    return device == first.device ? first : second;
-}
+Fake devices[2]{Fake{reinterpret_cast<VkDevice>(0x1000)}, Fake{reinterpret_cast<VkDevice>(0x2000)}};
+Fake& first = devices[0];
+Fake& second = devices[1];
 
 const std::uint64_t SharedView = 0x77;
 
+template <int Index>
+Fake& expect(VkDevice device) {
+    Require(device == devices[Index].device, "a call reached another device's function");
+    return devices[Index];
+}
+
+template <int Index>
 VKAPI_ATTR VkResult VKAPI_CALL fakeCreateView(VkDevice device, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
-    auto& fake = owner(device);
+    auto& fake = expect<Index>(device);
     ++fake.createViews;
     fake.lastDevice = device;
     *view = reinterpret_cast<VkImageView>(SharedView);
     return VK_SUCCESS;
 }
 
+template <int Index>
 VKAPI_ATTR void VKAPI_CALL fakeDestroyView(VkDevice device, VkImageView, const VkAllocationCallbacks*) {
-    auto& fake = owner(device);
+    auto& fake = expect<Index>(device);
     ++fake.destroyViews;
     fake.lastDevice = device;
 }
 
+template <int Index>
 VKAPI_ATTR VkResult VKAPI_CALL fakeCreateSampler(VkDevice device, const VkSamplerCreateInfo*, const VkAllocationCallbacks*, VkSampler* sampler) {
-    auto& fake = owner(device);
+    auto& fake = expect<Index>(device);
     ++fake.createSamplers;
     fake.lastDevice = device;
     *sampler = reinterpret_cast<VkSampler>(SharedView);
     return VK_SUCCESS;
 }
 
+template <int Index>
 VKAPI_ATTR void VKAPI_CALL fakeDestroySampler(VkDevice device, VkSampler, const VkAllocationCallbacks*) {
-    auto& fake = owner(device);
+    auto& fake = expect<Index>(device);
     ++fake.destroySamplers;
     fake.lastDevice = device;
 }
 
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL fakeProc(VkDevice, const char* name) {
-    if (std::strcmp(name, "vkCreateImageView") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeCreateView);
-    if (std::strcmp(name, "vkDestroyImageView") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroyView);
-    if (std::strcmp(name, "vkCreateSampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeCreateSampler);
-    if (std::strcmp(name, "vkDestroySampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroySampler);
+template <int Index>
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL fakeProc(VkDevice device, const char* name) {
+    Require(device == devices[Index].device, "a function was looked up through another device's loader");
+    if (std::strcmp(name, "vkCreateImageView") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeCreateView<Index>);
+    if (std::strcmp(name, "vkDestroyImageView") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroyView<Index>);
+    if (std::strcmp(name, "vkCreateSampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeCreateSampler<Index>);
+    if (std::strcmp(name, "vkDestroySampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroySampler<Index>);
     return nullptr;
 }
 
 }
 
 int main() {
-    const auto createView = reinterpret_cast<PFN_vkCreateImageView>(DescriptorHeapObjectFunction(first.device, fakeProc, "vkCreateImageView"));
-    const auto destroyView = reinterpret_cast<PFN_vkDestroyImageView>(DescriptorHeapObjectFunction(first.device, fakeProc, "vkDestroyImageView"));
-    const auto createSampler = reinterpret_cast<PFN_vkCreateSampler>(DescriptorHeapObjectFunction(first.device, fakeProc, "vkCreateSampler"));
-    const auto destroySampler = reinterpret_cast<PFN_vkDestroySampler>(DescriptorHeapObjectFunction(first.device, fakeProc, "vkDestroySampler"));
+    const auto createView = reinterpret_cast<PFN_vkCreateImageView>(DescriptorHeapObjectFunction(first.device, fakeProc<0>, "vkCreateImageView"));
+    const auto destroyView = reinterpret_cast<PFN_vkDestroyImageView>(DescriptorHeapObjectFunction(first.device, fakeProc<0>, "vkDestroyImageView"));
+    const auto createSampler = reinterpret_cast<PFN_vkCreateSampler>(DescriptorHeapObjectFunction(first.device, fakeProc<0>, "vkCreateSampler"));
+    const auto destroySampler = reinterpret_cast<PFN_vkDestroySampler>(DescriptorHeapObjectFunction(first.device, fakeProc<0>, "vkDestroySampler"));
     Require(createView != nullptr && destroyView != nullptr && createSampler != nullptr && destroySampler != nullptr, "the hooks resolve");
-    Require(DescriptorHeapObjectFunction(second.device, fakeProc, "vkCreateImageView") == reinterpret_cast<PFN_vkVoidFunction>(createView), "the second device resolves the same hook");
-    DescriptorHeapObjectFunction(second.device, fakeProc, "vkDestroyImageView");
-    DescriptorHeapObjectFunction(second.device, fakeProc, "vkCreateSampler");
-    DescriptorHeapObjectFunction(second.device, fakeProc, "vkDestroySampler");
+    Require(DescriptorHeapObjectFunction(second.device, fakeProc<1>, "vkCreateImageView") == reinterpret_cast<PFN_vkVoidFunction>(createView), "the second device resolves the same hook");
+    DescriptorHeapObjectFunction(second.device, fakeProc<1>, "vkDestroyImageView");
+    DescriptorHeapObjectFunction(second.device, fakeProc<1>, "vkCreateSampler");
+    DescriptorHeapObjectFunction(second.device, fakeProc<1>, "vkDestroySampler");
 
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;

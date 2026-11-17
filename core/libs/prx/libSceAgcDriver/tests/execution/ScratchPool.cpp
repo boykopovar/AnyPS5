@@ -265,7 +265,7 @@ Facts Inspect(const ShaderRecompiler::RecompileResult& result) {
 }
 
 void RequireHeapPipeline(const AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint64_t before, const std::string& name) {
-    if (!AgcDriver::Graphics::GpuHeapEnabled()) return;
+    if (!AgcDriver::Graphics::DescriptorHeapEnabled()) return;
     Require(result.gpuResolvedImages, name + ": the scratch program is not GPU mode");
     Require(device.DescriptorHeapComputePipelines() > before, name + ": the scratch program did not take the descriptor heap");
 }

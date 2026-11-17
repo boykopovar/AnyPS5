@@ -365,14 +365,14 @@ void RecreatedRecorderReadsHtile(AgcDriver::VulkanDevice& device, bool clearSurf
     auto& htile = NewBlock();
     const DepthTarget target{NewBlock().Address(), 0, {64, 32}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, htile.Address(), false};
     std::optional<Recorder> recorder;
-    recorder.emplace(context, true);
+    recorder.emplace(context, device.TimelineSemaphores());
     const auto* address = &*recorder;
     RecordHtileWords(context, *recorder, htile, 0xf0u);
     const auto note = recorder->NewestWriteNote(htile.Address(), HtileBytes);
     NoteHtileMaskOnGpu(context, {htile.Address(), HtileBytes, 0x3f0u, 0u});
     recorder.reset();
     if (clearSurfaces) ClearDepthSurfaces(context.device);
-    recorder.emplace(context, true);
+    recorder.emplace(context, device.TimelineSemaphores());
     Require(&*recorder == address, "the replacement recorder did not reuse the original storage");
     RecordHtileWords(context, *recorder, htile, 0xfu);
     Require(recorder->NewestWriteNote(htile.Address(), HtileBytes) == note, "the replacement recorder did not reuse the original note");

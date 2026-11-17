@@ -869,7 +869,8 @@ void RingRefusals(Scene& scene) {
         }
         const auto color = scene.Color();
         Require(color == 110, "address draw space reuse: the draw whose moved vertex buffer a pending fill completes read " + std::to_string(color) + " instead of 110: it did not see the vertex the GPU wrote");
-        Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved vertex buffer a pending fill completes counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
+        const bool reused = HeapStages || inPlace;
+        Require(outcomes[reused ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved vertex buffer a pending fill completes counted " + outcomes.Text() + (reused ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
     }
     scene.Fetch(0);
     scene.cachedVertex = false;

@@ -360,6 +360,7 @@ int main() {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            if (AgcDriver::Graphics::GpuHeapEnabled() && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         }
         {
             GuestAllocations::Mutation mutation;

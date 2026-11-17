@@ -136,7 +136,6 @@ int main() {
         Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         PixelConstant[0] = 0.25f;
         for (auto& output : Outputs) output.fill(-1.0f);
-        std::string drains;
         constexpr std::array<float, 2> Constants{0.25f, 0.125f};
         unsigned expected = 0;
         for (std::uint32_t pass = 0; pass < 2; ++pass) {
@@ -153,7 +152,10 @@ int main() {
             Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
             Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
             AgcDriverWaitIdle_nid_postfix();
-            drains = DrawFinisher::DrainText();
+            const auto drains = DrawFinisher::DrainText();
+            const auto passLabel = "pass " + std::to_string(pass) + ": ";
+            if (finisher) Require(drains.find(" 0x15 x") == std::string::npos, passLabel + "a pipelined dispatch after a draw handed to the finisher drained the finisher:" + drains);
+            if (finisher) Require(drains.find(" 0x46 x") == std::string::npos, passLabel + "a sample dump after a draw handed to the finisher drained the finisher:" + drains);
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Outputs.data()), sizeof(Outputs));
             for (std::uint32_t round = 0; round < Rounds; ++round) {
                 const auto where = "pass " + std::to_string(pass) + " round " + std::to_string(round);
@@ -166,8 +168,6 @@ int main() {
         unsigned brightest = 0;
         for (const auto value : ColorMemory) brightest = std::max(brightest, static_cast<unsigned>(std::to_integer<std::uint8_t>(value)));
         Require(brightest + 2 >= expected && brightest <= expected + 2, "the draws around the dispatches wrote " + std::to_string(brightest) + ", expected " + std::to_string(expected));
-        if (finisher) Require(drains.find(" 0x15 x") == std::string::npos, "a pipelined dispatch after a draw handed to the finisher drained the finisher:" + drains);
-        if (finisher) Require(drains.find(" 0x46 x") == std::string::npos, "a sample dump after a draw handed to the finisher drained the finisher:" + drains);
         AgcDriverShutdown_nid_postfix();
         std::cout << "dispatches and sample dumps after finisher draws " << (finisher ? "queued through the finisher" : "run in order") << "\n";
         return 0;

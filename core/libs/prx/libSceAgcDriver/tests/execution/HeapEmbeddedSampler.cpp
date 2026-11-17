@@ -112,11 +112,14 @@ int main() {
         RequireSampled(Outputs[2].data(), SampleTexel, "the wrapping constant sampler's texel", heap);
         RequireSampled(Outputs[3].data(), SampleTexel, "the mirroring constant sampler's texel", heap);
         if (embedding) {
-            const bool capped = std::getenv("APS5_EMBEDDED_SAMPLER_CAP") != nullptr;
+            const char* capText = std::getenv("APS5_EMBEDDED_SAMPLER_CAP");
+            const bool capped = capText != nullptr;
+            const auto cap = capped ? static_cast<std::uint32_t>(std::strtoul(capText, nullptr, 10)) : ~0u;
             const auto* heapObject = AgcDriver::Graphics::BindlessHeap::Existing(device->graphicsContext());
             Require(heapObject != nullptr, "the heap dispatch left no descriptor heap");
-            Require(capped ? heapObject->EmbeddedSamplerCount() == 0u : heapObject->EmbeddedSamplerCount() > embeddedBefore,
-                    capped ? "a capped device embedded a sampler past its limit" : "the pipeline did not embed the constant sampler");
+            const auto count = heapObject->EmbeddedSamplerCount();
+            Require(count <= cap, "a capped device embedded a sampler past its limit");
+            Require(cap == 0u || count > embeddedBefore, "the pipeline did not embed the constant sampler");
         }
         const bool capped = std::getenv("APS5_EMBEDDED_SAMPLER_CAP") != nullptr;
         std::cout << "constant samplers sampled " << (!embedding ? "through descriptors" : capped ? "from sampler heap slots past the embedded sampler limit" : "as embedded samplers") << '\n';

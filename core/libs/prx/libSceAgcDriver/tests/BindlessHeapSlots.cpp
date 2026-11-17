@@ -47,16 +47,29 @@ std::shared_ptr<Texture> fakeTexture(const Context& context, std::size_t) {
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkImage image = VK_NULL_HANDLE;
     require(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image) == VK_SUCCESS, "a texture fixture image is created");
+    VkMemoryRequirements requirements{};
+    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    const auto release = [context, image, &memory] {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    };
     std::unique_ptr<Texture> texture;
     try {
+        require(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory) == VK_SUCCESS, "a texture fixture image gets memory");
+        require(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0u) == VK_SUCCESS, "a texture fixture image binds its memory");
         texture = std::make_unique<Texture>(context, image, info.format, VK_IMAGE_ASPECT_COLOR_BIT, VkComponentMapping{});
     } catch (...) {
-        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        release();
         throw;
     }
-    return std::shared_ptr<Texture>(texture.release(), [context, image](Texture* released) {
+    return std::shared_ptr<Texture>(texture.release(), [context, image, memory](Texture* released) {
         delete released;
         context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
     });
 }
 
