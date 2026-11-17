@@ -716,6 +716,7 @@ int main(int argc, char** argv) {
     HttpEpollHandle epoll = nullptr;
     HttpNBEvent events[2]{};
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
+    Require(sceHttpSetEpollId(1, 0, nullptr) == beforeInit);
     Require(sceHttpAbortWaitRequest(nullptr) == beforeInit);
     Require(sceHttpTerm_nid_postfix(1) == beforeInit);
     HttpConnectionStat preStat{};
@@ -724,6 +725,7 @@ int main(int argc, char** argv) {
     int cookie = 0x5a5a;
     Require(sceHttpSetCookieEnabled(12345, 0) == invalidId);
     Require(sceHttpSetCookieEnabled(12345, 2) == invalidId);
+    Require(sceHttpSetEpollId(12345, 0, nullptr) == invalidId);
     Require(sceHttpGetCookieEnabled(12345, &cookie) == invalidId && cookie == 0x5a5a);
     const int context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(context > 0);
@@ -732,6 +734,7 @@ int main(int argc, char** argv) {
     Require(sceHttpGetConnectionStat(12345, &preStat) == invalidId);
     const int tmpl = sceHttpCreateTemplate(context, "test-agent", 1, 0);
     Require(tmpl > 0);
+    Require(sceHttpSetEpollId(tmpl, 0, nullptr) == 0);
     for (const int value : {0, 1, 2, 3, 255, 256, -1, static_cast<int>(0x80000000u)}) {
         Require(sceHttpSetCookieEnabled(tmpl, value) == 0);
         cookie = 0x5a5a;
