@@ -1175,12 +1175,20 @@ void TestJsonText() {
         "a short buffer still reports the decoded size");
     Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "\\ud83dXXde00", 12, &length, &consumed) == NpUtilBufferTooSmall,
         "a high surrogate without a second unicode escape is not combined");
+    Require(sceNpUtilJsonGetOneChar(reinterpret_cast<char*>(0x10), sizeof(one), "a", 1, &length, &consumed) == NpUtilInvalid,
+        "unwritable destination buffer is refused");
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "a", 1, reinterpret_cast<std::size_t*>(0x10), &consumed) == NpUtilInvalid,
+        "unwritable destination length is refused");
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "a", 1, &length, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid,
+        "unwritable consumed length is refused");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";
     Require(sceNpUtilGetNthChar(1, japanese, &character) == 0 && character == japanese + 3, "characters are counted, not bytes");
     Require(sceNpUtilGetNthChar(10, "abc", &character) == 0 && *character == '\0', "counting stops at the end");
     Require(sceNpUtilGetNthChar(2, "a\x01b", &character) == NpUtilInvalidCharacter, "control characters are refused");
+    Require(sceNpUtilGetNthChar(0, "a", nullptr) == NpUtilInvalid, "null character destination is refused");
+    Require(sceNpUtilGetNthChar(0, "a", reinterpret_cast<const char**>(0x10)) == NpUtilInvalid, "unwritable character destination is refused");
 
     char url[32] = {};
     Require(sceNpUtilHttpUrlEncode(url, sizeof(url), "a b=c*", 6, &length) == 0 && Equals(url, "a+b%3Dc*") && length == 9,
