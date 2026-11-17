@@ -108,6 +108,7 @@ void ResetCheckpointSnapshots() noexcept;
 }
 #include <limits>
 #include <list>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -3011,6 +3012,26 @@ bool OpportunisticReap() {
     return enabled;
 }
 
+struct FillPiece {
+    const Graphics::HostImport* import;
+    std::uint64_t address;
+    std::size_t bytes;
+};
+
+bool fillPieces(const Graphics::Context& context, std::uint64_t address, std::size_t bytes, std::vector<FillPiece>& pieces) {
+    pieces.clear();
+    const auto end = address + bytes;
+    for (auto cursor = address; cursor < end;) {
+        const auto* import = Graphics::ExistingHostImportFor(context, cursor, 16);
+        if (import == nullptr) return false;
+        const auto to = std::min<std::uint64_t>(end, import->base + import->bytes);
+        if ((to - address) % 16 != 0) return false;
+        pieces.push_back({import, cursor, static_cast<std::size_t>(to - cursor)});
+        cursor = to;
+    }
+    return pieces.size() > 1;
+}
+
 }
 
 void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
@@ -3233,7 +3254,8 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     if (OpportunisticReap()) recorder.Reap();
     const auto context = graphicsContext();
     const Graphics::HostImport* import = Graphics::HostImportFor(context, address, bytes);
-    if (import == nullptr) return false;
+    std::vector<FillPiece> pieces;
+    if (import == nullptr && !fillPieces(context, address, bytes, pieces)) return false;
     // Earlier recorded work that stores into the range must land before the fill, or it would
     // overwrite the fill later. Stores the GPU makes (direct dispatch writes, GPU labels, earlier
     // fills, GPU-direct write-backs) are ordered by the fill's own barrier below (ALL_COMMANDS ->
@@ -3287,7 +3309,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             // The sync ran completions, whose write-backs can refresh the import table and retire
             // the import looked up above; the caller stores the fill itself when it is gone.
             import = Graphics::HostImportFor(context, address, bytes);
-            if (import == nullptr) return false;
+            if (import == nullptr && !fillPieces(context, address, bytes, pieces)) return false;
         } else {
             ++ordered;
         }
@@ -3313,9 +3335,10 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
     const std::array<std::uint32_t, 4> patternWords{pattern[0], pattern[1], pattern[2], pattern[3]};
     static const bool elideRepeats = std::getenv("APS5_NO_FILL_ELISION") == nullptr;
-    const auto importSerial = elideRepeats ? Graphics::HostImportSerial(context, address, bytes, false) : 0;
+    const bool elide = elideRepeats && import != nullptr;
+    const auto importSerial = elide ? Graphics::HostImportSerial(context, address, bytes, false) : 0;
     const auto unwatchSerial = GuestMemory::UnwatchSerial();
-    if (elideRepeats) {
+    if (elide) {
         const auto found = state->repeatedFills.find(address);
         if (found != state->repeatedFills.end() && found->second.bytes == bytes && found->second.pattern == patternWords && found->second.importSerial == importSerial && found->second.unwatchSerial == unwatchSerial && !Graphics::LeaseWorkPending() && GuestMemory::CollectWritesUncached(address, bytes) != 0 && GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
             ++elidedFills;
@@ -3373,32 +3396,40 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         Graphics::Recorder::CountBarriers(CommandClass::Fill);
     }
-    const auto offset = Graphics::HostImportOffset(*import, address);
+    const std::array<FillPiece, 1> whole{{{import, address, bytes}}};
+    const auto targets = import != nullptr ? std::span<const FillPiece>(whole) : std::span<const FillPiece>(pieces);
     if (uniform) {
         ++uniformFills;
-        context.Resolved(&Graphics::DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, import->buffer, offset, bytes, pattern[0]);
+        for (const auto& piece : targets) context.Resolved(&Graphics::DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, piece.import->buffer, Graphics::HostImportOffset(*piece.import, piece.address), piece.bytes, pattern[0]);
     } else if (patternBuffer != nullptr) {
         ++patternFills;
         std::vector<VkBufferCopy> copies;
-        for (std::size_t done = 0; done < bytes; done += PatternBufferBytes) copies.push_back({0, offset + done, std::min(PatternBufferBytes, bytes - done)});
-        context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, patternBuffer->Handle(), import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+        for (const auto& piece : targets) {
+            const auto offset = Graphics::HostImportOffset(*piece.import, piece.address);
+            copies.clear();
+            for (std::size_t done = 0; done < piece.bytes; done += PatternBufferBytes) copies.push_back({0, offset + done, std::min(PatternBufferBytes, piece.bytes - done)});
+            context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, patternBuffer->Handle(), piece.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+        }
     } else {
         ++patternFills;
         // A 16-byte pattern is seeded once and doubled in place until the range is covered.
         auto seed = std::make_shared<Graphics::Buffer>(context, 16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         std::memcpy(seed->Bytes().data(), pattern.data(), 16);
         recorder.Keep(seed);
-        const VkBufferCopy first{0, offset, 16};
         const auto copyBuffer = context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
-        copyBuffer(commands, seed->Handle(), import->buffer, 1, &first);
-        for (std::size_t done = 16; done < bytes;) {
-            const auto chunk = std::min(done, bytes - done);
-            Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-            Graphics::Recorder::CountBarriers(CommandClass::Fill);
-            const VkBufferCopy copy{offset, offset + done, chunk};
-            copyBuffer(commands, import->buffer, import->buffer, 1, &copy);
-            done += chunk;
-            ++doublingSteps;
+        for (const auto& piece : targets) {
+            const auto offset = Graphics::HostImportOffset(*piece.import, piece.address);
+            const VkBufferCopy first{0, offset, 16};
+            copyBuffer(commands, seed->Handle(), piece.import->buffer, 1, &first);
+            for (std::size_t done = 16; done < piece.bytes;) {
+                const auto chunk = std::min(done, piece.bytes - done);
+                Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+                Graphics::Recorder::CountBarriers(CommandClass::Fill);
+                const VkBufferCopy copy{offset, offset + done, chunk};
+                copyBuffer(commands, piece.import->buffer, piece.import->buffer, 1, &copy);
+                done += chunk;
+                ++doublingSteps;
+            }
         }
     }
     // The filled bytes are visible to everything recorded after: shaders, transfers, the host, and
@@ -3414,7 +3445,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     if (uniform) recorder.NotePendingWordFill(address, bytes, pattern[0]);
     else recorder.NotePendingWrite(address, bytes);
     const auto generation = GuestMemory::MarkWritten(address, bytes);
-    if (elideRepeats && generation != 0) {
+    if (elide && generation != 0) {
         constexpr std::size_t RepeatedFillsKept = 256;
         if (state->repeatedFills.size() >= RepeatedFillsKept && !state->repeatedFills.contains(address)) state->repeatedFills.clear();
         state->repeatedFills[address] = {bytes, patternWords, generation, importSerial, unwatchSerial};
