@@ -630,6 +630,41 @@ void testForgottenUnwatchedHashes() {
     check(!hashes.samples.contains({0x100000, Block}), "a store into the last byte of an unwatched block left its hash");
 }
 
+std::vector<std::byte> fillWords(std::initializer_list<std::uint32_t> words) {
+    std::vector<std::byte> bytes(words.size() * 4);
+    std::size_t at = 0;
+    for (const auto word : words) {
+        std::memcpy(bytes.data() + at, &word, 4);
+        at += 4;
+    }
+    return bytes;
+}
+
+void testUnalignedGpuFill() {
+    using Runs = std::vector<std::pair<std::size_t, std::size_t>>;
+    constexpr std::uint64_t Base = 0x100000;
+    constexpr std::array<std::uint32_t, 4> Pattern{0xa1a1a1a1u, 0xb2b2b2b2u, 0xc3c3c3c3u, 0xd4d4d4d4u};
+    Runs runs;
+    {
+        AgcDriver::FrameRecorder::GpuStores stores;
+        stores.Fill(Base + 4, 20, Pattern);
+        const auto title = fillWords({0x11111111u, Pattern[0], Pattern[1], 0x22222222u, Pattern[3], Pattern[0], 0x33333333u, 0x44444444u});
+        const auto driver = stores.KeepTitleWords(Base, title, runs, false);
+        check(driver == 16, "a 20-byte fill at an address that is not 16-aligned was not matched word by word from its own start");
+        check(runs == Runs{{0, 4}, {12, 4}, {24, 8}}, "the title's words around and inside a 20-byte fill at an address that is not 16-aligned were not kept");
+    }
+    {
+        AgcDriver::FrameRecorder::GpuStores stores;
+        stores.Fill(Base + 4, 20, Pattern);
+        const std::array<std::byte, 2> stored{std::byte{0x5a}, std::byte{0x6b}};
+        stores.Store(Base + 14, stored);
+        const auto title = fillWords({0x11111111u, Pattern[0], Pattern[1], 0x6b5ac3c3u, Pattern[3], Pattern[0], 0x33333333u});
+        const auto driver = stores.KeepTitleWords(Base, title, runs, false);
+        check(driver == 20, "a store that split a 20-byte fill at an address that is not 16-aligned changed the pattern of the pieces it left");
+        check(runs == Runs{{0, 4}, {24, 4}}, "a store that split a 20-byte fill at an address that is not 16-aligned kept driver words as the title's");
+    }
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -1385,6 +1420,7 @@ int main(int argc, char** argv) {
         else if (mode == "tokens") testEopTokens();
         else if (mode == "merge_blocks") testMergedBlocks();
         else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
+        else if (mode == "unaligned_gpu_fill") testUnalignedGpuFill();
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();

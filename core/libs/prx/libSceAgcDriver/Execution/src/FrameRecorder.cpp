@@ -608,19 +608,33 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
 void FrameRecorder::endGpuStores() {
     notingGpuStores = false;
     std::lock_guard lock(gpuStoresMutex);
-    gpuWords.clear();
-    gpuFills.clear();
+    gpuStores.words.clear();
+    gpuStores.fills.clear();
 }
 
 void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStores.Store(address, bytes);
+}
+
+void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStores.Fill(address, bytes, pattern);
+}
+
+void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStoreBytes += gpuStores.KeepTitleWords(address, bytes, runs, zero);
+}
+
+void FrameRecorder::GpuStores::Store(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return;
     const auto end = address + bytes.size();
-    std::lock_guard lock(gpuStoresMutex);
-    forgetGpuStores(address, end);
-    if (bytes.size() > GpuStoreWordLimit) return;
+    Forget(address, end);
+    if (bytes.size() > WordLimit) return;
     for (auto at = address; at < end;) {
         const auto word = at & ~std::uint64_t{3};
-        auto& stored = gpuWords[word];
+        auto& stored = words[word];
         for (; at < end && at < word + 4; ++at) {
             const auto shift = static_cast<std::uint32_t>(at - word) * 8u;
             stored.value = (stored.value & ~(0xffu << shift)) | (std::to_integer<std::uint32_t>(bytes[at - address]) << shift);
@@ -629,14 +643,17 @@ void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byt
     }
 }
 
-void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+void FrameRecorder::GpuStores::Fill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
     if (bytes == 0) return;
-    std::lock_guard lock(gpuStoresMutex);
-    forgetGpuStores(address, address + bytes);
-    if (address % 16 == 0 && bytes % 16 == 0) gpuFills.emplace(address, GpuFill{address + bytes, pattern});
+    Forget(address, address + bytes);
+    if (address % 4 == 0 && bytes % 4 == 0) fills.emplace(address, FillRun{address, address + bytes, pattern});
 }
 
-void FrameRecorder::forgetGpuStores(std::uint64_t begin, std::uint64_t end) {
+std::uint32_t FrameRecorder::GpuStores::FillRun::At(std::uint64_t word) const {
+    return pattern[((word - origin) % 16) / 4];
+}
+
+void FrameRecorder::GpuStores::Forget(std::uint64_t begin, std::uint64_t end) {
     const auto low = begin & ~std::uint64_t{3};
     const auto high = (end + 3) & ~std::uint64_t{3};
     const auto outside = [&](std::uint64_t word) {
@@ -646,57 +663,57 @@ void FrameRecorder::forgetGpuStores(std::uint64_t begin, std::uint64_t end) {
         }
         return mask;
     };
-    for (auto word = gpuWords.lower_bound(low); word != gpuWords.end() && word->first < end;) {
+    for (auto word = words.lower_bound(low); word != words.end() && word->first < end;) {
         word->second.known &= outside(word->first);
-        if (word->second.known == 0) word = gpuWords.erase(word);
+        if (word->second.known == 0) word = words.erase(word);
         else ++word;
     }
-    auto fill = gpuFills.upper_bound(begin);
-    if (fill != gpuFills.begin()) --fill;
-    while (fill != gpuFills.end() && fill->first < end) {
+    auto fill = fills.upper_bound(begin);
+    if (fill != fills.begin()) --fill;
+    while (fill != fills.end() && fill->first < end) {
         if (fill->second.end <= begin) {
             ++fill;
             continue;
         }
         const auto start = fill->first;
         const auto kept = fill->second;
-        fill = gpuFills.erase(fill);
-        if (start < low) gpuFills.emplace(start, GpuFill{low, kept.pattern});
-        if (high < kept.end) gpuFills.emplace(high, GpuFill{kept.end, kept.pattern});
+        fill = fills.erase(fill);
+        if (start < low) fills.emplace(start, FillRun{kept.origin, low, kept.pattern});
+        if (high < kept.end) fills.emplace(high, FillRun{kept.origin, kept.end, kept.pattern});
         for (const auto word : {low, high - 4}) {
             const auto mask = outside(word);
-            if (mask != 0 && start <= word && word < kept.end) gpuWords[word] = GpuWord{kept.pattern[(word % 16) / 4], mask};
+            if (mask != 0 && start <= word && word < kept.end) words[word] = StoredWord{kept.At(word), mask};
         }
     }
 }
 
-void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero) {
+std::uint64_t FrameRecorder::GpuStores::KeepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero) {
     runs.clear();
     const auto end = address + bytes.size();
-    std::lock_guard lock(gpuStoresMutex);
-    auto word = gpuWords.lower_bound(address & ~std::uint64_t{3});
-    auto fill = gpuFills.upper_bound(address);
-    if (fill != gpuFills.begin()) --fill;
-    if (fill != gpuFills.end() && fill->second.end <= address) ++fill;
-    const bool words = word != gpuWords.end() && word->first < end;
-    const bool fills = fill != gpuFills.end() && fill->first < end;
-    if (zero && !words && !fills) return;
-    if (!words && !fills) {
+    auto word = words.lower_bound(address & ~std::uint64_t{3});
+    auto fill = fills.upper_bound(address);
+    if (fill != fills.begin()) --fill;
+    if (fill != fills.end() && fill->second.end <= address) ++fill;
+    const bool stored = word != words.end() && word->first < end;
+    const bool filled = fill != fills.end() && fill->first < end;
+    if (zero && !stored && !filled) return 0;
+    if (!stored && !filled) {
         if (!bytes.empty()) runs.emplace_back(0, bytes.size());
-        return;
+        return 0;
     }
+    std::uint64_t driverBytes = 0;
     std::size_t open = bytes.size();
     for (auto at = address & ~std::uint64_t{3}; at < end; at += 4) {
         std::uint32_t expected = 0;
         std::uint8_t known = 0;
-        if (word != gpuWords.end() && word->first == at) {
+        if (word != words.end() && word->first == at) {
             expected = word->second.value;
             known = word->second.known;
             ++word;
         } else {
-            while (fill != gpuFills.end() && fill->second.end <= at) ++fill;
-            if (fill != gpuFills.end() && fill->first <= at) {
-                expected = fill->second.pattern[(at % 16) / 4];
+            while (fill != fills.end() && fill->second.end <= at) ++fill;
+            if (fill != fills.end() && fill->first <= at) {
+                expected = fill->second.At(at);
                 known = 0xf;
             }
         }
@@ -709,7 +726,7 @@ void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::b
             const auto offset = static_cast<std::size_t>(byte - address);
             const bool driver = (known & (1u << (byte - at))) != 0 && ((differs >> ((byte - at) * 8u)) & 0xffu) == 0;
             if (driver) {
-                ++gpuStoreBytes;
+                ++driverBytes;
                 if (open != bytes.size()) runs.emplace_back(open, offset - open);
                 open = bytes.size();
             } else if (open == bytes.size()) {
@@ -718,7 +735,8 @@ void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::b
         }
     }
     if (open != bytes.size()) runs.emplace_back(open, bytes.size() - open);
-    for (const auto& [offset, length] : runs) forgetGpuStores(address + offset, address + offset + length);
+    for (const auto& [offset, length] : runs) Forget(address + offset, address + offset + length);
+    return driverBytes;
 }
 
 void FrameRecorder::snapshot(const Range& range) {

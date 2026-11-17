@@ -59,6 +59,25 @@ public:
         void Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample);
         void Forget(std::uint64_t begin, std::uint64_t end);
     };
+    struct GpuStores {
+        struct FillRun {
+            std::uint64_t origin = 0;
+            std::uint64_t end = 0;
+            std::array<std::uint32_t, 4> pattern{};
+            std::uint32_t At(std::uint64_t word) const;
+        };
+        struct StoredWord {
+            std::uint32_t value = 0;
+            std::uint8_t known = 0;
+        };
+        static constexpr std::size_t WordLimit = 64u * 1024u;
+        std::map<std::uint64_t, StoredWord> words;
+        std::map<std::uint64_t, FillRun> fills;
+        void Store(std::uint64_t address, std::span<const std::byte> bytes);
+        void Fill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern);
+        void Forget(std::uint64_t begin, std::uint64_t end);
+        std::uint64_t KeepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero);
+    };
     static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
@@ -75,15 +94,6 @@ private:
     };
 
     FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames);
-    struct GpuFill {
-        std::uint64_t end = 0;
-        std::array<std::uint32_t, 4> pattern{};
-    };
-    struct GpuWord {
-        std::uint32_t value = 0;
-        std::uint8_t known = 0;
-    };
-    static constexpr std::size_t GpuStoreWordLimit = 64u * 1024u;
 
     struct Span {
         std::uint64_t address = 0;
@@ -107,7 +117,6 @@ private:
     void noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes);
     void noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern);
     void endGpuStores();
-    void forgetGpuStores(std::uint64_t begin, std::uint64_t end);
     void keepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
@@ -133,8 +142,7 @@ private:
     UnwatchedHashes unwatchedHashes;
     inline static std::atomic<bool> notingGpuStores{false};
     std::mutex gpuStoresMutex;
-    std::map<std::uint64_t, GpuWord> gpuWords;
-    std::map<std::uint64_t, GpuFill> gpuFills;
+    GpuStores gpuStores;
     std::uint64_t gpuStoreBytes = 0;
     std::mutex displayMutex;
     std::map<std::uint64_t, DisplayBuffer> displayBuffers;
