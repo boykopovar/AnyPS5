@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -98,6 +99,22 @@ bool VaryingBuiltin(std::uint32_t builtin) {
         return true;
     default:
         return false;
+    }
+}
+
+std::string BuiltinName(std::uint32_t builtin) {
+    switch (builtin) {
+    case spv::BuiltInLocalInvocationId: return "LocalInvocationId";
+    case spv::BuiltInGlobalInvocationId: return "GlobalInvocationId";
+    case spv::BuiltInLocalInvocationIndex: return "LocalInvocationIndex";
+    case spv::BuiltInSubgroupId: return "SubgroupId";
+    case spv::BuiltInSubgroupLocalInvocationId: return "SubgroupLocalInvocationId";
+    case spv::BuiltInSubgroupEqMask: return "SubgroupEqMask";
+    case spv::BuiltInSubgroupGeMask: return "SubgroupGeMask";
+    case spv::BuiltInSubgroupGtMask: return "SubgroupGtMask";
+    case spv::BuiltInSubgroupLeMask: return "SubgroupLeMask";
+    case spv::BuiltInSubgroupLtMask: return "SubgroupLtMask";
+    default: return std::to_string(builtin);
     }
 }
 
@@ -286,6 +303,11 @@ private:
         return nonUniform.contains(id);
     }
 
+    std::string RootOf(std::uint32_t id) const {
+        const auto found = roots.find(id);
+        return found != roots.end() && !found->second.empty() ? found->second : "a per-invocation value";
+    }
+
     static std::vector<std::uint32_t> Successors(const Block& block) {
         if (block.body.empty()) return {};
         const auto& terminator = block.body.back();
@@ -411,7 +433,10 @@ private:
             }
         }
         const auto fencedEntries = FencedEntries(function, flow, blocks);
-        for (const auto parameter : function.parameters) nonUniform.insert(parameter);
+        for (const auto parameter : function.parameters) {
+            nonUniform.insert(parameter);
+            roots.emplace(parameter, "a parameter of function %" + std::to_string(function.id));
+        }
         std::unordered_set<std::uint32_t> divergent;
         std::unordered_set<std::uint32_t> divergentMerges;
         for (auto position = flow.order.size(); position-- > 0u;) {
@@ -425,6 +450,7 @@ private:
             const auto& terminator = body.back();
             const auto terminatorOp = Opcode(terminator);
             bool split = (terminatorOp == spv::OpBranchConditional || terminatorOp == spv::OpSwitch) && NonUniform(terminator.at(1));
+            std::pair<std::uint32_t, std::uint32_t> decider{header, split ? terminator.at(1) : 0u};
             const auto construct = Construct(flow, header, merge);
             if (mergeOp == spv::OpLoopMerge && !split) {
                 for (const auto node : construct) {
@@ -434,6 +460,7 @@ private:
                     const auto exitOp = Opcode(exit);
                     if (divergent.contains(node) || ((exitOp == spv::OpBranchConditional || exitOp == spv::OpSwitch) && NonUniform(exit.at(1)))) {
                         split = true;
+                        decider = {node, (exitOp == spv::OpBranchConditional || exitOp == spv::OpSwitch) && NonUniform(exit.at(1)) ? exit.at(1) : 0u};
                         break;
                     }
                 }
@@ -450,11 +477,14 @@ private:
                     const auto& successors = flow.successors.at(node);
                     if (std::find(successors.begin(), successors.end(), merge) != successors.end() || (continueTarget != 0u && std::find(successors.begin(), successors.end(), continueTarget) != successors.end())) {
                         split = true;
+                        decider = {node, exit.at(1)};
                         break;
                     }
                 }
             }
             if (!split) continue;
+            for (const auto node : construct) decidedBy.try_emplace(node, decider);
+            if (mergeOp == spv::OpLoopMerge) decidedBy.try_emplace(header, decider);
             divergent.insert(construct.begin(), construct.end());
             if (mergeOp == spv::OpLoopMerge) divergent.insert(header);
             divergentMerges.insert(merge);
@@ -489,37 +519,70 @@ private:
                 }
                 if (inDivergentFlow && !report && (op == spv::OpControlBarrier || (op == spv::OpFunctionCall && instruction.size() > 3u && barriers.contains(instruction[3])))) {
                     report = std::string(op == spv::OpControlBarrier ? "an OpControlBarrier" : "a call reaching an OpControlBarrier") + " in block %" + std::to_string(label) + " of function %" + std::to_string(function.id) + " sits in control flow a per-invocation value decides";
+                    if (const auto found = decidedBy.find(label); found != decidedBy.end()) {
+                        const auto [branch, condition] = found->second;
+                        *report += condition != 0u ? "; the branch at the end of block %" + std::to_string(branch) + " on %" + std::to_string(condition) + " decides it, and %" + std::to_string(condition) + " comes from " + RootOf(condition)
+                                                   : "; an exit at the end of block %" + std::to_string(branch) + " leaves from divergent flow";
+                    }
                 }
                 const auto result = Result(instruction);
                 if (result == 0u || NonUniform(result)) continue;
                 bool varying = false;
+                std::string root;
+                const auto inherit = [&](std::uint32_t operand) {
+                    if (varying || !NonUniform(operand)) return;
+                    varying = true;
+                    root = RootOf(operand);
+                };
                 switch (op) {
                 case spv::OpLoad: {
                     const auto variable = BaseVariable(instruction.at(3), chains);
                     const auto builtin = module.builtins.find(variable);
                     const auto storage = module.storageClasses.find(variable);
-                    varying = NonUniform(instruction[3]) || (builtin != module.builtins.end() && VaryingBuiltin(builtin->second)) || storedNonUniform.contains(variable) ||
-                        (storage != module.storageClasses.end() && storage->second == spv::StorageClassInput && builtin == module.builtins.end()) || (!snapshots.contains(variable) && Racy(instruction[3], fencedBefore));
+                    inherit(instruction[3]);
+                    if (varying) break;
+                    if (builtin != module.builtins.end() && VaryingBuiltin(builtin->second)) root = "a load of the " + BuiltinName(builtin->second) + " built-in";
+                    else if (storedNonUniform.contains(variable)) root = "a load of %" + std::to_string(variable) + ", which is stored a per-invocation value or in divergent flow";
+                    else if (storage != module.storageClasses.end() && storage->second == spv::StorageClassInput && builtin == module.builtins.end()) root = "a load of the Input variable %" + std::to_string(variable);
+                    else if (!snapshots.contains(variable) && Racy(instruction[3], fencedBefore)) root = "a load of %" + std::to_string(variable) + ", memory the shader writes, with no barrier before the load";
+                    varying = !root.empty();
                     break;
                 }
                 case spv::OpAtomicLoad:
-                    varying = NonUniform(instruction.at(3)) || Racy(instruction[3], fencedBefore);
+                    inherit(instruction.at(3));
+                    if (!varying && Racy(instruction[3], fencedBefore)) {
+                        varying = true;
+                        root = "an atomic load of memory the shader writes, with no barrier before it";
+                    }
                     break;
                 case spv::OpPhi:
-                    varying = inDivergentFlow || divergentMerges.contains(label);
-                    for (std::size_t operand = 3u; !varying && operand < instruction.size(); operand += 2u) varying = NonUniform(instruction[operand]);
+                    if (inDivergentFlow || divergentMerges.contains(label)) {
+                        varying = true;
+                        root = "a phi of block %" + std::to_string(label) + ", where divergent flow merges";
+                    }
+                    for (std::size_t operand = 3u; operand < instruction.size(); operand += 2u) inherit(instruction[operand]);
                     break;
                 case spv::OpFunctionCall:
-                    varying = instruction.size() > 3u && varyingFunctions.contains(instruction[3]);
-                    for (std::size_t operand = 4u; !varying && operand < instruction.size(); ++operand) varying = NonUniform(instruction[operand]);
+                    if (instruction.size() > 3u && varyingFunctions.contains(instruction[3])) {
+                        varying = true;
+                        root = "a call to function %" + std::to_string(instruction[3]) + ", which computes a per-invocation value";
+                    }
+                    for (std::size_t operand = 4u; operand < instruction.size(); ++operand) inherit(instruction[operand]);
                     break;
                 default:
-                    varying = PerInvocationResult(op) || (ImageRead(op) && Written(spv::StorageClassImage));
-                    if (!varying) VisitIdOperands(instruction, 1u, [&](std::size_t operand) { varying = varying || NonUniform(instruction[operand]); });
+                    if (PerInvocationResult(op)) {
+                        varying = true;
+                        root = "an atomic or subgroup instruction (opcode " + std::to_string(static_cast<std::uint32_t>(op)) + ")";
+                    } else if (ImageRead(op) && Written(spv::StorageClassImage)) {
+                        varying = true;
+                        root = "a read of an image the shader writes";
+                    }
+                    if (!varying) VisitIdOperands(instruction, 1u, [&](std::size_t operand) { inherit(instruction[operand]); });
                     break;
                 }
                 if (!varying) continue;
                 nonUniform.insert(result);
+                roots.emplace(result, root);
                 if (op != spv::OpFunctionCall) varyingFunctions.insert(function.id);
             }
         }
@@ -535,6 +598,8 @@ private:
     std::unordered_set<std::uint32_t> storedNonUniform;
     std::unordered_set<std::uint32_t> snapshots;
     std::unordered_set<std::uint32_t> varyingFunctions;
+    std::unordered_map<std::uint32_t, std::string> roots;
+    std::unordered_map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> decidedBy;
     std::optional<std::string> report;
 };
 

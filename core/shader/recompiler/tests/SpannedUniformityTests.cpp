@@ -5,6 +5,7 @@
 #include <functional>
 #include <initializer_list>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -98,6 +99,13 @@ void expect(const char* name, const Module& module, bool rejected, std::span<con
     const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots);
     if (reason.has_value() == rejected) return;
     std::fprintf(stderr, "%s: expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+void expectReason(const char* name, const Module& module, const char* part) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, {});
+    if (reason.has_value() && reason->find(part) != std::string::npos) return;
+    std::fprintf(stderr, "%s: expected a rejection naming \"%s\", got %s\n", name, part, reason ? reason->c_str() : "none");
     failed = true;
 }
 
@@ -241,6 +249,24 @@ void laneSplit(Module& module, std::uint32_t merge) {
 
 int main() {
     expect("a barrier under a lane comparison", selection(true), true);
+    expectReason("a barrier under a lane comparison names the built-in", selection(true), "the branch at the end of block %100 on %102 decides it, and %102 comes from a load of the LocalInvocationIndex built-in");
+    expectReason("a barrier under a phi joining a per-lane selection names the phi", joined([](Module& module) {
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpPhi, {Bool, First + 8u, True, First + 3u, True, First});
+    }), "comes from a phi of block %104, where divergent flow merges");
+    expectReason("a barrier under an atomic result names the atomic", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpAtomicIAdd, {Uint, First + 6u, First + 5u, Two, Semantics, Three});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "comes from an atomic or subgroup instruction");
+    expectReason("a barrier under a workgroup word read after a store names the unfenced load", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpStore, {First + 5u, Three});
+        module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "with no barrier before the load");
     expect("a barrier under a constant comparison", selection(false), false);
     expect("a barrier in a loop a lane value leaves", loop(true, false), true);
     expect("a barrier in a uniform loop after a per-lane selection", loop(false, true), false);
