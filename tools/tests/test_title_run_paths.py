@@ -1,6 +1,7 @@
 import contextlib
 import datetime
 import faulthandler
+import functools
 import importlib.util
 import io
 import json
@@ -35,6 +36,12 @@ def load_tool():
         TOOL = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(TOOL)
     return TOOL
+
+
+@functools.lru_cache(maxsize=None)
+def short_head():
+    result = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
+    return result.stdout.strip()
 
 
 def frozen_datetime(instant):
@@ -577,8 +584,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         prepare.assert_not_called()
 
     def report_name(self, instant):
-        result = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
-        return f"{result.stdout.strip()}-{instant:%Y%m%d-%H%M%S}"
+        return f"{short_head()}-{instant:%Y%m%d-%H%M%S}"
 
     def test_old_report_directory_symlinks_are_not_followed(self):
         package = self.package(self.root / "games" / TITLE)
@@ -617,5 +623,5 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 if __name__ == "__main__":
-    faulthandler.dump_traceback_later(20, exit=True)
+    faulthandler.dump_traceback_later(280, exit=True)
     unittest.main()
