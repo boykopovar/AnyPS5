@@ -112,9 +112,9 @@ bool ExactF32Arithmetic() {
 
 std::uint32_t ShaderOptMask() {
     static const std::uint32_t mask = [] {
-        const auto off = [](const char* text) { return text != nullptr && std::strcmp(text, "0") == 0; };
+        const auto on = [](const char* text) { return text != nullptr && *text != '\0' && std::strcmp(text, "0") != 0; };
         std::uint32_t result = 0u;
-        if (!off(std::getenv("APS5_SHADER_OPT_PLAIN_FLOAT"))) result |= static_cast<std::uint32_t>(ShaderOpt::PlainFloat);
+        if (on(std::getenv("APS5_SHADER_OPT_PLAIN_FLOAT"))) result |= static_cast<std::uint32_t>(ShaderOpt::PlainFloat);
         return result;
     }();
     return mask;
