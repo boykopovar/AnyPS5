@@ -241,9 +241,8 @@ int APS5_VABI sceLibcInternalPending3_018_nid_no_patch(const void* self, void* s
 }
 APS5_EXPORT("eoW60zcLT8Q", sceLibcInternalPending3_018_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending3_019_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceLibcInternalPending3_019_nid_no_patch(const void* self, void* state, const char* first, const char* last, std::size_t count) {
+    return CodecvtUtf32Length_nid_no_patch(self, state, first, last, count);
 }
 APS5_EXPORT("m6rjfL4aMcA", sceLibcInternalPending3_019_nid_no_patch);
 
@@ -269,9 +268,8 @@ int APS5_VABI sceLibcInternalPending3_025_nid_no_patch(const void* self, void* s
 }
 APS5_EXPORT("0FKwlv9iH1c", sceLibcInternalPending3_025_nid_no_patch);
 
-int APS5_VABI _ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix(const void* self, void* state, const char* first, const char* last, std::size_t count) {
+    return CodecvtUtf16Length_nid_no_patch(self, state, first, last, count);
 }
 
 int APS5_VABI sceLibcInternalPending3_036_nid_no_patch() {
