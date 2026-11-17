@@ -1,0 +1,92 @@
+#include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
+
+namespace AgcDriver::Graphics {
+
+namespace {
+
+struct ReplayThreadTag;
+using ReplayThreadSlot = HostThreadSlot<bool, ReplayThreadTag>;
+
+[[noreturn]] void refuseReplayThreadAppend() {
+    std::fputs("AGC graphics: a command was appended to a stream from a replay thread; replay reads only its stream and the real functions\n", stderr);
+    std::fflush(stderr);
+    std::abort();
+}
+
+}
+
+bool OnReplayThread() noexcept {
+    return ReplayThreadSlot::Get();
+}
+
+ReplayThreadScope::ReplayThreadScope() noexcept : previous(ReplayThreadSlot::Get()) {
+    ReplayThreadSlot::Set(true);
+}
+
+ReplayThreadScope::~ReplayThreadScope() {
+    ReplayThreadSlot::Set(previous);
+}
+
+CommandStream::Chunk::Chunk(std::size_t capacity) : bytes(new std::byte[capacity]), capacity(capacity) {}
+
+CommandStream::CommandStream(WorkBudget* budget) : budget(budget) {}
+
+CommandStream::~CommandStream() = default;
+
+std::byte* CommandStream::reserve(Run run, std::size_t payloadBytes) {
+    if (OnReplayThread()) refuseReplayThreadAppend();
+    try {
+        if (Sealed()) throw std::logic_error("AGC graphics: a command was appended to a sealed stream");
+        if (Poisoned()) std::rethrow_exception(Reason());
+        const std::size_t need = RecordHeader + payloadBytes;
+        if (chunks.empty() || chunks.back()->capacity - chunks.back()->used < need) {
+            const std::size_t capacity = std::max(ChunkBytes, need);
+            chunks.push_back(std::make_unique<Chunk>(capacity));
+            charged += capacity;
+            if (budget != nullptr) budget->Charge(capacity);
+        }
+        auto& chunk = *chunks.back();
+        auto* at = chunk.bytes.get() + chunk.used;
+        const Record record{run, payloadBytes};
+        std::memcpy(at, &record, sizeof(Record));
+        chunk.used += need;
+        bytes.fetch_add(need, std::memory_order_relaxed);
+        return at + RecordHeader;
+    } catch (...) {
+        Poison(std::current_exception());
+        throw;
+    }
+}
+
+void CommandStream::Poison(std::exception_ptr why) noexcept {
+    {
+        std::lock_guard lock(reasonMutex);
+        if (reason == nullptr) reason = why;
+    }
+    poisoned.store(true, std::memory_order_release);
+}
+
+std::exception_ptr CommandStream::Reason() const {
+    std::lock_guard lock(reasonMutex);
+    return reason;
+}
+
+void CommandStream::ReleaseMemory() noexcept {
+    chunks.clear();
+}
+
+void Replay(const CommandStream& stream, VkCommandBuffer target, const DeviceFunctions& real) {
+    if (!stream.Sealed()) throw std::logic_error("AGC graphics: a stream was replayed before it was sealed");
+    if (stream.Poisoned()) std::rethrow_exception(stream.Reason());
+    if (CommandStream::IsHandle(target)) throw std::logic_error("AGC graphics: a stream was replayed into a stream handle instead of a command buffer");
+    const ReplayThreadScope scope;
+    stream.ForEach([&](CommandStream::Run run, const std::byte* payload) { run(payload, target, real); });
+}
+
+}
