@@ -62,7 +62,13 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  }
  SaveDataDialogResult local{};
  constexpr std::size_t writeLen = offsetof(SaveDataDialogResult, user_data) + sizeof(local.user_data);
+ if (!GuestWritable_nid_no_patch(result, writeLen)) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
  if (!CopyInPreservingErrno(&local, result, writeLen)) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ if (local.dir_name != nullptr && !GuestWritable_nid_no_patch(local.dir_name, std::strlen(g_dir_name) + 1)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  local.mode = g_mode;

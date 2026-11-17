@@ -290,6 +290,14 @@ int main() {
     std::memset(emptySelectionDir.data, 'X', sizeof(emptySelectionDir.data));
     SaveDataDialogResult emptySelectionResult{};
     emptySelectionResult.dir_name = &emptySelectionDir;
+    errno = 71;
+    Require(sceSaveDataDialogGetResult(reinterpret_cast<void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "get result on unmapped pointer");
+    Require(errno == 71, "get result preserved errno on unmapped pointer");
+    SaveDataDialogResult unmappedDirResult{};
+    unmappedDirResult.dir_name = reinterpret_cast<SaveDataDirName*>(0x10);
+    Require(sceSaveDataDialogGetResult(&unmappedDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "get result on unmapped dir_name");
+    Require(errno == 71, "get result preserved errno on unmapped dir_name");
+    Require(unmappedDirResult.mode == 0 && unmappedDirResult.result == 0 && unmappedDirResult.button_id == 0 && unmappedDirResult.user_data == nullptr, "refused unmapped dir_name leaves destination result unmutated");
     Require(sceSaveDataDialogGetResult(&emptySelectionResult) == 0, "read empty selection result");
     Require(emptySelectionDir.data[0] == '\0', "empty selection directory name must be null-terminated");
     Require(emptySelectionResult.mode == emptySelectionParam.mode &&
