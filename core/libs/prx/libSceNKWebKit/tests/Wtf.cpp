@@ -625,6 +625,48 @@ static void TestJscAndPal() {
     Require(WTFIsDebuggerAttached() == false);
 }
 
+struct TestLogChannel {
+    std::uint8_t state;
+    const char* name;
+    std::uint8_t level;
+    const char* subsystem;
+};
+
+static_assert(sizeof(TestLogChannel) == 32);
+static_assert(offsetof(TestLogChannel, level) == 16);
+
+static bool AccumulatedLogsEqual(const char* expected) {
+    NKWebKit::WtfAbi::String logs = _ZN3WTF26getAndResetAccumulatedLogsEv();
+    const std::size_t length = std::strlen(expected);
+    return logs.impl && logs.impl->length == length && (logs.impl->hashAndFlags & 4) && (!length || std::memcmp(logs.impl->data, expected, length) == 0);
+}
+
+static void TestAccumulatedLogs() {
+    _ZN3WTF20resetAccumulatedLogsEv();
+    Require(AccumulatedLogsEqual(""));
+
+    TestLogChannel off{0, "Off", 1, "test"};
+    TestLogChannel on{1, "On", 1, "test"};
+    TestLogChannel accumulating{2, "Accumulating", 1, "test"};
+    WTFLog(&off, "off%d", 0);
+    WTFLog(&on, "on%d", 1);
+    Require(AccumulatedLogsEqual(""));
+
+    WTFLog(&accumulating, "a%d", 1);
+    WTFLog(&accumulating, "b\n");
+    WTFLog(&accumulating, "%s", "");
+    WTFLog(&accumulating, "%c", 0xE9);
+    Require(AccumulatedLogsEqual("a1\nb\n\n\xE9\n"));
+    Require(AccumulatedLogsEqual(""));
+
+    WTFLog(&accumulating, "c");
+    _ZN3WTF20resetAccumulatedLogsEv();
+    Require(AccumulatedLogsEqual(""));
+
+    _ZN3WTF14dataLogFStringEPKc("dataLogFString\n");
+    _ZN3WTF14dataLogFStringEPKc("");
+}
+
 void TestAdditionalWtf();
 
 static void TestMappedFiles() {
@@ -944,6 +986,20 @@ static void TestSleepSeconds() {
     _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
     _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
     Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+
+    auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) _ZN3WTF5sleepENS_7SecondsE(Seconds{0.002});
+    auto shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
+
+    shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) {
+        TimeWithDynamicClockType wake = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+        wake.m_value += 0.002;
+        _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(wake);
+    }
+    shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
 }
 
 static void TestMakeAllDirectories() {
@@ -994,6 +1050,7 @@ int main() {
         return 1;
     }
     TestAdditionalWtf();
+    TestAccumulatedLogs();
     TestStackBounds();
     TestTimingScope();
     TestMemoryAllocations();
@@ -1580,9 +1637,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); void TestFileSystemRepresentations(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); Wtf2Tests::TestFileSystemRepresentations(); }
 
 namespace Wtf2Tests {
 
@@ -1870,6 +1927,72 @@ void TestFileNameHelpers() {
     auto wideTail = Wide(u"a/文");
     Check(NameUnits(LastComponent(&wideTail)) == u"文");
     Throws([&] { LastComponent(nullptr); });
+}
+
+void TestFileSystemRepresentations() {
+    const auto Representation = &_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE;
+    const auto FromRepresentation = &_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc;
+    const auto Append = &_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE;
+
+    Check(Bytes(Representation(&(const String&)NameString("/data/a b"))) == "/data/a b");
+    const unsigned char latin1Path[] = {'/', 'c', 'a', 'f', 0xE9};
+    auto latin1 = Create8(latin1Path, 5);
+    Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
+    Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    String nullString;
+    CString nullRepresentation = Representation(&nullString);
+    Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
+    Throws([&] { Representation(nullptr); });
+
+    Check(!FromRepresentation(nullptr).impl);
+    auto fromUTF8 = FromRepresentation("/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(NameUnits(fromUTF8) == u"/a/caf\u00E9/\u4E2D");
+    Check(!FromRepresentation("bad\xFF").impl);
+    auto empty = FromRepresentation("");
+    Check(empty.impl && !empty.impl->length);
+
+    NKWebKit::WtfAbi::Vector<StringView> components(3);
+    components.buffer[0] = Literal("b");
+    components.buffer[1] = Literal("");
+    components.buffer[2] = Literal("c.txt");
+    components.size = 3;
+    auto joined = Append(Literal("/a"), &components);
+    Check(NameUnits(joined) == u"/a/b//c.txt" && NameIs8Bit(joined));
+    auto trailing = Append(Literal("/a/"), &components);
+    Check(NameUnits(trailing) == u"/a//b//c.txt");
+    auto relative = Append(Literal(""), &components);
+    Check(NameUnits(relative) == u"/b//c.txt");
+
+    NKWebKit::WtfAbi::Vector<StringView> none;
+    auto alone = Append(Literal("/only"), &none);
+    Check(NameUnits(alone) == u"/only" && NameIs8Bit(alone));
+    auto nothing = Append(Literal(""), &none);
+    Check(nothing.impl && !nothing.impl->length && NameIs8Bit(nothing));
+    auto nullPath = Append(StringView{nullptr, 0, true}, &none);
+    Check(nullPath.impl && !nullPath.impl->length);
+
+    const std::u16string widePath = u"/\u4E2D";
+    auto wideJoined = Append(StringView{widePath.data(), 2, false}, &components);
+    Check(NameUnits(wideJoined) == u"/\u4E2D/b//c.txt" && !NameIs8Bit(wideJoined));
+    const std::u16string latinUnit = u"\u00E9";
+    auto latinAlone = Append(StringView{latinUnit.data(), 1, false}, &none);
+    Check(NameUnits(latinAlone) == u"\u00E9" && NameIs8Bit(latinAlone));
+    const std::u16string emptyWide;
+    auto emptyWideAlone = Append(StringView{emptyWide.data(), 0, false}, &none);
+    Check(NameIs8Bit(emptyWideAlone));
+    NKWebKit::WtfAbi::Vector<StringView> wideComponent(1);
+    wideComponent.buffer[0] = StringView{latinUnit.data(), 1, false};
+    wideComponent.size = 1;
+    auto upconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(upconverted) == u"/a/\u00E9" && !NameIs8Bit(upconverted));
+    wideComponent.buffer[0] = StringView{emptyWide.data(), 0, false};
+    auto emptyUpconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(emptyUpconverted) == u"/a/" && !NameIs8Bit(emptyUpconverted));
+
+    wideComponent.buffer[0] = StringView{nullptr, 1, true};
+    Throws([&] { Append(Literal("/a"), &wideComponent); });
+    Throws([&] { Append(Literal("/a"), nullptr); });
 }
 
 const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;

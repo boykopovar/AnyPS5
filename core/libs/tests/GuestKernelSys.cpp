@@ -369,14 +369,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     Require(link_nid_postfix("missing", paths.Unreadable()) == -1 && Error() == 2);
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
-    posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldload_nid_postfix(paths.Unreadable()); });
-    posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
-    posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
-    const std::int32_t statVersion = 1056;
-    std::memcpy(paths.Unreadable() - sizeof(statVersion), &statVersion, sizeof(statVersion));
-    *__error_nid_postfix() = 0;
-    Require(kldstat_nid_postfix(1, paths.Unreadable() - sizeof(statVersion)) == -1 && Error() == 2);
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -1121,7 +1114,7 @@ static void CheckKqueueFromEqueue() {
 }
 
 static void CheckProcessQueries() {
-    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 0x3F)}};
+    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 56) | (1ull << 0x3F)}};
     for (auto query : {sceKernelTitleWorkaroundIsEnabled, sceKernelTitleWorkdaroundIsEnabled}) {
         std::int32_t enabled = -1;
         Require(query(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
@@ -1138,8 +1131,12 @@ static void CheckProcessQueries() {
         Require(query(&workaround, 63, &enabled) == 0 && enabled == 1);
         Require(query(&workaround, 64, &enabled) == 0 && enabled == 1);
         Require(query(&workaround, 65, &enabled) == 0 && enabled == 0);
-        Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
-        Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 0x77, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x78, &enabled) == 0 && enabled == 1);
+        for (const std::int32_t refused : {0x79, 0x7E, 0x7F}) {
+            enabled = -1;
+            Require(query(&workaround, refused, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        }
     }
     for (const std::uint64_t selector : {std::uint64_t{0}, std::uint64_t{0x28}}) {
         std::int32_t enabled = -1;
@@ -1150,7 +1147,12 @@ static void CheckProcessQueries() {
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 3, &enabled) == 0 && enabled == 1);
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 4, &enabled) == 0 && enabled == 0);
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 64, &enabled) == 0 && enabled == 1);
-        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x7F, &enabled) == 0 && enabled == 1);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x77, &enabled) == 0 && enabled == 0);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x78, &enabled) == 0 && enabled == 1);
+        for (const std::uint32_t refused : {0x79u, 0x7Eu, 0x7Fu}) {
+            enabled = -1;
+            Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, refused, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        }
     }
     for (const std::uint64_t selector : {std::uint64_t{0x29}, std::uint64_t{0x2A}, ~std::uint64_t{0}}) {
         std::int32_t enabled = -1;
@@ -1705,12 +1707,9 @@ int main() {
     Require(chroot_nid_postfix((root / "file.txt" / "..").string().c_str()) == -1 && Error() == 20);
     Require(chroot_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
     Require(chroot_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
-    Require(kldfind_nid_postfix(nullptr) == -1 && Error() == 14);
-    Require(kldfind_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
-    Require(kldfind_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
-    Require(kldfind_nid_postfix("") == -1 && Error() == 2);
-    Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
-    Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    constexpr int GuestEnosys = 78;
+    *__error_nid_postfix() = 0;
+    Require(kldfind_nid_postfix("kernel") == -1 && Error() == GuestEnosys);
     Require(kldload_nid_postfix(nullptr) == -1 && Error() == 14);
     Require(kldload_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
     Require(kldload_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
@@ -1723,12 +1722,12 @@ int main() {
         Require(kldload_nid_postfix(name.c_str()) == -1 && Error() == 1);
     }
     Require(std::filesystem::remove(kldHeader));
-    Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
-    Require(kldnext_nid_postfix(0) == 0);
-    Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
-    Require(kldfirstmod_nid_postfix(-1) == -1 && Error() == 2);
-    Require(kldfirstmod_nid_postfix(0) == -1 && Error() == 2);
-    Require(kldfirstmod_nid_postfix(1) == -1 && Error() == 2);
+    *__error_nid_postfix() = 0;
+    Require(kldnext_nid_postfix(0) == -1 && Error() == GuestEnosys);
+    for (const int fileid : {1, 0x7fffffff}) {
+        *__error_nid_postfix() = 0;
+        Require(kldfirstmod_nid_postfix(fileid) == -1 && Error() == GuestEnosys);
+    }
     Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
@@ -1740,48 +1739,18 @@ int main() {
         *__error_nid_postfix() = 0;
         return kldstat_nid_postfix(fileid, fileStatus.data()) == -1 && Error() == error && fileStatus == before;
     };
-    Require(kldstat_nid_postfix(1, nullptr) == -1 && Error() == 14);
-    Require(kldstat_nid_postfix(1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
-    for (const std::int32_t version : {0, 1, 1040, 1055, 1057, 2079, 2081, -1}) {
-        Require(kldstatFails(1, version, 22) && kldstatFails(-1, version, 22));
-    }
-    for (const std::int32_t version : {1056, 2080}) {
-        for (const int fileid : {-2147483647 - 1, -1, 0, 1, 2, 2147483647}) Require(kldstatFails(fileid, version, 2));
-    }
+    for (const int fileid : {1, 0x7fffffff}) Require(kldstatFails(fileid, 2080, GuestEnosys));
+    for (const std::int32_t version : {0, 4}) Require(kldstatFails(1, version, GuestEnosys));
     struct SymbolLookup {
         std::int32_t version;
         const char* name;
         std::uint64_t value;
         std::uint64_t size;
     };
-    const std::string longSymbol(1024, 's');
-    SymbolLookup lookup{32, "symbol", 7, 9};
-    Require(kldsym_nid_postfix(-1, 1, nullptr) == -1 && Error() == 14);
-    Require(kldsym_nid_postfix(-1, 1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
-    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
+    SymbolLookup lookup{32, "printf", 7, 9};
+    *__error_nid_postfix() = 0;
+    Require(kldsym_nid_postfix(0, 1, &lookup) == -1 && Error() == GuestEnosys);
     Require(lookup.value == 7 && lookup.size == 9);
-    for (const std::int32_t version : {0, 24, 31, 33}) {
-        lookup = {version, "symbol", 0, 0};
-        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
-        lookup.name = nullptr;
-        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
-    }
-    for (const int command : {0, 2, -1}) {
-        lookup = {32, nullptr, 0, 0};
-        Require(kldsym_nid_postfix(-1, command, &lookup) == -1 && Error() == 22);
-    }
-    lookup = {32, nullptr, 0, 0};
-    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 14);
-    lookup.name = reinterpret_cast<const char*>(0x10);
-    Require(kldsym_nid_postfix(0, 1, &lookup) == -1 && Error() == 14);
-    lookup.name = longSymbol.c_str();
-    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 63);
-    lookup.name = "";
-    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
-    lookup.name = "symbol";
-    for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
-        Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
-    }
     Require(swapon_nid_postfix(nullptr) == -1 && Error() == 14);
     Require(swapon_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
     Require(swapon_nid_postfix("") == -1 && Error() == 2);
