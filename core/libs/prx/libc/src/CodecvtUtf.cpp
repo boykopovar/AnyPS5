@@ -5,7 +5,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
-#include <cerrno>
+#include "prx/libc/include/GuestWindow.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -19,6 +19,7 @@ constexpr int Error = 2;
 constexpr int NoConv = 3;
 constexpr std::uint32_t GenerateHeader = 2;
 constexpr std::uint32_t ConsumeHeader = 4;
+constexpr std::uintptr_t MaxcodeOffset = 0x10;
 constexpr std::uintptr_t ModeOffset = 0x18;
 
 struct UtfCodecvtFacet {
@@ -27,42 +28,58 @@ struct UtfCodecvtFacet {
     std::uint32_t mode;
 };
 
-static_assert(offsetof(UtfCodecvtFacet, maxcode) == 0x10);
-static_assert(offsetof(UtfCodecvtFacet, mode) == 0x18);
+static_assert(offsetof(UtfCodecvtFacet, maxcode) == MaxcodeOffset);
+static_assert(offsetof(UtfCodecvtFacet, mode) == ModeOffset);
 
 template<typename TElement>
 using InFunction = int (APS5_VABI*)(const void* self, void* state, const char* first1, const char* last1, const char** mid1, TElement* first2, TElement* last2, TElement** mid2);
 
-const UtfCodecvtFacet& FacetOf(const void* self) {
-    return *static_cast<const UtfCodecvtFacet*>(self);
+template<typename TValue>
+TValue ReadAt(std::uintptr_t address, std::uintptr_t offset, const char* message) {
+    if (address > std::numeric_limits<std::uintptr_t>::max() - offset)
+        throw std::invalid_argument("UTF codecvt: invalid facet address");
+    TValue value = 0;
+    GuestCopyInOrThrow(&value, reinterpret_cast<const void*>(address + offset), sizeof(value), message);
+    return value;
 }
 
 template<typename TElement>
 int VirtualIn(const void* self, void* state, const char* first1, const char* last1, const char** mid1, TElement* first2, TElement* last2, TElement** mid2) {
-    const auto* vtable = reinterpret_cast<const GuestLocale::CodecvtVtable*>(FacetOf(self).base.vtable);
-    return reinterpret_cast<InFunction<TElement>>(vtable->in)(self, state, first1, last1, mid1, first2, last2, mid2);
+    const auto vtable = ReadAt<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(self), 0, "UTF codecvt: unreadable facet vtable");
+    const auto in = ReadAt<std::uintptr_t>(vtable, offsetof(GuestLocale::CodecvtVtable, in), "UTF codecvt: unreadable facet vtable");
+    return reinterpret_cast<InFunction<TElement>>(in)(self, state, first1, last1, mid1, first2, last2, mid2);
 }
 
 template<typename TValue>
 TValue ReadMode(const void* self) {
-    const auto address = reinterpret_cast<std::uintptr_t>(self);
-    if (address > std::numeric_limits<std::uintptr_t>::max() - ModeOffset)
-        throw std::invalid_argument("UTF codecvt: invalid facet address");
-    TValue mode = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&mode, reinterpret_cast<const void*>(address + ModeOffset), sizeof(mode));
-    errno = savedErrno;
-    if (!copied)
-        throw std::invalid_argument("UTF codecvt: unreadable facet mode");
-    return mode;
+    return ReadAt<TValue>(reinterpret_cast<std::uintptr_t>(self), ModeOffset, "UTF codecvt: unreadable facet mode");
 }
 
-void WriteNext(char** next, char* first) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(next, &first, sizeof(first));
-    errno = savedErrno;
-    if (!copied)
-        throw std::invalid_argument("UTF codecvt: unwritable next pointer");
+std::uint64_t ReadMaxcode(const void* self) {
+    return ReadAt<std::uint64_t>(reinterpret_cast<std::uintptr_t>(self), MaxcodeOffset, "UTF codecvt: unreadable facet maximum code");
+}
+
+template<typename TValue>
+TValue ReadState(const void* state) {
+    TValue value = 0;
+    GuestCopyInOrThrow(&value, state, sizeof(value), "UTF codecvt: unreadable shift state");
+    return value;
+}
+
+template<typename TValue>
+void WriteState(void* state, TValue value) {
+    GuestCopyOutOrThrow(state, &value, sizeof(value), "UTF codecvt: unwritable shift state");
+}
+
+template<typename TElement>
+void WriteNext(TElement** next, TElement* first) {
+    GuestCopyOutOrThrow(next, &first, sizeof(first), "UTF codecvt: unwritable next pointer");
+}
+
+template<typename TSource, typename TDestination>
+void CheckRanges(const TSource* first1, const TSource* last1, const TDestination* first2, const TDestination* last2) {
+    if (reinterpret_cast<std::uintptr_t>(last1) < reinterpret_cast<std::uintptr_t>(first1) || reinterpret_cast<std::uintptr_t>(last2) < reinterpret_cast<std::uintptr_t>(first2))
+        throw std::invalid_argument("UTF codecvt: range ends before it starts");
 }
 
 template<typename TElement, typename TIn>
@@ -120,28 +137,49 @@ int APS5_VABI CodecvtUtf16Encoding_nid_no_patch(const void*) {
 }
 
 int APS5_VABI CodecvtUtf16In_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char16_t* first2, char16_t* last2, char16_t** mid2) {
-    const UtfCodecvtFacet& facet = FacetOf(self);
-    auto* pending = static_cast<std::uint16_t*>(state);
-    *mid1 = first1;
-    *mid2 = first2;
-    while (*mid1 != last1 && *mid2 != last2) {
-        unsigned char byte = static_cast<unsigned char>(**mid1);
+    WriteNext(mid1, first1);
+    WriteNext(mid2, first2);
+    if (first1 == last1 || first2 == last2) return Partial;
+    CheckRanges(first1, last1, first2, last2);
+    const std::uint64_t maxcode = ReadMaxcode(self);
+    const auto mode = ReadMode<std::uint32_t>(self);
+    const auto initial = ReadState<std::uint16_t>(state);
+    std::uint16_t pending = initial;
+    const char* const begin = first1;
+    GuestSourceWindow<char> source(begin, static_cast<std::size_t>(last1 - begin), "UTF codecvt: unreadable source range");
+    GuestDestinationWindow<char16_t> destination(first2, "UTF codecvt: unwritable destination range");
+    const char* next1 = first1;
+    char16_t* next2 = first2;
+    const auto read = [&](const char* position) { return static_cast<unsigned char>(source[static_cast<std::size_t>(position - begin)]); };
+    const auto put = [&](char16_t value) {
+        destination.Put(value);
+        ++next2;
+    };
+    const auto finish = [&](int result) {
+        destination.Flush();
+        if (pending != initial) WriteState(state, pending);
+        WriteNext(mid1, next1);
+        WriteNext(mid2, next2);
+        return result;
+    };
+    while (next1 != last1 && next2 != last2) {
+        unsigned char byte = read(next1);
         std::uint64_t value;
         int extra;
         int skip;
-        if (*pending > 1) {
-            if (byte < 0x80 || 0xc0 <= byte) return Error;
-            ++*mid1;
-            *(*mid2)++ = static_cast<char16_t>(*pending | (byte & 0x3f));
-            *pending = 1;
+        if (pending > 1) {
+            if (byte < 0x80 || 0xc0 <= byte) return finish(Error);
+            ++next1;
+            put(static_cast<char16_t>(pending | (byte & 0x3f)));
+            pending = 1;
             continue;
         }
         if (byte < 0x80) {
             value = byte;
             extra = 0;
         } else if (byte < 0xc0) {
-            ++*mid1;
-            return Error;
+            ++next1;
+            return finish(Error);
         } else if (byte < 0xe0) {
             value = byte & 0x1f;
             extra = 1;
@@ -156,60 +194,79 @@ int APS5_VABI CodecvtUtf16In_nid_no_patch(const void* self, void* state, const c
             extra = byte < 0xfc ? 4 : 5;
         }
         skip = extra < 3 ? 0 : 1;
-        first1 = *mid1;
+        first1 = next1;
         if (extra == 0) {
-            ++*mid1;
-        } else if (last1 - *mid1 < extra + 1 - skip) {
+            ++next1;
+        } else if (last1 - next1 < extra + 1 - skip) {
             break;
         } else {
-            for (++*mid1; skip < extra; --extra, ++*mid1) {
-                if ((byte = static_cast<unsigned char>(**mid1)) < 0x80 || 0xc0 <= byte) return Error;
+            for (++next1; skip < extra; --extra, ++next1) {
+                if ((byte = read(next1)) < 0x80 || 0xc0 <= byte) return finish(Error);
                 value = value << 6 | (byte & 0x3f);
             }
         }
         if (0 < skip) value <<= 6;
-        if ((facet.maxcode < 0x10ffff ? facet.maxcode : 0x10ffff) < value) return Error;
+        if ((maxcode < 0x10ffff ? maxcode : 0x10ffff) < value) return finish(Error);
         if (0xffff < value) {
-            *(*mid2)++ = static_cast<char16_t>(0xd800 | ((value >> 10) - 0x0040));
-            *pending = static_cast<std::uint16_t>(0xdc00 | (value & 0x03ff));
+            put(static_cast<char16_t>(0xd800 | ((value >> 10) - 0x0040)));
+            pending = static_cast<std::uint16_t>(0xdc00 | (value & 0x03ff));
             continue;
         }
         if (skip != 0) {
-            if (*mid1 == last1) {
-                *mid1 = first1;
+            if (next1 == last1) {
+                next1 = first1;
                 break;
             }
-            if ((byte = static_cast<unsigned char>(*(*mid1)++)) < 0x80 || 0xc0 <= byte) return Error;
+            if ((byte = read(next1++)) < 0x80 || 0xc0 <= byte) return finish(Error);
             value |= byte & 0x3f;
         }
-        if (*pending == 0) {
-            *pending = 1;
-            if ((facet.mode & ConsumeHeader) != 0 && value == 0xfeff) {
-                const int result = VirtualIn<char16_t>(self, state, *mid1, last1, mid1, first2, last2, mid2);
+        if (pending == 0) {
+            pending = 1;
+            if ((mode & ConsumeHeader) != 0 && value == 0xfeff) {
+                finish(Ok);
+                const int result = VirtualIn<char16_t>(self, state, next1, last1, mid1, first2, last2, mid2);
                 if (result == Partial) {
-                    *pending = 0;
-                    *mid1 = first1;
+                    WriteState<std::uint16_t>(state, 0);
+                    WriteNext(mid1, first1);
                 }
                 return result;
             }
         }
-        *(*mid2)++ = static_cast<char16_t>(value);
+        put(static_cast<char16_t>(value));
     }
-    return first1 == *mid1 ? Partial : Ok;
+    return finish(first1 == next1 ? Partial : Ok);
 }
 
 int APS5_VABI CodecvtUtf16Out_nid_no_patch(const void* self, void* state, const char16_t* first1, const char16_t* last1, const char16_t** mid1, char* first2, char* last2, char** mid2) {
-    const UtfCodecvtFacet& facet = FacetOf(self);
-    auto* pending = static_cast<std::uint16_t*>(state);
-    *mid1 = first1;
-    *mid2 = first2;
-    while (*mid1 != last1 && *mid2 != last2) {
+    WriteNext(mid1, first1);
+    WriteNext(mid2, first2);
+    if (first1 == last1 || first2 == last2) return Partial;
+    CheckRanges(first1, last1, first2, last2);
+    const auto mode = ReadMode<std::uint32_t>(self);
+    const auto initial = ReadState<std::uint16_t>(state);
+    std::uint16_t pending = initial;
+    GuestSourceWindow<char16_t> source(first1, static_cast<std::size_t>(last1 - first1), "UTF codecvt: unreadable source range");
+    GuestDestinationWindow<char> destination(first2, "UTF codecvt: unwritable destination range");
+    const char16_t* next1 = first1;
+    char* next2 = first2;
+    const auto put = [&](char value) {
+        destination.Put(value);
+        ++next2;
+    };
+    const auto finish = [&](int result) {
+        destination.Flush();
+        if (pending != initial) WriteState(state, pending);
+        WriteNext(mid1, next1);
+        WriteNext(mid2, next2);
+        return result;
+    };
+    while (next1 != last1 && next2 != last2) {
         std::uint64_t value;
-        const auto word = static_cast<std::uint16_t>(**mid1);
+        const auto word = static_cast<std::uint16_t>(source[static_cast<std::size_t>(next1 - first1)]);
         bool save = false;
-        if (1 < *pending) {
-            if (word < 0xdc00 || 0xe000 <= word) return Error;
-            value = static_cast<std::uint64_t>((*pending << 10) | (word - 0xdc00));
+        if (1 < pending) {
+            if (word < 0xdc00 || 0xe000 <= word) return finish(Error);
+            value = static_cast<std::uint64_t>((pending << 10) | (word - 0xdc00));
         } else if (0xd800 <= word && word < 0xdc00) {
             value = static_cast<std::uint64_t>((word - 0xd800 + 0x0040) << 10);
             save = true;
@@ -232,33 +289,27 @@ int APS5_VABI CodecvtUtf16Out_nid_no_patch(const void* self, void* state, const 
             extra = 3;
         }
         int count = extra < 3 ? extra + 1 : save ? 1 : 3;
-        if (last2 - *mid2 < count) break;
-        if (*pending == 0 && (facet.mode & GenerateHeader) != 0) {
-            if (last2 - *mid2 < 3 + count) break;
-            *(*mid2)++ = '\xef';
-            *(*mid2)++ = '\xbb';
-            *(*mid2)++ = '\xbf';
+        if (last2 - next2 < count) break;
+        if (pending == 0 && (mode & GenerateHeader) != 0) {
+            if (last2 - next2 < 3 + count) break;
+            put('\xef');
+            put('\xbb');
+            put('\xbf');
         }
-        ++*mid1;
+        ++next1;
         if (save || extra < 3) {
-            *(*mid2)++ = lead;
+            put(lead);
             --count;
         }
-        for (; 0 < count; --count) *(*mid2)++ = static_cast<char>((value >> 6 * --extra & 0x3f) | 0x80);
-        *pending = static_cast<std::uint16_t>(save ? value >> 10 : 1);
+        for (; 0 < count; --count) put(static_cast<char>((value >> 6 * --extra & 0x3f) | 0x80));
+        pending = static_cast<std::uint16_t>(save ? value >> 10 : 1);
     }
-    return first1 == *mid1 ? Partial : Ok;
+    return finish(first1 == next1 ? Partial : Ok);
 }
 
 int APS5_VABI CodecvtUtf16Unshift_nid_no_patch(const void*, void* state, char* first, char*, char** next) {
     WriteNext(next, first);
-    std::uint16_t pending = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&pending, state, sizeof(pending));
-    errno = savedErrno;
-    if (!copied)
-        throw std::invalid_argument("UTF codecvt: unreadable shift state");
-    return pending > 1 ? Error : Ok;
+    return ReadState<std::uint16_t>(state) > 1 ? Error : Ok;
 }
 APS5_EXPORT("RYTHR81Y-Mc", CodecvtUtf16Unshift_nid_no_patch);
 
@@ -291,20 +342,36 @@ int APS5_VABI CodecvtUtf32Encoding_nid_no_patch(const void* self) {
 APS5_EXPORT("DDnr3lDwW8I", CodecvtUtf32Encoding_nid_no_patch);
 
 int APS5_VABI CodecvtUtf32In_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char32_t* first2, char32_t* last2, char32_t** mid2) {
-    const UtfCodecvtFacet& facet = FacetOf(self);
-    auto* started = static_cast<char*>(state);
-    *mid1 = first1;
-    *mid2 = first2;
-    while (*mid1 != last1 && *mid2 != last2) {
-        unsigned char byte = static_cast<unsigned char>(**mid1);
+    WriteNext(mid1, first1);
+    WriteNext(mid2, first2);
+    if (first1 == last1 || first2 == last2) return Partial;
+    CheckRanges(first1, last1, first2, last2);
+    const std::uint64_t maxcode = ReadMaxcode(self);
+    const auto mode = ReadMode<std::uint32_t>(self);
+    const auto initial = ReadState<char>(state);
+    char started = initial;
+    GuestSourceWindow<char> source(first1, static_cast<std::size_t>(last1 - first1), "UTF codecvt: unreadable source range");
+    GuestDestinationWindow<char32_t> destination(first2, "UTF codecvt: unwritable destination range");
+    const char* next1 = first1;
+    char32_t* next2 = first2;
+    const auto read = [&](const char* position) { return static_cast<unsigned char>(source[static_cast<std::size_t>(position - first1)]); };
+    const auto finish = [&](int result) {
+        destination.Flush();
+        if (started != initial) WriteState(state, started);
+        WriteNext(mid1, next1);
+        WriteNext(mid2, next2);
+        return result;
+    };
+    while (next1 != last1 && next2 != last2) {
+        unsigned char byte = read(next1);
         std::uint64_t value;
         int extra;
         if (byte < 0x80) {
             value = byte;
             extra = 0;
         } else if (byte < 0xc0) {
-            ++*mid1;
-            return Error;
+            ++next1;
+            return finish(Error);
         } else if (byte < 0xe0) {
             value = byte & 0x1f;
             extra = 1;
@@ -319,42 +386,63 @@ int APS5_VABI CodecvtUtf32In_nid_no_patch(const void* self, void* state, const c
             extra = byte < 0xfc ? 4 : 5;
         }
         if (extra == 0) {
-            ++*mid1;
-        } else if (last1 - *mid1 < extra + 1) {
+            ++next1;
+        } else if (last1 - next1 < extra + 1) {
             break;
         } else {
-            for (++*mid1; 0 < extra; --extra, ++*mid1) {
-                if ((byte = static_cast<unsigned char>(**mid1)) < 0x80 || 0xc0 <= byte) return Error;
+            for (++next1; 0 < extra; --extra, ++next1) {
+                if ((byte = read(next1)) < 0x80 || 0xc0 <= byte) return finish(Error);
                 value = value << 6 | (byte & 0x3f);
             }
         }
-        if (*started == 0) {
-            *started = 1;
-            if ((facet.mode & ConsumeHeader) != 0 && value == 0xfeff) {
-                const int result = VirtualIn<char32_t>(self, state, *mid1, last1, mid1, first2, last2, mid2);
+        if (started == 0) {
+            started = 1;
+            if ((mode & ConsumeHeader) != 0 && value == 0xfeff) {
+                finish(Ok);
+                const int result = VirtualIn<char32_t>(self, state, next1, last1, mid1, first2, last2, mid2);
                 if (result == Partial) {
-                    *started = 0;
-                    *mid1 = first1;
+                    WriteState<char>(state, 0);
+                    WriteNext(mid1, first1);
                 }
                 return result;
             }
         }
-        if (facet.maxcode < value) return Error;
-        *(*mid2)++ = static_cast<char32_t>(value);
+        if (maxcode < value) return finish(Error);
+        destination.Put(static_cast<char32_t>(value));
+        ++next2;
     }
-    return first1 == *mid1 ? Partial : Ok;
+    return finish(first1 == next1 ? Partial : Ok);
 }
 
 int APS5_VABI CodecvtUtf32Out_nid_no_patch(const void* self, void* state, const char32_t* first1, const char32_t* last1, const char32_t** mid1, char* first2, char* last2, char** mid2) {
-    const UtfCodecvtFacet& facet = FacetOf(self);
-    auto* started = static_cast<char*>(state);
-    *mid1 = first1;
-    *mid2 = first2;
-    while (*mid1 != last1 && *mid2 != last2) {
+    WriteNext(mid1, first1);
+    WriteNext(mid2, first2);
+    if (first1 == last1 || first2 == last2) return Partial;
+    CheckRanges(first1, last1, first2, last2);
+    const std::uint64_t maxcode = ReadMaxcode(self);
+    const auto mode = ReadMode<std::uint32_t>(self);
+    const auto initial = ReadState<char>(state);
+    char started = initial;
+    GuestSourceWindow<char32_t> source(first1, static_cast<std::size_t>(last1 - first1), "UTF codecvt: unreadable source range");
+    GuestDestinationWindow<char> destination(first2, "UTF codecvt: unwritable destination range");
+    const char32_t* next1 = first1;
+    char* next2 = first2;
+    const auto put = [&](char value) {
+        destination.Put(value);
+        ++next2;
+    };
+    const auto finish = [&](int result) {
+        destination.Flush();
+        if (started != initial) WriteState(state, started);
+        WriteNext(mid1, next1);
+        WriteNext(mid2, next2);
+        return result;
+    };
+    while (next1 != last1 && next2 != last2) {
         char lead;
         int extra;
-        const auto value = static_cast<std::uint64_t>(**mid1);
-        if (facet.maxcode < value) return Error;
+        const auto value = static_cast<std::uint64_t>(source[static_cast<std::size_t>(next1 - first1)]);
+        if (maxcode < value) return finish(Error);
         if (value < 0x0080) {
             lead = static_cast<char>(value);
             extra = 0;
@@ -374,20 +462,20 @@ int APS5_VABI CodecvtUtf32Out_nid_no_patch(const void* self, void* state, const 
             lead = static_cast<char>(0xfc | (value >> 30 & 0x03));
             extra = 5;
         }
-        if (*started == 0) {
-            *started = 1;
-            if ((facet.mode & GenerateHeader) != 0) {
-                if (last2 - *mid2 < 3 + 1 + extra) return Partial;
-                *(*mid2)++ = '\xef';
-                *(*mid2)++ = '\xbb';
-                *(*mid2)++ = '\xbf';
+        if (started == 0) {
+            started = 1;
+            if ((mode & GenerateHeader) != 0) {
+                if (last2 - next2 < 3 + 1 + extra) return finish(Partial);
+                put('\xef');
+                put('\xbb');
+                put('\xbf');
             }
         }
-        if (last2 - *mid2 < 1 + extra) break;
-        ++*mid1;
-        for (*(*mid2)++ = lead; 0 < extra;) *(*mid2)++ = static_cast<char>((value >> 6 * --extra & 0x3f) | 0x80);
+        if (last2 - next2 < 1 + extra) break;
+        ++next1;
+        for (put(lead); 0 < extra;) put(static_cast<char>((value >> 6 * --extra & 0x3f) | 0x80));
     }
-    return first1 == *mid1 ? Partial : Ok;
+    return finish(first1 == next1 ? Partial : Ok);
 }
 
 int APS5_VABI CodecvtUtf32Unshift_nid_no_patch(const void*, void*, char* first, char*, char** next) {
