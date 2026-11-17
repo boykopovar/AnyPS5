@@ -1697,9 +1697,14 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
             auto heapRequest = request;
             heapRequest.target.gpuResolvedImages = true;
             PerformanceTimer timing("Shader.PrepareArtifact");
-            entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(heapRequest, &preparation)});
-            prebuild(heapRequest, *entries.back().handle);
-            heapPrebuilt = request.target.descriptorMemory;
+            try {
+                auto heapHandle = PrepareShaderWithDiagnostics(heapRequest, &preparation);
+                entries.push_back({plan.codeOffset, std::move(heapHandle)});
+                prebuild(heapRequest, *entries.back().handle);
+                heapPrebuilt = request.target.descriptorMemory;
+            } catch (const std::exception& error) {
+                APS5_LOG_OUT("heap shader preparation skipped: %s", error.what());
+            }
         }
     }
     if (!heapPrebuilt) prebuild(request, *entries.front().handle);
@@ -2402,7 +2407,14 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             if (!invocation || !HeapStageEligible(stage.stage, invocation->Plan().get()) || (HeapPreRasterStage(stage.stage) && !heapVertex)) return false;
             auto request = *requests[index];
             request.target.gpuResolvedImages = true;
-            const auto handle = preparedHandle(*stage.snapshot, stage.entry.codeOffset, request);
+            std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+            try {
+                handle = preparedHandle(*stage.snapshot, stage.entry.codeOffset, request);
+            } catch (const std::exception& error) {
+                if (!deferUnprepared) throw;
+                APS5_LOG_OUT("heap graphics stage preparation skipped: %s", error.what());
+                return false;
+            }
             heap.push_back({stage.snapshot, {stage.entry.codeOffset, handle}, stage.stage, stage.pushOffset, registrationFor(request, *handle), true});
             return true;
         };

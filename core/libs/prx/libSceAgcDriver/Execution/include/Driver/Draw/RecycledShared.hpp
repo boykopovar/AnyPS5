@@ -29,7 +29,7 @@ public:
         ++fresh;
         if (pool.size() < capacity) {
             pool.push_back(made);
-        } else {
+        } else if (!pool.empty()) {
             pool[cursor] = made;
             advance();
         }

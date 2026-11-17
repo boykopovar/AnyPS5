@@ -403,7 +403,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
 
     for (std::size_t j = 0; j < context.programs.size(); ++j) {
         if (context.matched[j] != nullptr && !context.recompiled[j] && (context.drawHit || j < i)) context.memory.insert(context.memory.end(), context.matchedRegions[j].begin(), context.matchedRegions[j].end());
-        if (j < i && context.recompiled[j] && context.stageCaptures[j].Direct()) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
+        if (j != i && context.recompiled[j] && context.stageCaptures[j].Direct()) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
     }
     request.context.memory = context.memory;
     if (dumpGraphics) static_cast<void>(dumpRequest(program.binary.codeAddress, request));

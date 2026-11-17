@@ -169,7 +169,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         pendingOverlaps = Graphics::StorageTexture::AnyPendingOverlaps(runs);
         if (wholeRuns && !pendingOverlaps) variant.cleanPendingSerial.store(pendingSerial, std::memory_order_release);
     } else if (verifyPendingSerialSkip()) {
-        if (Graphics::StorageTexture::AnyPendingOverlaps(runs)) throw std::runtime_error("APS5_VERIFY_PENDING_SERIAL_SKIP: a dispatch variant skipped its pending image check at an unchanged serial while a pending image overlaps its runs");
+        if (Graphics::StorageTexture::AnyPendingOverlaps(runs) && Graphics::StorageTexture::PendingSerial() == pendingSerial) throw std::runtime_error("APS5_VERIFY_PENDING_SERIAL_SKIP: a dispatch variant skipped its pending image check at an unchanged serial while a pending image overlaps its runs");
     }
     if (pendingOverlaps || Graphics::AnyShadowedOverlaps(runs)) {
         vouched.clear();

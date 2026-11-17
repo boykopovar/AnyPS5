@@ -59,6 +59,16 @@ void fullPoolCyclesTests() {
     std::cout << "a full recycled pool replaces long-held objects with newer ones\n";
 }
 
+void zeroCapacityTests() {
+    RecycledShared<std::vector<std::uint32_t>> pool(0, 4);
+    for (std::uint32_t round = 0; round < 3; ++round) {
+        auto values = pool.Take([](std::vector<std::uint32_t>& reused) { reused.clear(); });
+        require(values != nullptr, "a zero-capacity pool returned no object");
+    }
+    require(pool.Fresh() == 3 && pool.Reused() == 0, "a zero-capacity pool retained an object");
+    std::cout << "a zero-capacity recycled pool hands out unretained objects\n";
+}
+
 void stageWordsResetTests() {
     ShaderRecompiler::HeapStageWords words;
     words.userData = {1, 2, 3};
@@ -96,6 +106,7 @@ int main() {
         heldObjectsNotReusedTests();
         releasedObjectsReusedTests();
         fullPoolCyclesTests();
+        zeroCapacityTests();
         stageWordsResetTests();
         std::cout << "recycled stage record tests passed\n";
         return 0;
