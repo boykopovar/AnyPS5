@@ -5,6 +5,7 @@
 #include "prx/libcairo/include/Surface.hpp"
 #include "prx/libcairo/include/Context.hpp"
 #include "prx/libcairo/include/Path.hpp"
+#include "prx/libcairo/include/FtFontOptions.hpp"
 #include "prx/libcairo/include/Region.hpp"
 #include "prx/libcairo/include/ScaledFont.hpp"
 #include "prx/libcairo/include/Mesh.hpp"

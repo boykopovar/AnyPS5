@@ -735,7 +735,8 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
 }
 int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
     if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    std::memset(npEnv, 0, 0x18);
+    constexpr std::array<std::uint8_t, 0x18> cleared{};
+    if (!CopyGuestOut(npEnv, cleared.data(), cleared.size())) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
@@ -909,7 +910,8 @@ int APS5_VABI sceNpCheckCallback(void) {
 
 int APS5_VABI sceNpCheckNpAvailability(std::int32_t requestId, const NpOnlineId* onlineId, std::uint8_t* available) {
  if (requestId == 0 || onlineId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
- if (available != nullptr) *available = 0;
+ const std::uint8_t unavailable = 0;
+ if (available != nullptr && !CopyGuestOut(available, &unavailable, sizeof(unavailable))) return SCE_NP_ERROR_INVALID_ARGUMENT;
  return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
@@ -989,6 +991,11 @@ int APS5_VABI sceNpNotifyPlusFeature(const void* param) {
 
 int APS5_VABI sceNpGetAccountId(const NpOnlineId* online_id, uint64_t* account_id) {
     if (!online_id || !account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    NpOnlineId localId{};
+    const auto preserved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, online_id, sizeof(localId));
+    errno = preserved;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
@@ -1018,14 +1025,12 @@ int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
 }
 
 int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
-    (void)user_id;
-    (void)account_id;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
-    (void)user_id;
-    if (!np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
@@ -1038,8 +1043,7 @@ int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
 }
 
 int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
-    (void)user_id;
-    if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 

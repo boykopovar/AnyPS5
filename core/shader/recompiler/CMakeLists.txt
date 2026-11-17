@@ -116,6 +116,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowIndexNarrower.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanPayloadEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
@@ -254,6 +255,7 @@ function(add_shader_recompiler target runtimeTarget)
         string(APPEND shaderCacheExtra " system-deps=${ANYPS5_SYSTEM_DEPS_STAMP}")
     endif()
     set(shaderCacheReviewedNames
+            BdaAbi::OtherFaults
             BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
@@ -264,6 +266,7 @@ function(add_shader_recompiler target runtimeTarget)
             DebugProbeActive
             DecodeRdnaInstruction
             DepthBitsTextureWidth
+            ExactF32Arithmetic
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
@@ -273,6 +276,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::TableHeader
             FmaskLayoutOf
             IsFmaskTextureFormat
+            PipelineSpecialization::IsAtomicLockTable
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords
@@ -333,6 +337,7 @@ function(add_shader_recompiler target runtimeTarget)
             FindTableCalls
             LinkCalls
             LoadStamp
+            StoreStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)

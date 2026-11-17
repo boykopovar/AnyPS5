@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
@@ -43,6 +44,14 @@ int DoCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char*
     return ctx->cipher->doCipher(ctx, out, in, length);
 }
 
+bool BuffersOverlap(const unsigned char* first, std::size_t firstSize, const unsigned char* second, std::size_t secondSize) {
+    if (!first || !second || !firstSize || !secondSize) return false;
+    const auto firstStart = reinterpret_cast<std::uintptr_t>(first);
+    const auto secondStart = reinterpret_cast<std::uintptr_t>(second);
+    if (firstStart < secondStart) return secondStart - firstStart < firstSize;
+    return firstStart - secondStart < secondSize;
+}
+
 int EncryptUpdate(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, const unsigned char* in, int inl, const char* function) {
     const auto& cipher = RequireCipher(ctx, function);
     if (cipher.flags & CipherFlagCustomCipher) {
@@ -79,21 +88,41 @@ int EncryptUpdate(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, cons
         }
         const int filled = block - buffered;
         Copy(ctx->buf + buffered, in, static_cast<std::size_t>(filled), function);
+        const int remaining = inl - filled;
+        const int nextBuffered = remaining & (block - 1);
+        const int alignedRemaining = remaining - nextBuffered;
+        std::vector<unsigned char> staged;
+        const unsigned char* rest = in + filled;
+        const std::size_t totalOut = static_cast<std::size_t>(block) + static_cast<std::size_t>(alignedRemaining);
+        if (remaining > 0 && out && BuffersOverlap(rest, static_cast<std::size_t>(remaining), out, totalOut)) {
+            staged.assign(rest, rest + remaining);
+            rest = staged.data();
+        }
         if (!DoCipher(ctx, out, ctx->buf, static_cast<std::size_t>(block), function)) return 0;
-        inl -= filled;
-        in += filled;
         out += block;
         SetLength(outl, block, function);
-    } else {
-        SetLength(outl, 0, function);
+        if (alignedRemaining > 0) {
+            if (!DoCipher(ctx, out, rest, static_cast<std::size_t>(alignedRemaining), function)) return 0;
+            *outl += alignedRemaining;
+        }
+        if (nextBuffered) Copy(ctx->buf, rest + alignedRemaining, static_cast<std::size_t>(nextBuffered), function);
+        ctx->bufLen = nextBuffered;
+        return 1;
     }
+    SetLength(outl, 0, function);
     buffered = inl & (block - 1);
     inl -= buffered;
+    std::vector<unsigned char> stagedTail;
+    const unsigned char* tailSource = in + inl;
+    if (buffered && inl > 0 && out && BuffersOverlap(tailSource, static_cast<std::size_t>(buffered), out, static_cast<std::size_t>(inl))) {
+        stagedTail.assign(tailSource, tailSource + buffered);
+        tailSource = stagedTail.data();
+    }
     if (inl > 0) {
         if (!DoCipher(ctx, out, in, static_cast<std::size_t>(inl), function)) return 0;
         *outl += inl;
     }
-    if (buffered) Copy(ctx->buf, in + inl, static_cast<std::size_t>(buffered), function);
+    if (buffered) Copy(ctx->buf, tailSource, static_cast<std::size_t>(buffered), function);
     ctx->bufLen = buffered;
     return 1;
 }
@@ -149,20 +178,31 @@ int DecryptUpdate(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, cons
         return 0;
     }
     const bool held = ctx->finalUsed;
+    unsigned char savedFinal[sizeof(ctx->final)]{};
     if (held) {
-        Copy(out, ctx->final, block, function);
-        out += block;
+        if (!out && block) Copy(out, ctx->final, block, function);
+        std::memcpy(savedFinal, ctx->final, block);
     }
-    if (!EncryptUpdate(ctx, out, outl, in, inl, function)) return 0;
+    std::vector<unsigned char> stagedIn;
+    const unsigned char* input = in;
+    if (held && in && out && BuffersOverlap(in, static_cast<std::size_t>(inl), out, static_cast<std::size_t>(block) + static_cast<std::size_t>(inl))) {
+        stagedIn.assign(in, in + inl);
+        input = stagedIn.data();
+    }
+    unsigned char* const updateOut = held ? out + block : out;
+    if (!EncryptUpdate(ctx, updateOut, outl, input, inl, function)) return 0;
     if (block > 1 && !ctx->bufLen) {
         if (*outl < static_cast<int>(block)) throw std::invalid_argument(std::string(function) + ": block mask does not match the block size");
         *outl -= static_cast<int>(block);
         ctx->finalUsed = 1;
-        std::memcpy(ctx->final, out + *outl, block);
+        std::memcpy(ctx->final, updateOut + *outl, block);
     } else {
         ctx->finalUsed = 0;
     }
-    if (held) *outl += static_cast<int>(block);
+    if (held) {
+        std::memcpy(out, savedFinal, block);
+        *outl += static_cast<int>(block);
+    }
     return 1;
 }
 

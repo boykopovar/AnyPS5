@@ -659,6 +659,22 @@ def main():
             assert run.returncode != 0 and 'Failed to load module:' in run.stderr and 'unused.prx' in run.stderr and 'GetLastError: 126' in run.stderr, (run.returncode, run.stdout, run.stderr)
             assert 'nothing is imported from it' not in run.stderr, run.stderr
 
+        for needed in ('libSceGnmDriver_padebug.prx', 'libSceGnmDriver_padebug.sprx'):
+            case = work / ('padebug-' + needed)
+            (case / 'libs').mkdir(parents=True)
+            (case / 'libs' / 'libSceGnmDriver.prx').write_bytes(native_provider.read_bytes())
+            source = case / 'input.elf'
+            source.write_bytes(executable(needed, 'shared#A#B', module_name='libSceGnmDriver'))
+            output = case / 'output.exe'
+            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', str(source), str(output)], capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            image = output.read_bytes()
+            assert 'libs\\libSceGnmDriver.prx\0'.encode('utf-16le') in image, needed
+            assert 'libSceGnmDriver_padebug'.encode('utf-16le') not in image, needed
+            if os.name == 'nt':
+                run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                assert run.returncode == 22, (needed, run.returncode, run.stdout, run.stderr)
+
         check_internal_guest_libc(convert, work, relinker)
 
         for filename, module_name in [('foo.native.prx', 'foo_native'),

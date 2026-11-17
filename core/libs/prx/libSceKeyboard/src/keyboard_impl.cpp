@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <mutex>
 
 namespace {
@@ -180,10 +181,16 @@ int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
     if (data == nullptr || num <= 0 || num > KEYBOARD_MAX_DATA_NUM) return KEYBOARD_ERROR_INVALID_ARG;
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) return 0;
     const int available = std::min(count, num);
+    if (available == 0) return 0;
+    std::array<KeyboardData, KEYBOARD_MAX_DATA_NUM> output{};
     for (int i = 0; i < available; ++i) {
-        data[i] = history[head];
-        head = (head + 1) % KEYBOARD_MAX_DATA_NUM;
+        output[i] = history[(head + i) % KEYBOARD_MAX_DATA_NUM];
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, output.data(), static_cast<std::size_t>(available) * sizeof(KeyboardData));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
+    head = (head + available) % KEYBOARD_MAX_DATA_NUM;
     count -= available;
     return available;
 }
@@ -193,13 +200,17 @@ int ReadState(std::int32_t handle, KeyboardData* data) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    KeyboardData current{};
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) {
-        *data = {};
-        data->timestamp = sceKernelGetProcessTime();
-        data->length = 1;
-        return KEYBOARD_OK;
+        current.timestamp = sceKernelGetProcessTime();
+        current.length = 1;
+    } else {
+        current = snapshot();
     }
-    *data = snapshot();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 
