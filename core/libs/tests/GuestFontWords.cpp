@@ -328,6 +328,8 @@ static void CharacterQueries() {
     Require(sceFontCharacterGetTextFontCode(text[0], &handle, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     code = 7;
     Require(sceFontCharacterGetTextFontCode(nullptr, &handle, &code) == SCE_FONT_ERROR_INVALID_PARAMETER && handle == nullptr && code == 0);
+    errno = EBUSY;
+    Require(sceFontCharacterGetTextFontCode(text[0], reinterpret_cast<FontHandle*>(std::uintptr_t{0x10}), &code) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     int level = -1;
     Require(sceFontCharacterGetBidiLevel(text[0], &level) == SCE_FONT_OK && level == 3);
     Require(sceFontCharacterGetBidiLevel(text[1], &level) == SCE_FONT_OK && level == 0);

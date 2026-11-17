@@ -559,13 +559,13 @@ int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* te
 
 int APS5_VABI sceFontCharacterGetTextFontCode(const FontTextCharacter* textCharacter, FontHandle* pFontHandle, std::uint32_t* textCode) {
     if (!textCharacter) {
-        if (pFontHandle) *pFontHandle = nullptr;
-        if (textCode) *textCode = 0;
+        if (pFontHandle) (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
+        if (textCode) (void)CopyOutGuest(textCode, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (!pFontHandle || !textCode) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *pFontHandle = textCharacter->font;
-    *textCode = textCharacter->characterCode;
+    if (!CopyOutGuest(pFontHandle, textCharacter->font)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!CopyOutGuest(textCode, textCharacter->characterCode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
