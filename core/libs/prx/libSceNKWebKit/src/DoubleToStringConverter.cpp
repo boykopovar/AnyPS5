@@ -1,7 +1,10 @@
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -16,21 +19,29 @@ constexpr int kMaxExponentialDigits = 100;
 using NKWebKit::WtfAbi::DoubleConversionStringBuilder;
 using NKWebKit::WtfAbi::DoubleToStringConverter;
 
+struct HostBuilder {
+    DoubleConversionStringBuilder builder;
+    std::string text;
+};
+
 void ValidateBuilder(const DoubleConversionStringBuilder& builder) {
     if (!builder.buffer.start || builder.buffer.length <= 0 || builder.position < 0)
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: invalid builder state");
 }
 
-void AppendCharacter(DoubleConversionStringBuilder& builder, char ch) {
+void AppendCharacter(HostBuilder& host, char ch) {
+    auto& builder = host.builder;
     ValidateBuilder(builder);
     if (ch == '\0')
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: NUL character");
     if (builder.position + 1 >= builder.buffer.length)
         throw std::out_of_range("WTF::double_conversion::StringBuilder: buffer overflow");
-    builder.buffer.start[builder.position++] = ch;
+    host.text.push_back(ch);
+    ++builder.position;
 }
 
-void AppendSubstring(DoubleConversionStringBuilder& builder, const char* text, int count) {
+void AppendSubstring(HostBuilder& host, const char* text, int count) {
+    auto& builder = host.builder;
     ValidateBuilder(builder);
     if (count < 0)
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: negative substring length");
@@ -40,19 +51,40 @@ void AppendSubstring(DoubleConversionStringBuilder& builder, const char* text, i
         throw std::invalid_argument("WTF::double_conversion::StringBuilder: null substring");
     if (builder.position + count >= builder.buffer.length)
         throw std::out_of_range("WTF::double_conversion::StringBuilder: buffer overflow");
-    std::memcpy(builder.buffer.start + builder.position, text, static_cast<std::size_t>(count));
+    host.text.append(text, static_cast<std::size_t>(count));
     builder.position += count;
 }
 
-void AppendString(DoubleConversionStringBuilder& builder, const char* text) {
-    AppendSubstring(builder, text, static_cast<int>(std::strlen(text)));
+bool CopySymbol(const char* source, std::size_t limit, std::string& destination) {
+    char chunk[4096];
+    auto current = reinterpret_cast<std::uintptr_t>(source);
+    while (destination.size() < limit) {
+        std::size_t count = sizeof(chunk) - current % sizeof(chunk);
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(current), count))
+            return false;
+        if (const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count))) {
+            destination.append(chunk, static_cast<std::size_t>(end - chunk));
+            return true;
+        }
+        destination.append(chunk, std::min(count, limit - destination.size()));
+        current += count;
+    }
+    return true;
+}
+
+bool StoreBuilder(DoubleConversionStringBuilder* destination, const HostBuilder& host, int position) {
+    if (host.text.empty())
+        return true;
+    return GuestWritable_nid_no_patch(destination, sizeof(host.builder))
+        && GuestCopyOut_nid_no_patch(host.builder.buffer.start + position, host.text.data(), host.text.size())
+        && GuestCopyOut_nid_no_patch(destination, &host.builder, sizeof(host.builder));
 }
 
 void CreateExponentialRepresentation(
     const DoubleToStringConverter& converter,
     const std::string& digits,
     int exponent,
-    DoubleConversionStringBuilder& builder) {
+    HostBuilder& builder) {
     AppendCharacter(builder, digits[0]);
     if (digits.size() != 1) {
         AppendCharacter(builder, '.');
@@ -73,25 +105,10 @@ void CreateExponentialRepresentation(
     AppendSubstring(builder, expDigits.data(), static_cast<int>(expDigits.size()));
 }
 
-bool HandleSpecialValues(
-    const DoubleToStringConverter& converter,
-    double value,
-    DoubleConversionStringBuilder& builder) {
-    if (std::isinf(value)) {
-        if (!converter.infinitySymbol)
-            return false;
-        if (value < 0.0)
-            AppendCharacter(builder, '-');
-        AppendString(builder, converter.infinitySymbol);
-        return true;
-    }
-    if (std::isnan(value)) {
-        if (!converter.nanSymbol)
-            return false;
-        AppendString(builder, converter.nanSymbol);
-        return true;
-    }
-    return false;
+void HandleSpecialValue(double value, const std::string& symbol, HostBuilder& builder) {
+    if (std::isinf(value) && value < 0.0)
+        AppendCharacter(builder, '-');
+    AppendSubstring(builder, symbol.data(), static_cast<int>(symbol.size()));
 }
 
 }  // namespace
@@ -121,8 +138,24 @@ _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentialEdiPNS0_13Str
     DoubleConversionStringBuilder* resultBuilder) {
     if (!self || !resultBuilder)
         throw std::invalid_argument("WTF::double_conversion::DoubleToStringConverter::ToExponential: null pointer");
-    if (!std::isfinite(value))
-        return HandleSpecialValues(*self, value, *resultBuilder);
+    DoubleToStringConverter converter;
+    HostBuilder builder;
+    if (!std::isfinite(value)) {
+        if (!GuestCopyIn_nid_no_patch(&converter, self, sizeof(converter)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        const char* symbol = std::isinf(value) ? converter.infinitySymbol : converter.nanSymbol;
+        if (!symbol)
+            return false;
+        std::string text;
+        if (!GuestCopyIn_nid_no_patch(&builder.builder, resultBuilder, sizeof(builder.builder))
+            || !CopySymbol(symbol, static_cast<std::size_t>(std::max(builder.builder.buffer.length, 0)), text))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        int position = builder.builder.position;
+        HandleSpecialValue(value, text, builder);
+        if (!StoreBuilder(resultBuilder, builder, position))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return true;
+    }
     if (requestedDigits < -1 || requestedDigits > kMaxExponentialDigits)
         return false;
 
@@ -180,11 +213,17 @@ _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentialEdiPNS0_13Str
         }
     }
 
-    bool uniqueZero = (self->flags & kUniqueZero) != 0;
+    if (!GuestCopyIn_nid_no_patch(&converter, self, sizeof(converter))
+        || !GuestCopyIn_nid_no_patch(&builder.builder, resultBuilder, sizeof(builder.builder)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    int position = builder.builder.position;
+    bool uniqueZero = (converter.flags & kUniqueZero) != 0;
     if (sign && (value != 0.0 || !uniqueZero))
-        AppendCharacter(*resultBuilder, '-');
+        AppendCharacter(builder, '-');
 
-    CreateExponentialRepresentation(*self, digits, exponent, *resultBuilder);
+    CreateExponentialRepresentation(converter, digits, exponent, builder);
+    if (!StoreBuilder(resultBuilder, builder, position))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return true;
 }
 

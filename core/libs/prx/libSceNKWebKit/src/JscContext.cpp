@@ -1,6 +1,8 @@
 #include "Jsc.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -147,6 +149,24 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
     script->startingLineNumber = clampedLine;
     script->source = std::move(sourceCopy);
     return script;
+}
+
+enum class AsciiSource { Copied, NonAscii, Unreadable };
+
+AsciiSource CopyAsciiSource(const char* source, std::size_t length, std::string& destination) {
+    char chunk[4096];
+    auto current = reinterpret_cast<std::uintptr_t>(source);
+    for (std::size_t offset = 0; offset < length;) {
+        std::size_t count = std::min<std::size_t>(sizeof(chunk) - current % sizeof(chunk), length - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(current), count)) return AsciiSource::Unreadable;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (static_cast<unsigned char>(chunk[i]) & 0x80u) return AsciiSource::NonAscii;
+        }
+        destination.append(chunk, count);
+        offset += count;
+        current += count;
+    }
+    return AsciiSource::Copied;
 }
 
 }  // namespace
@@ -905,8 +925,12 @@ void APS5_VABI JSGlobalContextSetUnhandledRejectionCallback(JSGlobalContextRef c
     if (!ctx) return;
     if (!IsObjectCallable(ctx, function)) {
         if (exception) {
+            if (!GuestWritable_nid_no_patch(exception, sizeof(JSValueRef)))
+                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             JSValue err = JS_NewTypeError(ctx->qctx, "Unhandled rejection callback must be a function");
-            *exception = ctx->group->ToHandle(ctx, err);
+            JSValueRef handle = ctx->group->ToHandle(ctx, err);
+            if (!GuestCopyOut_nid_no_patch(exception, &handle, sizeof(handle)))
+                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         }
         return;
     }
@@ -981,12 +1005,16 @@ bool APS5_VABI JSCheckScriptSyntax(JSContextRef ctx, JSStringRef script, JSStrin
 
 JSScriptRef APS5_VABI JSScriptCreateReferencingImmortalASCIIText(JSContextGroupRef group, JSStringRef url, int startingLineNumber, const char* source, std::size_t length, JSStringRef* errorMessage, int* errorLine) {
     if (!group || (!source && length > 0)) return nullptr;
-    for (std::size_t i = 0; i < length; ++i) {
-        if (static_cast<unsigned char>(source[i]) & 0x80u) {
-            return nullptr;
-        }
+    std::string text;
+    switch (CopyAsciiSource(source, length, text)) {
+    case AsciiSource::NonAscii:
+        return nullptr;
+    case AsciiSource::Unreadable:
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    case AsciiSource::Copied:
+        break;
     }
-    return CreateScriptInternal(const_cast<OpaqueJSContextGroup*>(group), url, startingLineNumber, source, length, errorMessage, errorLine);
+    return CreateScriptInternal(const_cast<OpaqueJSContextGroup*>(group), url, startingLineNumber, text.data(), text.size(), errorMessage, errorLine);
 }
 
 JSScriptRef APS5_VABI JSScriptCreateFromString(JSContextGroupRef group, JSStringRef url, int startingLineNumber, JSStringRef source, JSStringRef* errorMessage, int* errorLine) {

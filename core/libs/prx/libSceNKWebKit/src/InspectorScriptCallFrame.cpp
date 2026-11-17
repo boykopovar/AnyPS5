@@ -64,7 +64,9 @@
 
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <new>
 #include <stdexcept>
@@ -90,6 +92,19 @@ void Destroy(ScriptCallFrame& frame) {
     frame.functionName.~String();
 }
 
+constexpr std::size_t frameFieldBytes = offsetof(ScriptCallFrame, column) + sizeof(unsigned);
+
+bool CopyConstruct(ScriptCallFrame* self, const ScriptCallFrame* other) {
+    if (!self || !other) throw std::invalid_argument("null Inspector::ScriptCallFrame");
+    alignas(ScriptCallFrame) unsigned char source[sizeof(ScriptCallFrame)];
+    if (!GuestCopyIn_nid_no_patch(source, other, frameFieldBytes)) return false;
+    alignas(ScriptCallFrame) unsigned char copy[sizeof(ScriptCallFrame)];
+    auto* frame = ::new (static_cast<void*>(copy)) ScriptCallFrame(*reinterpret_cast<const ScriptCallFrame*>(source));
+    if (GuestCopyOut_nid_no_patch(self, copy, frameFieldBytes)) return true;
+    Destroy(*frame);
+    return false;
+}
+
 }
 
 namespace NKWebKit::InspectorAbi {
@@ -112,13 +127,13 @@ bool FramesEqual(const ScriptCallFrame& a, const ScriptCallFrame& b) {
 extern "C" {
 
 void APS5_VABI _ZN9Inspector15ScriptCallFrameC1ERKS0_(ScriptCallFrame* self, const ScriptCallFrame* other) {
-    if (!self || !other) throw std::invalid_argument("null Inspector::ScriptCallFrame");
-    ::new (static_cast<void*>(self)) ScriptCallFrame(*other);
+    if (!CopyConstruct(self, other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN9Inspector15ScriptCallFrameC2ERKS0_(ScriptCallFrame* self, const ScriptCallFrame* other) {
-    if (!self || !other) throw std::invalid_argument("null Inspector::ScriptCallFrame");
-    ::new (static_cast<void*>(self)) ScriptCallFrame(*other);
+    if (!CopyConstruct(self, other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN9Inspector15ScriptCallFrameD1Ev(ScriptCallFrame* self) {

@@ -64,7 +64,9 @@
 
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <limits>
@@ -90,6 +92,16 @@ const ScriptCallStack& Checked(const ScriptCallStack* stack) {
 
 void CheckFrames(const ScriptCallStack& stack) {
     if (stack.frames.size && !stack.frames.buffer) throw std::invalid_argument("null Inspector::ScriptCallFrame buffer");
+}
+
+constexpr std::size_t framesPerChunk = 4096 / sizeof(ScriptCallFrame);
+
+bool LoadStack(ScriptCallStack& stack, const ScriptCallStack* source) {
+    return GuestCopyIn_nid_no_patch(&stack, source, sizeof(stack));
+}
+
+bool LoadFrames(unsigned char* destination, const ScriptCallFrame* source, std::size_t count) {
+    return GuestCopyIn_nid_no_patch(destination, source, count * sizeof(ScriptCallFrame));
 }
 
 void Construct(ScriptCallStack& stack) {
@@ -190,13 +202,26 @@ const ScriptCallFrame* APS5_VABI _ZNK9Inspector15ScriptCallStack23firstNonNative
 }
 
 bool APS5_VABI _ZNK9Inspector15ScriptCallStack7isEqualEPS0_(const ScriptCallStack* self, ScriptCallStack* other) {
-    const auto& stack = Checked(self);
+    ScriptCallStack stack;
+    if (!LoadStack(stack, &Checked(self)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     CheckFrames(stack);
     if (!other) return false;
-    CheckFrames(*other);
-    if (other->frames.size != stack.frames.size) return false;
-    for (std::size_t i = 0; i < stack.frames.size; ++i) {
-        if (!NKWebKit::InspectorAbi::FramesEqual(stack.frames.buffer[i], other->frames.buffer[i])) return false;
+    ScriptCallStack peer;
+    if (!LoadStack(peer, other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    CheckFrames(peer);
+    if (peer.frames.size != stack.frames.size) return false;
+    alignas(ScriptCallFrame) unsigned char mine[framesPerChunk * sizeof(ScriptCallFrame)];
+    alignas(ScriptCallFrame) unsigned char theirs[framesPerChunk * sizeof(ScriptCallFrame)];
+    for (std::size_t offset = 0; offset < stack.frames.size;) {
+        std::size_t count = std::min<std::size_t>(framesPerChunk, stack.frames.size - offset);
+        if (!LoadFrames(mine, stack.frames.buffer + offset, count) || !LoadFrames(theirs, peer.frames.buffer + offset, count))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        for (std::size_t i = 0; i < count; ++i) {
+            if (!NKWebKit::InspectorAbi::FramesEqual(reinterpret_cast<const ScriptCallFrame*>(mine)[i], reinterpret_cast<const ScriptCallFrame*>(theirs)[i])) return false;
+        }
+        offset += count;
     }
     return true;
 }
