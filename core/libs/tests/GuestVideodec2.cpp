@@ -807,6 +807,31 @@ void testAvcPictureMetadata() {
         if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
         else checkUnprojected(output, sizeof(AvcPictureInfo));
     }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
+
+    auto newSequence = ippp;
+    auto wideSpsAndPps = secondSpsAndPps;
+    wideSpsAndPps[11] = 14;
+    auto& idr = newSequence.front();
+    check(idr[10] == 0x67 && idr[35] == 0x68 && idr[43] == 0x65, "the IPPP fixture's IDR does not follow its SPS and PPS");
+    idr.erase(idr.begin() + 6, idr.begin() + 40);
+    idr.insert(idr.begin() + 6, wideSpsAndPps.begin(), wideSpsAndPps.end());
+    auto sequenceSwitches = ippp;
+    sequenceSwitches.insert(sequenceSwitches.end(), newSequence.begin(), newSequence.end());
+    sequenceSwitches.insert(sequenceSwitches.end(), ippp.begin(), ippp.end());
+    check(decodeAll(66, sequenceSwitches, [&](const OutputInfo& output, std::size_t picture) {
+        const auto unit = picture % ippp.size();
+        auto expected = plain[unit];
+        expected.ptsData = 1000 + picture;
+        expected.dtsData = picture;
+        expected.attachedData = 0xa0 + picture;
+        if (picture / ippp.size() == 1) {
+            expected.aspectRatioIdc = 14;
+            expected.sarWidth = 4;
+            expected.sarHeight = 3;
+        }
+        check(hash(output) == hashes[unit], "decoded AVC pixels changed across a sequence switch");
+        check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " reports the wrong sequence metadata");
+    }) == sequenceSwitches.size(), "AVC pictures are missing across sequence switches");
 }
 
 void testEmptyAccessUnit() {

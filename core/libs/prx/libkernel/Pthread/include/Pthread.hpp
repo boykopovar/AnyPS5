@@ -123,7 +123,7 @@ struct PthreadAttrPrivate {
     int _schedpolicy;
     int _inheritsched;
     bool _createSuspended = false;
-    KernelCpumask _affinity = DEFAULT_THREAD_AFFINITY;
+    KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
     std::size_t _guardsize = 0x1000;
     int _solosched = 0;
@@ -210,6 +210,7 @@ extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
 #endif
 extern "C" void ResumeAllGuestThreads_nid_no_patch();
 bool LiveGuestThreadExists(std::int64_t tid);
+extern "C" bool LiveGuestThreadName_nid_no_patch(std::int64_t tid, char* name, std::size_t capacity);
 struct LiveGuestThreadName {
     std::int64_t tid;
     std::string name;
