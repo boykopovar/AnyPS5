@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,18 @@ void Require(bool condition, std::source_location location = std::source_locatio
     if (condition) return;
     std::fprintf(stderr, "LibreSSL3 inventory-name check failed at line %u\n", location.line());
     std::abort();
+}
+
+template <typename Function>
+void Rejects(Function function, std::source_location location = std::source_location::current()) {
+    errno = EINVAL;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && errno == EINVAL, location);
 }
 
 }
@@ -58,6 +71,9 @@ int main() {
         threw = true;
     }
     Require(threw);
+    Rejects([] { BN_is_negative_nid_postfix(reinterpret_cast<const Bignum*>(std::uintptr_t{0x10})); });
+    Rejects([] { RSA_bits_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(std::uintptr_t{0x10})); });
+    Rejects([] { EVP_CIPHER_nid_nid_postfix(reinterpret_cast<const LibreSsl3EvpCipher*>(std::uintptr_t{0x10})); });
     ERR_load_ERR_strings_nid_postfix();
     std::puts("libSceLibreSsl3 inventory-name tests passed");
 }
