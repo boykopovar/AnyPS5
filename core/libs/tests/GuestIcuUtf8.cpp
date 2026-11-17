@@ -2,6 +2,7 @@
 #include "unicode/utf8.h"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,18 @@
 #include <memory>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -225,6 +238,108 @@ void InvalidArguments() {
     Require(utf8_appendCharSafeBody_nid_postfix(nullptr, 0, INT32_MIN, -1, nullptr) == 0);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info {};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        Require(base != nullptr);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<std::uint8_t*>(mapped);
+#endif
+        Protect(base, false, false);
+        Protect(base + size * 2, false, false);
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 3);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    std::uint8_t* Begin() const { return base + size; }
+    std::uint8_t* End() const { return base + size * 2; }
+    void ReadOnly() const { Protect(Begin(), true, false); }
+
+private:
+    void Protect(std::uint8_t* page, bool read, bool write) const {
+#ifdef _WIN32
+        DWORD previous {};
+        Require(VirtualProtect(page, size, write ? PAGE_READWRITE : read ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(page, size, (read ? PROT_READ : 0) | (write ? PROT_WRITE : 0)) == 0);
+#endif
+    }
+
+    std::uint8_t* base = nullptr;
+    std::size_t size = 0;
+};
+
+void GuestPointers() {
+    std::array<std::uint8_t, 4> text{0xf0, 0x90, 0x80, 0x80};
+    auto* unmappedIndex = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedText = reinterpret_cast<const std::uint8_t*>(std::uintptr_t{0x10});
+    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), unmappedIndex, 4, 0xf0, -1); });
+    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(text.data(), 0, unmappedIndex, 0x80, -1); });
+    std::int32_t index = 1;
+    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(unmappedText, &index, 4, 0xf0, -1); });
+    Require(index == 1);
+    index = 3;
+    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(unmappedText, 0, &index, 0x80, -1); });
+    Require(index == 3);
+    Rejects([&] { utf8_back1SafeBody_nid_postfix(unmappedText, 0, 3); });
+
+    GuardedPage page;
+    auto* end = page.End();
+    end[-3] = 0xe2;
+    end[-2] = 0x82;
+    end[-1] = 0xac;
+    const auto* forward = end - 3;
+    index = 1;
+    Require(utf8_nextCharSafeBody_nid_postfix(forward, &index, -1, 0xe2, -1) == 0x20ac && index == 3);
+    end[-2] = 0xf0;
+    end[-1] = 0x90;
+    index = 2;
+    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(forward, &index, -1, 0xf0, -1); });
+    Require(index == 2);
+    index = 2;
+    Require(utf8_nextCharSafeBody_nid_postfix(forward, &index, 3, 0xf0, -1) == -1 && index == 3);
+
+    auto* begin = page.Begin();
+    begin[0] = 0xe2;
+    begin[1] = 0x82;
+    begin[2] = 0xac;
+    const auto* backward = begin - 8;
+    index = 10;
+    Require(utf8_prevCharSafeBody_nid_postfix(backward, 8, &index, 0xac, -1) == 0x20ac && index == 8);
+    Require(utf8_back1SafeBody_nid_postfix(backward, 8, 10) == 8);
+    begin[0] = 0x80;
+    begin[1] = 0x80;
+    index = 10;
+    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(backward, 7, &index, 0x80, -1); });
+    Require(index == 10);
+    Rejects([&] { utf8_back1SafeBody_nid_postfix(backward, 7, 9); });
+
+    auto* stored = reinterpret_cast<std::int32_t*>(begin + 8);
+    *stored = 1;
+    begin[16] = 0xe2;
+    begin[17] = 0x82;
+    begin[18] = 0xac;
+    page.ReadOnly();
+    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(begin + 16, stored, 3, 0xe2, -1); });
+    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(begin + 16, 0, stored, 0x82, -1); });
+    Require(*stored == 1);
+}
+
 struct NativeChecks {
     std::uint64_t decoding = 0;
     std::uint64_t cursor = 0;
@@ -318,5 +433,6 @@ int main() {
     AppendFailures();
     TerminatedAndBounded();
     InvalidArguments();
+    GuestPointers();
     NativeMalformedSequences();
 }

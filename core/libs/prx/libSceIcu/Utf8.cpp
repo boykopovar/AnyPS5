@@ -35,9 +35,43 @@ std::int32_t ErrorValue(int trails, std::int8_t strict) {
     return values[trails];
 }
 
-std::uint8_t Read(const std::uint8_t* text, std::int32_t index) {
-    if (!text) APS5_INVALID_ARG_EX;
-    return text[index];
+class Text {
+public:
+    Text(const std::uint8_t* guest, bool backward) : guest(guest), backward(backward) {}
+
+    std::uint8_t operator[](std::int32_t index) {
+        if (index < base || index >= base + count) Load(index);
+        return window[static_cast<std::size_t>(index - base)];
+    }
+
+private:
+    void Load(std::int32_t index) {
+        if (!guest) APS5_INVALID_ARG_EX;
+        const auto offset = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(guest + index) % 0x1000);
+        std::int64_t first = index;
+        std::int64_t last = static_cast<std::int64_t>(index) + 1;
+        if (backward) first = (std::max)(std::int64_t{0}, index - (std::min)(std::int64_t{3}, offset));
+        else last = index + (std::min)(std::int64_t{4}, 0x1000 - offset);
+        if (!GuestCopyIn_nid_no_patch(window.data(), guest + first, static_cast<std::size_t>(last - first))) APS5_INVALID_ARG_EX;
+        base = first;
+        count = last - first;
+    }
+
+    const std::uint8_t* guest;
+    bool backward;
+    std::array<std::uint8_t, 4> window{};
+    std::int64_t base = 0;
+    std::int64_t count = 0;
+};
+
+std::int32_t ReadIndex(const std::int32_t* index) {
+    std::int32_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, index, sizeof(value))) APS5_INVALID_ARG_EX;
+    return value;
+}
+
+void WriteIndex(std::int32_t* index, std::int32_t value) {
+    if (!GuestCopyOut_nid_no_patch(index, &value, sizeof(value))) APS5_INVALID_ARG_EX;
 }
 
 void Advance(std::int32_t& index) {
@@ -52,12 +86,12 @@ struct Prefix {
     bool complete = false;
 };
 
-Prefix PreviousPrefix(const std::uint8_t* text, std::int32_t start, std::int32_t index, std::uint8_t last, bool allowSurrogate) {
+Prefix PreviousPrefix(Text& text, std::int32_t start, std::int32_t index, std::uint8_t last, bool allowSurrogate) {
     if (!IsTrail(last)) return {index};
     std::array<std::uint8_t, 3> trails{last};
     auto position = index;
     for (int count = 1; count <= 3 && position > start; ++count) {
-        const auto byte = Read(text, --position);
+        const auto byte = text[--position];
         if (IsTrail(byte)) {
             if (count < 3) trails[count] = byte;
             continue;
@@ -90,29 +124,31 @@ void Write(std::uint8_t* text, std::int32_t index, std::uint32_t value, int widt
 extern "C" {
 
 std::int32_t APS5_VABI utf8_nextCharSafeBody_nid_postfix(const std::uint8_t* text, std::int32_t* index, std::int32_t length, std::int32_t lead, std::int8_t strict) {
-    if (!index || *index < 0 || (length >= 0 && *index > length)) APS5_INVALID_ARG_EX;
-    const auto original = *index;
+    const auto original = ReadIndex(index);
+    if (original < 0 || (length >= 0 && original > length)) APS5_INVALID_ARG_EX;
     auto position = original;
     const int needed = TrailCount(lead);
     if (!needed || position == length) return ErrorValue(0, strict);
+    Text bytes(text, false);
     std::int32_t value = lead & (0x7f >> needed);
     for (int trail = 0; trail < needed && position != length; ++trail) {
-        const auto byte = Read(text, position);
+        const auto byte = bytes[position];
         if (trail == 0 ? !FirstTrail(lead, byte, strict == -2) : !IsTrail(byte)) break;
         value = (value << 6) | (byte & 0x3f);
         Advance(position);
     }
-    *index = position;
+    WriteIndex(index, position);
     const int consumed = position - original;
     if (consumed == needed && (strict <= 0 || !Noncharacter(value))) return value;
     return ErrorValue(consumed, strict);
 }
 
 std::int32_t APS5_VABI utf8_prevCharSafeBody_nid_postfix(const std::uint8_t* text, std::int32_t start, std::int32_t* index, std::int32_t trail, std::int8_t strict) {
-    if (!index) APS5_INVALID_ARG_EX;
-    CheckBackward(start, *index);
-    const auto prefix = PreviousPrefix(text, start, *index, static_cast<std::uint8_t>(trail), strict == -2);
-    *index = prefix.index;
+    const auto original = ReadIndex(index);
+    CheckBackward(start, original);
+    Text bytes(text, true);
+    const auto prefix = PreviousPrefix(bytes, start, original, static_cast<std::uint8_t>(trail), strict == -2);
+    WriteIndex(index, prefix.index);
     if (prefix.complete && (strict <= 0 || !Noncharacter(prefix.value))) return prefix.value;
     return ErrorValue(prefix.trails, strict);
 }
@@ -143,7 +179,9 @@ std::int32_t APS5_VABI utf8_appendCharSafeBody_nid_postfix(std::uint8_t* text, s
 
 std::int32_t APS5_VABI utf8_back1SafeBody_nid_postfix(const std::uint8_t* text, std::int32_t start, std::int32_t index) {
     CheckBackward(start, index);
-    return PreviousPrefix(text, start, index, Read(text, index), false).index;
+    Text bytes(text, true);
+    const auto last = bytes[index];
+    return PreviousPrefix(bytes, start, index, last, false).index;
 }
 
 }
