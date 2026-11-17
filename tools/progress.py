@@ -1,13 +1,15 @@
 import argparse
 import importlib.util
+import hashlib
 import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", Path(__file__).with_name("nid_names.py"))
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
@@ -19,11 +21,16 @@ shader_scan = importlib.util.module_from_spec(scan_spec)
 sys.modules[scan_spec.name] = shader_scan
 scan_spec.loader.exec_module(shader_scan)
 
+isa_spec = importlib.util.spec_from_file_location("anyps5_isa_profiles", Path(__file__).with_name("isa_profiles.py"))
+isa_profiles = importlib.util.module_from_spec(isa_spec)
+isa_spec.loader.exec_module(isa_profiles)
+
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
+ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -91,6 +98,15 @@ GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def blank(match):
     if match.group("code") is not None:
         return match.group()
@@ -127,6 +143,276 @@ def stub_calls(text):
         calls |= found
 
 
+TYPE_DECLARATION = re.compile(r"\b(?:struct|class|union|enum(?:\s+class|\s+struct)?)\s+(?:\w+\s*::\s*)*(\w+)\s*"
+                              r"(?:final\s*)?(?::(?!:)([^{;]*))?[{;]")
+TYPE_ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*([^;]*);")
+TYPEDEF = re.compile(r"\btypedef\b([^;{}]*?)\b(\w+)\s*;")
+BRACED_NAME = re.compile(r"\}\s*(\w+)\s*;")
+CONVERSION = re.compile(r"\boperator\s+(?:(?:const|volatile)\s+)*(?:\w+\s*::\s*)*(\w+)\s*(?:<[^;{}]*>)?\s*[*&]")
+SIMPLE_TYPE = re.compile(r"\s*(?:typename\s+)?(?:\w+\s*::\s*)*(\w+)\s*")
+TEMPLATE_CLAUSE = re.compile(r"\btemplate\s*<([^{};]*)>")
+TEMPLATE_PARAMETER = re.compile(r"\b(?:typename|class)\b\s*(?:\.\.\.)?\s*(\w+)")
+DECLARATION = re.compile(r"(?<![\w.:>])((?:\w+\s*::\s*)*\w+)(\s*<[^<>;(){}]*>)?((?:\s*(?:\bconst\b|\bvolatile\b|\*|&))*)"
+                         r"\s*\b(\w+)(?=\s*(?:[=;,)({\[]|:(?!:)))")
+ARGUMENT = re.compile(r"([*&]?)\s*(\w+)")
+PARAMETER = re.compile(r"\s*((?:\w+\s*::\s*)*\w+)\s*([*&\s]*)(\w+)?\s*")
+STATEMENT_WORDS = frozenset(("return", "else", "do", "throw", "new", "delete", "case", "goto", "co_return", "co_await",
+                             "co_yield", "not", "and", "or", "xor", "bitand", "bitor", "compl", "sizeof", "alignof",
+                             "using", "namespace", "public", "private", "protected", "friend", "operator", "template",
+                             "typename", "struct", "class", "union", "enum", "if", "while", "for", "switch", "catch",
+                             "static_assert", "default"))
+INDEFINITE_TYPES = frozenset(("auto", "const", "volatile", "static", "inline", "constexpr", "constinit", "register",
+                              "extern", "mutable", "thread_local", "explicit", "virtual", "unsigned", "signed"))
+
+
+def closing(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "([{":
+            depth += 1
+        elif text[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(text)
+
+
+class TypeIndex:
+    def __init__(self, texts):
+        self.parent, self.known, self.opaque = {}, set(), set()
+        for text in texts:
+            for match in TYPE_DECLARATION.finditer(text):
+                self.known.add(match.group(1))
+                for base in re.findall(r"\w+", match.group(2) or ""):
+                    if base not in ("public", "protected", "private", "virtual"):
+                        self.join(match.group(1), base)
+            for match in TYPE_ALIAS.finditer(text):
+                self.alias(match.group(1), match.group(2))
+            for match in TYPEDEF.finditer(text):
+                self.alias(match.group(2), match.group(1))
+            self.opaque.update(match.group(1) for match in BRACED_NAME.finditer(text))
+            self.opaque.update(match.group(1) for match in CONVERSION.finditer(text))
+        roots = {self.find(name) for name in self.known}
+        self.concrete = {name for name in self.parent if self.find(name) in roots} | self.known
+        self.concrete -= {name for name in self.concrete if self.find(name) in {self.find(o) for o in self.opaque}}
+
+    def find(self, name):
+        self.parent.setdefault(name, name)
+        while self.parent[name] != name:
+            self.parent[name] = self.parent[self.parent[name]]
+            name = self.parent[name]
+        return name
+
+    def join(self, first, second):
+        self.parent[self.find(first)] = self.find(second)
+
+    def alias(self, name, target):
+        simple = SIMPLE_TYPE.fullmatch(target)
+        if simple:
+            self.join(name, simple.group(1))
+        else:
+            self.opaque.add(name)
+
+    def related(self, first, second):
+        return self.find(first) == self.find(second)
+
+
+def split_arguments(text):
+    parts, depth, start = [], 0, 0
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == "," and not depth:
+            parts.append(text[start:i])
+            start = i + 1
+    return parts + [text[start:]]
+
+
+def split_parameters(text):
+    parts, depth, angle, start, default, reliable = [], 0, 0, 0, None, True
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth:
+            continue
+        elif default is not None:
+            reliable = reliable and character not in "<>"
+            if character == ",":
+                parts.append((default, True))
+                start, default = i + 1, None
+        elif character == "<":
+            angle += 1
+        elif character == ">" and angle:
+            angle -= 1
+        elif character == "=" and not angle:
+            default = text[start:i]
+        elif character == "," and not angle:
+            parts.append((text[start:i], False))
+            start = i + 1
+    parts.append((default, True) if default is not None else (text[start:], False))
+    return parts, reliable and not angle
+
+
+def parameter_type(declaration):
+    if any(mark in declaration for mark in ("(", "[", "<", "...")):
+        return None
+    plain = re.sub(r"\b(?:const|volatile)\b", " ", declaration)
+    qualified = plain != declaration
+    plain = re.sub(r"\b(?:struct|class|union|enum|typename|register)\b", " ", plain)
+    match = PARAMETER.fullmatch(plain)
+    if not match:
+        return None
+    base = re.split(r"\s*::\s*", match.group(1))[-1]
+    marks = match.group(2).replace(" ", "").replace("\t", "").replace("\n", "")
+    if "&&" in marks or (marks and set(marks) - {"*", "&"}):
+        return None
+    if "&" in marks:
+        return None if qualified or marks.count("&") > 1 else ("reference", base, marks.count("*"))
+    if "*" in marks:
+        return ("pointer", base, marks.count("*"))
+    return None
+
+
+class Definition:
+    def __init__(self, name, text, match, follow_qualified):
+        self.name, self.follow_qualified = name, follow_qualified
+        start = match.end(1)
+        opening = text.index("(", start)
+        parameters = text[opening + 1:closing(text, opening)]
+        self.parameters, self.required, self.maximum = [], 0, 0
+        if parameters.strip() not in ("", "void"):
+            declarations, reliable = split_parameters(parameters)
+            for declaration, has_default in declarations:
+                pack = "..." in declaration
+                self.parameters.append(None if pack else parameter_type(declaration))
+                self.required += not (pack or has_default)
+                self.maximum = float("inf") if pack or self.maximum == float("inf") else self.maximum + 1
+            if not reliable:
+                self.parameters, self.required, self.maximum = [], 0, float("inf")
+        boundary = max(text.rfind(character, 0, match.start(1)) for character in ";{}") + 1
+        self.templates = {parameter for clause in TEMPLATE_CLAUSE.findall(text, boundary, match.start(1))
+                          for parameter in TEMPLATE_PARAMETER.findall(clause)}
+        self.signature = match.group()
+        self.body = text[match.end() - 1:body_end(text, match.end() - 1)]
+        self.calls, self.reaches, self.variables_cache = [], False, None
+
+    def variables(self):
+        if self.variables_cache is None:
+            found = {}
+            for text in (self.signature, self.body):
+                for match in DECLARATION.finditer(text):
+                    base = re.split(r"\s*::\s*", match.group(1))[-1]
+                    if base in STATEMENT_WORDS or base[0].isdigit():
+                        continue
+                    following = text[match.end():match.end() + 64].lstrip()
+                    kind = None
+                    if base not in INDEFINITE_TYPES and not match.group(2) and not following.startswith("["):
+                        kind = (base, match.group(3).count("*"))
+                    found.setdefault(match.group(4), set()).add(kind)
+            self.variables_cache = {name: next(iter(kinds)) if len(kinds) == 1 else None for name, kinds in found.items()}
+        return self.variables_cache
+
+    def argument(self, text):
+        match = ARGUMENT.fullmatch(text.strip())
+        if not match:
+            return None
+        kind = self.variables().get(match.group(2))
+        if kind is None:
+            return None
+        depth = kind[1] + {"*": -1, "&": 1, "": 0}[match.group(1)]
+        return (kind[0], depth) if depth >= 0 else None
+
+
+def accepts(definition, argument, parameter, types):
+    if parameter is None or argument is None:
+        return True
+    kind, base, depth = parameter
+    argument_base, argument_depth = argument
+    if argument_base not in types.concrete or (kind == "pointer" and not argument_depth):
+        return True
+    generic = base in definition.templates or base not in types.concrete
+    if generic:
+        return depth <= argument_depth
+    return depth == argument_depth and types.related(base, argument_base)
+
+
+def call_arguments(body, opening):
+    end = closing(body, opening)
+    inner = body[opening + 1:end]
+    top, depth = [], 0
+    for character in inner:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif not depth:
+            top.append(character)
+    top = re.sub(r"->|<<|>>|<=|>=", " ", "".join(top))
+    if "..." in top or ("<" in top and ">" in top):
+        return None
+    return [] if not inner.strip() else split_arguments(inner)
+
+
+def resolve(caller, arguments, candidates, types):
+    if arguments is None:
+        return candidates
+    count = len(arguments)
+    fitting = [c for c in candidates if c.required <= count <= c.maximum] or candidates
+    kinds = [caller.argument(argument) for argument in arguments]
+    typed = [c for c in fitting if all(accepts(c, kind, parameter, types)
+                                       for kind, parameter in zip(kinds, c.parameters))]
+    return typed or fitting
+
+
+def reaching_definitions(texts, headers, asm_names):
+    types = TypeIndex(texts + headers)
+    exports, files = {}, []
+    for text in texts:
+        helpers = {}
+        for match in STUB_WRAPPER.finditer(text):
+            helpers.setdefault(match.group(1), []).append(Definition(match.group(1), text, match, True))
+        definitions = [Definition(match.group(1), text, match, False) for match in DEFINITION.finditer(text)]
+        for definition in definitions:
+            exports.setdefault(definition.name, []).append(definition)
+        files.append((helpers, definitions))
+    nodes = []
+    for helpers, definitions in files:
+        local = [d for group in helpers.values() for d in group] + definitions
+        for definition in local:
+            for call in CALL.finditer(definition.body):
+                name = call.group(1)
+                if name != STUB and name not in helpers and name not in exports:
+                    continue
+                if not definition.follow_qualified and QUALIFIED.search(definition.body, 0, call.start()):
+                    continue
+                if name == STUB:
+                    definition.calls.append(None)
+                    continue
+                targets = helpers.get(name, [])
+                if len(targets) > 1:
+                    targets = resolve(definition, call_arguments(definition.body, call.end() - 1), targets, types)
+                definition.calls.append((targets, exports.get(name, []) if name not in asm_names else []))
+            nodes.append(definition)
+    callers = {}
+    for node in nodes:
+        for call in node.calls:
+            for target in call[0] + call[1] if call else ():
+                callers.setdefault(id(target), []).append(node)
+    pending = list(nodes)
+    while pending:
+        node = pending.pop()
+        if node.reaches or not any(call is None or any(t.reaches for t in call[0]) or
+                                   (call[1] and all(t.reaches for t in call[1])) for call in node.calls):
+            continue
+        node.reaches = True
+        pending.extend(callers.get(id(node), ()))
+    return files
+
+
 def statements(body):
     depth, start, parts = 0, 1, []
     for i, character in enumerate(body[1:], 1):
@@ -141,14 +427,44 @@ def statements(body):
     return parts
 
 
-def inert_statement(statement, wrappers):
+def template_open(tokens, index):
+    before = tokens[index - 1] if index else ""
+    after = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+
+
+def inert_parameters(signature):
+    parameters, nesting, default = set(), [], False
+    text = signature.partition("(")[2].rpartition(")")[0]
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text)]
+    for index, token in enumerate(tokens):
+        if token == "," and not nesting:
+            default = False
+        elif token == "=" and not nesting:
+            default = True
+        elif token == "<" and default and not template_open(tokens, index):
+            continue
+        elif token in ("(", "[", "{", "<"):
+            nesting.append(token)
+        elif token in (")", "]", "}", ">") and nesting:
+            if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
+                nesting.pop()
+        elif not default and not any(part in ("[", "{", "<") for part in nesting):
+            if re.fullmatch(r"[A-Za-z_]\w*", token):
+                parameters.add(token)
+    return parameters
+
+
+def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        return True
+        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers):
+def inert_body(body, wrappers, signature):
+    parameters = inert_parameters(signature)
     terminals = 0
     for statement in statements(body):
         statement = statement.strip()
@@ -156,17 +472,17 @@ def inert_body(body, wrappers):
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers):
+        if terminals or not inert_statement(statement, wrappers, parameters):
             return False
         terminals += 1
     return True
 
 
 def inert_wrappers(text):
-    bodies = {m.group(1): text[m.end() - 1:body_end(text, m.end() - 1)] for m in STUB_WRAPPER.finditer(text)}
+    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
     names = set()
     while True:
-        found = {name for name, body in bodies.items() if name not in names and inert_body(body, names)}
+        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
         if not found:
             return names
         names |= found
@@ -181,9 +497,11 @@ def shared_source_owners(path):
 
 
 def scan_library(path):
-    done, todo, inert, live = set(), set(), set(), set()
+    done, todo, inert, live, assembled = set(), set(), set(), set(), set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    path_flavored = flavor(str(path))
     sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
-               if "tests" not in source.relative_to(path).parts]
+               if "tests" not in flavor(str(source)).relative_to(path_flavored).parts]
     texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
     for source in sources:
@@ -194,23 +512,23 @@ def scan_library(path):
             if token.group("code") is None or token.start() not in definitions:
                 continue
             name = definitions[token.start()]
+            assembled.add(name)
             if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
                 done.add(name)
                 live.add(name)
-    for text in texts:
-        calls = stub_calls(text)
+    headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
+               for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
+    for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
         wrappers = inert_wrappers(text)
-        for match in DEFINITION.finditer(text):
-            name = match.group(1)
+        for definition in definitions:
+            name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
-            body = text[match.end() - 1:body_end(text, match.end() - 1)]
-            if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
-                   for call in CALL.finditer(body)):
+            if definition.reaches:
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers) else live).add(name)
+            (inert if inert_body(definition.body, wrappers, definition.signature) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
@@ -261,7 +579,10 @@ def collect_shaders():
             name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
-    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
+    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S)
+    if not enum:
+        raise ValueError(f"{OPCODES} has no enum class RdnaOpcode")
+    enum = enum.group(1)
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
@@ -287,7 +608,11 @@ def collect_shaders():
 
 
 def collect_shader_source(root=None):
-    return shader_scan.measure(root or ROOT, shader_scan.load_isa_forms(ISA_FORMS))
+    try:
+        profiles = {"gfx1013": ("LLVM gfx1013 reference", isa_profiles.load_gfx1013_forms(ISA_GFX1013))}
+    except (OSError, ValueError) as error:
+        raise shader_scan.ScanError(f"cannot read gfx1013 reference: {error}") from error
+    return shader_scan.measure(root or ROOT, shader_scan.load_isa_forms(ISA_FORMS), profiles)
 
 
 def worst_ratio(row, side):
@@ -515,8 +840,15 @@ def render(libraries, shaders, shader_source=None):
         body += grid
         top += height + 10
     if shader_source:
-        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
-        panel, height = still_needed_svg(shader_source, top, top + row)
+        gfx1013 = shader_source.get("profiles", {}).get("gfx1013")
+        if gfx1013:
+            body += treemap("gfx1013 reference forms decoded", shader_forms_panel(gfx1013), 0, top)
+            body += treemap("RDNA2 reference forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP, top)
+            top += row
+        else:
+            body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
+        needed = {**shader_source, **gfx1013} if gfx1013 else shader_source
+        panel, height = still_needed_svg(needed, top, top + row)
         body += panel
     else:
         body += treemap("GPU shader instructions", shaders, 0, top)
@@ -564,7 +896,28 @@ def shader_source_percent(source):
 
 def shader_source_badge(source):
     instructions = source["instructions"]
-    return badge("shader forms decoded", {"percent": shader_source_percent(source)}, f'{instructions["decoded"]}/{instructions["total"]}')
+    label = "RDNA2 reference" if "profiles" in source else "shader forms decoded"
+    return badge(label, {"percent": shader_source_percent(source)}, f'{instructions["decoded"]}/{instructions["total"]}')
+
+
+def gfx1013_section(source):
+    instructions, dpp = source["instructions"], source["dpp"]
+    missing = [(form_label(form), form["missing"]) for form in source["forms"] if form["missing"]]
+    return "\n".join([
+        "<h2>gfx1013 reference shader coverage</h2>",
+        "<table><tr><th>Measure</th><th>Count</th><th>Of</th></tr>",
+        f'<tr><td>Instruction forms decoded</td><td>{instructions["decoded"]}</td><td>{instructions["total"]}</td></tr>',
+        f'<tr><td>Instruction forms with a translator case</td><td>{instructions["translated"]}</td><td>{instructions["total"]}</td></tr>',
+        f'<tr><td>DPP forms decoded</td><td>{dpp["decoded"]}</td><td>{dpp["total"]}</td></tr></table>',
+        f'<p>This pinned reference profile uses AMD RDNA1 forms, the gfx1013 BVH encodings and explicitly sourced LLVM forms '
+        f'(<a href="{SOURCE}/tools/gfx1013_isa_forms.txt">inventory and provenance</a>). '
+        "The PS5 uses gfx1013, but this public-source profile is not a complete console ISA or hardware verification. "
+        "Literal positions, SDWA selectors and NSA operand layouts are not separate forms. "
+        "Decoded means opcode-table recognition; a translator case does not establish correct execution.</p>",
+        "<h3>gfx1013 reference forms not decoded</h3>",
+        "<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>"
+                             for label, names in missing) + "</table>" if missing else "<p>Every reference form is decoded.</p>",
+    ])
 
 
 def bar_rows(rows, color, scale=0):
@@ -579,12 +932,13 @@ def still_needed_html(source):
             f'<h3>Image formats (of {data["formats"][0][2]})</h3>', "<table>", *bar_rows(data["formats"], FORMAT_COLOR), "</table>",
             f'<p>Formats are counted from <a href="{SOURCE}/core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp">TextureFormat.cpp</a> '
             "and the recompiler's format tables: sampled and typed-buffer formats the recompiler handles, and formats the driver maps to a Vulkan format.</p>"]
-    right = ["<h3>Instruction forms still needed</h3>"]
+    right = ["<h3>RDNA2 reference forms still needed</h3>" if "profiles" in source else "<h3>Instruction forms still needed</h3>"]
     for heading, groups in data["lists"]:
         right.append(f"<h4>{escape(heading)}</h4>")
         if groups:
             right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>")
-    return "\n".join(["<h2>Still needed</h2>", '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
+    title = "<h2>RDNA2 reference still needed</h2>" if "profiles" in source else "<h2>Still needed</h2>"
+    return "\n".join([title, '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
 
 
 def shader_source_section(source):
@@ -592,7 +946,7 @@ def shader_source_section(source):
         return ""
     instructions, dpp = source["instructions"], source["dpp"]
     return "\n".join([
-        "<h2>Shader recompiler: counted from the code</h2>",
+        "<h2>RDNA2 reference: counted from the code</h2>" if "profiles" in source else "<h2>Shader recompiler: counted from the code</h2>",
         "<table>",
         "<tr><th>Measure</th><th>Count</th><th>Of</th></tr>",
         f'<tr><td>Instruction forms decoded</td><td>{instructions["decoded"]}</td><td>{instructions["total"]}</td></tr>',
@@ -618,7 +972,8 @@ def shader_source_section(source):
 
 def shader_page(shader_source, shaders, extra):
     if shader_source:
-        return [shader_source_section(shader_source)]
+        profile = shader_source.get("profiles", {}).get("gfx1013")
+        return ([gfx1013_section(profile)] if profile else []) + [shader_source_section(shader_source)]
     return [table("GPU shader instructions", "Encoding", shaders),
             f'<p>The total is the AMD RDNA 1 + RDNA 2 instruction list (<a href="{SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
             f'An instruction is implemented when the <a href="{SOURCE}/core/shader/recompiler/RdnaDecoder">decoder</a> recognizes it. '
@@ -720,7 +1075,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
@@ -781,10 +1137,17 @@ def report(base, head):
     lines = compare("System libraries", "Library", "functions", base["libraries"], head["libraries"])
     lines += library_report(base["libraries"], head["libraries"])
     lines += compare("GPU shader instructions", "Encoding", "instructions", base["shaders"], head["shaders"])
+    before = base.get("shader_source", {}).get("profiles", {}).get("gfx1013")
+    after = head.get("shader_source", {}).get("profiles", {}).get("gfx1013")
+    if after and (not before or before["instructions"] != after["instructions"] or before["dpp"] != after["dpp"]):
+        instructions = after["instructions"]
+        previous = f'{before["instructions"]["decoded"]}/{before["instructions"]["total"]}' if before else "Not measured"
+        lines += ["#### gfx1013 reference shader forms", "", "| Before | After |", "| - | - |",
+                  f'| {previous} | {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(after)}%) |', ""]
     return "\n".join(lines)
 
 
-SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "badge-shaders-gfx1013.svg", "progress.svg", "progress.html")
 
 
 def require_distinct_reports(output):
@@ -817,6 +1180,13 @@ def write_site(output, libraries, shaders, shader_source=None, open_pr_progress=
     (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(shader_source_badge(shader_source) if shader_source else badge("shaders", shaders), encoding="utf-8")
+    profile = shader_source.get("profiles", {}).get("gfx1013") if shader_source else None
+    if profile:
+        instructions = profile["instructions"]
+        (output / "badge-shaders-gfx1013.svg").write_text(
+            badge("gfx1013 reference", {"percent": shader_source_percent(profile)}, f'{instructions["decoded"]}/{instructions["total"]}'), encoding="utf-8")
+    else:
+        (output / "badge-shaders-gfx1013.svg").write_text(badge("gfx1013 reference", {"percent": 0}, "unavailable", TRACK_COLOR), encoding="utf-8")
     (output / "progress.svg").write_text(render(libraries, shaders, shader_source), encoding="utf-8")
     (output / "progress.html").write_text(summary(libraries, shaders, shader_source, open_pr_progress), encoding="utf-8")
 
@@ -863,6 +1233,22 @@ def validate_open_pr_progress(estimate):
 def validate_snapshot(snapshot):
     if not isinstance(snapshot, dict):
         raise ValueError("snapshot must be an object")
+    source = snapshot.get("shader_source", {})
+    if not isinstance(source, dict):
+        raise ValueError("shader_source must be an object")
+    profiles = source.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise ValueError("shader_source.profiles must be an object")
+    profile = profiles.get("gfx1013")
+    if profile is not None:
+        if not isinstance(profile, dict):
+            raise ValueError("gfx1013 profile must be an object")
+        for field, keys in (("instructions", ("total", "decoded", "translated")), ("dpp", ("total", "decoded"))):
+            counts = profile.get(field)
+            if not isinstance(counts, dict) or any(type(counts.get(key)) is not int or counts[key] < 0 for key in keys):
+                raise ValueError(f"gfx1013.{field} must contain non-negative integer counts")
+            if any(counts[key] > counts["total"] for key in keys[1:]):
+                raise ValueError(f"gfx1013.{field} count exceeds its total")
     for section in ("libraries", "shaders"):
         data = snapshot.get(section)
         if not isinstance(data, dict):
@@ -894,8 +1280,32 @@ def validate_snapshot(snapshot):
 
 
 def regenerate_isa_forms(xml):
-    header = [line for line in ISA_FORMS.read_text(encoding="utf-8").splitlines() if line.startswith("#")]
-    forms = shader_scan.parse_isa_xml(xml.read_text(encoding="utf-8"))
+    raw = xml.read_bytes()
+    text = raw.decode("utf-8")
+    try:
+        metadata = ET.fromstring(text)
+    except ET.ParseError as error:
+        raise ValueError(f"{xml}: invalid ISA XML: {error}") from error
+    if metadata.findtext("ISA/Architecture/ArchitectureName") != "AMD RDNA 2":
+        raise ValueError(f"{xml}: expected AMD RDNA 2 XML")
+    if metadata.findtext("Document/License") != "MIT":
+        raise ValueError(f"{xml}: expected MIT-licensed ISA XML")
+    copyright = metadata.findtext("Document/Copyright")
+    release = metadata.findtext("Document/ReleaseDate")
+    if not copyright or not release:
+        raise ValueError(f"{xml}: missing ISA copyright or release date")
+    original = [line for line in ISA_FORMS.read_text(encoding="utf-8").splitlines() if line.startswith("#")]
+    license_start = next((i for i, line in enumerate(original) if line.startswith("# Permission is hereby granted")), None)
+    if license_start is None:
+        raise ValueError(f"{ISA_FORMS}: missing MIT permission notice")
+    header = ["# RDNA 2 instruction forms: name encoding form opcode",
+              f"# Derived from AMD's machine-readable ISA ({xml.name}, release {release}, sha256 of the XML",
+              f"# {hashlib.sha256(raw).hexdigest()}). Regenerate with:",
+              "#   python3 tools/progress.py --regenerate-isa-forms amdgpu_isa_rdna2.xml", "#",
+              f"# {copyright} The XML is published under the MIT licence:", "#", *original[license_start:]]
+    forms = shader_scan.parse_isa_xml(text)
+    if not forms:
+        raise ValueError(f"{xml}: ISA XML has no recognized instruction forms")
     ISA_FORMS.write_text("\n".join(header + [" ".join(map(str, form)) for form in forms]) + "\n", encoding="utf-8")
     print(f"{ISA_FORMS}: {len(forms)} forms")
     return 0
@@ -923,15 +1333,19 @@ def main(argv=None):
                         help="rewrite tools/rdna2_isa_forms.txt from AMD's amdgpu_isa_rdna2.xml (machine-readable ISA, MIT) and exit")
     parser.add_argument("--json", action="store_true",
                         help="print the progress.json object to stdout instead of the summary lines")
+    parser.add_argument("--regenerate-gfx1013-forms", type=Path, nargs=2, metavar=("RDNA1_XML", "RDNA2_XML"),
+                        help="rewrite the pinned LLVM gfx1013 reference inventory from AMD's RDNA1 and RDNA2 XML and exit")
     try:
         args = parser.parse_args(argv)
+        if args.regenerate_isa_forms and args.regenerate_gfx1013_forms:
+            parser.error("--regenerate-isa-forms does not combine with --regenerate-gfx1013-forms")
         if args.compare:
             if args.module or args.json:
                 parser.error("--compare does not combine with --module or --json")
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys))
                 except (OSError, ValueError, RecursionError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -942,8 +1356,14 @@ def main(argv=None):
             base, head = snapshots
             print(report(base, head), end="")
             return 0
-        if args.regenerate_isa_forms:
-            return regenerate_isa_forms(args.regenerate_isa_forms)
+        if args.regenerate_isa_forms or args.regenerate_gfx1013_forms:
+            try:
+                if args.regenerate_isa_forms:
+                    return regenerate_isa_forms(args.regenerate_isa_forms)
+                isa_profiles.write_gfx1013_forms(ISA_GFX1013, *(path.read_text(encoding="utf-8") for path in args.regenerate_gfx1013_forms))
+                return 0
+            except (OSError, ValueError) as error:
+                parser.error(str(error))
         if not args.output and not (args.module or args.json):
             parser.error("the output directory is required")
         if args.root:
@@ -952,7 +1372,7 @@ def main(argv=None):
         open_pr_progress = None
         if args.open_pr_estimate:
             try:
-                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
                 validate_open_pr_progress(open_pr_progress)
             except (OSError, ValueError, RecursionError) as error:
                 parser.error(f"{args.open_pr_estimate}: {error}")
@@ -960,6 +1380,10 @@ def main(argv=None):
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except OSError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename}: {error.strerror}")
+        except ValueError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error}")
         try:
             shader_source = collect_shader_source(args.root)
         except shader_scan.ScanError as error:
@@ -987,6 +1411,11 @@ def main(argv=None):
                 instructions = shader_source["instructions"]
                 print(f'shader forms decoded {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(shader_source)}%), '
                       f'translated {instructions["translated"]}, unsupported throws {shader_source["unsupported_throws"]}')
+                profile = shader_source.get("profiles", {}).get("gfx1013")
+                if profile:
+                    instructions = profile["instructions"]
+                    print(f'gfx1013 reference forms decoded {instructions["decoded"]}/{instructions["total"]} '
+                          f'({shader_source_percent(profile)}%), translated {instructions["translated"]}')
         return 0
     finally:
         PRX, OPCODES = previous

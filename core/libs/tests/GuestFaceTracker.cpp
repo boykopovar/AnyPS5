@@ -43,5 +43,25 @@ int main() {
     Require(sceFaceTrackerGetUserFeature(1, &feature, reinterpret_cast<int*>(0x10), context.data()) == kErrInvalid);
     Require(errno == 71);
 
+    errno = 71;
+    Require(sceFaceTrackerGetDefaultConfig(reinterpret_cast<void*>(0x10)) == kErrInvalid);
+    Require(errno == 71);
+
+    std::vector<std::uint8_t> config(0x80, 0);
+    Require(sceFaceTrackerGetDefaultConfig(config.data()) == 0);
+
+    errno = 71;
+    Require(sceFaceTrackerRegisterUser(1, reinterpret_cast<const void*>(0x10), 16, context.data()) == kErrInvalid);
+    Require(errno == 71);
+
+    void* badContext = reinterpret_cast<void*>(0x10);
+    errno = 71;
+    Require(sceFaceTrackerRegisterUser(1, config.data(), 16, badContext) == kErrInvalid && errno == 71);
+    Require(sceFaceTrackerUnregisterUser(1, badContext) == kErrInvalid && errno == 71);
+    Require(sceFaceTrackerGetUserFeature(1, &feature, &featureSize, badContext) == kErrInvalid && errno == 71);
+    Require(sceFaceTrackerGetUserIdByTrackId(0, badContext) == kErrInvalid && errno == 71);
+    Require(sceFaceTrackerGetTrackIdByUserId(1, badContext) == kErrInvalid && errno == 71);
+    Require(sceFaceTrackerRegisterStartTrackingCallback(nullptr, nullptr, badContext) == kErrInvalid && errno == 71);
+
     return 0;
 }

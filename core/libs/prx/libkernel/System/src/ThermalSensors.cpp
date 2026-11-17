@@ -198,7 +198,6 @@ int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius) {
         if (!GuestCopyOut_nid_no_patch(outCelsius, &value, sizeof(value))) return Fail(14);
         return 0;
     }
-    if (sensorId > 3 && sensorId < 62) throw std::runtime_error("sceKernelGetSocSensorTemperature: channels 4 to 61 have no host sensor and were not measured");
     int celsius[3];
     ReadHostSensors(celsius);
     const int host = sensorId >= 3 ? 0 : sensorId;

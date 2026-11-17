@@ -1,4 +1,5 @@
 #include "prx/libSceVenc/libSceVenc.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -9,6 +10,10 @@
 #include <initializer_list>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int VencError(std::uint32_t code) {
     return static_cast<int>(0x80C70000u | code);
@@ -54,7 +59,9 @@ void CheckEncoderParameters() {
     void* encoder = target;
 
     Require(sceVencCreateEncoder(nullptr, nullptr, nullptr) == VencError(0x00), "Create: null output first");
+    errno = 71;
     Require(sceVencCreateEncoder(nullptr, &memory, &encoder) == VencError(0x01), "Create: null parameters");
+    Require(errno == 71, "Create: errno preserved on output clear");
     Require(encoder == nullptr, "Create: output cleared before the parameter checks");
     encoder = target;
     Require(sceVencCreateEncoder(&parameters, &memory, &encoder) == VencError(0x04), "Create: parameter +8");
@@ -182,9 +189,13 @@ void CheckSocSupport() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckEncoderParameters();
     CheckEncoderCalls();
     CheckSocSupport();
     std::puts("Venc tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

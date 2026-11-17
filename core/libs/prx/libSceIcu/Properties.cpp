@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/Properties.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/uchar.h"
-#include "uprops.h"
 #include <cstdint>
 
 namespace {
@@ -16,29 +15,24 @@ UBool U_CALLCONV ForwardCharTypeRange(const void* context, UChar32 start, UChar3
     return enumeration.range(enumeration.context, start, limit, type) != 0;
 }
 
-bool FromDataFile(UPropertySource source) {
-    switch (source) {
-    case UPROPS_SRC_NFKC:
-    case UPROPS_SRC_NFKC_CF:
-    case UPROPS_SRC_INPC:
-    case UPROPS_SRC_INSC:
-    case UPROPS_SRC_VO:
-    case UPROPS_SRC_EMOJI: return true;
-    default: return false;
-    }
-}
-
-bool LayoutProperty(UPropertySource source) {
-    return source == UPROPS_SRC_INPC || source == UPROPS_SRC_INSC || source == UPROPS_SRC_VO;
-}
-
 UProperty Property(std::int32_t which) {
     return static_cast<UProperty>(which);
+}
+
+UErrorCode& Status(std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    return *reinterpret_cast<UErrorCode*>(error);
 }
 
 }
 
 extern "C" {
+
+const UCPMap* APS5_VABI u_getIntPropertyMap_nid_postfix(std::int32_t property, std::int32_t* error) {
+    auto& status = Status(error);
+    if (U_FAILURE(status)) return nullptr;
+    return u_getIntPropertyMap(Property(property), &status);
+}
 
 std::int8_t APS5_VABI u_charType_nid_postfix(std::int32_t character) {
     return u_charType(character);
@@ -187,20 +181,14 @@ std::int32_t APS5_VABI u_getIntPropertyMinValue_nid_postfix(std::int32_t propert
 }
 
 std::int32_t APS5_VABI u_getIntPropertyMaxValue_nid_postfix(std::int32_t property) {
-    if (property >= UCHAR_INT_START && property < UCHAR_INT_LIMIT && LayoutProperty(uprops_getSource(Property(property))))
-        NotImplemented_nid_no_patch("u_getIntPropertyMaxValue: property from a data file");
     return u_getIntPropertyMaxValue(Property(property));
 }
 
 std::int8_t APS5_VABI u_hasBinaryProperty_nid_postfix(std::int32_t character, std::int32_t property) {
-    if (property >= UCHAR_BINARY_START && property < UCHAR_BINARY_LIMIT && FromDataFile(uprops_getSource(Property(property))))
-        NotImplemented_nid_no_patch("u_hasBinaryProperty: property from a data file");
     return u_hasBinaryProperty(character, Property(property));
 }
 
 std::int32_t APS5_VABI u_getIntPropertyValue_nid_postfix(std::int32_t character, std::int32_t property) {
-    if (property >= UCHAR_BINARY_START && property < UCHAR_INT_LIMIT && FromDataFile(uprops_getSource(Property(property))))
-        NotImplemented_nid_no_patch("u_getIntPropertyValue: property from a data file");
     return u_getIntPropertyValue(character, Property(property));
 }
 

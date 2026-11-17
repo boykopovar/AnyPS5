@@ -817,8 +817,16 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     return layout;
 }
 
+std::array<std::array<float, 4>, OverlayColorCount> ColorblindOverlayPalette(std::array<std::array<float, 4>, OverlayColorCount> palette) {
+    palette[static_cast<std::size_t>(OverlayColor::Graph)] = {0.34f, 0.71f, 0.91f, 1.0f};
+    palette[static_cast<std::size_t>(OverlayColor::Accent)] = {0.90f, 0.62f, 0.00f, 1.0f};
+    return palette;
+}
+
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace) {
+    static const bool colorblind = std::getenv("ANYPS5_OVERLAY_PALETTE") != nullptr && std::string_view(std::getenv("ANYPS5_OVERLAY_PALETTE")) == "colorblind";
     std::array<std::array<float, 4>, OverlayColorCount> palette{{{0.0f, 0.0f, 0.0f, 0.6f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.35f, 0.8f, 0.35f, 1.0f}, {0.06f, 0.07f, 0.09f, 0.94f}, {0.22f, 0.24f, 0.29f, 1.0f}, {1.0f, 0.78f, 0.2f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}}};
+    if (colorblind) palette = ColorblindOverlayPalette(palette);
     if (colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) {
         for (auto& color : palette) {
             const float red = srgbDecode(color[0]);
@@ -1187,10 +1195,11 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     begin.framebuffer = framebuffer;
     begin.renderArea = area;
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
+    Graphics::CommandState state;
+    state.Begin(commands, false);
+    state.BindPipeline(context, drawing, 0);
+    state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
+    state.SetScissor(context, area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
     const VkBuffer buffer = slot.rects->Handle();

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <stdexcept>
 #include <utility>
 
@@ -97,7 +98,6 @@ Writer::Writer(const std::string& directory, std::size_t capacity, const std::st
     const std::string path = directory + "/videoout.jsonl";
     output.open(std::filesystem::path(reinterpret_cast<const char8_t*>(path.c_str())), std::ios::binary | std::ios::app);
     if (!output.is_open()) throw std::runtime_error("VideoOut telemetry: cannot open " + path);
-    output.exceptions(std::ios::badbit | std::ios::failbit);
     const auto steady = steadyNanos();
     char text[256];
     std::snprintf(text, sizeof(text), ",\"contract\":\"%s\",\"commit\":\"%s\",\"pid\":%lld,\"prx\":\"libSceVideoOut\"}\n", ContractLevel, commit.c_str(), static_cast<long long>(processId()));
@@ -117,6 +117,7 @@ bool Writer::emit(std::string line, bool mustKeep) {
 void Writer::writeAll(const std::string& text) {
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     output.flush();
+    if (!output) throw std::ios_base::failure("VideoOut telemetry: writing videoout.jsonl failed");
 }
 
 void Writer::writeDrops(bool force) {

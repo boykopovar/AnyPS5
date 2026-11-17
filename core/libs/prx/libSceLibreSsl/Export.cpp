@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
+#include <cerrno>
 #include <climits>
 #include <cinttypes>
 #include <cstdio>
@@ -180,11 +181,6 @@ int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int 
 
 void APS5_VABI CONF_modules_free_nid_postfix(void) {}
 
-int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
     void* expected = nullptr;
     return threadIdCallback.compare_exchange_strong(expected, callback) ? 1 : 0;
@@ -192,8 +188,10 @@ int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
 
 void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value) {
     if (id == nullptr) APS5_INVALID_ARG_EX;
-    *id = {};
-    id->val = value;
+    const CryptoThreadId local{nullptr, value};
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(id, &local, sizeof(local));
+    errno = savedErrno;
 }
 
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
@@ -263,15 +261,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
 }
 
 
-int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
-    if (response != nullptr) NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;
@@ -301,25 +290,11 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response,
     return 0;
 }
 
-void* APS5_VABI OCSP_response_get1_basic_nid_postfix(LibreSslOcspResponse* response) {
-    if (!response) throw std::invalid_argument(std::string(__func__) + ": null response");
-    if (!response->responseBytes) {
-        LibreSslPutError_nid_no_patch(39, 0xfff, 108);
-        return nullptr;
-    }
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
 
 void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {}
 
 int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -333,14 +308,9 @@ LibreSslX509* APS5_VABI PEM_read_X509_nid_postfix(void* stream, LibreSslX509** c
     return PEM_read_X509_impl_nid_no_patch(stream, certificate, passwordCallback, userData);
 }
 
-int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
                                                           LibreSslPemPasswordCallback callback, void* userData) {
-    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, __func__);
+    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, "TRUSTED CERTIFICATE", __func__);
 }
 
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
@@ -369,11 +339,6 @@ int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -674,11 +639,6 @@ int APS5_VABI UI_OpenSSL_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509V3_EXT_print_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
     if (!extension) return 0;
     std::int32_t critical;
@@ -701,11 +661,6 @@ void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
 }
 
 int APS5_VABI X509_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_print_ex_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -819,11 +774,6 @@ const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t err
     static char unknown[100];
     std::snprintf(unknown, sizeof(unknown), "error number %" PRId64, error);
     return unknown;
-}
-
-int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output) {
