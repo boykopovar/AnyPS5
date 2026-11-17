@@ -38,6 +38,9 @@ int main() {
     Require(sceVrServiceDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceVrServiceDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceVrServiceDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrServiceDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrServiceDialogGetResult(result) == kErrNotFinished);
     Require(result[0] == -1 && result[1] == -1);
