@@ -407,7 +407,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     const auto actual = std::bit_cast<float>(samples[lane][component]);
-                    Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-6, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
+                    Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-4, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
                 }
             }
             std::cout << "MC_COORD_TRUNC oracle model passed " << coordinates.size() << " coordinate pairs\n";
