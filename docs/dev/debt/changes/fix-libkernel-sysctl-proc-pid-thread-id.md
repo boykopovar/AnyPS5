@@ -1,0 +1,13 @@
+# libkernel
+
+## change [kern.proc.pid]
+
+- [kern.proc.pid](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - what the console fills in a process's `kinfo_proc` is unverified; `sysctl` {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_PID`, pid} for the calling process returns a 1,088-byte FreeBSD 11 amd64 `kinfo_proc` ([`sys/sys/user.h`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/sys/user.h)) holding only `ki_structsize`, `ki_pid`, `ki_ppid` and `ki_comm` (`eboot.bin`, the base name of the `kern.proc.pathname` value), with every other field 0, including `ki_flag`, so `P_TRACED` (0x800) is clear. Source Port (PPSA20040) asks for its own record with a 0x440-byte buffer and tests only bit 0x800 of `ki_flag` at offset 0x170, to see whether a debugger is attached. Other processes' pids and -1 fail with `ESRCH`, a write with `EPERM` and a short buffer with `ENOMEM`.
+
+## change [kern.proc.pid_td]
+
+- [kern.proc.pid_td](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - whether the console answers {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_PID | KERN_PROC_INC_THREAD`, pid} and what it fills in is unverified; here it returns one `kern.proc.pid` record per live guest thread, as FreeBSD 11.4's [`kern_proc_out`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_proc.c#L1329-L1373) does without `KERN_PROC_NOTHREADS`, with `ki_tid` (the `pthread_getthreadid_np` value), `ki_numthreads`, and the thread name split as `fill_kinfo_thread` splits it: up to 16 bytes in `ki_tdname`, the next 3 in `ki_moretdname`. Run time, CPU, state, priority and the other per-thread fields stay 0. As for `kern.proc.pid`, only the calling process is answered, by its pid or the id of one of its live threads: any other pid, -1 included, fails with `ESRCH`, where FreeBSD's `pget` also answers for other visible processes.
+
+## add Functional
+
+- [kern.proc.pathname, kern.proc.env and kern.proc.vmmap](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - the id of one of the calling process's live threads fails with `ESRCH`, where FreeBSD 11.4's `pget`, which these three call without `PGET_NOTID`, maps an id above `PID_MAX` to its thread's process, as `kern.proc.pid` does here.

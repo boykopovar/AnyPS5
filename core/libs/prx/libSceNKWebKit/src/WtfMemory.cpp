@@ -76,6 +76,30 @@ void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv(std::size_t, void* location
     return location;
 }
 
+void* APS5_VABI _ZN7WebCore6ISOBoxnwEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnaEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void APS5_VABI _ZN7WebCore6ISOBoxdlEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void APS5_VABI _ZN7WebCore6ISOBoxdaEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnwEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnaEmPv(std::size_t, void* location) {
+    return location;
+}
+
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size) {
     if (count != 0 && size > std::numeric_limits<std::size_t>::max() / count) {
         std::abort();

@@ -47,7 +47,7 @@ void WriteUnwindInfo(const UnwindImage& image, const std::uint8_t* base, ModuleI
   if (image.hasTables) {
     info->eh_frame_hdr_addr = image.tables.header;
     info->eh_frame_addr = image.tables.frames;
-    info->eh_frame_size = image.tables.framesSize;
+    info->eh_frame_size = image.tables.framesSize + sizeof(std::uint32_t);
     info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
     info->seg0_size = image.size;
   }
