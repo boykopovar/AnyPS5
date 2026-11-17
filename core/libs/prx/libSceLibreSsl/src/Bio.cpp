@@ -208,7 +208,9 @@ int APS5_VABI readMemory(Bio* bio, char* destination, int size) {
     bio->flags &= ~RetryFlags;
     const int count = size >= 0 ? static_cast<int>(std::min<std::size_t>(size, buffer.length)) : size;
     if (destination && count > 0) {
-        if (!CopyGuestOutPreservingErrno(destination, buffer.data, static_cast<std::size_t>(count))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        std::vector<char> bytes(static_cast<std::size_t>(count));
+        if (!CopyGuestInPreservingErrno(bytes.data(), buffer.data, bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!CopyGuestOutPreservingErrno(destination, bytes.data(), bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         consumeMemory(bio, buffer, static_cast<std::size_t>(count));
         return count;
     }

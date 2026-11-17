@@ -707,7 +707,9 @@ void TestGuestPointers() {
     Require(BIO_free_nid_postfix(borrowed) == 1, "free borrowed string BIO");
     borrowed = BIO_new_mem_buf_nid_postfix(page.Tail("ab", 2), 4);
     Require(borrowed != nullptr, "borrowed buffer running into an unmapped page");
+    std::memcpy(output, "#######", sizeof(output));
     RequireRejected([&] { borrowed->method->read(borrowed, output, 4); }, "read from a borrowed buffer running into an unmapped page");
+    Require(std::memcmp(output, "#######", sizeof(output)) == 0, "rejected borrowed read leaves the destination untouched");
     RequireRejected([&] { borrowed->method->gets(borrowed, output, 8); }, "line from a borrowed buffer running into an unmapped page");
     Require(BIO_ctrl_nid_postfix(borrowed, 10, 0, nullptr) == 4, "rejected borrowed reads consume nothing");
     Require(BIO_free_nid_postfix(borrowed) == 1, "free overlong borrowed BIO");
