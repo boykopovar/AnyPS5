@@ -17,6 +17,9 @@
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -480,6 +483,14 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     return value;
 }
 
+bool FlushToZeroEnabled() {
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+    return (_mm_getcsr() & 0x8000) != 0;
+#else
+    return false;
+#endif
+}
+
 template<typename TFloat>
 TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, char**)) {
     if (const NanSubject subject = FindNanSubject(text); subject.tail != nullptr) {
@@ -512,7 +523,16 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         }
         return value;
     }
-    if (!hexadecimal) return value;
+    if (!hexadecimal) {
+        if constexpr (std::is_same_v<TFloat, double>) {
+            const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+            if (FlushToZeroEnabled() && (bits & 0x7fffffffffffffffull) != 0 && (bits & 0x7ff0000000000000ull) == 0) {
+                errno = ERANGE;
+                return std::signbit(value) ? -TFloat{0} : TFloat{0};
+            }
+        }
+        return value;
+    }
     if constexpr (std::is_same_v<TFloat, double>) {
         const HexadecimalSubject exact = ReadHexadecimalSubject(subject + 2, parsedEnd);
         const long long leadingExponent = exact.exponent + 63;

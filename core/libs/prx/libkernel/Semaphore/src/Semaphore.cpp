@@ -148,6 +148,11 @@ int APS5_VABI sceKernelWaitSema(KernelSema handle, int need, KernelUseconds* tim
   traceSyncWaitEnd(KERNEL_SEMA_OK);
   return KERNEL_SEMA_OK;
  }
+ if (time != nullptr && *time == 0) {
+  if (KernelTraceWaitEnabled()) KernelTraceWait_nid_postfix("sema", caller, 0, true);
+  traceSyncWaitEnd(SCE_KERNEL_ERROR_ETIMEDOUT);
+  return SCE_KERNEL_ERROR_ETIMEDOUT;
+ }
  const std::uint64_t generation = sem->cancelGeneration;
  KernelSemaWaiter waiter{need};
  if (sem->priorityQueue && scePthreadGetprio(scePthreadSelf(), &waiter.priority) == 0) {
@@ -211,7 +216,8 @@ int APS5_VABI sceKernelCancelSema(KernelSema handle, int count, int* threads) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
  if (threads != nullptr) {
-  *threads = static_cast<int>(sem->queue.size());
+  const int waiting = static_cast<int>(sem->queue.size());
+  if (!GuestCopyOut_nid_no_patch(threads, &waiting, sizeof(waiting))) return SCE_KERNEL_ERROR_EFAULT;
  }
  sem->tokenCount = count < 0 ? sem->initCount : count;
  sem->queue.clear();

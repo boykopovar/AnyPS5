@@ -650,7 +650,14 @@ void testTitleReadsMouse() {
         keyboardMouse.HandleEvent(PadSimulation::MotionEvent(200, 0), now);
         keyboardMouse.Advance(now);
     }
-    check(keyboardMouse.Compose(PadInputState{}).sticks[2] == 128, "motion tilted the right stick while the title reads the mouse");
+    check(keyboardMouse.Compose(PadInputState{}).sticks[2] > 128, "motion in mouse mode did not tilt the right stick while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    check((keyboardMouse.Compose(PadInputState{}).buttons & square) != 0, "a left click in mouse mode did not press Square while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    keyboardMouse.HandleEvent(PadSimulation::WheelEvent(-1), now);
+    check((keyboardMouse.Compose(PadInputState{}).buttons & down) != 0, "wheel down in mouse mode did not press Down while the title reads the mouse");
+    check(keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, true), now).toggleMouse, "a middle click in mouse mode did not ask to leave mouse mode while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, false), now);
     keyboardMouse.SetTitleReadsMouse(false);
     keyboardMouse.HandleEvent(PadSimulation::WheelEvent(1), now);
     check((keyboardMouse.Compose(PadInputState{}).buttons & up) != 0, "wheel bindings did not resume after the title stopped reading the mouse");

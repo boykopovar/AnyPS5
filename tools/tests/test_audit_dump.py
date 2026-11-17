@@ -14,7 +14,8 @@ import audit_dump
 import unwrap_self
 
 SELF = b"\x4f\x15\x3d\x1d" + b"\0" * 60
-ELF = b"\x7fELF" + b"\0" * 60
+ELF = b"\x7fELF" + b"\0" * 12 + b"\x18\xfe" + b"\0" * 46
+EXECUTABLE = b"\x7fELF" + b"\0" * 12 + b"\x10\xfe" + b"\0" * 46
 
 
 def fake_unwrap(source, destination, verbose=False):
@@ -128,6 +129,28 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(directories, [])
         self.assertEqual(extra, [])
         self.assertEqual(messages, ["staged eboot.bin and 0 modules"])
+
+    def test_executables_found_by_magic_are_skipped_with_a_message(self):
+        self.module("eboot.bin.esbak", EXECUTABLE)
+        self.module("sce_module/libc.prx")
+        self.module("sce_module/launcher.bin", EXECUTABLE)
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / "eboot.bin.esbak").exists())
+        self.assertFalse((source / "sce_module" / "launcher.bin").exists())
+        self.assertTrue((source / "sce_module" / "libc.prx").is_file())
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["skipped launcher.bin: not a shared module (ELF type 0xfe10)",
+                                    "skipped eboot.bin.esbak: not a shared module (ELF type 0xfe10)",
+                                    "staged eboot.bin and 1 modules"])
+
+    def test_an_executable_with_a_module_suffix_still_reaches_the_relinker(self):
+        self.module("sce_module/odd.prx", EXECUTABLE)
+        source = self.root / "source"
+        audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "sce_module" / "odd.prx").read_bytes(), EXECUTABLE)
 
     def test_a_module_that_is_neither_a_self_nor_an_elf_is_refused(self):
         self.module("sce_module/broken.prx", b"MZ" + b"\0" * 62)
