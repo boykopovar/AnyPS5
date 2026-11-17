@@ -286,7 +286,7 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
         pointer = variable;
     } else if (state.gpuResolvedImages) {
         if (state.samplerVariable == 0) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
-        state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+        RequireDynamicIndexing(state, spv::CapabilitySampledImageArrayDynamicIndexing, DescriptorBindingKind::Samplers, sampler, "the sampler heap needs sampler array dynamic indexing, which the device lacks");
         const auto slot = LoadHeapSlotWord(state, state.program.Metadata().bindings.SamplerSlotDword() + arrayIndex);
         pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.samplerVariable, slot);

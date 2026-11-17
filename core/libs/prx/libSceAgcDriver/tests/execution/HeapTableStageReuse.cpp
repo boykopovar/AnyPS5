@@ -10,6 +10,7 @@
 #include "RuntimeAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -31,6 +32,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -127,7 +129,7 @@ void Prepare(const GuestBlock& block, const GuestBlock& surfaces) {
     AgcDriver::GuestMemory::CollectWritesUncached(surfaces.At(0), SurfaceBlockBytes);
 }
 
-ShaderRecompiler::RecompileResult Compile(const AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+ShaderRecompiler::RecompileResult Compile(const AgcDriver::VulkanDevice& device, const GuestBlock& block, std::optional<std::uint32_t> withoutCapability = std::nullopt) {
     const auto srt = block.At(SrtOffset);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srt), static_cast<std::uint32_t>(srt >> 32u)};
     const std::span<const std::uint32_t> code(block.Words(0), Code.size());
@@ -137,12 +139,17 @@ ShaderRecompiler::RecompileResult Compile(const AgcDriver::VulkanDevice& device,
         {block.At(HeapOffset), std::as_bytes(std::span<const std::uint32_t>(block.Words(HeapOffset), static_cast<std::size_t>(Textures) * Stride / 4u))},
     }};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {false, false, false}, false, 1};
+    auto target = device.ComputeTarget(Lanes);
+    std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+    if (withoutCapability) capabilities.erase(std::remove(capabilities.begin(), capabilities.end(), *withoutCapability), capabilities.end());
+    target.supportedCapabilities = capabilities;
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, block.At(0), code, 0, {}},
         {Lanes, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.ComputeTarget(Lanes),
+        target,
         {0, 0, 0, 128}
     };
+    if (withoutCapability) request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
 
@@ -232,6 +239,20 @@ void RefreshAfterSlotReleased(const AgcDriver::VulkanDevice& device, const Guest
     std::puts("the heap table map was rebuilt after its texture's slot was released");
 }
 
+void SamplerHeapNeedsDynamicIndexing(const AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    const auto supported = Compile(device, block);
+    RequireHeapTable(supported);
+    std::string failure;
+    try {
+        static_cast<void>(Compile(device, block, spv::CapabilitySampledImageArrayDynamicIndexing));
+    } catch (const std::runtime_error& error) {
+        failure = error.what();
+    }
+    Require(failure.find("the sampler heap needs sampler array dynamic indexing") != std::string::npos && failure.find("binding_kind=57") != std::string::npos,
+            "heap table stage reuse: a device without sampled image array dynamic indexing did not fail naming the sampler heap: " + failure);
+    std::puts("a sampler heap on a device without dynamic indexing failed at emission");
+}
+
 }
 
 int main() {
@@ -246,6 +267,7 @@ int main() {
         RefreshAfterOriginalDestroyed(*device, block, false);
         RefreshAfterOriginalDestroyed(*device, block, true);
         RefreshAfterSlotReleased(*device, block);
+        SamplerHeapNeedsDynamicIndexing(*device, block);
         std::puts("heap table stage reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
