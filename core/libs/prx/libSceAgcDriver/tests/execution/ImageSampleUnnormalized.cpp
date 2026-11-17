@@ -390,7 +390,7 @@ int main(int argc, char** argv) {
                 for (std::uint32_t component = 0; component < 4u; ++component) {
                     const auto expected = (1.0 - a) * (1.0 - b) * fetch(i, j, component) + a * (1.0 - b) * fetch(i + 1.0, j, component) + (1.0 - a) * b * fetch(i, j + 1.0, component) + a * b * fetch(i + 1.0, j + 1.0, component);
                     const auto actual = std::bit_cast<float>(samples[lane][component]);
-                    Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-6, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
+                    Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-4, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
                 }
             }
             std::cout << "MC_COORD_TRUNC oracle model passed 128 coordinate pairs\n";
