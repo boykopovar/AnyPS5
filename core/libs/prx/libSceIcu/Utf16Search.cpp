@@ -1,10 +1,9 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -117,19 +116,18 @@ extern "C" {
 char16_t* APS5_VABI u_memmove_nid_postfix(char16_t* destination, const char16_t* source, std::int32_t count) {
     if (count <= 0) return destination;
     if (!destination || !source) NotImplemented_nid_no_patch(__func__);
-    const auto bytes = static_cast<std::size_t>(count) * sizeof(char16_t);
-    GuestArena::HostWrite access(destination, bytes);
-    if (!access.Open()) NotImplemented_nid_no_patch(__func__);
-    std::memmove(destination, source, bytes);
+    std::u16string units(static_cast<std::size_t>(count), 0);
+    const auto bytes = units.size() * sizeof(char16_t);
+    if (!GuestCopyIn_nid_no_patch(units.data(), source, bytes) || !GuestCopyOut_nid_no_patch(destination, units.data(), bytes))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return destination;
 }
 
 char16_t* APS5_VABI u_memset_nid_postfix(char16_t* destination, char16_t value, std::int32_t count) {
     if (count <= 0) return destination;
     if (!destination) NotImplemented_nid_no_patch(__func__);
-    GuestArena::HostWrite access(destination, static_cast<std::size_t>(count) * sizeof(char16_t));
-    if (!access.Open()) NotImplemented_nid_no_patch(__func__);
-    for (std::int32_t position = 0; position < count; ++position) destination[position] = value;
+    const std::u16string units(static_cast<std::size_t>(count), value);
+    if (!GuestCopyOut_nid_no_patch(destination, units.data(), units.size() * sizeof(char16_t))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return destination;
 }
 
