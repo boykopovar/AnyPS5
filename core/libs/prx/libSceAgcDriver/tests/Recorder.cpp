@@ -15396,6 +15396,7 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
             return available;
         };
         Require(!availableScratch(), "scratch retention fixture already had an idle indirect scratch");
+        recorder.NotePendingWrite(argumentsAddress, sizeof(arguments));
         Draw(context, consumer, indirect, shaders);
         Require(!availableScratch(), "GPU indirect scratch recycled before completion");
         const auto read = recorder.DescribePendingRead(argumentsAddress, sizeof(arguments));
