@@ -460,12 +460,9 @@ void testRewindTargetReuse(const std::filesystem::path& tool) {
     check(!reader.Truncated(), "the capture is truncated");
     const auto firstDump = capture / "first.bin";
     const auto secondDump = capture / "second.bin";
-    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
+    const auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
                    std::to_string(at(layout.secondTarget)) + ":4:\"" + secondDump.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    const auto code = std::system(command.c_str());
+    const auto code = runTool(command);
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     const auto replayedFirst = readFile(firstDump);
     const auto replayedSecond = readFile(secondDump);
