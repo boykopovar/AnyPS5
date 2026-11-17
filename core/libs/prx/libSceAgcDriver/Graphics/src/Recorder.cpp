@@ -4860,12 +4860,12 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
     wait.semaphoreCount = 1;
     wait.pSemaphores = &timeline;
     wait.pValues = &serial;
-    auto result = waitSemaphores(device, &wait, 5'000'000'000ull);
-    for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
-        // As for the fence wait in finish(): a hung batch is reported every 5 s.
-        std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), waited);
+    auto result = waitSemaphores(device, &wait, 100'000'000ull);
+    for (int slices = 1; result == VK_TIMEOUT; ++slices) {
         if (QueueSubmitter::FailedSubmits(device) != 0) return VK_ERROR_UNKNOWN;
-        result = waitSemaphores(device, &wait, 5'000'000'000ull);
+        // As for the fence wait in finish(): a hung batch is reported every 5 s.
+        if (slices % 50 == 0) std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), slices / 10);
+        result = waitSemaphores(device, &wait, 100'000'000ull);
     }
     return result;
 }

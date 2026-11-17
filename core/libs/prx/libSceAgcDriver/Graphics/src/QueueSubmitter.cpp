@@ -24,6 +24,7 @@ Submitters& AllSubmitters() {
 }
 
 std::atomic<std::size_t> liveSubmitters{0};
+constexpr std::size_t MaxQueuedJobs = 64;
 
 }
 
@@ -81,6 +82,7 @@ void QueueSubmitter::RetireDevice(VkDevice device) {
 }
 
 std::uint64_t QueueSubmitter::FailedSubmits(VkDevice device) {
+    if (liveSubmitters.load(std::memory_order_acquire) == 0) return 0;
     auto& all = AllSubmitters();
     std::lock_guard lock(all.mutex);
     std::uint64_t count = 0;
@@ -119,7 +121,8 @@ std::uint64_t QueueSubmitter::Enqueue(const Job& job) {
     bool wake = false;
     std::uint64_t position = 0;
     {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
+        drained.wait(lock, [&] { return jobs.size() < MaxQueuedJobs || stopping; });
         if (stopping) throw std::runtime_error("AGC graphics: a batch was queued on the queue submitter of a retired device");
         jobs.push_back(job);
         position = ++enqueued;
