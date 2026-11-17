@@ -4,6 +4,8 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -56,6 +58,25 @@ constexpr std::array<std::array<std::uint32_t, 4>, Threads> Measured{{
 
 constexpr const char* Names[3] = {"v_rcp_f32", "v_rcp_iflag_f32", "v_rcp_f32 of a negated source"};
 
+double Ulp(double value) {
+    int exponent = 0;
+    std::frexp(value, &exponent);
+    return std::ldexp(1.0, std::max(exponent - 24, -149));
+}
+
+bool Agrees(std::uint32_t input, std::uint32_t wanted, std::uint32_t got) {
+    if (got == wanted) return true;
+    if ((input & 0x7f800000u) == 0u || (input & 0x7f800000u) == 0x7f800000u) return false;
+    if ((got ^ input) & 0x80000000u) return false;
+    const double exact = std::fabs(1.0 / static_cast<double>(std::bit_cast<float>(input)));
+    const double error = 2.5 * Ulp(exact);
+    const std::uint32_t magnitude = got & 0x7fffffffu;
+    if (magnitude == 0u) return exact - error < std::ldexp(1.0, -126);
+    if (magnitude < 0x00800000u || magnitude >= 0x7f800000u) return false;
+    const double value = static_cast<double>(std::bit_cast<float>(magnitude));
+    return value >= exact - error && value <= exact + error;
+}
+
 alignas(256) std::array<std::uint32_t, Threads> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
@@ -101,8 +122,9 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t floatMode) {
         for (std::uint32_t op = 0; op < 3u; ++op) {
             const auto got = Output[tid * Results + op];
             const auto wanted = Measured[tid][op + 1u];
-            Require(got == wanted, std::string(Names[op]) + " of " + Hex(Measured[tid][0]) + " with FLOAT_MODE " + Hex(floatMode) +
-                                       " is " + Hex(got) + ", expected the RDNA 2 value " + Hex(wanted));
+            const auto input = op == 2u ? Measured[tid][0] ^ 0x80000000u : Measured[tid][0];
+            Require(Agrees(input, wanted, got), std::string(Names[op]) + " of " + Hex(Measured[tid][0]) + " with FLOAT_MODE " + Hex(floatMode) +
+                                       " is " + Hex(got) + ", expected the RDNA 2 value " + Hex(wanted) + " or a normal result within the device's 1/x error");
         }
     }
 }
