@@ -18,6 +18,8 @@ constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
+constexpr int CHECK_VERSION_ERROR_BUSY = static_cast<int>(0x80B80006u);
+constexpr int CHECK_VERSION_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055A800u);
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
@@ -26,14 +28,18 @@ std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
 extern "C" {
 
-int APS5_VABI sceNpEulaDialogCheckVersion() {
+int APS5_VABI sceNpEulaDialogCheckVersion(std::int32_t userId, std::int32_t value, void* callback, void* userdata) {
+    (void)userId;
+    (void)userdata;
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (value <= 0 || callback == nullptr) return CHECK_VERSION_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpEulaDialogCheckVersionAbort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEulaDialogCheckVersionAbort(void) {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    return CHECK_VERSION_ERROR_BUSY;
 }
 
 int APS5_VABI sceNpEulaDialogInitialize(void) {
