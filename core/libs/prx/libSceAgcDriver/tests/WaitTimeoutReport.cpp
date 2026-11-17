@@ -115,6 +115,7 @@ void CheckGroupedWriters() {
     char target[32];
     std::snprintf(target, sizeof(target), "0x%llx", static_cast<unsigned long long>(address));
     Require(Count(text, std::string("WAIT_REG_MEM at ") + target + " timed out after") == 1, "wait timeout report: the wait was not reported once");
+    Require(Count(text, "(function 3 ref 0x2 ") == 1, "wait timeout report: the first wait's reference was not reported");
     const std::string writer = std::string("earlier write by queue 0x0 opcode 0x37 at ") + target + "+0x4";
     Require(Count(text, writer) == 1, "wait timeout report: the label's writer was not listed once");
     Require(Count(text, writer + " (" + std::to_string(Writes) + " in the write history)") == 1, "wait timeout report: the writer line does not count the label's " + std::to_string(Writes) + " writes");
@@ -126,9 +127,38 @@ void CheckGroupedWriters() {
 
 }
 
+void CheckLaterReference() {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&label));
+    const std::array<std::uint32_t, 7> wait{0xc0053c00, 0x13, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3, 0xffffffffu, 0x19};
+    std::vector<std::uint32_t> words(wait.begin(), wait.end());
+    const auto finished = WriteData(&done, 2);
+    words.insert(words.end(), finished.begin(), finished.end());
+    StderrCapture capture;
+    try {
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "wait timeout report: the second submission failed");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        Require(done == 1, "wait timeout report: the wait for a later reference completed");
+        label = 3;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (done != 2) {
+            Require(std::chrono::steady_clock::now() < deadline, "wait timeout report: the second wait did not complete after the label was written");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    } catch (...) {
+        static_cast<void>(capture.Finish());
+        throw;
+    }
+    const auto text = capture.Finish();
+    char target[32];
+    std::snprintf(target, sizeof(target), "0x%llx", static_cast<unsigned long long>(address));
+    Require(Count(text, std::string("WAIT_REG_MEM at ") + target + " timed out after") == 1 && Count(text, "(function 3 ref 0x3 ") == 1, "wait timeout report: a later wait on the same label with a new reference was not reported");
+}
+
 int main() {
     try {
         CheckGroupedWriters();
+        CheckLaterReference();
         LibcRunShutdown_nid_postfix();
         std::puts("a timed-out wait lists each earlier writer of its label once, with a count");
         return 0;

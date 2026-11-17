@@ -421,16 +421,15 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (!warned && std::chrono::steady_clock::now() - start > std::chrono::milliseconds(waitTimeoutMs())) {
             warned = true;
             ++outcomes.timedOut;
+            const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
             {
                 static std::mutex reportedMutex;
-                static std::set<std::uint64_t> reported;
+                static std::set<std::tuple<std::uint32_t, std::uint64_t, std::uint64_t>> reported;
                 static std::uint64_t timeouts = 0;
                 const std::lock_guard lock(reportedMutex);
                 if (++timeouts % 20 == 0) std::fprintf(stderr, "[gpu] %llu GPU waits have timed out\n", static_cast<unsigned long long>(timeouts));
-                if (!reported.insert(awaited).second) continue;
+                if (!reported.insert({queue, awaited, reference}).second) continue;
             }
-            const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-            const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
             const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
             const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
             std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
