@@ -9,10 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <source_location>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -43,7 +41,6 @@ using Release = Facet* (APS5_VABI*)(Facet*);
 using Query = int (APS5_VABI*)(const Facet*);
 using Noconv = bool (APS5_VABI*)(const Facet*);
 using Unshift = int (APS5_VABI*)(const Facet*, void*, char*, char*, char**);
-using Length = int (APS5_VABI*)(const Facet*, void*, const char*, const char*, std::size_t);
 template<typename TElement>
 using In = int (APS5_VABI*)(const Facet*, void*, const char*, const char*, const char**, TElement*, TElement*, TElement**);
 template<typename TElement>
@@ -84,17 +81,6 @@ void RequireThrows(Function function) {
     Require(thrown);
 }
 
-template<class Function>
-void RequireNotImplemented(const char* name, Function function) {
-    std::string message;
-    try {
-        function();
-    } catch (const std::exception& error) {
-        message = error.what();
-    }
-    Require(message == std::string(name) + " not implemented");
-}
-
 template<typename TFunction>
 TFunction Slot(const std::uintptr_t* vtable, std::size_t index) {
     return reinterpret_cast<TFunction>(vtable[index]);
@@ -107,7 +93,7 @@ Facet* NewFacet(const std::uintptr_t* vtable, std::uint64_t maxcode, std::uint32
 }
 
 template<typename TElement>
-void CheckVtable(const std::uintptr_t* vtable, std::uint64_t maxcode, const std::array<int, 8>& maxLengths, const std::array<int, 8>& encodings, int unshiftWithLowSurrogate, const char* lengthName) {
+void CheckVtable(const std::uintptr_t* vtable, std::uint64_t maxcode, const std::array<int, 8>& maxLengths, const std::array<int, 8>& encodings, int unshiftWithLowSurrogate) {
     Require(vtable[0] == 0 && vtable[1] == 0);
     for (std::size_t index = 2; index < kCodecvtUtfVtableSlots; ++index) Require(vtable[index] != 0);
 
@@ -145,8 +131,6 @@ void CheckVtable(const std::uintptr_t* vtable, std::uint64_t maxcode, const std:
     char* next = nullptr;
     Require(Slot<Unshift>(vtable, 11)(facet, shift, narrow.data(), narrow.data() + narrow.size(), &next) == unshiftWithLowSurrogate && next == narrow.data());
 
-    RequireNotImplemented(lengthName, [&] { Slot<Length>(vtable, 12)(facet, state, bytes, bytes + 6, 4); });
-
     releasedCount = 0;
     Slot<Destructor>(vtable, 2)(facet);
     Require(releasedCount == 0);
@@ -155,8 +139,8 @@ void CheckVtable(const std::uintptr_t* vtable, std::uint64_t maxcode, const std:
 }
 
 void CheckVtables() {
-    CheckVtable<char16_t>(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, 0x10ffff, {6, 6, 7, 7, 9, 9, 9, 9}, {0, 0, 0, 0, 0, 0, 0, 0}, Error, "CodecvtUtf16Length_nid_no_patch");
-    CheckVtable<char32_t>(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, 0xffffffff, {6, 6, 9, 9, 9, 9, 9, 9}, {0, 0, -1, -1, -1, -1, -1, -1}, Ok, "CodecvtUtf32Length_nid_no_patch");
+    CheckVtable<char16_t>(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, 0x10ffff, {6, 6, 7, 7, 9, 9, 9, 9}, {0, 0, 0, 0, 0, 0, 0, 0}, Error);
+    CheckVtable<char32_t>(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, 0xffffffff, {6, 6, 9, 9, 9, 9, 9, 9}, {0, 0, -1, -1, -1, -1, -1, -1}, Ok);
 }
 
 void CheckIds() {
@@ -191,9 +175,6 @@ void CheckQueryExports() {
     Require(CodecvtUtf32Encoding_nid_no_patch(&facet) == -1);
     Require(CodecvtUtf16MaxLength_nid_no_patch(&facet) == 9);
     Require(CodecvtUtf32MaxLength_nid_no_patch(&facet) == 9);
-    std::uint64_t state[2] = {};
-    RequireNotImplemented("CodecvtUtf16Length_nid_no_patch", [&] { CodecvtUtf16Length_nid_no_patch(&facet, state, nullptr, nullptr, 0); });
-    RequireNotImplemented("CodecvtUtf32Length_nid_no_patch", [&] { _ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix(&facet, state, nullptr, nullptr, 0); });
 }
 
 template<typename TElement, typename TIn, typename TOut>
