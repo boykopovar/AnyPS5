@@ -214,12 +214,10 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         NotImplemented_nid_no_patch("rtprio_thread: an idle-class set");
     }
     if (requestedClass == Normal) {
-        if (value < 615 || value > 895) return fail(GuestEinval);
-        NotImplemented_nid_no_patch(requested.type == Normal ? "rtprio_thread: a normal-class set, which needs the caller's system credentials" : "rtprio_thread: a normal-class set with the FIFO bit");
+        if (requested.type == Normal || value < 615 || value > 895) return fail(GuestEinval);
+        NotImplemented_nid_no_patch("rtprio_thread: a normal-class set with the FIFO bit");
     }
-    if (requestedClass != Realtime) return fail(GuestEinval);
-    if (value >= 896 && value <= 959) NotImplemented_nid_no_patch("rtprio_thread: a real-time priority from 896 to 959, which needs the caller's system credentials");
-    if (value < 256 || value > 767) return fail(GuestEinval);
+    if (requestedClass != Realtime || value < 256 || value > 767) return fail(GuestEinval);
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
 

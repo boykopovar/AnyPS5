@@ -133,10 +133,7 @@ int main() {
         for (const std::uint16_t prio : {256, 767}) {
             Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority change not implemented");
         }
-        for (const std::uint16_t prio : {896, 959}) {
-            Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority from 896 to 959, which needs the caller's system credentials not implemented");
-        }
-        for (const std::uint16_t prio : {255, 768, 895, 960}) {
+        for (const std::uint16_t prio : {255, 768, 895, 896, 959, 960}) {
             GuestRtPrio request{type, prio};
             Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
         }
@@ -148,8 +145,10 @@ int main() {
             Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
         }
     }
-    Require(SetFailure(0, {RTP_PRIO_NORMAL, 615}) == "rtprio_thread: a normal-class set, which needs the caller's system credentials not implemented");
-    Require(SetFailure(0, {RTP_PRIO_NORMAL, 895}) == "rtprio_thread: a normal-class set, which needs the caller's system credentials not implemented");
+    for (const std::uint16_t prio : {615, 700, 895}) {
+        GuestRtPrio request{RTP_PRIO_NORMAL, prio};
+        Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
+    }
     Require(SetFailure(0, {RTP_PRIO_NORMAL | 8, 700}) == "rtprio_thread: a normal-class set with the FIFO bit not implemented");
     for (const std::uint16_t type : {std::uint16_t{RTP_PRIO_NORMAL}, std::uint16_t{RTP_PRIO_NORMAL | 8}}) {
         for (const std::uint16_t prio : {614, 896}) {
