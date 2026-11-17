@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -31,6 +32,13 @@ struct DriverTestAccess {
     static bool StillAwaited(std::uint64_t held) { return Driver::stillAwaited(Slot(), held); }
     static std::optional<Driver::AwaitedFields> Read(std::uint64_t held) { return Driver::readAwaited(Slot(), held); }
     static bool Unchanged(const Driver::AwaitedFields& fields) { return Driver::awaitedUnchanged(Slot(), fields); }
+    static std::optional<Driver::AwaitedFields> Blocked(std::uint64_t held) { return Driver::blockedOn(Slot(), held); }
+    static bool HeldStill(const Driver::AwaitedFields& fields) {
+        const std::array<Driver::HeldSlot, 1> held{{{&Slot(), fields}}};
+        return Driver::Get().slotsHeldStill(held);
+    }
+    static void HoldCapture(bool held) { Driver::Get().captureHold.store(held, std::memory_order_seq_cst); }
+    static std::uint32_t Running() { return Driver::Get().runningWorkers.load(std::memory_order_seq_cst); }
 };
 
 }
@@ -98,6 +106,34 @@ void rewindWaitAfterMemoryWait() {
     DriverTestAccess::Unblock();
 }
 
+void workerLeavingItsWaitDuringTheCheck() {
+    alignas(8) std::atomic<std::uint32_t> gate{0};
+    Worker worker;
+    DriverTestAccess::BlockOnMemory(waitEqual(&gate, 1), &gate);
+    const auto blocked = DriverTestAccess::Blocked(reinterpret_cast<std::uint64_t>(&gate));
+    require(blocked.has_value() && DriverTestAccess::HeldStill(*blocked), "a blocked wait does not hold still");
+    DriverTestAccess::HoldCapture(true);
+    std::thread leaving([] { DriverTestAccess::Unblock(); });
+    while (DriverTestAccess::Running() == 0) std::this_thread::yield();
+    const bool heldStill = DriverTestAccess::HeldStill(*blocked);
+    DriverTestAccess::HoldCapture(false);
+    leaving.join();
+    require(!heldStill, "a wait the worker is leaving holds still");
+    require(!DriverTestAccess::HeldStill(*blocked), "a wait the worker left holds still");
+}
+
+void workerReblockedDuringTheCheck() {
+    alignas(8) std::atomic<std::uint32_t> gate{0};
+    Worker worker;
+    DriverTestAccess::BlockOnMemory(waitEqual(&gate, 1), &gate);
+    const auto blocked = DriverTestAccess::Blocked(reinterpret_cast<std::uint64_t>(&gate));
+    require(blocked.has_value(), "a blocked wait is not blocked");
+    DriverTestAccess::Unblock();
+    DriverTestAccess::BlockOnMemory(waitEqual(&gate, 1), &gate);
+    require(!DriverTestAccess::HeldStill(*blocked), "a wait the worker left and entered again holds still");
+    DriverTestAccess::Unblock();
+}
+
 void awaitedWaitsFollowTheSlot() {
     alignas(8) std::atomic<std::uint32_t> gate{0};
     Worker worker;
@@ -119,11 +155,13 @@ void awaitedWaitsFollowTheSlot() {
 }
 
 int main() {
-    const std::array<std::pair<const char*, void (*)()>, 4> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 6> cases{{
         {"satisfied gate held across unblock", satisfiedGateHeldAcrossUnblock},
         {"fields read across a reblock at the same address", fieldsReadAcrossReblockAtTheSameAddress},
         {"REWIND wait after a memory wait", rewindWaitAfterMemoryWait},
         {"awaited waits follow the slot", awaitedWaitsFollowTheSlot},
+        {"worker leaving its wait during the check", workerLeavingItsWaitDuringTheCheck},
+        {"worker reblocked during the check", workerReblockedDuringTheCheck},
     }};
     int failures = 0;
     for (const auto& [name, run] : cases) {

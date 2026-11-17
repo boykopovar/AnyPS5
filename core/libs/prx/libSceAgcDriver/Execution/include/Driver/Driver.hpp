@@ -464,7 +464,10 @@ private:
     std::mutex tailsMutex;
     std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
     void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
+    static std::optional<AwaitedFields> blockedOn(const AwaitedSlot& slot, std::uint64_t awaited);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    using HeldSlot = std::pair<const AwaitedSlot*, AwaitedFields>;
+    bool slotsHeldStill(std::span<const HeldSlot> held) const;
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
     void noteRewindWaitFields(std::uint32_t queue);
     std::atomic<bool> captureHold{false};

@@ -499,23 +499,40 @@ bool Driver::awaitedSatisfied(const AwaitedFields& fields) {
     return Pm4::WaitCompares(static_cast<std::uint32_t>(fields.shape), fields.reference, fields.mask, value);
 }
 
-bool Driver::stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
+std::optional<Driver::AwaitedFields> Driver::blockedOn(const AwaitedSlot& slot, std::uint64_t awaited) {
     const auto fields = readAwaited(slot, awaited);
-    if (!fields) return false;
+    if (!fields) return std::nullopt;
     const bool satisfied = awaitedSatisfied(*fields);
-    return awaitedUnchanged(slot, *fields) && !satisfied;
+    if (!awaitedUnchanged(slot, *fields) || satisfied) return std::nullopt;
+    return fields;
+}
+
+bool Driver::stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
+    return blockedOn(slot, awaited).has_value();
+}
+
+bool Driver::slotsHeldStill(std::span<const HeldSlot> held) const {
+    if (runningWorkers.load(std::memory_order_seq_cst) != 0) return false;
+    return std::all_of(held.begin(), held.end(), [](const HeldSlot& slot) { return awaitedUnchanged(*slot.first, slot.second); });
 }
 
 bool Driver::parkedOnTitle() const {
     if (!queue0Uncommitted.empty() || DrawPipeline::Queue0().Busy() || DrawFinisher::Busy() || Graphics::Recorder::QueuedLabelsPending()) return false;
-    bool parked = false;
+    std::array<HeldSlot, std::tuple_size_v<decltype(awaitedSlots)>> held{};
+    std::size_t count = 0;
     for (const auto& [queue, worker] : workers) {
         const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
         const auto awaited = slot.address.load(std::memory_order_acquire);
-        if (awaited == 0 ? !worker.pending.empty() : !awaitsTitle(awaited) || !stillAwaited(slot, awaited)) return false;
-        parked = parked || awaited != 0;
+        if (awaited == 0) {
+            if (!worker.pending.empty()) return false;
+            continue;
+        }
+        if (!awaitsTitle(awaited)) return false;
+        const auto fields = blockedOn(slot, awaited);
+        if (!fields) return false;
+        held[count++] = {&slot, *fields};
     }
-    return parked;
+    return count != 0 && slotsHeldStill(std::span<const HeldSlot>(held.data(), count));
 }
 
 void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
