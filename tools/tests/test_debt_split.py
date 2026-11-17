@@ -557,5 +557,30 @@ class DebtSplitTests(unittest.TestCase):
         self.assertNotEqual(before, "")
 
 
+    def test_parse_groups_headings_entries_and_text(self):
+        text = "# libX\n\n### change\n\n- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap\n  continued\n\nplain text\n"
+        items = debt_split.parse(text)
+        kinds = [kind for kind, _, _ in items]
+        self.assertEqual(kinds, ["heading", "heading", "entry", "text"])
+        self.assertEqual(items[2][1], "change")
+        self.assertIn("continued", items[2][2])
+        self.assertEqual(items[3][2], "plain text")
+
+
+    def test_key_is_set_for_entries_only(self):
+        entry = "- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap"
+        self.assertIsNone(debt_split.key("heading", "## change"))
+        self.assertIsNone(debt_split.key("text", "plain text"))
+        self.assertEqual(debt_split.key("entry", entry), debt_split.debt_name(entry))
+
+
+    def test_debt_file_is_under_debt_dir(self):
+        self.assertEqual(debt_split.debt_file("libc"), "docs/dev/debt/libc.md")
+
+
+    def test_separated_puts_a_blank_between_entries_and_text(self):
+        self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+
+
 if __name__ == "__main__":
     unittest.main()

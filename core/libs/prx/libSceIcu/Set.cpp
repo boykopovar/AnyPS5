@@ -167,19 +167,29 @@ std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet* set) {
 std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t itemIndex, std::int32_t* start, std::int32_t* end,
                                                 char16_t*, std::int32_t, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
-    if (*error > 0) return 0;
+    std::int32_t incoming = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (incoming > 0) return 0;
     if (itemIndex < 0) {
-        *error = IllegalArgumentError;
+        WriteError(error, IllegalArgumentError, __func__);
         return -1;
     }
     const auto& ranges = Check(set).ranges;
     if (static_cast<std::size_t>(itemIndex) >= ranges.size()) {
-        *error = IndexOutOfBoundsError;
+        WriteError(error, IndexOutOfBoundsError, __func__);
         return -1;
     }
     if (!start || !end) APS5_INVALID_ARG_EX;
-    *start = ranges[static_cast<std::size_t>(itemIndex)].start;
-    *end = ranges[static_cast<std::size_t>(itemIndex)].end;
+    const auto& range = ranges[static_cast<std::size_t>(itemIndex)];
+    const std::int32_t first = range.start;
+    const std::int32_t last = range.end;
+    const int keptErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(start, &first, sizeof(first)) && GuestCopyOut_nid_no_patch(end, &last, sizeof(last));
+    errno = keptErrno;
+    if (!stored) APS5_INVALID_ARG_EX;
     return 0;
 }
 
