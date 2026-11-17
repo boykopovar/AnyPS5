@@ -272,6 +272,38 @@ void Check(AgcDriver::VulkanDevice& device, const Case& test, bool deviceWide) {
     Require(host.empty(), label + ": the narrow module's memory differs from the host model: " + host);
 }
 
+std::size_t AtomicStores(std::span<const std::uint32_t> words) {
+    std::size_t stores = 0;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        Require(count != 0 && count <= words.size() - offset, "buffer wide stores: malformed SPIR-V instruction");
+        if ((words[offset] & 0xffffu) == 228u) ++stores;
+        offset += count;
+    }
+    return stores;
+}
+
+void CheckCoherentPairWithoutInt64Atomics(AgcDriver::VulkanDevice& device) {
+    if (!device.Target().wideBufferStores || !TargetHasCapability(device.Target(), spv::CapabilityInt64)) return;
+    std::vector<std::uint32_t> capabilities;
+    for (const auto capability : device.Target().supportedCapabilities) {
+        if (capability != static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) capabilities.push_back(capability);
+    }
+    auto target = device.Target();
+    target.supportedCapabilities = capabilities;
+    const Case test{"dwordx2 then coherent dwordx2", false, 2, 0, 16, 0, 0, 512, false, Wide::Pair, Large};
+    auto& program = Programs.emplace_back(Code(test));
+    const std::uint32_t store = 0xe0001000u | (StoreOpcode(test) << 18u);
+    program.insert(program.end() - 1, {store | 8u | (1u << 14u), 0x80000201u});
+    const auto descriptor = Descriptor(test);
+    const std::vector<std::uint32_t> userData(descriptor.begin(), descriptor.end());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(program.data()), std::as_bytes(std::span(program))}}};
+    const auto result = ShaderRecompiler::Recompile(Request(program, userData, target, memory));
+    const auto words = result.spirv.Words();
+    Require(StoresThrough(words, "buffers_u64") != 0, "buffer wide stores: the ordinary dwordx2 store was not widened on a target without Int64Atomics");
+    Require(AtomicStores(words) == 0, "buffer wide stores: a coherent dwordx2 store emitted an atomic store through the wide view on a target without Int64Atomics");
+}
+
 }
 
 int main() {
@@ -282,6 +314,7 @@ int main() {
         const bool deviceWide = device->Target().wideBufferStores;
         Require(!optOut || !deviceWide, "buffer wide stores: APS5_NO_WIDE_BUFFER_STORES did not turn the device target's wide stores off");
         for (const auto& test : Cases) Check(*device, test, deviceWide);
+        CheckCoherentPairWithoutInt64Atomics(*device);
         std::printf("buffer wide stores tests passed (%zu cases, device wide stores %s)\n", std::size(Cases), deviceWide ? "on" : "off");
         return 0;
     } catch (const std::exception& error) {
