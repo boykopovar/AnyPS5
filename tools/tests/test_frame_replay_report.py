@@ -62,6 +62,49 @@ ANYPS5_HOST_REPORT: 1
 
 
 class FrameReplayReportTests(unittest.TestCase):
+    def test_validation_diagnostics_in_stdout_and_stderr(self):
+        for stdout_bytes in (False, True):
+            for stderr_bytes in (False, True):
+                stdout = json.dumps(NATIVE)
+                stderr = HOST
+                healthy = report.parse_replay_result(stdout.encode() if stdout_bytes else stdout,
+                                                     stderr.encode() if stderr_bytes else stderr, COMMIT)
+                self.assertEqual(len(healthy["issues"]), 1 if stderr_bytes else 0)
+                if stderr_bytes:
+                    self.assertIsNone(healthy["host"])
+                for stream in ("stdout", "stderr", "both"):
+                    for diagnostic in ("Validation Error: shader interface exceeds the device limit",
+                                       "VUID-RuntimeSpirv-Location-06272"):
+                        with self.subTest(stream=stream, diagnostic=diagnostic,
+                                          stdout_bytes=stdout_bytes, stderr_bytes=stderr_bytes):
+                            stdout = json.dumps(NATIVE)
+                            stderr = HOST
+                            if stream in ("stdout", "both"):
+                                stdout = diagnostic + "\n" + stdout
+                            if stream in ("stderr", "both"):
+                                stderr = diagnostic + "\n" + stderr
+                            parsed = report.parse_replay_result(stdout.encode() if stdout_bytes else stdout,
+                                                                stderr.encode() if stderr_bytes else stderr, COMMIT)
+                            self.assertEqual(parsed["native"], NATIVE)
+                            if stderr_bytes:
+                                self.assertIsNone(parsed["host"])
+                            else:
+                                self.assertEqual(parsed["host"]["count"], 1)
+                            self.assertEqual(len(parsed["issues"]), 2 if stderr_bytes else 1)
+                            validation = [issue for issue in parsed["issues"] if "Vulkan validation diagnostics" in issue]
+                            self.assertEqual(len(validation), 1)
+                            self.assertIn("stdout/stderr", validation[0])
+
+        invalid = b"\xff VUID-RuntimeSpirv-Location-06272\n"
+        for stream in ("stdout", "stderr"):
+            with self.subTest(invalid_utf8_stream=stream):
+                stdout = invalid + json.dumps(NATIVE).encode() if stream == "stdout" else json.dumps(NATIVE)
+                stderr = invalid + HOST.encode() if stream == "stderr" else HOST
+                parsed = report.parse_replay_result(stdout, stderr, COMMIT)
+                self.assertIsNone(parsed["native"] if stream == "stdout" else parsed["host"])
+                self.assertEqual(len(parsed["issues"]), 2)
+                self.assertTrue(any("Vulkan validation diagnostics" in issue for issue in parsed["issues"]))
+
     def test_contract(self):
         with self.subTest("bounded strict JSON"):
             self.assertEqual(report.load_replay_json(b'{"a":1}'), {"a": 1})

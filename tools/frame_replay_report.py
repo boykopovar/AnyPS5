@@ -274,8 +274,11 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
         result["issues"].append(f"invocation host report: {error}")
     if isinstance(stderr, str) and "the capture is truncated" in stderr:
         result["issues"].append("native replay reported a truncated capture")
-    if isinstance(stderr, str) and re.search(r"(?:Validation Error|VUID-[A-Za-z0-9_-]+)", stderr):
-        result["issues"].append("Vulkan validation diagnostics were recorded; inspect the raw stderr log")
+    diagnostics = (stream[:MAX_LOG_BYTES].decode("utf-8", errors="replace") if isinstance(stream, bytes)
+                   else stream[:MAX_LOG_BYTES] if isinstance(stream, str) else ""
+                   for stream in (stdout, stderr))
+    if any(re.search(r"(?:Validation Error|VUID-[A-Za-z0-9_-]+)", stream) for stream in diagnostics):
+        result["issues"].append("Vulkan validation diagnostics were recorded; inspect the raw stdout/stderr logs")
     result["issues"] = list(dict.fromkeys(result["issues"]))
     result["unknowns"] = list(dict.fromkeys(result["unknowns"]))
     return result
