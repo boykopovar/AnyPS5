@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include <cerrno>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +14,12 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using Print = int (APS5_VABI*)(LibreSsl::Bio*, void*, std::uint64_t, int);
 static_assert(std::is_same_v<decltype(&X509V3_EXT_print_nid_postfix), Print>);
@@ -337,6 +345,87 @@ void CheckWithoutObject() {
     Require(threw);
 }
 
+
+template<typename TAction> void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0);
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    unsigned char* Tail(const unsigned char* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return data + bytes - size;
+    }
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+void CheckUnreadable(void* nonce) {
+    auto* const unmapped = reinterpret_cast<void*>(0x10);
+    const Printed expected = PrintTo(nonce, true, 0, 4);
+    Require(expected.result == 1 && !expected.output.empty());
+    const std::size_t before = live.size();
+    RequireRejected([&] { X509V3_EXT_print_nid_postfix(nullptr, unmapped, 0, 4); });
+
+    Extension extension = *static_cast<Extension*>(nonce);
+    extension.object = static_cast<LibreSslAsn1Object*>(unmapped);
+    RequireRejected([&] { X509V3_EXT_print_nid_postfix(nullptr, &extension, 0, 4); });
+    extension = *static_cast<Extension*>(nonce);
+    extension.value = static_cast<Asn1String*>(unmapped);
+    RequireRejected([&] { X509V3_EXT_print_nid_postfix(nullptr, &extension, 0, 4); });
+
+    GuardedPage objectPage;
+    LibreSslAsn1Object object = *static_cast<Extension*>(nonce)->object;
+    Require(object.nid == 0 && object.length > 0);
+    object.data = objectPage.Tail(object.data, static_cast<std::size_t>(object.length));
+    extension = *static_cast<Extension*>(nonce);
+    extension.object = &object;
+    Require(PrintTo(&extension, true, 0, 4).output == expected.output);
+    object.length = INT_MAX;
+    RequireRejected([&] { X509V3_EXT_print_nid_postfix(nullptr, &extension, 0, 4); });
+
+    GuardedPage valuePage;
+    Asn1String value = *static_cast<Extension*>(nonce)->value;
+    value.data = valuePage.Tail(value.data, static_cast<std::size_t>(value.length));
+    extension = *static_cast<Extension*>(nonce);
+    extension.value = &value;
+    const Printed fromPage = PrintTo(&extension, true, 0, 4);
+    Require(fromPage.result == expected.result && fromPage.output == expected.output);
+    value.length = INT_MAX;
+    RequireRejected([&] { X509V3_EXT_print_nid_postfix(nullptr, &extension, 0, 4); });
+    Require(live.size() == before);
+}
+
 }
 
 int main() {
@@ -359,6 +448,7 @@ int main() {
     CheckAllocationFailures(singles);
     CheckNonceAllocation(responses->data[0]);
     CheckWithoutObject();
+    CheckUnreadable(responses->data[0]);
     Require(live.size() == decoded);
     OCSP_BASICRESP_free_nid_postfix(basic);
     OCSP_RESPONSE_free_nid_postfix(response);

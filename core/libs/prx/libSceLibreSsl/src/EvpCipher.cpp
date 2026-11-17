@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -14,7 +15,12 @@ extern "C" {
 
 int APS5_VABI EVP_CIPHER_block_size_nid_postfix(const LibreSslEvpCipher* cipher) {
     if (!cipher) throw std::invalid_argument(std::string(__func__) + ": null cipher");
-    return cipher->blockSize;
+    int blockSize = 0;
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&blockSize, reinterpret_cast<const std::byte*>(cipher) + offsetof(LibreSslEvpCipher, blockSize), sizeof(blockSize));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return blockSize;
 }
 
 }
