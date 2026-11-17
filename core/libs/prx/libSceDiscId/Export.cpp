@@ -2,10 +2,12 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -22,6 +24,17 @@ struct Request {
 static_assert(sizeof(Request) == ((GetCommand >> 16) & 0x1fff));
 static_assert(sizeof(Request) == ((Get2Command >> 16) & 0x1fff));
 
+bool CanWriteOutput(void* destination) {
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite write(destination, 1);
+        writable = write.Open() && GuestWritable_nid_no_patch(destination, 1);
+    }
+    errno = savedErrno;
+    return writable;
+}
+
 int Send(std::uint32_t command, Request& request) {
     const int descriptor = sceKernelOpen("/dev/duid", 2, 0);
     if (descriptor < 0) return ErrorDeviceUnavailable;
@@ -35,14 +48,14 @@ int Send(std::uint32_t command, Request& request) {
 extern "C" {
 
 int APS5_VABI sceDiscIdGet(DiscId* discId) {
-    if (discId == nullptr) return ErrorInvalidArgument;
+    if (discId == nullptr || !CanWriteOutput(discId)) return ErrorInvalidArgument;
     Request request{discId, 0, 0};
     const int status = Send(GetCommand, request);
     return status == 0 ? static_cast<int>(request.value) : status;
 }
 
 int APS5_VABI sceDiscIdGet2(DiscId2* discId, std::uint32_t flags) {
-    if (discId == nullptr || flags != 0) return ErrorInvalidArgument;
+    if (discId == nullptr || flags != 0 || !CanWriteOutput(discId)) return ErrorInvalidArgument;
     Request request{discId, 0, 0};
     const int status = Send(Get2Command, request);
     return status == 0 ? static_cast<int>(request.result) : status;
