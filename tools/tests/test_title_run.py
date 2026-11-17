@@ -115,6 +115,18 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fixed_base is not supported on macos"):
             title_run.relink_args({"fixed_base": "0x400000"}, "macos")
 
+    def test_intel_host_gets_to_intel(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({}, "windows", intel_host=True), ["--windows", "--to-intel"])
+
+    def test_amd_host_keeps_the_entry_flags(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=False), [])
+
+    def test_an_explicit_conversion_is_not_duplicated(self):
+        self.assertEqual(title_run.relink_args({"relink": ["--to-intel"]}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--to-rosetta"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--to-avx"])
+
 
 def bmp(path, width, height, color):
     rows = b"".join(bytes(channel for x in range(width) for channel in (*color(x, y), 255)) for y in range(height))

@@ -104,9 +104,22 @@ def load_titles(path):
     return titles
 
 
-def relink_args(entry, platform):
+def host_is_intel():
+    if os.name == "nt":
+        return os.environ.get("PROCESSOR_IDENTIFIER", "").strip().lower().startswith("intel")
+    if sys.platform == "darwin":
+        return os.uname().machine == "x86_64"
+    try:
+        return "GenuineIntel" in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def relink_args(entry, platform, intel_host=False):
     args = ["--windows"] if platform == "windows" else []
     args += entry.get("relink", [])
+    if intel_host and not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
+        args.append("--to-intel")
     if "fixed_base" in entry:
         if platform not in FIXED_BASE_FLAGS:
             raise ValueError(f"fixed_base is not supported on {platform}")
@@ -755,7 +768,7 @@ def prepare(title_id, found, entry, platform, build, work):
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
-        relinked = subprocess.run([str(relinker), *relink_args(entry, platform), str(source / "eboot.elf"), str(executable)],
+        relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel()), str(source / "eboot.elf"), str(executable)],
                                   stdout=log, stderr=subprocess.STDOUT)
     if relinked.returncode != 0:
         return None
