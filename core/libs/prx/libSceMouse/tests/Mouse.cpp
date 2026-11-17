@@ -122,6 +122,41 @@ int main() {
     input.HandleEvent(event, 7);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].connected);
 
+    event = {};
+    event.type = SDL_MOUSEBUTTONDOWN;
+    event.button.windowID = 7;
+    event.button.button = SDL_BUTTON_LEFT;
+    input.HandleEvent(event, 7);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 1);
+    input.SetPadOwnsMouse(true);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 0);
+    input.HandleEvent(event, 7);
+    event = {};
+    event.type = SDL_MOUSEMOTION;
+    event.motion.windowID = 7;
+    event.motion.xrel = 3;
+    input.HandleEvent(event, 7);
+    event = {};
+    event.type = SDL_MOUSEWHEEL;
+    event.wheel.windowID = 7;
+    event.wheel.y = 1;
+    input.HandleEvent(event, 7);
+    input.SetPadOwnsMouse(true);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+    input.SetPadOwnsMouse(false);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+    event = {};
+    event.type = SDL_MOUSEBUTTONDOWN;
+    event.button.windowID = 7;
+    event.button.button = SDL_BUTTON_LEFT;
+    input.HandleEvent(event, 7);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 1);
+    input.SetPadOwnsMouse(true);
+    event.type = SDL_MOUSEBUTTONUP;
+    input.HandleEvent(event, 7);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 2) == 2 && data[0].buttons == 0 && data[1].buttons == 0);
+    input.SetPadOwnsMouse(false);
+
     for (int i = 0; i < 300; ++i) {
         MouseInputEvent motion{};
         motion.x = -1;
