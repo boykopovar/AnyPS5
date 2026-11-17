@@ -6,6 +6,7 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
+#include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/macos/MacOsMachOPatcher.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
@@ -180,6 +181,11 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (!windows) inputProgress.Report({Domain::ProgressStage::Image, Io::Utf8Path(input.InputPath), 0, 1});
     std::vector<std::uint8_t> executableBytes;
     try {
+        if (windows && !appliedPatches.empty()) {
+            const Elfpatcher::Windows::WindowsLoadImage image(sourceBytes, result.OriginalHeaders, false);
+            for (auto& patch : appliedPatches)
+                if (patch.Target == options.TargetName) patch.OutputRva = image.GetRva(patch.VirtualAddress);
+        }
         executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);

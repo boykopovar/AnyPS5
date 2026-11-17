@@ -526,7 +526,20 @@ jobs:
       - name: Remove git locks left by an interrupted checkout
         shell: bash
         run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+          submodules: recursive
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again into the emptied workspace
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false

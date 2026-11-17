@@ -27,9 +27,33 @@ namespace AgcDriver::Graphics {
 
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     if (state.depth || pixel.posZ) return;
+    for (auto& extra : state.extraViewports) {
+        if (!std::isfinite(extra.minDepth) || !std::isfinite(extra.maxDepth)) continue;
+        extra.minDepth = std::clamp(extra.minDepth, 0.0f, 1.0f);
+        extra.maxDepth = std::clamp(extra.maxDepth, 0.0f, 1.0f);
+    }
     if (!std::isfinite(state.viewport.minDepth) || !std::isfinite(state.viewport.maxDepth)) return;
     state.viewport.minDepth = std::clamp(state.viewport.minDepth, 0.0f, 1.0f);
     state.viewport.maxDepth = std::clamp(state.viewport.maxDepth, 0.0f, 1.0f);
+}
+
+void ApplyViewportIndex(const Context& context, State& state) {
+    if (state.viewportExports == 0u) return;
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.rectList && !state.stages.mesh.has_value();
+    const bool direct = (vertex && context.viewportIndexLayer) || state.stages.mesh.has_value();
+    if (context.multiViewport && direct) {
+        Require(ViewportCount(state) == MaxViewports && state.viewportScissors.size() == MaxViewports, "a viewport index draw must declare all 16 viewports, since the 4-bit index can name any of them");
+        return;
+    }
+    static bool reported = false;
+    if (!reported) {
+        reported = true;
+        std::fprintf(stderr, "[gpu] viewport index vertex exports are ignored: %s\n", !context.multiViewport ? "the device has no multiViewport with 16 viewports" : vertex ? "the device has no VK_EXT_shader_viewport_index_layer for vertex draws" : "only vertex and mesh draws select a viewport");
+    }
+    if (!state.viewportScissors.empty()) state.scissor = state.viewportScissors.front();
+    state.viewportExports = 0u;
+    state.extraViewports.clear();
+    state.viewportScissors.clear();
 }
 
 namespace {
@@ -994,7 +1018,7 @@ struct DecodedColorFormat {
 };
 
 bool UintPacked(ShaderRecompiler::ColorExportPacking packing) {
-    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16;
+    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16;
 }
 
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
@@ -1003,9 +1027,9 @@ const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) 
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
 }
 
-ShaderRecompiler::ColorExportPacking HalfExportPacking(VkFormat format) {
-    if (format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8G8_UINT || format == VK_FORMAT_R8G8B8A8_UINT) return ShaderRecompiler::ColorExportPacking::UintClamp8;
-    if (format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16G16_UINT || format == VK_FORMAT_R16G16B16A16_UINT) return ShaderRecompiler::ColorExportPacking::UintClamp16;
+ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRecompiler::ColorExportPacking eight, ShaderRecompiler::ColorExportPacking sixteen) {
+    if (format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8G8_UINT || format == VK_FORMAT_R8G8B8A8_UINT) return eight;
+    if (format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16G16_UINT || format == VK_FORMAT_R16G16B16A16_UINT) return sixteen;
     return ShaderRecompiler::ColorExportPacking::Uint;
 }
 
@@ -1109,6 +1133,36 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
         default:
             return fail();
     }
+}
+
+bool intersectViewportScissor(VkRect2D& result, const Registers& registers, std::uint32_t offset) {
+    const auto tl = read(registers, offset);
+    const auto br = read(registers, offset + 1);
+    if ((tl & 0x8000u) != 0 || (br & 0x80008000u) != 0) return false;
+    const auto x = tl & 0xffffu;
+    const auto y = (tl >> 16u) & 0x7fffu;
+    const auto right = br & 0xffffu;
+    const auto bottom = br >> 16u;
+    const auto oldRight = static_cast<std::uint32_t>(result.offset.x) + result.extent.width;
+    const auto oldBottom = static_cast<std::uint32_t>(result.offset.y) + result.extent.height;
+    const auto left = std::max(static_cast<std::uint32_t>(result.offset.x), x);
+    const auto top = std::max(static_cast<std::uint32_t>(result.offset.y), y);
+    result.offset = {static_cast<std::int32_t>(left), static_cast<std::int32_t>(top)};
+    result.extent = {std::min(oldRight, right) > left ? std::min(oldRight, right) - left : 0, std::min(oldBottom, bottom) > top ? std::min(oldBottom, bottom) - top : 0};
+    return true;
+}
+
+void unite(VkRect2D& bounds, const VkRect2D& rect) {
+    if (rect.extent.width == 0 || rect.extent.height == 0) return;
+    if (bounds.extent.width == 0 || bounds.extent.height == 0) {
+        bounds = rect;
+        return;
+    }
+    const auto left = std::min(bounds.offset.x, rect.offset.x);
+    const auto top = std::min(bounds.offset.y, rect.offset.y);
+    const auto right = std::max(static_cast<std::int64_t>(bounds.offset.x) + bounds.extent.width, static_cast<std::int64_t>(rect.offset.x) + rect.extent.width);
+    const auto bottom = std::max(static_cast<std::int64_t>(bounds.offset.y) + bounds.extent.height, static_cast<std::int64_t>(rect.offset.y) + rect.extent.height);
+    bounds = {{left, top}, {static_cast<std::uint32_t>(right - left), static_cast<std::uint32_t>(bottom - top)}};
 }
 
 void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offset, bool screen) {
@@ -1392,8 +1446,10 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     constexpr std::uint32_t maintenance = 0x0000101cu;
     if ((control->second & maintenance) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
+    const auto colorControl = find(queue.context, 0x202);
+    const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && (colorDisabled || (colorMasks && ColorWriteMask(queue.context) == 0))) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
@@ -1538,12 +1594,17 @@ void ApplyDepthBoundsEmulation(const Context& context, State& state, const Shade
     state.depthBiasPerFace = false;
     state.viewport.minDepth = bound;
     state.viewport.maxDepth = bound;
+    for (auto& extra : state.extraViewports) {
+        extra.minDepth = bound;
+        extra.maxDepth = bound;
+    }
 }
 
 void ApplyDepthRemap(const Context& context, State& state) {
-    const auto& viewport = state.viewport;
-    const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
+    const auto withinUnitRange = [](const VkViewport& viewport) { return viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1; };
+    const bool inRange = withinUnitRange(state.viewport) && std::ranges::all_of(state.extraViewports, withinUnitRange);
     if (context.depthRangeUnrestricted || inRange) return;
+    Require(state.extraViewports.empty(), "viewport depth outside [0, 1] is remapped for a single viewport only");
     const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
     Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
@@ -1848,13 +1909,15 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     result.quadSampleMask = decodeQuadSampleMask(cx, result.samples);
     result.pixelEarlyZ = !PixelProgramSkipped(queue) && PixelEarlyZ(read(cx, 0x203));
     result.pixelKill = !PixelProgramSkipped(queue) && (read(cx, 0x203) & 0x40u) != 0;
-    if ((read(cx, 0x207) & LayerExports & ~result.layerExports & ~(1u << 21u)) != 0) {
+    result.viewportExports = read(cx, 0x207) & ViewportIndexExport;
+    if ((read(cx, 0x207) & LayerExports & ~result.layerExports & ~result.viewportExports & ~(1u << 21u)) != 0) {
         static bool reported = false;
         if (!reported) {
             reported = true;
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
+    const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
     bool collapsed = false;
     if (viewportControl == 0u) {
         result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
@@ -1868,7 +1931,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
         const auto maxDepth = zo + zs;
         APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
-        const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
         collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
         if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
             std::ostringstream message;
@@ -1895,6 +1957,46 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if ((read(cx, 0x292) & 2u) != 0) intersect(result.scissor, cx, 0x94, false);
     if (collapsed) result.scissor.extent = {0, 0};
     APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
+    if (result.viewportExports != 0u) {
+        const auto clearControl = find(cx, 0x000);
+        const bool depthClear = result.depth && clearControl != cx.end() && (clearControl->second & 1u) != 0;
+        result.viewportScissors.assign(1, result.scissor);
+        auto bounds = result.scissor;
+        for (std::uint32_t index = 1; index < MaxViewports; ++index) {
+            const auto base = 0x10fu + 6u * index;
+            const auto optionalFloat = [&](std::uint32_t offset) {
+                const auto it = find(cx, offset);
+                return it == cx.end() ? std::numeric_limits<float>::quiet_NaN() : std::bit_cast<float>(it->second);
+            };
+            const auto vxs = optionalFloat(base);
+            const auto vxo = optionalFloat(base + 1u);
+            const auto vys = optionalFloat(base + 2u);
+            const auto vyo = optionalFloat(base + 3u);
+            const auto vzs = optionalFloat(base + 4u);
+            const auto vzo = optionalFloat(base + 5u);
+            const auto vMinDepth = result.negativeOneToOne ? vzo - vzs : vzo;
+            const auto vMaxDepth = vzo + vzs;
+            const bool vCollapsed = (vxs == 0 || vys == 0) && vxs >= 0 && areaFree && std::isfinite(vxo) && std::isfinite(vyo) && std::isfinite(vMinDepth) && std::isfinite(vMaxDepth);
+            bool usable = vCollapsed || (vxs > 0 && std::isfinite(vxs) && vys != 0 && std::isfinite(vys) && std::isfinite(vxo) && std::isfinite(vyo) && std::isfinite(vMinDepth) && std::isfinite(vMaxDepth));
+            auto viewport = vCollapsed ? VkViewport{vxo, vyo, 1, 1, vMinDepth, vMaxDepth} : VkViewport{vxo - vxs, vyo - vys, 2 * vxs, 2 * vys, vMinDepth, vMaxDepth};
+            if (depthClear) {
+                viewport.minDepth = result.depth->clearDepth;
+                viewport.maxDepth = result.depth->clearDepth;
+            }
+            VkRect2D scissor{{0, 0}, result.renderExtent};
+            intersect(scissor, cx, 0xc, true);
+            intersect(scissor, cx, 0x81, false);
+            intersect(scissor, cx, 0x90, false);
+            const auto vportScissor = 0x94u + 2u * index;
+            if ((read(cx, 0x292) & 2u) != 0 && (find(cx, vportScissor) == cx.end() || find(cx, vportScissor + 1u) == cx.end() || !intersectViewportScissor(scissor, cx, vportScissor))) usable = false;
+            if (!usable) viewport = VkViewport{0, 0, 1, 1, 0, 1};
+            if (!usable || vCollapsed) scissor.extent = {0, 0};
+            result.extraViewports.push_back(viewport);
+            result.viewportScissors.push_back(scissor);
+            unite(bounds, scissor);
+        }
+        result.scissor = bounds;
+    }
     result.blends.assign(exportCount, VkPipelineColorBlendAttachmentState{});
     std::array<float, 4> requiredBlendConstants{};
     std::uint32_t requiredBlendMask = 0;
@@ -2019,8 +2121,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
-            if (slotExport == 4) color.packing = HalfExportPacking(color.format);
-            else if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
+            if (slotExport == 2 || slotExport == 4 || slotExport == 9) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintClamp8, ShaderRecompiler::ColorExportPacking::UintClamp16);
+            else if (slotExport == 1) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintMask8, ShaderRecompiler::ColorExportPacking::UintMask16);
+            else if (slotExport != 3) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto supported = [](VkBlendOp op, VkBlendFactor source, VkBlendFactor destination) {
@@ -2353,9 +2456,11 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
         default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
     }
-    Require(slice == 0 || (color.tileMode != ColorTileMode::GcnDisplay2D && color.tileMode != ColorTileMode::GcnThin2D), "GCN color views of a later slice of a 2D-tiled array, whose banks rotate per slice, are not implemented");
+    const bool macroTiled = color.tileMode == ColorTileMode::GcnDisplay2D || color.tileMode == ColorTileMode::GcnThin2D;
+    Require(slice == 0 || !macroTiled || color.samples == 1u, "GCN multisampled color views of a later slice of a 2D-tiled array are not implemented");
+    if (macroTiled) color.pipeBankXor = GcnLayerBankXor(GcnTiling(ColorTextureTileMode(color.tileMode), color.elementBytes), slice);
     color.mipCount = 1;
-    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
     color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments;
     color.address = color.surfaceAddress;

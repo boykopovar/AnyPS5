@@ -290,6 +290,22 @@ void BadPointers() {
         Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, nullptr) == 0);
         Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), const_cast<unsigned*>(static_cast<const unsigned*>(pointer)), nullptr) == -1 && Error() == Efault);
     }
+    for (const void* pointer : bad) {
+        const auto badAttr = static_cast<const GuestMqAttr*>(pointer);
+        auto badOut = const_cast<GuestMqAttr*>(badAttr);
+        const auto createBad = Name("badcreate");
+        Require(kmq_open_nid_postfix(createBad.c_str(), ORdwr | OCreat, 0600, badAttr) == -1 && Error() == Efault);
+        const int opened = kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, badAttr);
+        Require(opened >= 0 && close_nid_postfix(opened) == 0);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, nullptr) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, nullptr, badOut) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, badOut) == -1 && Error() == Efault);
+    }
+    const GuestMqAttr on{ONonblock, 0, 0, 0, {}};
+    Require(kmq_setattr_nid_postfix(queue, &on, const_cast<GuestMqAttr*>(static_cast<const GuestMqAttr*>(bad[0]))) == -1 && Error() == Efault);
+    GuestMqAttr check{};
+    Require(kmq_setattr_nid_postfix(queue, nullptr, &check) == 0);
+    Require((check.flags & ONonblock) == 0);
     Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
 }
 

@@ -80,6 +80,7 @@ int main() {
     constexpr auto portNotFound = static_cast<std::int32_t>(0x804e0807u);
     Require(sceVoiceGetVolume(128, nullptr) == notInitialized);
     Require(sceVoiceGetBitRate(128, nullptr) == notInitialized);
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, nullptr) == notInitialized);
     Require(sceVoiceGetMuteFlag(128, nullptr) == notInitialized);
     Require(sceVoiceSetVolume(128, 1.0f) == notInitialized);
     Require(sceVoiceSetMuteFlag(128, 1) == notInitialized);
@@ -159,6 +160,12 @@ int main() {
     scheduled = {1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
     Require(sceVoiceSetThreadsParams(&scheduled) == static_cast<std::int32_t>(0x804e080bu));
     Require(sceVoiceGetResourceInfo(nullptr) == invalidArgument);
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    std::uint32_t memSize = 0x5a5a5a5au;
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, &memSize) == static_cast<std::int32_t>(0x804e080fu) && memSize == 0);
     struct ResourceOutput {
         VoiceResourceInfo info;
         std::uint32_t guard;
@@ -271,6 +278,9 @@ int main() {
     Require(sceVoiceUpdatePort(input, &update) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && muted);
     Require(sceVoiceGetVolume(input, &volume) == 0 && volume == 0.75f);
+    errno = 71;
+    Require(sceVoiceGetVolume(input, reinterpret_cast<float*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 27);
     update.voice.bitrate = 1;
