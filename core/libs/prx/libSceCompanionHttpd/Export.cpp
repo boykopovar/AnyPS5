@@ -28,6 +28,13 @@ int APS5_VABI sceCompanionHttpdOptParamInitialize(CompanionHttpdOptParam* param)
 }
 
 int APS5_VABI sceCompanionHttpdInitialize(const CompanionHttpdOptParam* param) {
+    if (param != nullptr) {
+        CompanionHttpdOptParam local{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+        errno = savedErrno;
+        if (!copied) return CompanionHttpdErrorInvalidParam;
+    }
     return 0;
 }
 
