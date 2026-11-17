@@ -154,6 +154,21 @@ std::deque<const std::uint32_t*>& Driver::releasedTails() {
     return HostThreadLocal<std::deque<const std::uint32_t*>, ReleasedTailsStorage>();
 }
 
+void Driver::copyRewindTail(Submission& tail, const std::uint32_t* guest, std::size_t words, std::span<const Submission::RewindReturn> returns) {
+    tail.rewindTail = nullptr;
+    tail.rewindWords = 0;
+    tail.rewindReturns.clear();
+    copyCommands(tail, guest, words);
+    std::size_t next = 0;
+    std::size_t budget = std::size_t{1} << 26u;
+    while (tail.rewindTail == nullptr && next < returns.size()) {
+        const auto& resume = returns[next++];
+        copySegment(tail, resume.words->data(), resume.words->size(), budget, 0, resume.origin);
+    }
+    tail.rewindReturns.insert(tail.rewindReturns.end(), returns.begin() + static_cast<std::ptrdiff_t>(next), returns.end());
+    std::ranges::sort(tail.indirectSegments, {}, &Submission::IndirectSegment::start);
+}
+
 void Driver::noteReleasedTails(const Submission& submission) {
     auto& released = releasedTails();
     released.clear();
@@ -161,18 +176,20 @@ void Driver::noteReleasedTails(const Submission& submission) {
     auto& scratch = ShaderRecompiler::ThreadOwned(scratchSlot);
     const std::uint32_t* tail = submission.rewindTail;
     std::size_t words = submission.rewindWords;
+    auto returns = submission.rewindReturns;
     for (std::size_t chunk = 0; chunk < 256 && tail != nullptr; ++chunk) {
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(tail - 1)).load(std::memory_order_acquire) & 0x80000000u) == 0) break;
         released.push_back(tail - 1);
         scratch.rewindTail = nullptr;
         scratch.rewindWords = 0;
         try {
-            copyCommands(scratch, tail, words);
+            copyRewindTail(scratch, tail, words, returns);
         } catch (const std::exception&) {
             break;
         }
         tail = scratch.rewindTail;
         words = scratch.rewindWords;
+        returns = std::move(scratch.rewindReturns);
     }
 }
 
@@ -185,19 +202,20 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     std::ranges::sort(submission.indirectSegments, {}, &Submission::IndirectSegment::start);
 }
 
-bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth) {
+bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t* origin) {
     require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
     for (;;) {
         const std::uint32_t* chained = nullptr;
         std::size_t chainedWords = 0;
-        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords)) return true;
+        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords, origin)) return true;
         if (chained == nullptr) return false;
         guest = chained;
         words = chainedWords;
+        origin = nullptr;
     }
 }
 
-bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords) {
+bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords, const std::uint32_t* origin) {
     require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
     budget -= words;
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
@@ -208,6 +226,10 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             return true;
         });
         for (const auto& range : guarded) require(range.first >= next, "conditional execution range ends inside a packet");
+    };
+    const std::uint32_t* source = origin != nullptr ? origin : guest;
+    const auto resumeAfter = [&](std::size_t next) {
+        if (next < words) submission.rewindReturns.push_back({std::make_shared<const std::vector<std::uint32_t>>(guest + next, guest + words), source + next});
     };
     for (std::size_t cursor = 0; cursor < words;) {
         const auto header = guest[cursor];
@@ -272,6 +294,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             const auto start = submission.commands.size();
             if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
+                resumeAfter(cursor + count);
                 return true;
             }
             noteIndirectSegment(submission, start, target, targetWords);
@@ -284,7 +307,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             submission.commands.push_back(header);
             submission.commands.push_back(std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(guest + cursor + 1)).load(std::memory_order_acquire));
             cursor += count;
-            submission.rewindTail = guest + cursor;
+            submission.rewindTail = source + cursor;
             submission.rewindWords = words - cursor;
             return true;
         }
@@ -730,7 +753,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         released.clear();
         tail.enqueuedAt = std::chrono::steady_clock::now();
     }
-    copyCommands(tail, stalled.rewindTail, stalled.rewindWords);
+    copyRewindTail(tail, stalled.rewindTail, stalled.rewindWords, stalled.rewindReturns);
     noteTailRead(stalled.rewindTail, tail.queue, tail.rewindTail);
     if (APS5_ENABLE_TIMING_LOG) tail.copiedAt = std::chrono::steady_clock::now();
     validate(tail, stalled.rewindTail);
