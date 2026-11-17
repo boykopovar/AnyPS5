@@ -1,5 +1,6 @@
 #include "prx/libSceUsbStorageDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -107,6 +108,9 @@ int main() {
     Require(sceUsbStorageDialogGetStatus() == kStatusRunning);
     Require(sceUsbStorageDialogClose() == 0);
     Require(sceUsbStorageDialogGetStatus() == kStatusFinished);
+    errno = 71;
+    Require(sceUsbStorageDialogGetResult(reinterpret_cast<UsbStorageDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
+    Require(errno == 71);
     result.result = 0;
     Require(sceUsbStorageDialogGetResult(&result) == 0);
     Require(result.result == kErrNotFinished && result.status == 0);

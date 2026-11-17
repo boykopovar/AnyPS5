@@ -71,9 +71,13 @@ int APS5_VABI sceUsbStorageDialogGetResult(UsbStorageDialogResult* result) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (g_closed.load()) {
+        const int savedErrno = errno;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+            errno = savedErrno;
+            return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+        }
         const std::int32_t notFinished = COMMON_DIALOG_ERROR_NOT_FINISHED;
         const std::int32_t zeroStatus = 0;
-        const int savedErrno = errno;
         if (!GuestCopyOut_nid_no_patch(&result->result, &notFinished, sizeof(notFinished)) ||
             !GuestCopyOut_nid_no_patch(&result->status, &zeroStatus, sizeof(zeroStatus))) {
             errno = savedErrno;
