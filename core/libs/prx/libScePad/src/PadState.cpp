@@ -194,11 +194,21 @@ bool Pad::IsInitialized() {
 }
 
 namespace {
+void InjectSticks(std::array<std::uint8_t, 4>& sticks, const Pad::InputCommandFile::Input& injected) {
+    if (!injected.hasSticks) return;
+    for (int stick = 0; stick < 2; ++stick) {
+        if ((injected.stickMask & (1u << stick)) == 0) continue;
+        sticks[stick * 2] = injected.sticks[stick * 2];
+        sticks[stick * 2 + 1] = injected.sticks[stick * 2 + 1];
+    }
+}
+
 PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t fuseTime, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
     const bool intercepted = state.intercepted;
     data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
-    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
+    auto sticks = state.sticks;
+    if (!intercepted) InjectSticks(sticks, injected);
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
@@ -367,6 +377,7 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = f
         if (frame.hasSticks && !injected.hasSticks) {
             injected.hasSticks = true;
             injected.sticks = frame.sticks;
+            injected.stickMask = frame.stickMask;
         }
     }
     if (injected != lastInjected) {
@@ -706,7 +717,7 @@ extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state) {
     injectedHeldThroughCapture |= injected.buttons;
     injectedHeldAt = sceKernelGetProcessTime();
     state->buttons |= injected.buttons;
-    if (injected.hasSticks) state->sticks = injected.sticks;
+    InjectSticks(state->sticks, injected);
 }
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {

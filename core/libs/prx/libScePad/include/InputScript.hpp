@@ -41,6 +41,7 @@ public:
     struct Frame {
         std::uint32_t buttons = 0;
         bool hasSticks = false;
+        std::uint8_t stickMask = 0;
         std::array<std::uint8_t, 4> sticks{128, 128, 128, 128};
         std::uint8_t analogL2 = 0;
         std::uint8_t analogR2 = 0;
@@ -96,6 +97,12 @@ public:
         liveOffset = error ? 0 : static_cast<std::uint64_t>(size);
         liveSize = liveOffset;
         liveTime = error ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(livePath, error);
+        liveLine = 0;
+        if (liveOffset == 0) return;
+        std::ifstream file(livePath, std::ios::binary);
+        std::string text(static_cast<std::size_t>(liveOffset), '\0');
+        file.read(text.data(), static_cast<std::streamsize>(text.size()));
+        liveLine = static_cast<std::size_t>(std::count(text.begin(), text.begin() + file.gcount(), '\n'));
     }
 
     bool Active() const { return !script.empty() || !livePath.empty(); }
@@ -270,6 +277,7 @@ private:
         frame.buttons |= event.entry.buttons;
         if (event.entry.stick >= 0) {
             frame.hasSticks = true;
+            frame.stickMask |= static_cast<std::uint8_t>(1u << event.entry.stick);
             frame.sticks[event.entry.stick * 2] = event.entry.axes[0];
             frame.sticks[event.entry.stick * 2 + 1] = event.entry.axes[1];
         }
@@ -283,29 +291,39 @@ private:
         if (error) return;
         const auto time = std::filesystem::last_write_time(livePath, error);
         if (error || (time == liveTime && size == liveSize)) return;
-        liveTime = time;
-        liveSize = size;
-        if (size < liveOffset) liveOffset = 0;
-        if (size == liveOffset) return;
+        const std::uint64_t offset = size < liveOffset ? 0 : liveOffset;
+        if (size == offset) {
+            liveTime = time;
+            liveSize = size;
+            liveOffset = offset;
+            return;
+        }
         std::ifstream file(livePath, std::ios::binary);
         if (!file) return;
-        file.seekg(static_cast<std::streamoff>(liveOffset));
-        std::string text(static_cast<std::size_t>(size - liveOffset), '\0');
+        file.seekg(static_cast<std::streamoff>(offset));
+        std::string text(static_cast<std::size_t>(size - offset), '\0');
         file.read(text.data(), static_cast<std::streamsize>(text.size()));
+        if (file.bad()) return;
         text.resize(static_cast<std::size_t>(file.gcount()));
+        liveTime = time;
+        liveSize = size;
+        if (offset == 0 && liveOffset != 0) liveLine = 0;
+        liveOffset = offset;
         const auto complete = text.rfind('\n');
         if (complete == std::string::npos) return;
         text.resize(complete + 1);
         liveOffset += text.size();
         std::size_t position = 0;
-        std::size_t line = 0;
         const std::uint64_t elapsed = now >= origin ? now - origin : 0;
+        std::erase_if(live, [&](const Scheduled& event) { return event.endUs + 1000000 < elapsed; });
         while (position < text.size()) {
             const auto end = text.find('\n', position);
-            ++line;
+            ++liveLine;
             std::vector<Entry> parsed;
             try {
-                ParseLine(std::string_view(text).substr(position, end - position), line, parsed);
+                const auto lineText = std::string_view(text).substr(position, end - position);
+                ParseLine(lineText, liveLine, parsed);
+                if (live.size() + parsed.size() > kMaxEntries) fail(liveLine, "more than " + std::to_string(kMaxEntries) + " live events pending", lineText);
             } catch (const std::runtime_error& failure) {
                 if (report != nullptr) report->errors.push_back(std::string("APS5_PAD_SCRIPT_LIVE ") + failure.what());
                 parsed.clear();
@@ -317,7 +335,6 @@ private:
             }
             position = end + 1;
         }
-        std::erase_if(live, [&](const Scheduled& event) { return event.endUs + 1000000 < elapsed; });
     }
 
     std::vector<Scheduled> script;
@@ -329,6 +346,7 @@ private:
     std::filesystem::path livePath;
     std::uint64_t liveOffset = 0;
     std::uint64_t liveSize = 0;
+    std::size_t liveLine = 0;
     std::filesystem::file_time_type liveTime{};
     std::uint64_t nextLivePoll = 0;
 };

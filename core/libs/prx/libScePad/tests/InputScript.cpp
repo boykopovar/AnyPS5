@@ -67,6 +67,7 @@ int main() {
         Check(script.Sample(5250000).buttons == 0, "all released");
         frame = script.Sample(5400000, &report);
         Check(frame.hasSticks && frame.sticks[2] == 10 && frame.sticks[3] == 20 && frame.sticks[0] == 128, "stick injected");
+        Check(frame.stickMask == 2, "only the right stick is marked as scripted");
         Check(!script.Sample(5500000).hasSticks, "stick released");
 
         Pad::InputScript looping;
@@ -93,6 +94,7 @@ int main() {
         Check(live.Sample(1100000, &liveReport).buttons == 0, "poll throttled");
         auto liveFrame = live.Sample(2000000, &liveReport);
         Check(liveReport.errors.size() == 1 && liveReport.errors[0].find("nonsense") != std::string::npos, "live error reported");
+        Check(liveReport.errors[0].find("line 3:") != std::string::npos, "live error names its line in the file");
         Check(liveFrame.buttons == Cross && liveReport.fired.size() == 1, "live line scheduled from read time");
         Check(live.Sample(2100000).buttons == Cross, "live hold");
         Check(live.Sample(2160000).buttons == 0, "live hold ends");
@@ -102,6 +104,19 @@ int main() {
         Check(live.Sample(3000000).buttons == 0, "partial line waits");
         append("1 40\n");
         Check(live.Sample(3300000).buttons == R1, "completed line scheduled");
+        append("0 bogus\n");
+        Pad::InputScript::Report laterReport;
+        static_cast<void>(live.Sample(4000000, &laterReport));
+        Check(laterReport.errors.size() == 1 && laterReport.errors[0].find("line 5:") != std::string::npos, "a later live error keeps counting lines");
+        std::filesystem::remove(path);
+
+        Pad::InputScript capped;
+        capped.SetLive(path);
+        capped.Start(0);
+        append("0 repeat 1 20000 cross 100000\n0 circle\n");
+        Pad::InputScript::Report capReport;
+        Check(capped.Sample(1000000, &capReport).buttons == Cross, "live events up to the cap are scheduled");
+        Check(capReport.errors.size() == 1 && capReport.errors[0].find("live events pending") != std::string::npos && capReport.errors[0].find("line 2:") != std::string::npos, "live events past the cap are refused");
         std::filesystem::remove(path);
 
         std::filesystem::remove(path);
@@ -114,6 +129,10 @@ int main() {
         Check(preexisting.Sample(1000000).buttons == 0, "lines present at startup are ignored");
         append("0 down 5000\n");
         Check(preexisting.Sample(2000000).buttons == 0x40, "line appended after startup runs");
+        append("0 nope\n");
+        Pad::InputScript::Report preexistingReport;
+        static_cast<void>(preexisting.Sample(3000000, &preexistingReport));
+        Check(preexistingReport.errors.size() == 1 && preexistingReport.errors[0].find("line 3:") != std::string::npos, "line numbers count the lines present at startup");
         std::filesystem::remove(path);
     } catch (const std::exception& error) {
         std::cerr << error.what() << "\n";
