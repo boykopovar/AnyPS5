@@ -328,6 +328,22 @@ def main():
                 assert result.returncode == 2 and "inside the guest module parent directory" in result.stderr, (name, result.stderr)
                 assert not output.exists() and not list(case.rglob("*.guest.prx"))
                 assert (external / "plugin.prx").read_bytes() == original
+            if os.name != "nt":
+                for name in ("linked", "Media/linked"):
+                    link = case / name
+                    link.symlink_to(external, target_is_directory=True)
+                    result, output = convert(case, windows, ["--module-dir", name], cwd=case)
+                    assert result.returncode == 2 and "inside the guest module parent directory" in result.stderr, (name, result.stdout, result.stderr)
+                    assert not output.exists() and not list(case.rglob("*.guest.prx"))
+                    assert (external / "plugin.prx").read_bytes() == original
+                inside = work / f"{windows}-inside-link"
+                modules = inside / "Media" / "Plugins"
+                modules.mkdir(parents=True)
+                (modules / "plugin.prx").write_bytes(original)
+                (inside / "linked").symlink_to(modules, target_is_directory=True)
+                result, output = convert(inside, windows, ["--module-dir", "linked"], standard=False)
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                assert (inside / "app0" / "linked" / "plugin.prx.guest.prx").is_file()
     print("Guest module directory option tests passed")
 
 
