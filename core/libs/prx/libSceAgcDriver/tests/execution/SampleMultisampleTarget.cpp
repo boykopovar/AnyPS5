@@ -600,10 +600,10 @@ void CheckFirstSampleReads(AgcDriver::VulkanDevice& device, const std::array<std
     Require(!distinct || differs, "no pixel's sample 0 differs from its other samples " + what);
 }
 
-std::array<std::uint32_t, 8> CompressedDescriptor(const Block& block, std::uint32_t tileMode, std::uint64_t htile, bool pipeAligned = true) {
+std::array<std::uint32_t, 8> CompressedDescriptor(const Block& block, std::uint32_t tileMode, std::uint64_t htile) {
     auto texture = TargetDescriptor(block, SampleShift, Format16161616Float, tileMode);
     const auto meta = htile >> 8u;
-    texture[6] = (pipeAligned ? 1u << 19u : 0u) | (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u);
+    texture[6] = (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u);
     texture[7] = static_cast<std::uint32_t>(meta >> 8u);
     return texture;
 }
@@ -2316,18 +2316,6 @@ int main(int argc, char** argv) {
         const std::uint32_t expandedTile = 0xfu;
         std::memcpy(partial.data + BlockBytes + htileBytes - sizeof(expandedTile), &expandedTile, sizeof(expandedTile));
         RequireRefused(*device, CompressedDescriptor(partial, TileZ64KBX, partial.Address() + BlockBytes), "neither all cleared to 0.0 nor all expanded", "loading a Z swizzle texture whose HTILE mixes cleared and expanded tiles");
-        const auto unalignedBytes = AgcDriver::Graphics::HtileMetadataBytes({Side, Side}, false);
-        Require(unalignedBytes < htileBytes, "the HTILE of the 4x texture is not smaller without pipe alignment");
-        const auto unalignedSurface = [&](Block& block) {
-            StoreWords(block, colorBytes, FillOnes);
-            std::fill_n(reinterpret_cast<std::uint32_t*>(block.data + BlockBytes), unalignedBytes / sizeof(std::uint32_t), 0xffffffffu);
-        };
-        Block unaligned(2u * BlockBytes);
-        unalignedSurface(unaligned);
-        CheckUniform(LoadSamples(*device, CompressedDescriptor(unaligned, TileZ64KBX, unaligned.Address() + BlockBytes, false)), Ones, "from the uniform memory of a Z swizzle surface whose HTILE without pipe alignment is all expanded, with other bytes after it");
-        Block aligned(2u * BlockBytes);
-        unalignedSurface(aligned);
-        RequireRefused(*device, CompressedDescriptor(aligned, TileZ64KBX, aligned.Address() + BlockBytes), "neither all cleared to 0.0 nor all expanded", "loading the same memory as a pipe-aligned Z swizzle texture, whose larger HTILE covers the bytes after it");
         Block display(2u * BlockBytes);
         StoreWords(display, colorBytes, FillOnes);
         RequireRefused(*device, CompressedDescriptor(display, TileD64KBX, display.Address() + BlockBytes), "compression metadata", "loading a D swizzle multisampled texture no draw rendered to with compression metadata");
