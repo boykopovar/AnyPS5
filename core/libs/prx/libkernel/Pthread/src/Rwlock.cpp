@@ -5,6 +5,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -74,6 +75,12 @@ extern "C" {
 
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) {
     if (!rwlock) throw std::runtime_error("scePthreadRwlockDestroy: null rwlock");
+    PthreadRwlock probed = nullptr;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&probed, rwlock, sizeof(probed));
+    const bool usable = readable && (probed == nullptr || GuestCopyOut_nid_no_patch(rwlock, &probed, sizeof(probed)));
+    errno = savedErrno;
+    if (!usable) return SCE_KERNEL_ERROR_EFAULT;
     std::atomic_ref<PthreadRwlock> slot(*rwlock);
     PthreadRwlock lock = slot.load(std::memory_order_acquire);
     do {
