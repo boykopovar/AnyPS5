@@ -61,6 +61,7 @@ struct DefaultContext {
     std::array<ShaderRegister, 1024> registers{};
     std::uint32_t count = 0;
     std::uint32_t version = 0;
+    bool used = false;
 };
 
 std::mutex defaultStateMutex;
@@ -118,9 +119,9 @@ int InitializeDefaultCxState(std::uint32_t version) {
     Require(version < 14, __func__, "unsupported context defaults version");
     std::lock_guard lock(defaultStateMutex);
     for (const auto& context : defaultContexts) {
-        if (context.version == version) return 0;
+        if (context.used && context.version == version) return 0;
     }
-    auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return context.version == 0; });
+    auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return !context.used; });
     if (slot == defaultContexts.end()) return static_cast<int>(0x8a6c0004u);
     DefaultContext next;
     next.registers.fill({0xffffffffu, 0});
@@ -142,6 +143,7 @@ int InitializeDefaultCxState(std::uint32_t version) {
         found->value = 0x2400u;
     }
     next.version = version;
+    next.used = true;
     *slot = next;
     return 0;
 }

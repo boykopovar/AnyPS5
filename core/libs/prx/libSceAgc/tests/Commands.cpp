@@ -1103,6 +1103,30 @@ void testInitializedDefaultRanges() {
     expectFailure([] { readDefaultRange(sceAgcGetDefaultCxStateFlat, nullptr, 0, 1, 2); });
 }
 
+void testZeroDefaults() {
+    testDefaultRangesBeforeInit();
+    check(sceAgcInit(0) == 0, "version-zero initialization failed");
+    std::array<std::uint32_t, 1025> first;
+    first.fill(0xdeadbeefu);
+    check(readDefaultRange(sceAgcGetDefaultCxStateFlat, first.data(), 0, 1024, 0) == 0, "version-zero context read failed");
+    const auto values = expectedContextRegisters(0);
+    check(!values.empty() && values.rbegin()->first < 1024, "version-zero fixture has no bounded defaults");
+    for (std::uint32_t index = 0; index < first.size(); ++index) {
+        const auto found = values.find(index);
+        const auto expected = index > values.rbegin()->first + 1 ? 0xdeadbeefu : found == values.end() ? 0u : found->second;
+        check(first[index] == expected, "version-zero defaults were not constructed");
+    }
+    check(sceAgcInit(13) == 0, "second version initialization failed");
+    auto retained = first;
+    check(readDefaultRange(sceAgcGetDefaultCxStateFlat, retained.data(), 0, 1024, 0) == 0 && retained == first, "initializing a second version replaced version zero");
+    std::uint32_t second = 0xdeadbeefu;
+    check(readDefaultRange(sceAgcGetDefaultCxStateFlat, &second, 0x206, 0x207, 1) == 0 && second == expectedContextRegisters(13).at(0x206), "second version did not occupy the other slot");
+    check(sceAgcInit(8) == static_cast<int>(0x8a6c0004u), "version zero did not consume a context slot");
+    check(sceAgcInit(0) == 0 && sceAgcInit(13) == 0, "occupied context versions could not be reused");
+    retained.fill(0xdeadbeefu);
+    check(readDefaultRange(sceAgcGetDefaultCxStateFlat, retained.data(), 0, 1024, 0) == 0 && retained == first, "reusing version zero changed its defaults");
+}
+
 void testDefaults() {
     testDefaultRangesBeforeInit();
     std::uint32_t state = 0x12345678;
@@ -1345,6 +1369,12 @@ void testPacketSizes() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "defaults-zero") == 0) {
+            testZeroDefaults();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC version-zero context initialization passed");
+            return 0;
+        }
         if (argc == 2 && std::strcmp(argv[1], "defaults") == 0) {
             testDefaults();
             testDefaultsTypes();
