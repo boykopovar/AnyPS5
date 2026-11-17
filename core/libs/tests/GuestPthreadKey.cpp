@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdlib>
 #include <thread>
 #include <vector>
@@ -102,6 +103,12 @@ int main() {
     Require(scePthreadSetspecific(reused, &second) == SCE_OK);
     Require(scePthreadGetspecific(reused) == &second);
     Require(scePthreadKeyDelete(reused) == SCE_OK);
+
+    errno = 71;
+    Require(scePthreadKeyCreate(reinterpret_cast<PthreadKey*>(0x10), nullptr) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    PthreadKey afterFault = -1;
+    Require(scePthreadKeyCreate(&afterFault, nullptr) == SCE_OK && afterFault == key);
+    Require(scePthreadKeyDelete(afterFault) == SCE_OK);
 
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, ReuseBeforeExit, nullptr, nullptr) == SCE_OK);

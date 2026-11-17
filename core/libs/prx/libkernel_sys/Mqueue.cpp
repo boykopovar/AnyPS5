@@ -139,9 +139,14 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
     (void)mode;
     if ((flags & GuestOAccmode) == GuestOAccmode || (flags & GuestOExec) != 0) return Fail(GuestEinval);
     const bool create = (flags & GuestOCreat) != 0;
+    GuestMqAttr localAttr{};
     if (create && attr != nullptr) {
-        if (attr->maxmsg <= 0 || attr->maxmsg > MaxMessages) return Fail(GuestEinval);
-        if (attr->msgsize <= 0 || attr->msgsize > MaxMessageSize) return Fail(GuestEinval);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
+        if (localAttr.maxmsg <= 0 || localAttr.maxmsg > MaxMessages) return Fail(GuestEinval);
+        if (localAttr.msgsize <= 0 || localAttr.msgsize > MaxMessageSize) return Fail(GuestEinval);
     }
     std::string name;
     if (const int error = CheckName(path, name)) return Fail(error);
@@ -152,8 +157,8 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
         if (!create) return Fail(GuestEnoent);
         queue = std::make_shared<Queue>();
         if (attr != nullptr) {
-            queue->maxmsg = attr->maxmsg;
-            queue->msgsize = attr->msgsize;
+            queue->maxmsg = localAttr.maxmsg;
+            queue->msgsize = localAttr.msgsize;
         }
     } else {
         if ((flags & (GuestOCreat | GuestOExcl)) == (GuestOCreat | GuestOExcl)) return Fail(GuestEexist);
@@ -179,15 +184,26 @@ int APS5_VABI kmq_unlink_nid_postfix(const char* path) {
 }
 
 int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, GuestMqAttr* oattr) {
-    if (attr != nullptr && (attr->flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
+    GuestMqAttr localAttr{};
+    if (attr != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
+        if ((localAttr.flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
+    }
     const auto open = Find(descriptor);
     if (!open) return Fail(GuestEbadf);
     std::lock_guard lock(open->queue->lock);
     if (oattr != nullptr) {
-        *oattr = GuestMqAttr{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
-                             static_cast<std::int64_t>(open->queue->messages.size()), {}};
+        const GuestMqAttr previous{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
+                                   static_cast<std::int64_t>(open->queue->messages.size()), {}};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(oattr, &previous, sizeof(previous));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
     }
-    if (attr != nullptr) open->nonblocking = (attr->flags & GuestONonblock) != 0;
+    if (attr != nullptr) open->nonblocking = (localAttr.flags & GuestONonblock) != 0;
     return 0;
 }
 
@@ -222,8 +238,8 @@ std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer
     queue.messages.erase(queue.messages.begin());
     queue.writable.notify_one();
     lock.unlock();
-    if (!entry.bytes.empty()) std::memcpy(buffer, entry.bytes.data(), entry.bytes.size());
-    if (priority != nullptr) *priority = entry.priority;
+    if (!entry.bytes.empty() && !GuestCopyOut_nid_no_patch(buffer, entry.bytes.data(), entry.bytes.size())) return Fail(GuestEfault);
+    if (priority != nullptr && !GuestCopyOut_nid_no_patch(priority, &entry.priority, sizeof(entry.priority))) return Fail(GuestEfault);
     return static_cast<std::int64_t>(entry.bytes.size());
 }
 

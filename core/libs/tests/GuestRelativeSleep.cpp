@@ -38,5 +38,9 @@ int main(int argc, char** argv) {
         _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix(milliseconds);
         Require(Clock::now() - start >= std::chrono::milliseconds(milliseconds), "returned before the requested duration");
     }
+    const auto shortSleepStart = Clock::now();
+    for (int i = 0; i < 20; ++i) _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix(1);
+    const auto shortSleep = Clock::now() - shortSleepStart;
+    Require(shortSleep >= std::chrono::milliseconds(20) && shortSleep < std::chrono::milliseconds(200), "repeated 1 ms sleeps took the wrong total time");
     std::puts("relative sleep checks passed");
 }
