@@ -13,11 +13,14 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using AgcDriver::Graphics::CommandFunctions;
+using AgcDriver::Graphics::CommandId;
 using AgcDriver::Graphics::CommandStream;
 using AgcDriver::Graphics::StreamMaterializer;
 
@@ -460,6 +463,490 @@ void EveryListedCommandHasAThunk() {
     Require(!AgcDriver::Graphics::IsCommandName("vkCreateBuffer"), "a non-command was taken for a command");
 }
 
+std::string captured;
+std::vector<std::pair<std::size_t, std::string>> capturedCommands;
+
+template<typename T>
+void put(const T& value) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    captured.append(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+template<typename T>
+void putArray(const T* values, std::uint32_t count) {
+    put(count);
+    put(values != nullptr);
+    for (std::uint32_t index = 0; index < count; ++index) put(values[index]);
+}
+
+void putNext(const void* next) {
+    put(next == nullptr);
+}
+
+void putTag(const char* name) {
+    capturedCommands.emplace_back(captured.size(), name);
+    captured += '|';
+    captured += name;
+    captured += '|';
+}
+
+void putMemory(const VkMemoryBarrier& barrier) {
+    put(barrier.sType);
+    putNext(barrier.pNext);
+    put(barrier.srcAccessMask);
+    put(barrier.dstAccessMask);
+}
+
+void putBuffer(const VkBufferMemoryBarrier& barrier) {
+    put(barrier.sType);
+    putNext(barrier.pNext);
+    put(barrier.srcAccessMask);
+    put(barrier.dstAccessMask);
+    put(barrier.srcQueueFamilyIndex);
+    put(barrier.dstQueueFamilyIndex);
+    put(barrier.buffer);
+    put(barrier.offset);
+    put(barrier.size);
+}
+
+void putImage(const VkImageMemoryBarrier& barrier) {
+    put(barrier.sType);
+    putNext(barrier.pNext);
+    put(barrier.srcAccessMask);
+    put(barrier.dstAccessMask);
+    put(barrier.oldLayout);
+    put(barrier.newLayout);
+    put(barrier.srcQueueFamilyIndex);
+    put(barrier.dstQueueFamilyIndex);
+    put(barrier.image);
+    put(barrier.subresourceRange);
+}
+
+void putAttachment(const VkRenderingAttachmentInfoKHR* attachment) {
+    put(attachment != nullptr);
+    if (attachment == nullptr) return;
+    put(attachment->sType);
+    putNext(attachment->pNext);
+    put(attachment->imageView);
+    put(attachment->imageLayout);
+    put(attachment->resolveMode);
+    put(attachment->resolveImageView);
+    put(attachment->resolveImageLayout);
+    put(attachment->loadOp);
+    put(attachment->storeOp);
+    put(attachment->clearValue);
+}
+
+template<CommandId Id>
+struct Exact;
+
+#define APS5_EXACT_RANGE(name, T) \
+    template<> \
+    struct Exact<CommandId::name> { \
+        static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const T* values) { \
+            putTag(#name); \
+            put(commands); \
+            put(first); \
+            putArray(values, count); \
+        } \
+    };
+APS5_EXACT_RANGE(CmdSetViewport, VkViewport)
+APS5_EXACT_RANGE(CmdSetScissor, VkRect2D)
+APS5_EXACT_RANGE(CmdSetColorWriteMaskEXT, VkColorComponentFlags)
+#undef APS5_EXACT_RANGE
+
+#define APS5_EXACT_COUNT(name, T) \
+    template<> \
+    struct Exact<CommandId::name> { \
+        static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, std::uint32_t count, const T* values) { \
+            putTag(#name); \
+            put(commands); \
+            putArray(values, count); \
+        } \
+    };
+APS5_EXACT_COUNT(CmdSetViewportWithCount, VkViewport)
+APS5_EXACT_COUNT(CmdSetViewportWithCountEXT, VkViewport)
+APS5_EXACT_COUNT(CmdSetScissorWithCount, VkRect2D)
+APS5_EXACT_COUNT(CmdSetScissorWithCountEXT, VkRect2D)
+#undef APS5_EXACT_COUNT
+
+template<>
+struct Exact<CommandId::CmdBindDescriptorSets> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkPipelineBindPoint point, VkPipelineLayout layout, std::uint32_t first, std::uint32_t count, const VkDescriptorSet* sets, std::uint32_t offsets, const std::uint32_t* dynamicOffsets) {
+        putTag("CmdBindDescriptorSets");
+        put(commands);
+        put(point);
+        put(layout);
+        put(first);
+        putArray(sets, count);
+        putArray(dynamicOffsets, offsets);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdPushConstants> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) {
+        putTag("CmdPushConstants");
+        put(commands);
+        put(layout);
+        put(stages);
+        put(offset);
+        putArray(static_cast<const std::uint8_t*>(values), size);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdBindVertexBuffers> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize* offsets) {
+        putTag("CmdBindVertexBuffers");
+        put(commands);
+        put(first);
+        putArray(buffers, count);
+        putArray(offsets, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdPipelineBarrier> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags dependencies, std::uint32_t memory, const VkMemoryBarrier* memoryBarriers, std::uint32_t buffers, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t images, const VkImageMemoryBarrier* imageBarriers) {
+        putTag("CmdPipelineBarrier");
+        put(commands);
+        put(source);
+        put(destination);
+        put(dependencies);
+        put(memory);
+        for (std::uint32_t index = 0; index < memory; ++index) putMemory(memoryBarriers[index]);
+        put(buffers);
+        for (std::uint32_t index = 0; index < buffers; ++index) putBuffer(bufferBarriers[index]);
+        put(images);
+        for (std::uint32_t index = 0; index < images; ++index) putImage(imageBarriers[index]);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdCopyBuffer> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkBuffer source, VkBuffer destination, std::uint32_t count, const VkBufferCopy* regions) {
+        putTag("CmdCopyBuffer");
+        put(commands);
+        put(source);
+        put(destination);
+        putArray(regions, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdUpdateBuffer> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size, const void* data) {
+        putTag("CmdUpdateBuffer");
+        put(commands);
+        put(buffer);
+        put(offset);
+        put(size);
+        putArray(static_cast<const std::uint8_t*>(data), static_cast<std::uint32_t>(size));
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdCopyBufferToImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkBuffer source, VkImage destination, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
+        putTag("CmdCopyBufferToImage");
+        put(commands);
+        put(source);
+        put(destination);
+        put(layout);
+        putArray(regions, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdCopyImageToBuffer> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage source, VkImageLayout layout, VkBuffer destination, std::uint32_t count, const VkBufferImageCopy* regions) {
+        putTag("CmdCopyImageToBuffer");
+        put(commands);
+        put(source);
+        put(layout);
+        put(destination);
+        putArray(regions, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdCopyImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageCopy* regions) {
+        putTag("CmdCopyImage");
+        put(commands);
+        put(source);
+        put(sourceLayout);
+        put(destination);
+        put(destinationLayout);
+        putArray(regions, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdBlitImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageBlit* regions, VkFilter filter) {
+        putTag("CmdBlitImage");
+        put(commands);
+        put(source);
+        put(sourceLayout);
+        put(destination);
+        put(destinationLayout);
+        putArray(regions, count);
+        put(filter);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdClearColorImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage image, VkImageLayout layout, const VkClearColorValue* color, std::uint32_t count, const VkImageSubresourceRange* ranges) {
+        putTag("CmdClearColorImage");
+        put(commands);
+        put(image);
+        put(layout);
+        put(*color);
+        putArray(ranges, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdClearDepthStencilImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage image, VkImageLayout layout, const VkClearDepthStencilValue* value, std::uint32_t count, const VkImageSubresourceRange* ranges) {
+        putTag("CmdClearDepthStencilImage");
+        put(commands);
+        put(image);
+        put(layout);
+        put(*value);
+        putArray(ranges, count);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdClearAttachments> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, std::uint32_t attachments, const VkClearAttachment* clears, std::uint32_t rects, const VkClearRect* areas) {
+        putTag("CmdClearAttachments");
+        put(commands);
+        putArray(clears, attachments);
+        putArray(areas, rects);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdBeginRenderPass> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
+        putTag("CmdBeginRenderPass");
+        put(commands);
+        put(info->sType);
+        putNext(info->pNext);
+        put(info->renderPass);
+        put(info->framebuffer);
+        put(info->renderArea);
+        putArray(info->pClearValues, info->clearValueCount);
+        put(contents);
+    }
+};
+
+template<>
+struct Exact<CommandId::CmdBeginRenderingKHR> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, const VkRenderingInfoKHR* info) {
+        putTag("CmdBeginRenderingKHR");
+        put(commands);
+        put(info->sType);
+        putNext(info->pNext);
+        put(info->flags);
+        put(info->renderArea);
+        put(info->layerCount);
+        put(info->viewMask);
+        put(info->colorAttachmentCount);
+        put(info->pColorAttachments != nullptr);
+        for (std::uint32_t index = 0; index < info->colorAttachmentCount; ++index) putAttachment(&info->pColorAttachments[index]);
+        putAttachment(info->pDepthAttachment);
+        putAttachment(info->pStencilAttachment);
+    }
+};
+
+CommandFunctions exactFunctions() {
+    CommandFunctions functions{};
+#define APS5_EXACT(name) functions.name = &Exact<CommandId::name>::Run;
+    APS5_EXACT(CmdSetViewport)
+    APS5_EXACT(CmdSetScissor)
+    APS5_EXACT(CmdSetColorWriteMaskEXT)
+    APS5_EXACT(CmdSetViewportWithCount)
+    APS5_EXACT(CmdSetViewportWithCountEXT)
+    APS5_EXACT(CmdSetScissorWithCount)
+    APS5_EXACT(CmdSetScissorWithCountEXT)
+    APS5_EXACT(CmdBindDescriptorSets)
+    APS5_EXACT(CmdPushConstants)
+    APS5_EXACT(CmdBindVertexBuffers)
+    APS5_EXACT(CmdPipelineBarrier)
+    APS5_EXACT(CmdCopyBuffer)
+    APS5_EXACT(CmdUpdateBuffer)
+    APS5_EXACT(CmdCopyBufferToImage)
+    APS5_EXACT(CmdCopyImageToBuffer)
+    APS5_EXACT(CmdCopyImage)
+    APS5_EXACT(CmdBlitImage)
+    APS5_EXACT(CmdClearColorImage)
+    APS5_EXACT(CmdClearDepthStencilImage)
+    APS5_EXACT(CmdClearAttachments)
+    APS5_EXACT(CmdBeginRenderPass)
+    APS5_EXACT(CmdBeginRenderingKHR)
+#undef APS5_EXACT
+    return functions;
+}
+
+template<CommandId Id>
+decltype(&Exact<Id>::Run) exactThunk() {
+    return reinterpret_cast<decltype(&Exact<Id>::Run)>(AgcDriver::Graphics::CommandThunk(AgcDriver::Graphics::CommandNames()[static_cast<std::size_t>(Id)], reinterpret_cast<PFN_vkVoidFunction>(&Exact<Id>::Run)));
+}
+
+struct Sources {
+    std::array<VkViewport, 3> viewports;
+    std::array<VkRect2D, 3> rects;
+    std::array<VkColorComponentFlags, 3> masks;
+    std::array<VkDescriptorSet, 3> sets;
+    std::array<std::uint32_t, 4> dynamicOffsets;
+    std::array<std::uint8_t, 20> constants;
+    std::array<VkBuffer, 3> vertexBuffers;
+    std::array<VkDeviceSize, 3> vertexOffsets;
+    std::array<VkMemoryBarrier, 2> memoryBarriers;
+    std::array<VkBufferMemoryBarrier, 2> bufferBarriers;
+    std::array<VkImageMemoryBarrier, 2> imageBarriers;
+    std::array<VkBufferCopy, 2> bufferCopies;
+    std::array<std::uint8_t, 12> update;
+    std::array<VkBufferImageCopy, 2> bufferImageCopies;
+    std::array<VkImageCopy, 2> imageCopies;
+    std::array<VkImageBlit, 2> blits;
+    VkClearColorValue color;
+    VkClearDepthStencilValue depthValue;
+    std::array<VkImageSubresourceRange, 2> ranges;
+    std::array<VkClearAttachment, 2> clears;
+    std::array<VkClearRect, 2> clearRects;
+    std::array<VkClearValue, 3> clearValues;
+    VkRenderPassBeginInfo pass;
+    std::array<VkRenderingAttachmentInfoKHR, 2> colors;
+    VkRenderingAttachmentInfoKHR depth;
+    VkRenderingAttachmentInfoKHR stencil;
+    VkRenderingInfoKHR rendering;
+    VkRenderingInfoKHR renderingWithoutStencil;
+};
+
+template<typename T>
+void fill(T& value, std::uint32_t& next) {
+    auto* bytes = reinterpret_cast<std::uint8_t*>(&value);
+    for (std::size_t index = 0; index < sizeof(T); ++index) bytes[index] = static_cast<std::uint8_t>(next++ * 37 + 11);
+}
+
+template<typename T>
+void structured(T& value, VkStructureType type, std::uint32_t& next) {
+    fill(value, next);
+    value.sType = type;
+    value.pNext = nullptr;
+}
+
+void prepare(Sources& sources) {
+    std::memset(&sources, 0, sizeof(sources));
+    std::uint32_t next = 1;
+    for (auto& value : sources.viewports) fill(value, next);
+    for (auto& value : sources.rects) fill(value, next);
+    for (auto& value : sources.masks) fill(value, next);
+    for (auto& value : sources.sets) fill(value, next);
+    for (auto& value : sources.dynamicOffsets) fill(value, next);
+    fill(sources.constants, next);
+    for (auto& value : sources.vertexBuffers) fill(value, next);
+    for (auto& value : sources.vertexOffsets) fill(value, next);
+    for (auto& value : sources.memoryBarriers) structured(value, VK_STRUCTURE_TYPE_MEMORY_BARRIER, next);
+    for (auto& value : sources.bufferBarriers) structured(value, VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, next);
+    for (auto& value : sources.imageBarriers) structured(value, VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, next);
+    for (auto& value : sources.bufferCopies) fill(value, next);
+    fill(sources.update, next);
+    for (auto& value : sources.bufferImageCopies) fill(value, next);
+    for (auto& value : sources.imageCopies) fill(value, next);
+    for (auto& value : sources.blits) fill(value, next);
+    fill(sources.color, next);
+    fill(sources.depthValue, next);
+    for (auto& value : sources.ranges) fill(value, next);
+    for (auto& value : sources.clears) fill(value, next);
+    for (auto& value : sources.clearRects) fill(value, next);
+    for (auto& value : sources.clearValues) fill(value, next);
+    structured(sources.pass, VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, next);
+    sources.pass.clearValueCount = static_cast<std::uint32_t>(sources.clearValues.size());
+    sources.pass.pClearValues = sources.clearValues.data();
+    for (auto& value : sources.colors) structured(value, VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, next);
+    structured(sources.depth, VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, next);
+    structured(sources.stencil, VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, next);
+    structured(sources.rendering, VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, next);
+    sources.rendering.colorAttachmentCount = static_cast<std::uint32_t>(sources.colors.size());
+    sources.rendering.pColorAttachments = sources.colors.data();
+    sources.rendering.pDepthAttachment = &sources.depth;
+    sources.rendering.pStencilAttachment = &sources.stencil;
+    sources.renderingWithoutStencil = sources.rendering;
+    sources.renderingWithoutStencil.pStencilAttachment = nullptr;
+}
+
+void recordEverySpecializedCommand(VkCommandBuffer commands, const Sources& sources) {
+    exactThunk<CommandId::CmdSetViewport>()(commands, 1, 3, sources.viewports.data());
+    exactThunk<CommandId::CmdSetScissor>()(commands, 2, 3, sources.rects.data());
+    exactThunk<CommandId::CmdSetColorWriteMaskEXT>()(commands, 1, 3, sources.masks.data());
+    exactThunk<CommandId::CmdSetViewportWithCount>()(commands, 2, sources.viewports.data());
+    exactThunk<CommandId::CmdSetViewportWithCountEXT>()(commands, 3, sources.viewports.data());
+    exactThunk<CommandId::CmdSetScissorWithCount>()(commands, 3, sources.rects.data());
+    exactThunk<CommandId::CmdSetScissorWithCountEXT>()(commands, 1, sources.rects.data());
+    exactThunk<CommandId::CmdBindDescriptorSets>()(commands, VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(41), 2, 3, sources.sets.data(), 4, sources.dynamicOffsets.data());
+    exactThunk<CommandId::CmdBindDescriptorSets>()(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(42), 0, 1, sources.sets.data(), 0, nullptr);
+    exactThunk<CommandId::CmdPushConstants>()(commands, fake<VkPipelineLayout>(43), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 12, 20, sources.constants.data());
+    exactThunk<CommandId::CmdBindVertexBuffers>()(commands, 4, 3, sources.vertexBuffers.data(), sources.vertexOffsets.data());
+    exactThunk<CommandId::CmdPipelineBarrier>()(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 2, sources.memoryBarriers.data(), 2, sources.bufferBarriers.data(), 2, sources.imageBarriers.data());
+    exactThunk<CommandId::CmdPipelineBarrier>()(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1, sources.bufferBarriers.data() + 1, 0, nullptr);
+    exactThunk<CommandId::CmdCopyBuffer>()(commands, handle(51), handle(52), 2, sources.bufferCopies.data());
+    exactThunk<CommandId::CmdUpdateBuffer>()(commands, handle(53), 24, 12, sources.update.data());
+    exactThunk<CommandId::CmdCopyBufferToImage>()(commands, handle(54), fake<VkImage>(55), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, sources.bufferImageCopies.data());
+    exactThunk<CommandId::CmdCopyImageToBuffer>()(commands, fake<VkImage>(56), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, handle(57), 2, sources.bufferImageCopies.data());
+    exactThunk<CommandId::CmdCopyImage>()(commands, fake<VkImage>(58), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fake<VkImage>(59), VK_IMAGE_LAYOUT_GENERAL, 2, sources.imageCopies.data());
+    exactThunk<CommandId::CmdBlitImage>()(commands, fake<VkImage>(60), VK_IMAGE_LAYOUT_GENERAL, fake<VkImage>(61), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, sources.blits.data(), VK_FILTER_LINEAR);
+    exactThunk<CommandId::CmdClearColorImage>()(commands, fake<VkImage>(62), VK_IMAGE_LAYOUT_GENERAL, &sources.color, 2, sources.ranges.data());
+    exactThunk<CommandId::CmdClearDepthStencilImage>()(commands, fake<VkImage>(63), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &sources.depthValue, 2, sources.ranges.data());
+    exactThunk<CommandId::CmdClearAttachments>()(commands, 2, sources.clears.data(), 2, sources.clearRects.data());
+    exactThunk<CommandId::CmdBeginRenderPass>()(commands, &sources.pass, VK_SUBPASS_CONTENTS_INLINE);
+    exactThunk<CommandId::CmdBeginRenderingKHR>()(commands, &sources.rendering);
+    exactThunk<CommandId::CmdBeginRenderingKHR>()(commands, &sources.renderingWithoutStencil);
+}
+
+std::string firstByteDifference(const std::string& expected, const std::string& actual, const std::vector<std::pair<std::size_t, std::string>>& commands) {
+    const auto length = std::min(expected.size(), actual.size());
+    std::size_t index = 0;
+    while (index < length && expected[index] == actual[index]) ++index;
+    std::string command = "?";
+    for (const auto& [offset, name] : commands) {
+        if (offset <= index) command = name;
+    }
+    return "first difference at byte " + std::to_string(index) + " of " + std::to_string(expected.size()) + " (" + std::to_string(actual.size()) + " replayed), in " + command;
+}
+
+void SpecializedStreamersKeepEveryArgument() {
+    const auto exact = exactFunctions();
+    const auto direct = fakeBuffer(70);
+    Sources sources;
+    prepare(sources);
+    captured.clear();
+    capturedCommands.clear();
+    recordEverySpecializedCommand(direct, sources);
+    const auto expected = captured;
+    const auto commandsAt = capturedCommands;
+    Require(expected.size() > 2000, "the direct recording captured only " + std::to_string(expected.size()) + " bytes");
+    const auto commands = commandsAt.size();
+    Require(commands == 25, "the direct recording captured " + std::to_string(commands) + " commands");
+    CommandStream stream(exact);
+    captured.clear();
+    recordEverySpecializedCommand(stream.Handle(), sources);
+    Require(captured.empty(), "a specialized command reached the driver while recording");
+    Require(stream.Materialized() == VK_NULL_HANDLE && !stream.Poisoned(), "a specialized command demoted the stream");
+    std::memset(static_cast<void*>(&sources), 0xA5, sizeof(sources));
+    stream.Seal();
+    AgcDriver::Graphics::Replay(stream, direct, exact);
+    Require(captured == expected, "the replay after the sources were overwritten differs: " + firstByteDifference(expected, captured, commandsAt));
+    Require(stream.Ops() == commands, "the stream counted " + std::to_string(stream.Ops()) + " ops for " + std::to_string(commands) + " commands");
+}
+
 VKAPI_ATTR void VKAPI_CALL emptyDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
 void DirectModeCost() {
@@ -493,6 +980,7 @@ int main(int argc, char** argv) {
         DirectCallsReachTheirOwnEntryPoint();
         StreamReplayRecordsWhatDirectRecords();
         DemotionReplaysThePrefixInOrder();
+        SpecializedStreamersKeepEveryArgument();
         PointerCommandsWithoutACopyDemote();
         DemotionWithoutAMaterializerPoisons();
         EntryPointsBeyondTheSlotsAreRefused();
