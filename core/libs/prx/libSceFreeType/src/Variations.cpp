@@ -1,12 +1,11 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
-#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include FT_MULTIPLE_MASTERS_H
 
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -25,19 +24,23 @@ void RequireLp64(const char* function) {
 std::vector<FT_Fixed> HostCoordinates(const std::int64_t* coordinates, std::uint32_t count, const char* function) {
     std::vector<FT_Fixed> host;
     if (!coordinates) return host;
+    std::vector<std::int64_t> guest(count);
+    if (count != 0 && !GuestCopyIn_nid_no_patch(guest.data(), coordinates, count * sizeof(std::int64_t))) {
+        throw std::runtime_error(std::string(function) + ": the guest coordinate buffer is not readable, which is not implemented");
+    }
     host.reserve(count);
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (coordinates[index] < std::numeric_limits<FT_Fixed>::min() || coordinates[index] > std::numeric_limits<FT_Fixed>::max()) {
+        if (guest[index] < std::numeric_limits<FT_Fixed>::min() || guest[index] > std::numeric_limits<FT_Fixed>::max()) {
             throw std::runtime_error(std::string(function) + ": a coordinate outside the host FT_Fixed range is not implemented");
         }
-        host.push_back(static_cast<FT_Fixed>(coordinates[index]));
+        host.push_back(static_cast<FT_Fixed>(guest[index]));
     }
     return host;
 }
 
-void PublishCoordinates(std::int64_t* coordinates, const std::vector<FT_Fixed>& host) {
-    GuestArena::HostWrite write(coordinates, host.size() * sizeof(*coordinates));
-    for (std::size_t index = 0; index < host.size(); ++index) coordinates[index] = host[index];
+bool PublishCoordinates(std::int64_t* coordinates, const std::vector<FT_Fixed>& host) {
+    std::vector<std::int64_t> wide(host.begin(), host.end());
+    return wide.empty() || GuestCopyOut_nid_no_patch(coordinates, wide.data(), wide.size() * sizeof(std::int64_t));
 }
 
 }
@@ -50,8 +53,7 @@ int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec* face, void** master) {
     FT_MM_Var* native = nullptr;
     const FT_Error error = FT_Get_MM_Var(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;
-    GuestArena::HostWrite write(master, sizeof(*master));
-    *master = native;
+    if (!GuestCopyOut_nid_no_patch(master, &native, sizeof(native))) return FT_Err_Invalid_Argument;
     return 0;
 }
 
@@ -78,7 +80,7 @@ int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std:
     std::vector<FT_Fixed> host(coordinates ? count : 0, 0);
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Get_Var_Design_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
-    if (error == 0 && coordinates) PublishCoordinates(coordinates, host);
+    if (error == 0 && coordinates && !PublishCoordinates(coordinates, host)) return FT_Err_Invalid_Argument;
     return error;
 }
 
@@ -100,7 +102,7 @@ int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::
     std::vector<FT_Fixed> host(coordinates ? count : 0, 0);
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Get_Var_Blend_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
-    if (error == 0 && coordinates) PublishCoordinates(coordinates, host);
+    if (error == 0 && coordinates && !PublishCoordinates(coordinates, host)) return FT_Err_Invalid_Argument;
     return error;
 }
 
@@ -136,8 +138,7 @@ int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec* face, void* master) 
     FT_Multi_Master native{};
     const FT_Error error = FT_Get_Multi_Master(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;
-    GuestArena::HostWrite write(master, sizeof(native));
-    std::memcpy(master, &native, sizeof(native));
+    if (!GuestCopyOut_nid_no_patch(master, &native, sizeof(native))) return FT_Err_Invalid_Argument;
     return 0;
 }
 

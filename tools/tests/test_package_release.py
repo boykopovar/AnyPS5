@@ -926,6 +926,14 @@ class ReleasePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
                     self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
+    def test_linux_sanitizer_packages_omit_stale_allocator_runtimes(self):
+        for option in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=option):
+                (self.build / "CMakeCache.txt").write_text(f"{option}:BOOL=ON\n", encoding="utf-8")
+                package_release.package("linux", self.build, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/licenses/mimalloc.txt"])
+
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
         previous = {"prx-linux-v1.zip": b"old zip", "prx-linux-v1.tar.gz": b"old tar", "relinker-v1": b"old binary"}
@@ -946,6 +954,53 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual((self.output / "relinker-v1.0").read_bytes(), b"relinker bytes")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
+
+    def test_tracy_file_validation_preserves_existing_release_assets(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        self.output.mkdir()
+        previous = self.output / "previous.asset"
+        previous.write_bytes(b"previous release")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            with self.subTest(kind=kind):
+                if kind == "dangling-symlink":
+                    try:
+                        client.symlink_to(self.root / "missing-client")
+                    except (OSError, NotImplementedError) as error:
+                        self.skipTest(f"symlinks unavailable: {error}")
+                elif kind == "directory":
+                    client.mkdir()
+                else:
+                    client.touch()
+                with self.assertRaisesRegex(RuntimeError, "Tracy"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous release")
+                if kind == "directory":
+                    client.rmdir()
+                else:
+                    client.unlink()
+
+    def test_tracy_symlink_contents_are_packaged_and_extra_entries_are_ambiguous(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/" + client.name), b"linked Tracy client")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/" + client.name).read(), b"linked Tracy client")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        extra = client.with_name("libTracyClient.so.0.13.1")
+        extra.symlink_to(self.root / "missing-client")
+        with self.assertRaisesRegex(RuntimeError, "ambiguous Tracy"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_hidden_cache_directory_is_not_a_required_library(self):
         (self.source / "core/libs/prx/.cache").mkdir()
