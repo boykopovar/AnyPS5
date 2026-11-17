@@ -1224,7 +1224,15 @@ void depthFallbackInvalidatesColor(AgcDriver::VulkanDevice& device) {
 #endif
 }
 
+struct HeldOutsideTheWatch {
+    HeldOutsideTheWatch() { SetHostImportDeferredSettles(false); }
+    ~HeldOutsideTheWatch() { SetHostImportDeferredSettles(true); }
+    HeldOutsideTheWatch(const HeldOutsideTheWatch&) = delete;
+    HeldOutsideTheWatch& operator=(const HeldOutsideTheWatch&) = delete;
+};
+
 void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
+    const HeldOutsideTheWatch held;
     auto color = colorTarget();
     auto* memory = allocateWatched(PlaneBytes);
     color.address = color.surfaceAddress = address(memory);
@@ -1255,6 +1263,7 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
 }
 
 void heldBaselineUnits(AgcDriver::VulkanDevice& device) {
+    const HeldOutsideTheWatch held;
     auto color = colorTarget();
     auto* memory = allocateWatched(2 * PlaneBytes);
     color.address = color.surfaceAddress = color.arrayAddress = address(memory);
