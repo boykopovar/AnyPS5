@@ -1,5 +1,8 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdarg>
@@ -9,6 +12,9 @@
 #include <cstring>
 #include <exception>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -367,7 +373,97 @@ void GuestPointers() {
     Require(RejectsKeepingErrno([&] { ft_mem_realloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, readOnlyError); }), "realloc refuses a read-only error");
     Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, unmappedError); }), "dup refuses an unmapped error");
     Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, "ab", readOnlyError); }), "strdup refuses a read-only error");
+    Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(&recorder.memory, 8, nullptr); }), "qalloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, nullptr); }), "alloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_qrealloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, nullptr); }), "qrealloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_realloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, nullptr); }), "realloc refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, nullptr); }), "dup refuses a null error");
+    Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, "ab", nullptr); }), "strdup refuses a null error");
     Require(recorder.allocs == 0 && recorder.reallocs == 0 && *readOnlyError == 0x5A5A5A5A, "an unwritable error is refused before any allocation");
+
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        void* const watchedPage = GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes);
+        Require(watchedPage != nullptr, "allocate write-watched error page");
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr, "create write-watched error section");
+        GuestArena::GuestArenaMap_nid_postfix(watchedPage, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(watchedPage, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(watchedPage, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, pages.data(), &count, true),
+                    "collect write-watched error writes");
+            return count != 0;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty),
+                "collect write-watched error writes");
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            Require(!collectDirty(), "write-watched error page was still dirty");
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY, "arm write-watched error page");
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* watchedError = static_cast<std::int32_t*>(watchedPage);
+        auto checkWatched = [&](auto call, const char* message) {
+            *watchedError = -1;
+            armWatch(watchedError);
+            errno = 71;
+            void* allocated = call();
+            Require(allocated != nullptr && *watchedError == 0 && errno == 71, message);
+            Require(collectDirty(), message);
+            return allocated;
+        };
+        void* qallocated = checkWatched([&] { return ft_mem_qalloc_nid_postfix(&recorder.memory, 8, watchedError); }, "qalloc accepts a write-watched error");
+        void* reallocedQ = checkWatched([&] { return ft_mem_qrealloc_nid_postfix(&recorder.memory, 4, 2, 4, qallocated, watchedError); }, "qrealloc accepts a write-watched error");
+        ft_mem_free_nid_postfix(&recorder.memory, reallocedQ);
+        void* allocated = checkWatched([&] { return ft_mem_alloc_nid_postfix(&recorder.memory, 8, watchedError); }, "alloc accepts a write-watched error");
+        void* realloced = checkWatched([&] { return ft_mem_realloc_nid_postfix(&recorder.memory, 4, 2, 4, allocated, watchedError); }, "realloc accepts a write-watched error");
+        ft_mem_free_nid_postfix(&recorder.memory, realloced);
+        void* duped = checkWatched([&] { return ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, watchedError); }, "dup accepts a write-watched error");
+        ft_mem_free_nid_postfix(&recorder.memory, duped);
+        void* strduped = checkWatched([&] { return ft_mem_strdup_nid_postfix(&recorder.memory, "ab", watchedError); }, "strdup accepts a write-watched error");
+        ft_mem_free_nid_postfix(&recorder.memory, strduped);
+        Reset(recorder);
+
+        *watchedError = 0x5A5A5A5A;
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, 0x02);
+        Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, watchedError); }), "alloc refuses a read-only arena error");
+        Require(recorder.allocs == 0 && *watchedError == 0x5A5A5A5A, "read-only arena error does not allocate or mutate");
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(watchedPage, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(watchedPage, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(watchedPage, kArenaBytes);
+    }
 
     Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(unmappedMemory, 8, &error); }), "qalloc refuses an unmapped memory record");
     Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(unmappedMemory, 8, &error); }), "alloc refuses an unmapped memory record");
