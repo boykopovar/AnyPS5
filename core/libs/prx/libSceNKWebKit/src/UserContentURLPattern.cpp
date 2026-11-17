@@ -1,250 +1,146 @@
-// Derived from Source/WebCore/page/UserContentURLPattern.cpp@e12a212a531aeddc11259e8515671cf5188e038d
-/*
- * Copyright (C) 2009-2017 Apple Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Derived from Source/WebCore/page/UserContentURLPattern.cpp@e12a212a531aeddc11259e8515671cf5188e038d
- */
-
-#include "prx/libSceNKWebKit/include/UserContentURLPatternExports.hpp"
-#include "prx/libSceNKWebKit/include/WtfExports.hpp"
-
-#include <cstddef>
-#include <stdexcept>
+#include "prx/libSceNKWebKit/src/Types.hpp"
+#include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 
 namespace {
 
-using NKWebKit::WebCoreAbi::UserContentURLPattern;
-using NKWebKit::WtfAbi::CodeUnitAt;
-using NKWebKit::WtfAbi::String;
-using NKWebKit::WtfAbi::StringView;
-using NKWebKit::WtfAbi::URL;
-
-constexpr std::size_t NotFound = static_cast<std::size_t>(-1);
-
-StringView View(const String& string) {
-    return NKWebKit::WtfAbi::ViewOf(string.impl);
-}
-
-char16_t ToASCIILower(char16_t c) {
-    return c >= 'A' && c <= 'Z' ? static_cast<char16_t>(c | 0x20) : c;
-}
-
-std::size_t Find(const StringView& view, const char* literal, unsigned start) {
-    unsigned literalLength = 0;
-    while (literal[literalLength]) ++literalLength;
-    if (start > view.length || view.length - start < literalLength) return NotFound;
-    for (unsigned i = start; i + literalLength <= view.length; ++i) {
-        unsigned j = 0;
-        while (j < literalLength && CodeUnitAt(view, i + j) == static_cast<unsigned char>(literal[j])) ++j;
-        if (j == literalLength) return i;
-    }
-    return NotFound;
-}
-
-bool EqualLiteral(const String& string, const char* literal) {
-    if (!string.impl) return false;
-    StringView view = View(string);
-    unsigned i = 0;
-    for (; literal[i]; ++i) {
-        if (i >= view.length || CodeUnitAt(view, i) != static_cast<unsigned char>(literal[i])) return false;
-    }
-    return i == view.length;
-}
-
-bool EqualLettersIgnoringASCIICase(const String& string, const char* letters) {
-    StringView view = View(string);
-    unsigned i = 0;
-    for (; letters[i]; ++i) {
-        if (i >= view.length || ToASCIILower(CodeUnitAt(view, i)) != static_cast<unsigned char>(letters[i])) return false;
-    }
-    return i == view.length;
-}
-
-bool EqualIgnoringASCIICase(const StringView& a, unsigned aStart, const StringView& b, unsigned length) {
-    for (unsigned i = 0; i < length; ++i) {
-        if (ToASCIILower(CodeUnitAt(a, aStart + i)) != ToASCIILower(CodeUnitAt(b, i))) return false;
+bool EqualLettersIgnoringASCIICase(std::u16string_view a, std::u16string_view b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t index = 0; index < a.size(); ++index) {
+        char16_t ca = a[index];
+        char16_t cb = b[index];
+        if (ca >= u'A' && ca <= u'Z') ca = static_cast<char16_t>(ca - u'A' + u'a');
+        if (cb >= u'A' && cb <= u'Z') cb = static_cast<char16_t>(cb - u'A' + u'a');
+        if (ca != cb) return false;
     }
     return true;
 }
 
-bool EqualIgnoringASCIICase(const StringView& a, const StringView& b) {
-    return a.length == b.length && EqualIgnoringASCIICase(a, 0, b, a.length);
+NKWebKit::Retained<NKWebKit::UserContentURLPattern> Parse(std::u16string_view pattern) {
+    auto result = NKWebKit::Make<NKWebKit::UserContentURLPattern>();
+    const auto schemeEnd = pattern.find(u"://");
+    if (schemeEnd == std::u16string_view::npos) return result;
+    result->scheme = std::u16string(pattern.substr(0, schemeEnd));
+    const bool fileScheme = EqualLettersIgnoringASCIICase(result->scheme, u"file");
+    const auto hostStart = schemeEnd + 3;
+    if (!fileScheme && hostStart >= pattern.size()) return result;
+    const auto pathStart = pattern.find(u'/', hostStart);
+    if (pathStart == std::u16string_view::npos) return result;
+    result->host = std::u16string(pattern.substr(hostStart, pathStart - hostStart));
+    if (result->host == u"*") {
+        result->host.clear();
+        result->matchSubdomains = true;
+    } else if (result->host.starts_with(u"*.")) {
+        result->host.erase(0, 2);
+        result->matchSubdomains = true;
+    } else if (fileScheme && EqualLettersIgnoringASCIICase(result->host, u"localhost")) {
+        result->host.clear();
+    }
+    if (result->host.find(u'*') != std::u16string::npos) return result;
+    result->path = std::u16string(pattern.substr(pathStart));
+    result->valid = true;
+    return result;
 }
 
-bool EndsWithIgnoringASCIICase(const StringView& string, const StringView& suffix) {
-    if (suffix.length > string.length) return false;
-    return EqualIgnoringASCIICase(string, string.length - suffix.length, suffix, suffix.length);
-}
-
-String Substring(const String& string, unsigned start, unsigned length) {
-    return NKWebKit::WtfAbi::SubstringSharingImpl(string, start, length);
-}
-
-bool Parse(UserContentURLPattern& self, const String& pattern) {
-    StringView view = View(pattern);
-    std::size_t schemeEndPos = Find(view, "://", 0);
-    if (schemeEndPos == NotFound)
-        return false;
-
-    self.scheme = Substring(pattern, 0, static_cast<unsigned>(schemeEndPos));
-
-    unsigned hostStartPos = static_cast<unsigned>(schemeEndPos) + 3;
-    if (hostStartPos >= view.length)
-        return false;
-
-    unsigned pathStartPos = 0;
-
-    if (EqualLettersIgnoringASCIICase(self.scheme, "file"))
-        pathStartPos = hostStartPos;
-    else {
-        std::size_t hostEndPos = Find(view, "/", hostStartPos);
-        if (hostEndPos == NotFound)
+bool WildcardMatchesPath(std::u16string_view pattern, std::u16string_view path) {
+    std::size_t pIndex = 0;
+    std::size_t pathIndex = 0;
+    std::size_t starP = std::u16string_view::npos;
+    std::size_t starPath = 0;
+    while (pathIndex < path.size()) {
+        if (pIndex < pattern.size() && pattern[pIndex] == u'*') {
+            starP = pIndex++;
+            starPath = pathIndex;
+        } else if (pIndex < pattern.size() && pattern[pIndex] == path[pathIndex]) {
+            ++pIndex;
+            ++pathIndex;
+        } else if (starP != std::u16string_view::npos) {
+            pIndex = starP + 1;
+            pathIndex = ++starPath;
+        } else {
             return false;
-
-        self.host = Substring(pattern, hostStartPos, static_cast<unsigned>(hostEndPos) - hostStartPos);
-        self.matchSubdomains = false;
-
-        if (EqualLiteral(self.host, "*")) {
-            self.host = String(NKWebKit::WtfAbi::EmptyStringImpl());
-            self.matchSubdomains = true;
-        } else if (Find(View(self.host), "*.", 0) == 0) {
-            String host = self.host;
-            self.host = Substring(host, 2, View(host).length - 2);
-            self.matchSubdomains = true;
         }
-
-        if (Find(View(self.host), "*", 0) != NotFound)
-            return false;
-
-        pathStartPos = static_cast<unsigned>(hostEndPos);
     }
-
-    self.path = Substring(pattern, pathStartPos, view.length - pathStartPos);
-
-    return true;
+    while (pIndex < pattern.size() && pattern[pIndex] == u'*') ++pIndex;
+    return pIndex == pattern.size();
 }
 
-bool MatchesHost(const UserContentURLPattern& self, const URL& test) {
-    StringView host = _ZNK3WTF3URL4hostEv(&test);
-    StringView patternHost = View(self.host);
-    if (EqualIgnoringASCIICase(host, patternHost))
-        return true;
-
-    if (!self.matchSubdomains)
+bool MatchesURL(const NKWebKit::UserContentURLPattern* pattern, const NKWebKit::URL* url) {
+    if (!pattern || !pattern->valid || !url) return false;
+    const auto decoded = NKWebKit::DecodeUtf8(url->text.data(), url->text.size());
+    if (!decoded.has_value()) return false;
+    const std::u16string_view urlString = *decoded;
+    const auto schemeEnd = urlString.find(u"://");
+    if (schemeEnd == std::u16string_view::npos) return false;
+    const auto urlScheme = urlString.substr(0, schemeEnd);
+    if (pattern->scheme == u"*") {
+        if (!EqualLettersIgnoringASCIICase(urlScheme, u"http") && !EqualLettersIgnoringASCIICase(urlScheme, u"https"))
+            return false;
+    } else if (!EqualLettersIgnoringASCIICase(urlScheme, pattern->scheme)) {
         return false;
-
-    if (!patternHost.length)
-        return true;
-
-    if (!EndsWithIgnoringASCIICase(host, patternHost))
-        return false;
-
-    return CodeUnitAt(host, host.length - patternHost.length - 1) == '.';
+    }
+    const bool fileScheme = EqualLettersIgnoringASCIICase(pattern->scheme, u"file");
+    const auto hostStart = schemeEnd + 3;
+    const auto authEnd = urlString.find_first_of(u"/?#", hostStart);
+    std::u16string_view authority;
+    std::u16string_view urlPath;
+    if (authEnd == std::u16string_view::npos) {
+        authority = urlString.substr(hostStart);
+        urlPath = u"/";
+    } else if (urlString[authEnd] == u'/') {
+        authority = urlString.substr(hostStart, authEnd - hostStart);
+        const auto queryOrFragment = urlString.find_first_of(u"?#", authEnd);
+        urlPath = (queryOrFragment == std::u16string_view::npos) ? urlString.substr(authEnd) : urlString.substr(authEnd, queryOrFragment - authEnd);
+    } else {
+        authority = urlString.substr(hostStart, authEnd - hostStart);
+        urlPath = u"/";
+    }
+    const auto atPos = authority.rfind(u'@');
+    const auto hostAndPort = (atPos == std::u16string_view::npos) ? authority : authority.substr(atPos + 1);
+    std::u16string_view urlHost;
+    if (hostAndPort.starts_with(u'[')) {
+        const auto closeBracket = hostAndPort.find(u']');
+        urlHost = (closeBracket != std::u16string_view::npos) ? hostAndPort.substr(0, closeBracket + 1) : hostAndPort;
+    } else {
+        const auto portStart = hostAndPort.find(u':');
+        urlHost = (portStart == std::u16string_view::npos) ? hostAndPort : hostAndPort.substr(0, portStart);
+    }
+    if (fileScheme && EqualLettersIgnoringASCIICase(urlHost, u"localhost")) urlHost = {};
+    if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
+        if (!pattern->matchSubdomains) return false;
+        if (!pattern->host.empty()) {
+            if (urlHost.size() <= pattern->host.size()) return false;
+            if (urlHost[urlHost.size() - pattern->host.size() - 1] != u'.') return false;
+            if (!EqualLettersIgnoringASCIICase(urlHost.substr(urlHost.size() - pattern->host.size()), pattern->host))
+                return false;
+        }
+    }
+    return WildcardMatchesPath(pattern->path, urlPath);
 }
 
-struct MatchTester {
-    StringView pattern;
-    unsigned patternIndex { 0 };
-    StringView test;
-    unsigned testIndex { 0 };
-
-    MatchTester(StringView patternView, StringView testView)
-        : pattern(patternView)
-        , test(testView)
-    {
-    }
-
-    bool TestStringFinished() const { return testIndex >= test.length; }
-    bool PatternStringFinished() const { return patternIndex >= pattern.length; }
-
-    void EatWildcard() {
-        while (!PatternStringFinished()) {
-            if (CodeUnitAt(pattern, patternIndex) != '*')
-                return;
-            patternIndex++;
-        }
-    }
-
-    void EatSameChars() {
-        while (!PatternStringFinished() && !TestStringFinished()) {
-            if (CodeUnitAt(pattern, patternIndex) == '*')
-                return;
-            if (CodeUnitAt(pattern, patternIndex) != CodeUnitAt(test, testIndex))
-                return;
-            patternIndex++;
-            testIndex++;
-        }
-    }
-
-    bool Test() {
-        EatSameChars();
-
-        if (TestStringFinished()) {
-            EatWildcard();
-            return PatternStringFinished();
-        }
-
-        if (PatternStringFinished())
-            return false;
-
-        if (CodeUnitAt(pattern, patternIndex) != '*')
-            return false;
-
-        while (!TestStringFinished()) {
-            MatchTester nextMatch(*this);
-            nextMatch.patternIndex++;
-            if (nextMatch.Test())
-                return true;
-            testIndex++;
-        }
-
-        EatWildcard();
-        return PatternStringFinished();
-    }
-};
-
-}  // namespace
+}
 
 extern "C" {
-
-bool APS5_VABI _ZN7WebCore21UserContentURLPattern5parseERKN3WTF6StringE(UserContentURLPattern* self, const String* pattern) {
-    if (!self || !pattern) throw std::invalid_argument("WebCore::UserContentURLPattern::parse requires a pattern object and a string");
-    return Parse(*self, *pattern);
+const void* APS5_VABI WKUserContentURLPatternCreate(const void* patternRef) {
+    return NKWebKit::ToRef(Parse(NKWebKit::Cast<NKWebKit::String>(patternRef, __func__)->characters));
 }
 
-bool APS5_VABI _ZNK7WebCore21UserContentURLPattern7matchesERKN3WTF3URLE(const UserContentURLPattern* self, const URL* url) {
-    if (!self || !url) throw std::invalid_argument("WebCore::UserContentURLPattern::matches requires a pattern object and a URL");
-    if (self->invalid)
-        return false;
-
-    if (!EqualLiteral(self->scheme, "*") && !EqualIgnoringASCIICase(_ZNK3WTF3URL8protocolEv(url), View(self->scheme)))
-        return false;
-
-    if (!EqualLettersIgnoringASCIICase(self->scheme, "file") && !MatchesHost(*self, *url))
-        return false;
-
-    return MatchTester(View(self->path), _ZNK3WTF3URL4pathEv(url)).Test();
+const void* APS5_VABI WKUserContentURLPatternCopyScheme(const void* urlPatternRef) {
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(NKWebKit::Cast<NKWebKit::UserContentURLPattern>(urlPatternRef, __func__)->scheme));
 }
 
+const void* APS5_VABI WKUserContentURLPatternCopyHost(const void* urlPatternRef) {
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(NKWebKit::Cast<NKWebKit::UserContentURLPattern>(urlPatternRef, __func__)->host));
+}
+
+bool APS5_VABI WKUserContentURLPatternIsValid(const void* urlPatternRef) {
+    return NKWebKit::Cast<NKWebKit::UserContentURLPattern>(urlPatternRef, __func__)->valid;
+}
+
+bool APS5_VABI WKUserContentURLPatternMatchesSubdomains(const void* urlPatternRef) {
+    return NKWebKit::Cast<NKWebKit::UserContentURLPattern>(urlPatternRef, __func__)->matchSubdomains;
+}
+
+bool APS5_VABI WKUserContentURLPatternMatchesURL(const void* urlPatternRef, const void* urlRef) {
+    return MatchesURL(NKWebKit::Cast<NKWebKit::UserContentURLPattern>(urlPatternRef, __func__), NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__));
+}
 }
