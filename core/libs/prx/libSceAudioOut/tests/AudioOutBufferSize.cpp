@@ -107,6 +107,8 @@ extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
 extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return 1; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int, int) { return "Main speakers"; }
 extern "C" int SDLCALL SDL_GetAudioDeviceSpec(int, int, SDL_AudioSpec* spec) { *spec = {}; spec->channels = 2; return 0; }
+extern "C" int SDLCALL SDL_GetDefaultAudioInfo(char**, SDL_AudioSpec*, int) { return -1; }
+extern "C" void SDLCALL SDL_free(void*) {}
 extern "C" const char* SDLCALL SDL_GetCurrentAudioDriver() { return "dummy"; }
 extern "C" const char* SDLCALL SDL_GetError() { return "test error"; }
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int capture, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int) {

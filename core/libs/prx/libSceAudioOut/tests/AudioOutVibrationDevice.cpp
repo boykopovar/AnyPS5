@@ -201,6 +201,8 @@ extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
 extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return failEnumeration ? -1 : available ? 2 : 1; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int index, int) { return index == 0 ? "Main speakers" : "DualSense Wireless Controller"; }
 extern "C" int SDLCALL SDL_GetAudioDeviceSpec(int index, int, SDL_AudioSpec* spec) { *spec = {}; spec->channels = index == 0 ? 2 : 4; return 0; }
+extern "C" int SDLCALL SDL_GetDefaultAudioInfo(char**, SDL_AudioSpec*, int) { return -1; }
+extern "C" void SDLCALL SDL_free(void*) {}
 extern "C" const char* SDLCALL SDL_GetCurrentAudioDriver() { return pulse ? "pulseaudio" : "dummy"; }
 extern "C" const char* SDLCALL SDL_GetError() { return "test controller open failure"; }
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int capture, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int flags) {
