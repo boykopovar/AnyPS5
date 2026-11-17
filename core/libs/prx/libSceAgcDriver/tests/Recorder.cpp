@@ -1966,6 +1966,8 @@ std::atomic<std::uint64_t> countedSubmits{0};
 std::atomic<bool> refusedSubmits{false};
 std::atomic<unsigned> lostSubmits{0};
 std::atomic<unsigned> failingBarriers{0};
+std::atomic<unsigned> failingFences{0};
+PFN_vkWaitForFences passedWaitForFences = nullptr;
 VkDevice commandsDevice = VK_NULL_HANDLE;
 std::atomic<std::int64_t> liveCommandBuffers{0};
 
@@ -1985,6 +1987,14 @@ VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit(VkQueue queue, std::uint32_t 
         return VK_ERROR_DEVICE_LOST;
     }
     return passedQueueSubmit(queue, count, submits, fence);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL failingWaitForFences(VkDevice device, std::uint32_t count, const VkFence* fences, VkBool32 all, std::uint64_t timeout) {
+    if (failingFences.load() != 0) {
+        failingFences.fetch_sub(1);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return passedWaitForFences(device, count, fences, all, timeout);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL countingAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
@@ -2017,6 +2027,10 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL replayFailingDeviceProc(VkDevice device
     }
     if (std::strcmp(name, "vkEndCommandBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(failingEndCommandBuffer);
     if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(countingQueueSubmit);
+    if (std::strcmp(name, "vkWaitForFences") == 0) {
+        passedWaitForFences = reinterpret_cast<PFN_vkWaitForFences>(passedDeviceProc(device, name));
+        return reinterpret_cast<PFN_vkVoidFunction>(failingWaitForFences);
+    }
     return passedDeviceProc(device, name);
 }
 
@@ -2207,6 +2221,78 @@ void deferredBatchTests(const Device& device) {
         }
         Require(refused && countedSubmits.load() == submitted, "a direct batch reached vkQueueSubmit after the device was lost");
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, true);
+        Recorder recorder(failing, false, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
+        Require(!recorder.Deferred(), "APS5_DIRECT_BATCHES opened a deferred batch");
+        lostSubmits.store(1);
+        bool lost = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            lost = true;
+        }
+        Require(lost && lostSubmits.load() == 0, "the injected device loss of a direct batch did not surface at submit");
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto submitted = countedSubmits.load();
+        bool refused = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        Require(refused && countedSubmits.load() == submitted, "a batch reached vkQueueSubmit after a direct batch lost the device");
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, true);
+        Recorder recorder(failing, true, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
+        Require(!recorder.Deferred(), "APS5_DIRECT_BATCHES opened a deferred batch");
+        const auto serial = recorder.OpenBatchSerial();
+        std::atomic<bool> waiting{false};
+        auto waited = std::async(std::launch::async, [&] {
+            waiting.store(true);
+            try {
+                recorder.WaitSerial(serial);
+            } catch (const std::exception&) {
+                return true;
+            }
+            return false;
+        });
+        while (!waiting.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        refusedSubmits.store(true);
+        bool failed = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            failed = true;
+        }
+        refusedSubmits.store(false);
+        Require(failed, "the refused submission of a direct batch did not surface at submit");
+        if (waited.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+            std::fprintf(stderr, "a wait on the serial of a direct batch whose submission failed did not end\n");
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        Require(waited.get(), "a wait on the serial of a direct batch whose submission failed returned as if the batch completed");
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto submitted = countedSubmits.load();
+        bool refused = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        Require(refused && countedSubmits.load() == submitted, "a batch reached vkQueueSubmit after a direct batch's submission failed");
     }
     {
         Context failing = context;

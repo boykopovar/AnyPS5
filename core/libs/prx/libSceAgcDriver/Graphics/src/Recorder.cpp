@@ -4923,12 +4923,24 @@ void Recorder::Submit() {
     batch->submitStarted.store(true, std::memory_order_release);
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
     if (batch->sealed != nullptr) batch->sealed->Returned(result);
+    std::exception_ptr refused;
+    if (result != VK_SUCCESS) {
+        try {
+            Check(result, "vkQueueSubmit recorder");
+        } catch (...) {
+            refused = std::current_exception();
+        }
+        if (batch->sealed == nullptr) {
+            if (result == VK_ERROR_DEVICE_LOST) latch.LoseDevice(refused);
+            else latch.Fail(serial, refused);
+        }
+    }
     if (result == VK_ERROR_DEVICE_LOST) {
         const auto idle = context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device);
         if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
         if (batch->sealed != nullptr) batch->sealed->DeviceIdleAfterLoss();
     }
-    Check(result, "vkQueueSubmit recorder");
+    if (refused != nullptr) std::rethrow_exception(refused);
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
@@ -5076,11 +5088,11 @@ void Recorder::Sync() {
     PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
-    std::exception_ptr submitFailure;
+    std::exception_ptr failure;
     try {
         Submit();
     } catch (...) {
-        submitFailure = std::current_exception();
+        failure = std::current_exception();
     }
     // Counted only when something is waited for: an idle recorder's Sync is free and would only
     // swamp the site table with the callers that check nothing first.
@@ -5091,7 +5103,7 @@ void Recorder::Sync() {
         finish(std::move(batch), true, source);
     }
     activeSyncSite = previousSite;
-    if (submitFailure != nullptr) std::rethrow_exception(submitFailure);
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void Recorder::FlushDeferredReleases() {
