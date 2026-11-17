@@ -813,6 +813,21 @@ class ProgressTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_snapshots_with_a_duplicate_json_key_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "good.json"
+            good.write_text("{}", encoding="utf-8")
+            repeated = Path(directory) / "repeated.json"
+            repeated.write_text('{"libraries": {}, "nested": {"done_names": ["a", "b"], "done_names": ["a"]}}', encoding="utf-8")
+            for arguments in (["--compare", str(good), str(repeated)], ["--compare", str(repeated), str(good)],
+                              ["--open-pr-estimate", str(repeated), str(Path(directory) / "output")]):
+                with self.subTest(arguments[0], first=arguments[1] == str(repeated)):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(arguments)
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(f"{repeated}: duplicate JSON key 'done_names'", stderr.getvalue())
+
     def test_output_directory_that_cannot_be_written_is_named(self):
         libraries, shaders = self.library_snapshot()
         with tempfile.TemporaryDirectory() as directory:
@@ -893,6 +908,28 @@ class ProgressTests(unittest.TestCase):
             half = Path(directory) / "half tree"
             (half / "core" / "libs" / "prx").mkdir(parents=True)
             for name, path in (("missing", Path(directory) / "missing tree"), ("empty", empty), ("no opcodes", half)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
+                    self.assertIn(str(path), stderr.getvalue())
+
+    def test_root_with_an_unreadable_tree_is_not_a_source_tree(self):
+        opcodes = progress.OPCODES.relative_to(progress.ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            no_enum = Path(directory) / "no enum"
+            (no_enum / "core" / "libs" / "prx").mkdir(parents=True)
+            (no_enum / opcodes).parent.mkdir(parents=True)
+            (no_enum / opcodes).write_text("enum class Other {};\n", encoding="utf-8")
+            opcode_directory = Path(directory) / "opcode directory"
+            (opcode_directory / "core" / "libs" / "prx").mkdir(parents=True)
+            (opcode_directory / opcodes).mkdir(parents=True)
+            prx_file = Path(directory) / "prx file"
+            (prx_file / "core" / "libs").mkdir(parents=True)
+            (prx_file / "core" / "libs" / "prx").write_text("", encoding="utf-8")
+            for name, path in (("no enum", no_enum), ("opcode directory", opcode_directory), ("prx file", prx_file)):
                 with self.subTest(name):
                     stderr = io.StringIO()
                     with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
@@ -1024,6 +1061,99 @@ class ProgressConstantReturnTests(unittest.TestCase):
             "int APS5_VABI Updated(int value) { ++value; return 0; }\n")
         self.assertEqual(group["done_names"], ["Discarded", "Updated"])
         self.assertEqual(group["inert_names"], ["Discarded"])
+
+
+class ProgressOverloadTests(unittest.TestCase):
+    def scan(self, files):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            for name, source in files.items():
+                (library / name).parent.mkdir(parents=True, exist_ok=True)
+                (library / name).write_text(source, encoding="utf-8")
+            return progress.scan_library(library)
+
+    TYPES = ("struct Text { char* data; };\n"
+             "struct String { Text* text; };\n"
+             "struct Value { String* string; };\n"
+             "struct Holder { Value* value; };\n")
+
+    def test_reference_overloads_resolve_by_argument_type(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "void Destroy(Value& value) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI StringDestroy(String* self) { Destroy(*self); }\n"
+            "void APS5_VABI ValueDestroy(Value* self) { Destroy(*self); }\n"
+            "void APS5_VABI LocalDestroy() { String local{}; Destroy(local); }\n"})
+        self.assertEqual(group["done_names"], ["LocalDestroy", "StringDestroy"])
+        self.assertEqual(group["todo_names"], ["ValueDestroy"])
+
+    def test_unknown_argument_types_keep_every_overload(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "void Destroy(Value& value) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI Member(Holder* holder) { Destroy(*holder->value); }\n"
+            "void APS5_VABI Deduced(String* self) { auto& other = *self; Destroy(other); }\n"
+            "void APS5_VABI Shadowed(String* self, Value* other) { [&](Value* self) { Destroy(*self); }(other); }\n"})
+        self.assertEqual(group["done_names"], [])
+        self.assertEqual(group["todo_names"], ["Deduced", "Member", "Shadowed"])
+
+    def test_overloads_resolve_by_argument_count(self):
+        group = self.scan({"Export.cpp":
+            "void Release(void* memory) { free(memory); }\n"
+            "void Release(int context, void* memory) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void Fill(void* memory, int value = 0) { memset(memory, value, 4); }\n"
+            "void Fill(void* memory, int value, int count, int stride) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI One(void* memory) { Release(memory); Fill(memory); Fill(memory, 1); }\n"
+            "void APS5_VABI Two(void* memory) { Release(0, memory); }\n"
+            "void APS5_VABI Four(void* memory) { Fill(memory, 1, 2, 3); }\n"})
+        self.assertEqual(group["done_names"], ["One"])
+        self.assertEqual(group["todo_names"], ["Four", "Two"])
+
+    def test_templates_packs_and_bases_stay_conservative(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "struct Derived : Value {};\n"
+            "using Node = Value;\n"
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "template<typename T>\nvoid Destroy(T*& pointer) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void Clear(String& string) { string.text = nullptr; }\n"
+            "void Clear(Node& node) { NotImplemented_nid_no_patch(__func__); }\n"
+            "template<typename... TArgs>\nvoid Forward(const TArgs&... arguments) { Destroy(arguments...); }\n"
+            "void APS5_VABI ByValue(String* self) { Destroy(*self); }\n"
+            "void APS5_VABI ByPointer(String* self) { Destroy(self); }\n"
+            "void APS5_VABI ByBase(Derived* self) { Clear(*self); }\n"
+            "void APS5_VABI ByAlias(Value* self) { Clear(*self); }\n"
+            "void APS5_VABI ByPack(String* self) { Forward(*self); }\n"})
+        self.assertEqual(group["done_names"], ["ByValue"])
+        self.assertEqual(group["todo_names"], ["ByAlias", "ByBase", "ByPack", "ByPointer"])
+
+    def test_exports_follow_the_classification_of_called_exports(self):
+        group = self.scan({
+            "Export.cpp":
+                "int APS5_VABI Primary() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                "int APS5_VABI Ready() { return 0; }\n"
+                "int APS5_VABI PrimaryAlias() { return Primary(); }\n"
+                "int APS5_VABI ReadyAlias() { return Ready(); }\n"
+                "int APS5_VABI Member(Object* object) { return object->Primary(); }\n"
+                "int Forward_nid_no_patch() { return Primary(); }\n"
+                "int APS5_VABI Internal() { return Forward_nid_no_patch(); }\n",
+            "Other.cpp":
+                "int APS5_VABI Primary();\n"
+                "static int Helper() { return Primary(); }\n"
+                "int APS5_VABI OtherAlias() { return Helper(); }\n"})
+        self.assertEqual(group["done_names"], ["Member", "Ready", "ReadyAlias"])
+        self.assertEqual(group["todo_names"], ["Internal", "OtherAlias", "Primary", "PrimaryAlias"])
+
+    def test_called_export_with_an_implemented_definition_counts_as_implemented(self):
+        group = self.scan({"Export.cpp":
+            "#ifdef __EMSCRIPTEN__\n"
+            "int APS5_VABI Twice() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+            "#else\n"
+            "int APS5_VABI Twice() { return 2; }\n"
+            "#endif\n"
+            "int APS5_VABI TwiceAlias() { return Twice(); }\n"})
+        self.assertEqual(group["done_names"], ["Twice", "TwiceAlias"])
+        self.assertEqual(group["todo_names"], [])
 
 
 if __name__ == "__main__":
