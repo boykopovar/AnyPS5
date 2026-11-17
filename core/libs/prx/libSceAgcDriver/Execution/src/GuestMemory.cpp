@@ -2973,7 +2973,7 @@ bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t ge
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
-    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return false;
+    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return true;
     return tracker.driverStoredOver(address, address + bytes, generation);
 }
 
