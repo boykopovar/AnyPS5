@@ -134,6 +134,7 @@ void SetLeftWatchCompare(bool compare);
 void SeedComparedPages(std::uint64_t address, std::span<const std::byte> bytes);
 void UpdateComparedPages(std::uint64_t address, std::span<const std::byte> bytes);
 void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed);
+void SetComparedDecisionHookForTest(void (*hook)());
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites

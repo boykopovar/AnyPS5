@@ -2306,6 +2306,7 @@ struct ComparedPage {
 
 std::atomic<bool> leftWatchCompare{false};
 std::mutex comparedMutex;
+std::atomic<void (*)()> comparedDecisionHookForTest{nullptr};
 std::map<std::uint64_t, ComparedPage> comparedPages;
 
 template<typename Each>
@@ -2466,11 +2467,7 @@ void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<
         for (auto found = comparedPages.lower_bound(address & ~std::uint64_t{WritePageBytes - 1}); found != comparedPages.end() && found->first < end; ++found) pages.push_back(*found);
     }
     std::vector<std::uint64_t> addresses;
-    std::vector<std::uint64_t> watchedAgain;
-    for (const auto& [page, compared] : pages) {
-        addresses.push_back(page);
-        if (Watched(page, WritePageBytes)) watchedAgain.push_back(page);
-    }
+    for (const auto& [page, compared] : pages) addresses.push_back(page);
     const auto hashes = hashGuestPages(addresses);
     for (std::size_t index = 0; index < pages.size(); ++index) {
         const auto& [page, compared] = pages[index];
@@ -2481,9 +2478,20 @@ void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<
         if (!changed.empty() && changed.back().second == begin) changed.back().second = stop;
         else changed.emplace_back(begin, stop);
     }
-    if (watchedAgain.empty()) return;
+    if (pages.empty()) return;
+    if (const auto hook = comparedDecisionHookForTest.load(std::memory_order_acquire)) hook();
+    auto& tracker = Tracker();
+    const auto trackerLock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return;
     const std::lock_guard lock(comparedMutex);
-    for (const auto page : watchedAgain) comparedPages.erase(page);
+    for (const auto page : addresses) {
+        if (tracker.covers(page, WritePageBytes)) comparedPages.erase(page);
+    }
+}
+
+void SetComparedDecisionHookForTest(void (*hook)()) {
+    comparedDecisionHookForTest.store(hook, std::memory_order_release);
 }
 
 bool UnwatchWritesProven() {

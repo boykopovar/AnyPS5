@@ -10,6 +10,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <limits>
 #include <string_view>
+#include <span>
 #include <barrier>
 #include <new>
 
@@ -416,6 +417,38 @@ void testStoreAfterUnwatch(const std::filesystem::path& directory) {
     expect(imported + 16, std::byte{0x53}, "the CPU store to that page after the next memory delta");
     expect(neighbor, std::byte{0x52}, "the CPU store to the watched page beside it in the same block");
     if (!failures.empty()) throw std::runtime_error(failures);
+}
+
+std::byte* comparedRacePage = nullptr;
+
+void unwatchComparedRacePage() {
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+    check(AgcDriver::GuestMemory::ImportWatched(address(comparedRacePage), 4096, [] { return true; }, false), "the import of the page failed");
+    std::fill_n(comparedRacePage + 32, 16, std::byte{0x5c});
+}
+
+void testComparedUnwatchRace() {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    comparedRacePage = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    struct ComparedReset {
+        ~ComparedReset() {
+            AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+            AgcDriver::GuestMemory::SetLeftWatchCompare(false);
+        }
+    } reset;
+    AgcDriver::GuestMemory::SetLeftWatchCompare(true);
+    check(AgcDriver::GuestMemory::Watched(address(comparedRacePage), Page), "the page is not in the write watch");
+    AgcDriver::GuestMemory::SeedComparedPages(address(comparedRacePage), std::span<const std::byte>(comparedRacePage, Page));
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> changed;
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(&unwatchComparedRacePage);
+    AgcDriver::GuestMemory::ChangedComparedPages(address(comparedRacePage), Page, changed);
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+    check(!AgcDriver::GuestMemory::Watched(address(comparedRacePage), Page), "the import left the page in the write watch");
+    AgcDriver::GuestMemory::ChangedComparedPages(address(comparedRacePage), Page, changed);
+    if (changed.empty()) throw std::runtime_error("the CPU store to a page that left the write watch while its compare entry was being checked was not reported");
 }
 
 #ifdef _WIN32
@@ -1148,6 +1181,7 @@ int main(int argc, char** argv) {
         else if (mode == "late_clear") testLateClear(directory);
         else if (mode == "store_between_walks") testStoreBetweenWalks(directory);
         else if (mode == "store_after_unwatch") testStoreAfterUnwatch(directory);
+        else if (mode == "compared_unwatch_race") testComparedUnwatchRace();
         else if (mode == "store_window") testStoreWindow(directory);
         else if (mode == "store_window_unwritten") testStoreWindowUnwritten(directory);
         else if (mode == "store_window_stopped") testStoreWindowStopped(directory);
