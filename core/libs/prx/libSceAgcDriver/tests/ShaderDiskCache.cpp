@@ -14,6 +14,7 @@
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -558,6 +559,96 @@ void verifyEntryRoundTrip() {
     require(ShaderDiskCache::DecodeEntry(incompatibleFile, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with an incompatible runtime ABI loads");
 }
 
+void verifyZstdRoundTrip() {
+    SampleRequest sample;
+    const auto key = sample.Key();
+    auto variant = sampleVariant();
+    variant.artifact.spirv = std::vector<std::uint32_t>(32768u);
+    for (std::size_t index = 0; index < variant.artifact.spirv.size(); ++index) variant.artifact.spirv[index] = static_cast<std::uint32_t>(index % 127u) * 0x01010101u;
+    setEnvironment("APS5_NO_SHADER_CACHE_ZSTD", "");
+    const auto compressed = ShaderDiskCache::EncodeEntry(key, variant);
+    setEnvironment("APS5_NO_SHADER_CACHE_ZSTD", "1");
+    const auto raw = ShaderDiskCache::EncodeEntry(key, variant);
+    setEnvironment("APS5_NO_SHADER_CACHE_ZSTD", "");
+    require(compressed.size() * 2u < raw.size(), "SPIR-V zstd did not reduce the encoded entry");
+    auto stored = std::make_shared<const std::vector<std::byte>>(compressed);
+    CompiledVariant decoded;
+    require(ShaderDiskCache::DecodeEntry(*stored, key, decoded, stored) == ShaderDiskCache::LoadStatus::Loaded, "a compressed entry does not decode");
+    require(decoded.artifact.spirv.Compressed() && !decoded.artifact.spirv.Materialized(), "compressed SPIR-V was materialized while loading");
+    require(decoded.artifact.spirv.ContentHash() == variant.artifact.spirv.ContentHash() && decoded.artifact.spirv.size() == variant.artifact.spirv.size(), "compressed SPIR-V metadata differs without materialization");
+    require(!decoded.artifact.spirv.Materialized(), "compressed SPIR-V metadata materialized the payload");
+    {
+        const auto words = decoded.artifact.spirv.Words();
+        require(decoded.artifact.spirv.Materialized() && std::ranges::equal(words, variant.artifact.spirv.Words()), "compressed SPIR-V does not round trip through a lease");
+    }
+    require(!decoded.artifact.spirv.Materialized(), "a released SPIR-V lease retained its decompressed words");
+    CompiledVariant rawDecoded;
+    require(ShaderDiskCache::DecodeEntry(raw, key, rawDecoded) == ShaderDiskCache::LoadStatus::Loaded && !rawDecoded.artifact.spirv.Compressed(), "the zstd kill switch did not write raw SPIR-V");
+    requireSameVariant(variant, rawDecoded, "raw kill switch round trip");
+    auto journal = sampleResult();
+    journal.spirv = std::vector<std::uint32_t>(16384u, 0x12345678u);
+    std::vector<std::byte> journalBytes;
+    ShaderDiskCache::EncodeResult(journal, journalBytes);
+    RecompileResult journalDecoded;
+    require(ShaderDiskCache::DecodeResult(journalBytes, journalDecoded) && !journalDecoded.spirv.Compressed(), "the pipeline journal SPIR-V codec is compressed instead of raw");
+    require(std::ranges::equal(journalDecoded.spirv.Words(), journal.spirv.Words()), "the pipeline journal SPIR-V changed");
+    auto corrupt = compressed;
+    corrupt[corrupt.size() - 5u] ^= std::byte{0x40};
+    require(ShaderDiskCache::DecodeEntry(corrupt, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a corrupt compressed entry loads");
+    require(ShaderDiskCache::DecodeEntry(std::span(compressed).first(compressed.size() / 2u), key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a truncated compressed entry loads");
+}
+
+void verifyZstdConcurrent() {
+    SampleRequest sample;
+    const auto key = sample.Key();
+    auto variant = sampleVariant();
+    variant.artifact.spirv = std::vector<std::uint32_t>(16384u, 0x12345678u);
+    const auto file = ShaderDiskCache::EncodeEntry(key, variant);
+    auto stored = std::make_shared<const std::vector<std::byte>>(file);
+    CompiledVariant decoded;
+    require(ShaderDiskCache::DecodeEntry(*stored, key, decoded, stored) == ShaderDiskCache::LoadStatus::Loaded && decoded.artifact.spirv.Compressed(), "the concurrent fixture is not compressed");
+    std::atomic<bool> start{false};
+    std::atomic<unsigned> ready{0};
+    std::vector<std::future<void>> readers;
+    for (unsigned thread = 0; thread < 8u; ++thread) {
+        readers.push_back(std::async(std::launch::async, [&] {
+            ready.fetch_add(1u, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+            for (unsigned iteration = 0; iteration < 64u; ++iteration) {
+                const auto words = decoded.artifact.spirv.Words();
+                require(words.size() == variant.artifact.spirv.size() && words.front() == 0x12345678u && words.back() == 0x12345678u, "a concurrent compressed lease returned other words");
+                require(decoded.artifact.spirv.ContentHash() == variant.artifact.spirv.ContentHash(), "a concurrent compressed read changed the identity");
+            }
+        }));
+    }
+    while (ready.load(std::memory_order_acquire) != readers.size()) std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    for (auto& reader : readers) reader.get();
+    require(!decoded.artifact.spirv.Materialized(), "concurrent readers retained decompressed SPIR-V after their leases");
+}
+
+void verifyLeaseLifetime() {
+    const std::vector<std::uint32_t> expected{spv::MagicNumber, 0x00010000u, 1u, 2u, 3u};
+    SharedSpirv::Lease raw;
+    {
+        SharedSpirv owned(expected);
+        raw = owned.Words();
+    }
+    require(std::ranges::equal(raw, expected), "a raw SPIR-V lease did not retain its owner");
+    SampleRequest sample;
+    const auto key = sample.Key();
+    auto variant = sampleVariant();
+    variant.artifact.spirv = std::vector<std::uint32_t>(16384u, 0x12345678u);
+    const auto file = ShaderDiskCache::EncodeEntry(key, variant);
+    SharedSpirv::Lease compressed;
+    {
+        CompiledVariant decoded;
+        require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded && decoded.artifact.spirv.Compressed(), "the lease lifetime fixture is not compressed");
+        compressed = decoded.artifact.spirv.Words();
+    }
+    require(std::ranges::equal(compressed, variant.artifact.spirv.Words()), "a compressed SPIR-V lease did not retain its decompressed owner");
+}
+
 std::vector<std::byte> packBytes(const std::vector<std::pair<std::vector<std::byte>, std::vector<std::byte>>>& entries) {
     using namespace ShaderRecompiler::ShaderDiskCache;
     std::vector<PackRecord> records;
@@ -592,30 +683,30 @@ void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
     require(WriteFileAtomically(path, packBytes({{key, EncodeEntry(key, variant)}})), "cannot write the ownership test pack");
     CompiledVariant first, second;
     PackLoadTimings timings;
-    const std::uint32_t* words = nullptr;
+    const std::byte* storedWords = nullptr;
     {
         CachePack pack(path);
         require(pack.Valid(), "the ownership test pack is invalid");
         require(pack.Load(key, first, timings) == LoadStatus::Loaded, "cannot load the first packed variant");
         require(pack.Load(key, second, timings) == LoadStatus::Loaded, "cannot load the second packed variant");
-        words = first.artifact.spirv.Words().data();
-        require(!first.artifact.spirv.empty() && words == second.artifact.spirv.Words().data(), "packed SPIR-V was copied instead of sharing its mapping");
+        storedWords = first.artifact.spirv.MappedBytes().data();
+        require(!first.artifact.spirv.empty() && storedWords == second.artifact.spirv.MappedBytes().data(), "packed SPIR-V was copied instead of sharing its mapping");
     }
     requireSameVariant(variant, first, "packed variant outlives its pack");
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
+    require(VirtualQuery(storedWords, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
 #endif
     auto edited = first.artifact.spirv;
     edited[0] ^= 1u;
-    require(edited.Words().data() != words && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
+    require(!edited.Compressed() && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
     first = {};
     requireSameVariant(variant, second, "last packed variant retains its mapping");
     std::vector<std::byte> published;
     require(ReadWholeFile(path, published) && published == packBytes({{key, EncodeEntry(key, variant)}}), "editing packed SPIR-V modified the cache file");
     second = {};
 #ifdef _WIN32
-    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
+    require(VirtualQuery(storedWords, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
 #endif
     const auto offset = sizeof(PackHeader) + sizeof(PackRecord);
     published.insert(published.begin() + offset, std::byte{});
@@ -633,7 +724,9 @@ void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
         CachePack pack(path);
         require(pack.Valid(), "an unaligned packed entry was rejected");
         require(pack.Load(key, first, timings) == LoadStatus::Loaded && pack.Load(key, second, timings) == LoadStatus::Loaded, "an unaligned packed entry did not load");
-        require(first.artifact.spirv.Words().data() != second.artifact.spirv.Words().data(), "an unaligned packed module did not use aligned owned storage");
+        const auto firstWords = first.artifact.spirv.Words();
+        const auto secondWords = second.artifact.spirv.Words();
+        require(firstWords.data() != secondWords.data(), "an unaligned packed module did not use aligned owned storage");
     }
     requireSameVariant(variant, first, "unaligned packed variant outlives its pack");
     requireSameVariant(variant, second, "second unaligned packed variant outlives its pack");
@@ -1234,20 +1327,20 @@ void verifyPersist() {
     const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "persisted SPIR-V is not a mapped cache entry");
+    require(VirtualQuery(persisted->artifact.spirv.MappedBytes().data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "persisted SPIR-V is not a mapped cache entry");
     const auto close = [](void* handle) { CloseHandle(handle); };
     std::unique_ptr<void, decltype(close)> writer(CreateFileW(path.c_str(), GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr), close);
     require(writer.get() != INVALID_HANDLE_VALUE, "cannot retain the published cache writer");
     CompiledVariant loaded;
     require(ShaderDiskCache::Load(key, loaded), "cannot load a cache entry while its writer retains rename access");
     const auto& loadedWords = loaded.artifact.spirv;
-    require(VirtualQuery(loadedWords.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "cache loading with a retained writer did not map the entry");
+    require(VirtualQuery(loadedWords.MappedBytes().data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "cache loading with a retained writer did not map the entry");
     writer.reset();
 #endif
     requireSameVariant(variant, *persisted, "persist round trip");
     auto detached = persisted->artifact.spirv;
     detached[0] ^= 1u;
-    require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
+    require(detached[0] != persisted->artifact.spirv.Words()[0], "changing a copied mapped module changed its owner");
 #ifdef _WIN32
     if (PosixReplaceUnsupported(path.parent_path())) {
         std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so a mapped persisted entry cannot be replaced there; skipping that check\n", path.parent_path().string().c_str());
@@ -1268,15 +1361,22 @@ void verifyReleaseMapped() {
     require(!owned.Mapped() && std::ranges::equal(words, owned.Words()), "releasing an owned module changed its words");
     SampleRequest sample;
     const auto key = sample.Key();
-    const auto variant = sampleVariant();
+    const auto variant = [&] {
+        auto large = sampleVariant();
+        large.artifact.spirv = std::vector<std::uint32_t>(16384u, 0x12345678u);
+        return large;
+    }();
     const auto persisted = ShaderDiskCache::Persist(key, variant);
     require(persisted != nullptr, "a persisted entry was not read back");
+    require(persisted->artifact.spirv.Compressed() && !persisted->artifact.spirv.Materialized(), "persisting compressed SPIR-V materialized it");
 #ifdef _WIN32
     require(persisted->artifact.spirv.Mapped(), "persisted SPIR-V is not a mapped cache entry");
 #endif
     ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
     ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
+    require(!persisted->artifact.spirv.Materialized(), "releasing compressed pages materialized SPIR-V");
     requireSameArtifact(variant.artifact, persisted->artifact, "a mapped entry whose pages were released");
+    require(!persisted->artifact.spirv.Materialized(), "comparing compressed SPIR-V retained its decompressed words");
 }
 
 #ifdef _WIN32
@@ -1316,7 +1416,7 @@ void verifyLongHostPaths() {
             "the long-path cache entry was not correctly published before mapping");
     require(persisted != nullptr, "a long-path cache entry was not persisted and mapped");
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED,
+    require(VirtualQuery(persisted->artifact.spirv.MappedBytes().data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED,
             "long-path persisted SPIR-V is not mapped");
     requireSameVariant(variant, *persisted, "long-path persist round trip");
     CompiledVariant loaded;
@@ -1485,7 +1585,7 @@ void verifyInvocationIsolation() {
     require(first.variantId != 0 && first.variantId == second.variantId, "a buffer address change did not reuse the artifact");
     require(second.cacheHit, "the second invocation missed the compiled cache");
     requireSameArtifact(first, second, "invocations sharing an artifact");
-    require(first.spirv.data() == second.spirv.data(), "invocations duplicated SPIR-V storage");
+    require(first.spirv.Words().data() == second.spirv.Words().data(), "invocations duplicated SPIR-V storage");
     require(!sameBindings(first.bindings, second.bindings) || first.pushConstants != second.pushConstants, "the second invocation reused stale resource data");
     request.userData[0] -= 0x10000u;
     const auto restored = Recompile(request.request);
@@ -1508,17 +1608,17 @@ void verifyInvocationIsolation() {
         const auto changed = Recompile(request.request);
         require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
-            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
+            require(first.spirv.Words().data() == changed.spirv.Words().data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
         }
         if (descriptor[2] == 0u) {
-            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            require(first.spirv.Words().data() == changed.spirv.Words().data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
             continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
         requireSameResult(Recompile(fresh.request), changed, "reused binding plan against fresh compilation");
         const auto repeated = Recompile(request.request);
-        require(changed.spirv.data() == repeated.spirv.data() && changed.PipelineVariantId() == repeated.PipelineVariantId(), "buffer specialization did not reuse its module");
+        require(changed.spirv.Words().data() == repeated.spirv.Words().data() && changed.PipelineVariantId() == repeated.PipelineVariantId(), "buffer specialization did not reuse its module");
     }
     request.userData = original;
     request.userData[3] |= 0x40000000u;
@@ -1537,11 +1637,12 @@ void verifyBufferAlignmentSpecialization() {
     const auto misses = diskMisses();
     const auto aligned = Recompile(request.request);
     const auto countAtomics = [](const RecompileResult& result) {
+        const auto words = result.spirv.Words();
         std::size_t atomics = 0;
-        for (std::size_t cursor = 5; cursor < result.spirv.size();) {
-            const auto count = result.spirv[cursor] >> 16u;
-            require(count != 0u && count <= result.spirv.size() - cursor, "invalid specialized buffer instruction");
-            if ((result.spirv[cursor] & 0xffffu) == spv::OpAtomicCompareExchange) ++atomics;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0u && count <= words.size() - cursor, "invalid specialized buffer instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpAtomicCompareExchange) ++atomics;
             cursor += count;
         }
         return atomics;
@@ -1554,11 +1655,11 @@ void verifyBufferAlignmentSpecialization() {
         require(countAtomics(unaligned) == 2u, "unaligned DWORD store did not split into two atomic updates");
         request.userData[0] += 0x10000u;
         const auto relocated = Recompile(request.request);
-        require(unaligned.spirv.data() == relocated.spirv.data(), "relocation with unchanged alignment rebuilt the buffer specialization");
+        require(unaligned.spirv.Words().data() == relocated.spirv.Words().data(), "relocation with unchanged alignment rebuilt the buffer specialization");
     }
     request.userData[0] = 0x10000000u;
     const auto restored = Recompile(request.request);
-    require(restored.spirv.data() == aligned.spirv.data(), "unaligned buffers replaced the aligned specialization");
+    require(restored.spirv.Words().data() == aligned.spirv.Words().data(), "unaligned buffers replaced the aligned specialization");
 }
 
 void verifyBindingPlanSelection() {
@@ -2893,6 +2994,7 @@ std::filesystem::path planEntryPath(PlanFixture& fixture) {
 
 int runPlanLoadingProcess(std::string_view mode) {
     if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
+    if (mode == "--load-plan-zstd-off") setEnvironment("APS5_NO_SHADER_CACHE_ZSTD", "1");
     if (mode == "--load-plan-off") setEnvironment("APS5_NO_PERF_DISK_PLANS", "1");
     if (mode == "--load-plan-reuse-off") {
         setEnvironment("APS5_NO_TABLE_SNAPSHOT_REUSE", "1");
@@ -2911,7 +3013,7 @@ int runPlanLoadingProcess(std::string_view mode) {
         std::cout << "a process with another switch value rebuilt all " << count << " plans\n";
         return 0;
     }
-    if (mode == "--load-plan") {
+    if (mode == "--load-plan" || mode == "--load-plan-zstd-off") {
         require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "the second process ran the front end" + counts);
     } else if (mode == "--load-plan-reuse-off") {
         require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "turning the image table reuse off changed the stored plan or variant keys" + counts);
@@ -2977,6 +3079,7 @@ void verifyPlanAcrossProcesses(const char* self) {
         const std::string command = "\"" + std::string(self) + "\" " + mode;
         require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
     };
+    run("--load-plan-zstd-off");
     run("--load-plan");
     run("--load-plan-off");
     run("--load-plan-reuse-off");
@@ -3037,6 +3140,13 @@ int main(int argc, char** argv) {
             std::cout << "artifact codec tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--zstd-codec") {
+            verifyZstdRoundTrip();
+            verifyZstdConcurrent();
+            verifyLeaseLifetime();
+            std::cout << "zstd codec tests passed\n";
+            return 0;
+        }
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--host-stderr") {
             verifyHostStandardError();
@@ -3065,6 +3175,9 @@ int main(int argc, char** argv) {
         verifyResultRoundTrip();
         verifyElementFlags();
         verifyEntryRoundTrip();
+        verifyZstdRoundTrip();
+        verifyZstdConcurrent();
+        verifyLeaseLifetime();
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
         verifyHashBytes();

@@ -44,6 +44,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_NO_SHADER_CACHE` | string | `core/shader/recompiler/ShaderDiskCache.cpp` |  | disables the on-disk shader cache when set to a non-empty value other than 0 |
 | `ANYPS5_SHADER_CACHE_DIR` | string | `core/shader/recompiler/ShaderDiskCache.cpp` |  | directory for the on-disk shader cache, overriding the one beside the executable |
+| `APS5_NO_SHADER_CACHE_ZSTD` | string | `core/shader/recompiler/ShaderDiskCache.cpp` |  | writes uncompressed SPIR-V payloads when set to a non-empty value other than 0; compressed and raw entries in the current format remain readable |
 | `APS5_BDA_BYTE_READS` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvBdaRead.cpp` |  | forces one address lookup and byte load per byte for BDA reads instead of a wide dword load |
 | `APS5_BDA_DWORD_STORES` | presence | `core/shader/recompiler/Translation/src/MemoryInstructions/FlatInstructions.cpp` |  | reverts BDA writes to one address store per dword instead of a wide multi-dword store |
 | `APS5_COHERENT_ATOMIC_LOADS` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvRuntimeBuffer.cpp` |  | emits `glc` buffer loads as device-scope relaxed atomic loads instead of volatile loads, for compute programs that wait for another workgroup's flag ([shader debt](debt/shader.md)) |

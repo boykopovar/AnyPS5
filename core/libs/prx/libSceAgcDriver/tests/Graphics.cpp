@@ -14743,9 +14743,9 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         const auto& constFirst = first;
         auto copy = first;
         const auto& constCopy = copy;
-        Require(!constFirst.Identity().Empty() && constFirst.Identity() == constCopy.Identity() && constFirst.spirv.data() == constCopy.spirv.data(), "a copied result did not share its module and identity");
+        Require(!constFirst.Identity().Empty() && constFirst.Identity() == constCopy.Identity() && constFirst.spirv.Words().data() == constCopy.spirv.Words().data(), "a copied result did not share its module and identity");
         copy.spirv[8] = 99;
-        Require(!(constCopy.Identity() == constFirst.Identity()) && constCopy.spirv.data() != constFirst.spirv.data() && constFirst.Identity() == module(1).Identity(), "writing a copied module did not give it an identity of its own");
+        Require(!(constCopy.Identity() == constFirst.Identity()) && constCopy.spirv.Words().data() != constFirst.spirv.Words().data() && constFirst.Identity() == module(1).Identity(), "writing a copied module did not give it an identity of its own");
         auto specialized = module(1);
         specialized.specialization.push_back({3, 4});
         Require(!(specialized.Identity() == constFirst.Identity()), "specialization constants did not enter the identity");

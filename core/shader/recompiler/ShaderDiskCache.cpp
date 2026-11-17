@@ -44,6 +44,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <zstd.h>
 
 namespace ShaderRecompiler {
 
@@ -172,6 +173,27 @@ struct FileHeader {
     std::uint64_t keyHash;
     std::uint64_t payloadHash;
 };
+
+enum class SpirvCodec : std::uint32_t {
+    Raw,
+    Zstd,
+};
+
+bool ZstdEnabled() {
+    const char* disabled = std::getenv("APS5_NO_SHADER_CACHE_ZSTD");
+    return disabled == nullptr || *disabled == '\0' || std::strcmp(disabled, "0") == 0;
+}
+
+std::shared_ptr<const std::vector<std::uint32_t>> MaterializeZstd(std::span<const std::byte> bytes, std::size_t wordCount, SpirvContentHash expectedHash) {
+    auto words = std::make_shared<std::vector<std::uint32_t>>(wordCount);
+    const auto expectedBytes = wordCount * sizeof(std::uint32_t);
+    const auto written = ZSTD_decompress(words->data(), expectedBytes, bytes.data(), bytes.size());
+    if (ZSTD_isError(written)) throw std::runtime_error(std::string("shader disk cache: zstd SPIR-V decompression failed: ") + ZSTD_getErrorName(written));
+    if (written != expectedBytes) throw std::runtime_error("shader disk cache: zstd SPIR-V returned a different byte count");
+    const SpirvContentHash hash{HashSpirvWords(*words, 0x5eed5a1d00000001ull), HashSpirvWords(*words, 0x5eed5a1d00000002ull)};
+    if (hash != expectedHash) throw std::runtime_error("shader disk cache: decompressed SPIR-V content hash differs");
+    return words;
+}
 
 std::size_t PayloadOffset(std::size_t keyBytes) {
     constexpr std::size_t alignment = 8;
@@ -306,6 +328,28 @@ public:
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
 
+    void Spirv(const SharedSpirv& spirv, bool compress) {
+        const auto words = spirv.Words();
+        const auto raw = std::as_bytes(std::span<const std::uint32_t>(words));
+        const auto hash = spirv.ContentHash();
+        SpirvCodec codec = SpirvCodec::Raw;
+        std::vector<std::byte> compressed;
+        if (compress && ZstdEnabled() && !words.empty()) {
+            compressed.resize(ZSTD_compressBound(raw.size()));
+            const auto written = ZSTD_compress(compressed.data(), compressed.size(), raw.data(), raw.size(), 1);
+            if (ZSTD_isError(written)) throw std::runtime_error(std::string("shader disk cache: zstd SPIR-V compression failed: ") + ZSTD_getErrorName(written));
+            compressed.resize(written);
+            if (written < raw.size()) codec = SpirvCodec::Zstd;
+        }
+        Value(codec);
+        Value<std::uint64_t>(words.size());
+        Value(hash.low);
+        Value(hash.high);
+        const auto stored = codec == SpirvCodec::Zstd ? std::span<const std::byte>(compressed) : raw;
+        Value<std::uint64_t>(stored.size());
+        out.insert(out.end(), stored.begin(), stored.end());
+    }
+
     void Flags(const ElementFlags& flags) {
         Value<std::uint64_t>(flags.size());
         for (const bool flag : flags) Value(flag);
@@ -396,15 +440,46 @@ public:
     }
 
     SharedSpirv Spirv() {
-        const auto count = Count(sizeof(std::uint32_t));
-        const auto* first = bytes.data() + position;
-        position += count * sizeof(std::uint32_t);
-        if (owner != nullptr && reinterpret_cast<std::uintptr_t>(first) % alignof(std::uint32_t) == 0) {
-            return SharedSpirv(owner, std::span(reinterpret_cast<const std::uint32_t*>(first), count));
+        const auto codec = Get<SpirvCodec>();
+        const auto encodedCount = Get<std::uint64_t>();
+        const SpirvContentHash hash{Get<std::uint64_t>(), Get<std::uint64_t>()};
+        const auto byteCount = Count(1);
+        if (!ok || encodedCount > std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t)) {
+            ok = false;
+            return {};
         }
-        std::vector<std::uint32_t> words(count);
-        if (count != 0) std::memcpy(words.data(), first, count * sizeof(std::uint32_t));
-        return SharedSpirv(std::move(words));
+        const auto wordCount = static_cast<std::size_t>(encodedCount);
+        const auto expectedBytes = wordCount * sizeof(std::uint32_t);
+        auto payload = bytes.subspan(position, byteCount);
+        position += byteCount;
+        if (codec == SpirvCodec::Raw) {
+            if (byteCount != expectedBytes) {
+                ok = false;
+                return {};
+            }
+            const auto* first = payload.data();
+            if (owner != nullptr && reinterpret_cast<std::uintptr_t>(first) % alignof(std::uint32_t) == 0) return SharedSpirv(owner, std::span(reinterpret_cast<const std::uint32_t*>(first), wordCount));
+            std::vector<std::uint32_t> words(wordCount);
+            if (wordCount != 0) std::memcpy(words.data(), first, expectedBytes);
+            return SharedSpirv(std::move(words));
+        }
+        if (codec != SpirvCodec::Zstd || wordCount == 0u || payload.empty()) {
+            ok = false;
+            return {};
+        }
+        const auto frameBytes = ZSTD_findFrameCompressedSize(payload.data(), payload.size());
+        const auto contentBytes = ZSTD_getFrameContentSize(payload.data(), payload.size());
+        if (ZSTD_isError(frameBytes) || frameBytes != payload.size() || contentBytes != expectedBytes) {
+            ok = false;
+            return {};
+        }
+        std::shared_ptr<const void> storage = owner;
+        if (storage == nullptr) {
+            auto copy = std::make_shared<const std::vector<std::byte>>(payload.begin(), payload.end());
+            payload = std::span<const std::byte>(*copy);
+            storage = std::move(copy);
+        }
+        return SharedSpirv(std::move(storage), payload, wordCount, hash, owner != nullptr, MaterializeZstd);
     }
 
     void Flags(ElementFlags& flags) {
@@ -558,9 +633,9 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.List(binding.imageOverwrites, 133, [](Reader& in, ImageOverwrite& proof) { decodeOverwrite(in, proof); });
 }
 
-void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
+void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result, bool compressSpirv) {
     writer.Value(result.runtimeAbiVersion);
-    writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
+    writer.Spirv(result.spirv, compressSpirv);
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.windowLaneGuards);
     writer.Value(result.descriptorFaults);
@@ -1474,6 +1549,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_DUMP_SPIRV",
     "APS5_NO_CODE_HASH_KEY",
     "APS5_NO_FAILURE_MEMO",
+    "APS5_NO_SHADER_CACHE_ZSTD",
     "APS5_NO_PERF_FRONTEND_PAIR",
     "APS5_NO_PERF_DISK_PLANS",
     "APS5_NO_PERF_DOM_INTERSECTION",
@@ -2026,7 +2102,7 @@ std::string EntryName(std::span<const std::byte> key) {
 
 void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out) {
     Writer writer(out);
-    encodeArtifact(writer, result);
+    encodeArtifact(writer, result, false);
     encodeInvocation(writer, result);
     writer.Value(result.workgroupMemoryDwords);
     writer.Values(std::span<const std::uint32_t>(result.shaderDataUserWords));
@@ -2046,7 +2122,7 @@ std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const Compile
     std::vector<std::byte> payload;
     payload.reserve(variant.artifact.spirv.size() * sizeof(std::uint32_t) + 4096);
     Writer writer(payload);
-    encodeArtifact(writer, variant.artifact);
+    encodeArtifact(writer, variant.artifact, true);
     encodeInfo(writer, variant.info);
     encodeAllocation(writer, variant.bindings);
     return wrapEntry(key, payload);
@@ -2138,16 +2214,15 @@ void Flush() {
 }
 
 void ReleaseMapped(const SharedSpirv& spirv) noexcept {
-    if (!spirv.Mapped()) return;
-    const auto words = spirv.Words();
-    if (words.empty()) return;
+    const auto bytes = spirv.MappedBytes();
+    if (bytes.empty()) return;
 #ifdef _WIN32
-    VirtualUnlock(const_cast<std::uint32_t*>(words.data()), words.size_bytes());
+    VirtualUnlock(const_cast<std::byte*>(bytes.data()), bytes.size());
 #else
     const auto page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
-    const auto first = reinterpret_cast<std::uintptr_t>(words.data());
+    const auto first = reinterpret_cast<std::uintptr_t>(bytes.data());
     const auto begin = first / page * page;
-    madvise(reinterpret_cast<void*>(begin), first + words.size_bytes() - begin, MADV_DONTNEED);
+    madvise(reinterpret_cast<void*>(begin), first + bytes.size() - begin, MADV_DONTNEED);
 #endif
 }
 

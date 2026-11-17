@@ -4092,7 +4092,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
         for (const auto& shader : shaders) {
             if (shader.stage != ShaderRecompiler::ShaderStage::Vertex) continue;
-            Require((shader.program->hostSubgroupSize == 1u || shader.program->hostSubgroupSize == context.subgroup.subgroupSize) && shader.program->spirv.size() >= 5u && shader.program->spirv[1] >= 0x00010000u && shader.program->spirv[1] < 0x00010600u, "stencil replay vertex subgroup contract differs from the physical device");
+            const auto words = shader.program->spirv.Words();
+            Require((shader.program->hostSubgroupSize == 1u || shader.program->hostSubgroupSize == context.subgroup.subgroupSize) && words.size() >= 5u && words[1] >= 0x00010000u && words[1] < 0x00010600u, "stencil replay vertex subgroup contract differs from the physical device");
         }
         Require(static_cast<std::uint64_t>(draw.firstInstance) + draw.instanceCount <= 0x100000000ull && (draw.indexed || static_cast<std::uint64_t>(draw.firstVertex) + draw.indexCount <= 0x100000000ull), "stencil replay draw indices overflow");
         Require(!state.depth || HasStencil(state.depth->format), "stencil replay requires an eight-bit stencil format");

@@ -573,6 +573,8 @@ add_shader_recompiler(shader_recompiler_agc_driver libc
         GUARD_SOURCES
         ${agcShaderCacheGuardSources}
 )
+target_link_libraries(shader_recompiler_agc_driver PRIVATE libzstd_static)
+target_include_directories(shader_recompiler_agc_driver SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/zstd/lib)
 
 target_include_directories(libSceAgcDriver INTERFACE
         $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>

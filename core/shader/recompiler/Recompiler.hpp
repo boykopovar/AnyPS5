@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <ranges>
@@ -822,20 +823,49 @@ class SharedSpirv {
     struct Holder;
 
 public:
+    using Materialize = std::shared_ptr<const std::vector<std::uint32_t>> (*)(std::span<const std::byte>, std::size_t, SpirvContentHash);
+
+    class Lease {
+    public:
+        using iterator = std::span<const std::uint32_t>::iterator;
+
+        Lease() = default;
+        Lease(std::span<const std::uint32_t> words, std::shared_ptr<const void> owner = nullptr) : words(words), owner(std::move(owner)) {}
+        [[nodiscard]] const std::uint32_t* data() const { return words.data(); }
+        [[nodiscard]] std::size_t size() const { return words.size(); }
+        [[nodiscard]] std::size_t size_bytes() const { return words.size_bytes(); }
+        [[nodiscard]] bool empty() const { return words.empty(); }
+        [[nodiscard]] const std::uint32_t& front() const { return words.front(); }
+        [[nodiscard]] const std::uint32_t& back() const { return words.back(); }
+        [[nodiscard]] const std::uint32_t& operator[](std::size_t index) const { return words[index]; }
+        [[nodiscard]] iterator begin() const { return words.begin(); }
+        [[nodiscard]] iterator end() const { return words.end(); }
+        [[nodiscard]] operator std::span<const std::uint32_t>() const { return words; }
+        friend bool operator==(const Lease& left, const Lease& right) { return std::ranges::equal(left.words, right.words); }
+
+    private:
+        std::span<const std::uint32_t> words;
+        std::shared_ptr<const void> owner;
+    };
+
     SharedSpirv() = default;
     SharedSpirv(std::vector<std::uint32_t> words) : holder(std::make_shared<Holder>(std::move(words), nullptr, std::span<const std::uint32_t>{})) {}
     SharedSpirv(std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : holder(std::make_shared<Holder>(std::vector<std::uint32_t>{}, std::move(owner), view)) {}
+    SharedSpirv(std::shared_ptr<const void> owner, std::span<const std::byte> bytes, std::size_t wordCount, SpirvContentHash hash, bool mapped, Materialize materialize) : holder(std::make_shared<Holder>(std::move(owner), bytes, wordCount, hash, mapped, std::move(materialize))) {}
     SharedSpirv& operator=(std::vector<std::uint32_t> other) {
         holder = std::make_shared<Holder>(std::move(other), nullptr, std::span<const std::uint32_t>{});
         return *this;
     }
 
-    [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
-    [[nodiscard]] bool Mapped() const { return holder != nullptr && holder->owner != nullptr; }
+    [[nodiscard]] Lease Words() const { return holder ? holder->Words(holder) : Lease{}; }
+    [[nodiscard]] bool Mapped() const { return holder != nullptr && holder->mapped; }
+    [[nodiscard]] bool Compressed() const { return holder != nullptr && holder->compressed; }
+    [[nodiscard]] bool Materialized() const { return holder != nullptr && holder->Materialized(); }
+    [[nodiscard]] std::span<const std::byte> MappedBytes() const { return holder ? holder->MappedBytes() : std::span<const std::byte>{}; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
-        const auto words = holder->Words();
+        const auto words = holder->Words(holder);
         if (words.empty()) return {};
         const SpirvContentHash hash{HashSpirvWords(words, 0x5eed5a1d00000001ull), HashSpirvWords(words, 0x5eed5a1d00000002ull)};
         holder->hashLow.store(hash.low, std::memory_order_relaxed);
@@ -843,20 +873,25 @@ public:
         holder->hashed.store(true, std::memory_order_release);
         return hash;
     }
-    [[nodiscard]] std::vector<std::uint32_t> Copy() const { return {Words().begin(), Words().end()}; }
-    [[nodiscard]] std::size_t size() const { return Words().size(); }
-    [[nodiscard]] bool empty() const { return Words().empty(); }
-    [[nodiscard]] const std::uint32_t* data() const { return Words().data(); }
+    [[nodiscard]] std::vector<std::uint32_t> Copy() const {
+        const auto words = Words();
+        return {words.begin(), words.end()};
+    }
+    [[nodiscard]] std::size_t size() const { return holder ? holder->Size() : 0u; }
+    [[nodiscard]] bool empty() const { return size() == 0u; }
     [[nodiscard]] std::uint32_t* data() { return Mutable().data(); }
-    [[nodiscard]] const std::uint32_t& operator[](std::size_t index) const { return Words()[index]; }
     [[nodiscard]] std::uint32_t& operator[](std::size_t index) { return Mutable()[index]; }
-    [[nodiscard]] std::span<const std::uint32_t>::iterator begin() const { return Words().begin(); }
-    [[nodiscard]] std::span<const std::uint32_t>::iterator end() const { return Words().end(); }
     [[nodiscard]] std::vector<std::uint32_t>::iterator begin() { return Mutable().begin(); }
     [[nodiscard]] std::vector<std::uint32_t>::iterator end() { return Mutable().end(); }
     void resize(std::size_t count) { Mutable().resize(count); }
     std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
-    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return std::ranges::equal(left.Words(), right.Words()); }
+    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) {
+        const auto leftWords = left.Words();
+        const auto rightWords = right.Words();
+        return std::ranges::equal(leftWords, rightWords);
+    }
+    friend bool operator==(const SharedSpirv& left, const Lease& right) { return left.Words() == right; }
+    friend bool operator==(const Lease& left, const SharedSpirv& right) { return left == right.Words(); }
 
     class Weak {
     public:
@@ -879,11 +914,43 @@ public:
 
 private:
     struct Holder {
-        Holder(std::vector<std::uint32_t> words, std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : words(std::move(words)), owner(std::move(owner)), view(view) {}
-        [[nodiscard]] std::span<const std::uint32_t> Words() const { return owner ? view : std::span<const std::uint32_t>(words); }
+        Holder(std::vector<std::uint32_t> words, std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : words(std::move(words)), owner(std::move(owner)), view(view), mapped(this->owner != nullptr) {}
+        Holder(std::shared_ptr<const void> owner, std::span<const std::byte> bytes, std::size_t wordCount, SpirvContentHash hash, bool mapped, Materialize materialize) : owner(std::move(owner)), mapped(mapped), compressed(true), compressedBytes(bytes), wordCount(wordCount), materialize(std::move(materialize)) {
+            hashLow.store(hash.low, std::memory_order_relaxed);
+            hashHigh.store(hash.high, std::memory_order_relaxed);
+            hashed.store(true, std::memory_order_release);
+        }
+        [[nodiscard]] Lease Words(const std::shared_ptr<Holder>& self) const {
+            if (!compressed) return owner ? Lease(view, self) : Lease(words, self);
+            std::lock_guard lock(mutex);
+            auto current = materialized.lock();
+            if (current == nullptr) {
+                current = materialize(compressedBytes, wordCount, {hashLow.load(std::memory_order_relaxed), hashHigh.load(std::memory_order_relaxed)});
+                materialized = current;
+            }
+            const std::span<const std::uint32_t> view(*current);
+            return Lease(view, std::move(current));
+        }
+        [[nodiscard]] bool Materialized() const {
+            if (!compressed) return false;
+            std::lock_guard lock(mutex);
+            return !materialized.expired();
+        }
+        [[nodiscard]] std::size_t Size() const { return compressed ? wordCount : owner ? view.size() : words.size(); }
+        [[nodiscard]] std::span<const std::byte> MappedBytes() const {
+            if (!mapped) return {};
+            return compressed ? compressedBytes : std::as_bytes(view);
+        }
         std::vector<std::uint32_t> words;
         std::shared_ptr<const void> owner;
         std::span<const std::uint32_t> view;
+        bool mapped = false;
+        bool compressed = false;
+        std::span<const std::byte> compressedBytes;
+        std::size_t wordCount = 0;
+        Materialize materialize;
+        mutable std::mutex mutex;
+        mutable std::weak_ptr<const std::vector<std::uint32_t>> materialized;
         mutable std::atomic<std::uint64_t> hashLow{0};
         mutable std::atomic<std::uint64_t> hashHigh{0};
         mutable std::atomic<bool> hashed{false};
