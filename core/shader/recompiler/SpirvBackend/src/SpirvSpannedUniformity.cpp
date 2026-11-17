@@ -514,7 +514,12 @@ private:
                 if (op == spv::OpStore && instruction.size() >= 3u) {
                     const auto variable = BaseVariable(instruction[1], chains);
                     const auto storage = module.storageClasses.find(variable);
-                    if (storage != module.storageClasses.end() && PrivateStorage(storage->second) && (inDivergentFlow || NonUniform(instruction[1]) || NonUniform(instruction[2]))) storedNonUniform.insert(variable);
+                    if (storage != module.storageClasses.end() && PrivateStorage(storage->second) && (inDivergentFlow || NonUniform(instruction[1]) || NonUniform(instruction[2]))) {
+                        storedNonUniform.insert(variable);
+                        if (NonUniform(instruction[2])) storedWhy.try_emplace(variable, "is stored %" + std::to_string(instruction[2]) + ", which comes from " + RootOf(instruction[2]));
+                        else if (NonUniform(instruction[1])) storedWhy.try_emplace(variable, "is stored through a per-invocation pointer");
+                        else storedWhy.try_emplace(variable, "is stored in divergent flow in block %" + std::to_string(label));
+                    }
                     continue;
                 }
                 if (inDivergentFlow && !report && (op == spv::OpControlBarrier || (op == spv::OpFunctionCall && instruction.size() > 3u && barriers.contains(instruction[3])))) {
@@ -542,7 +547,10 @@ private:
                     inherit(instruction[3]);
                     if (varying) break;
                     if (builtin != module.builtins.end() && VaryingBuiltin(builtin->second)) root = "a load of the " + BuiltinName(builtin->second) + " built-in";
-                    else if (storedNonUniform.contains(variable)) root = "a load of %" + std::to_string(variable) + ", which is stored a per-invocation value or in divergent flow";
+                    else if (storedNonUniform.contains(variable)) {
+                        const auto why = storedWhy.find(variable);
+                        root = "a load of %" + std::to_string(variable) + ", which " + (why != storedWhy.end() ? why->second : std::string("is stored a per-invocation value or in divergent flow"));
+                    }
                     else if (storage != module.storageClasses.end() && storage->second == spv::StorageClassInput && builtin == module.builtins.end()) root = "a load of the Input variable %" + std::to_string(variable);
                     else if (!snapshots.contains(variable) && Racy(instruction[3], fencedBefore)) root = "a load of %" + std::to_string(variable) + ", memory the shader writes, with no barrier before the load";
                     varying = !root.empty();
@@ -599,6 +607,7 @@ private:
     std::unordered_set<std::uint32_t> snapshots;
     std::unordered_set<std::uint32_t> varyingFunctions;
     std::unordered_map<std::uint32_t, std::string> roots;
+    std::unordered_map<std::uint32_t, std::string> storedWhy;
     std::unordered_map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> decidedBy;
     std::optional<std::string> report;
 };

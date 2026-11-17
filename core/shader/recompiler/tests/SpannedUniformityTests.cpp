@@ -256,6 +256,20 @@ int main() {
         module.emit(spv::OpLabel, {First + 4u});
         module.emit(spv::OpPhi, {Bool, First + 8u, True, First + 3u, True, First});
     }), "comes from a phi of block %104, where divergent flow merges");
+    expectReason("a barrier under a variable stored on one side of a per-lane selection names the store's block", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, Two});
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpStore, {First + 20u, Three});
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored in divergent flow in block %103");
+    expectReason("a barrier under a variable stored a lane value names the value's root", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, First + 1u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored %101, which comes from a load of the LocalInvocationIndex built-in");
     expectReason("a barrier under an atomic result names the atomic", joined([](Module& module) {
         module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
         module.emit(spv::OpAtomicIAdd, {Uint, First + 6u, First + 5u, Two, Semantics, Three});
