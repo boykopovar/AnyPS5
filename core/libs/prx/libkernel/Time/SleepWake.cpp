@@ -1,5 +1,6 @@
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Pthread/include/WindowsThreadLocal.hpp"
 
 #include <atomic>
 #include <cstdlib>
@@ -14,7 +15,14 @@ struct ThreadState {
     bool sleeping = false;
 };
 
-thread_local ThreadState state;
+ThreadState& State() {
+#ifdef _WIN32
+    return WindowsThreadLocal<ThreadState>::Get();
+#else
+    static thread_local ThreadState state;
+    return state;
+#endif
+}
 
 std::atomic<std::uint64_t> completions{0};
 
@@ -26,6 +34,7 @@ bool Enabled() {
 }
 
 void Sleep(std::uint64_t nanos) {
+    ThreadState& state = State();
     bool woken = false;
     if (nanos != 0 && nanos <= MAX_WAKEABLE_NANOS && !state.sleeping && Enabled()) {
         if (TimedWait::NowNanos() - state.lastSleepEndNanos >= nanos) state.earlyWakes = 0;
@@ -51,7 +60,7 @@ void KernelWakeSleepers_nid_no_patch() {
 }
 
 void KernelNoteGpuSubmit_nid_no_patch() {
-    SleepWake::state.earlyWakes = 0;
+    SleepWake::State().earlyWakes = 0;
 }
 
 }

@@ -789,7 +789,11 @@ int APS5_VABI sceAudioOutExGetMonitorInfo(int type, int index, void* info, std::
     if (type != 0) return static_cast<int>(0x80260003);
     if (info == nullptr) return static_cast<int>(0x80260004);
     if (size != EX_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
-    std::memset(info, 0, EX_MONITOR_INFO_SIZE);
+    const std::array<std::uint8_t, EX_MONITOR_INFO_SIZE> empty{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, empty.data(), empty.size());
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80260004);
     return 0;
 }
 
