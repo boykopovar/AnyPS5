@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_changed_guest_tests
@@ -204,10 +205,10 @@ class Main(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def main(self, build, changed_lines):
+    def main(self, build, changed_lines, *options):
         changed = Path(self.temporary.name) / "changed.txt"
         changed.write_text("\n".join(changed_lines), encoding="utf-8")
-        return build_changed_guest_tests.main([str(build), str(changed)])
+        return build_changed_guest_tests.main([str(build), str(changed), *options])
 
     def test_mixed_argument_bearing_and_argumentless_tests_all_run(self):
         build = self.fixture([
@@ -429,7 +430,58 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and "-I" in cmd]
         self.assertEqual(len(run_cmd), 1)
-        self.assertEqual(run_cmd[0][run_cmd[0].index("--output-log") + 1], "ctest.log")
+        command = run_cmd[0]
+        self.assertEqual(command, [
+            "ctest", "--test-dir", str(build), "--output-on-failure", "--timeout", "120",
+            "--parallel", "4", "--no-tests=error", "-I", command[10], "--output-log", "ctest.log"])
+
+    def test_output_junit_reaches_selected_and_script_only_ctest_runs(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
+        ]})
+        report = Path(self.temporary.name) / "result bundle" / "ctest.xml"
+        for changed, selection in (("core/libs/tests/Guest.cpp", "0,0,0,1\n"),
+                                   ("core/libs/nid/tests/test_gnu_hash.py", "0,0,0,2\n")):
+            with self.subTest(changed=changed):
+                calls = []
+                def execute(cmd, **kwargs):
+                    calls.append(cmd)
+                    if "-I" in cmd:
+                        self.assertEqual(Path(cmd[cmd.index("-I") + 1]).read_text(), selection)
+                        self.assertTrue(kwargs["check"])
+                    return run_result(listing if "--show-only=json-v1" in cmd else "")
+                with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+                    code = self.main(build, [changed], "--output-log", "ctest.log", "--output-junit", str(report))
+                self.assertEqual(code, 0)
+                commands = [cmd for cmd in calls if "-I" in cmd]
+                self.assertEqual(len(commands), 1)
+                command = commands[0]
+                self.assertEqual(command, [
+                    "ctest", "--test-dir", str(build), "--output-on-failure", "--timeout", "120",
+                    "--parallel", "4", "--no-tests=error", "-I", command[10],
+                    "--output-log", "ctest.log", "--output-junit", str(report)])
+
+    def test_no_junit_is_created_without_a_ctest_run(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        report = Path(self.temporary.name) / "ctest.xml"
+        for changed, failing in (("core/relinker/codegen/src/Amd64OnlyConverter.cpp", False),
+                                 ("core/libs/prx/libc/src/FloatBuiltins.cpp", False),
+                                 ("core/libs/tests/Guest.cpp", True)):
+            with self.subTest(changed=changed, failing=failing):
+                calls = []
+                def execute(cmd, **_):
+                    calls.append(cmd)
+                    if failing:
+                        raise subprocess.CalledProcessError(2, cmd)
+                    return run_result()
+                with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    code = self.main(build, [changed], "--output-junit", str(report))
+                self.assertEqual(code, int(failing))
+                self.assertFalse(any(cmd[0] == "ctest" for cmd in calls))
+                self.assertFalse(report.exists())
 
     def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
         selected = ["guest_" + "long_name_" * 8 + str(index) for index in range(600)]
@@ -495,6 +547,8 @@ class Main(unittest.TestCase):
 
         for failing in (False, True):
             with self.subTest(failing=failing):
+                report = Path(self.temporary.name) / "result bundle" / f"ctest-{failing}.xml"
+                report.parent.mkdir(exist_ok=True)
                 body = 'add_test("unrelated" "cmake" "-E" "touch" "unrelated")\n'
                 for index in range(2):
                     marker = f"ran-host-{index}"
@@ -504,10 +558,14 @@ class Main(unittest.TestCase):
                     body += f'add_test("host [{index}].+" "{python}" "-c" "{code}")\n'
                 (build / "CTestTestfile.cmake").write_text(body)
                 with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
-                    result = self.main(build, ["core/libs/tests/Host.cpp"])
+                    result = self.main(build, ["core/libs/tests/Host.cpp"], "--output-junit", str(report))
                 self.assertEqual(result, int(failing))
                 self.assertTrue(all((build / f"ran-host-{index}").exists() for index in range(2)))
                 self.assertFalse((build / "unrelated").exists())
+                suite = ElementTree.parse(report).getroot()
+                self.assertEqual({case.attrib["name"] for case in suite.findall("testcase")},
+                                 {f"host [{index}].+" for index in range(2)})
+                self.assertEqual(len(suite.findall("testcase/failure")), int(failing))
         self.assertEqual(builds, [["libs"], ["host_tests"], ["libs"], ["host_tests"]])
 
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):

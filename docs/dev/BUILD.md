@@ -61,6 +61,12 @@ Use [`tools/ctest_bundle.py`](../../tools/ctest_bundle.py) to collect a CTest in
 
 `finish` creates `published/manifest.json` with version 1 provenance, including the actual checked-out Git commit and tree, tracked-change state, and any allowlisted CI context. Included reports retain their original bytes and SHA-256 hashes. Missing, linked, and oversized reports have explicit manifest states. The recorded outcome belongs to the invoking step. Test execution and verdict attribution require the original reports.
 
+### CI publication
+
+The Build workflow publishes a separate artifact for each eligible CTest invocation, matrix entry, and run attempt. This includes the Windows changed-guest helper, which forwards CTest's `--output-junit` when requested. The bundle records the actual checked-out Git commit and tree separately from the event SHA. Requested Vulkan settings and configured toolchain identifiers describe the invocation.
+
+Preparation, collection, and upload are best effort. Existing test selection, gates, retries, timeouts, skip checks, and failure exits still govern the run. A preparation failure keeps the original report paths without uploading them. If a build fails before testing, the collected manifest can record missing reports. CTest JUnit can retain only the final result of a repeated case. Use the raw log for earlier attempts. Artifacts inherit repository retention, and expired or cancelled evidence leaves the test result unknown.
+
 ## Requirements
 
 - x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.

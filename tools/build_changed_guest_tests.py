@@ -204,16 +204,17 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
     return resolutions
 
 
-def run_ctest(build_dir, indices, output_log):
+def run_ctest(build_dir, indices, output_log, output_junit=None):
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
         selection = Path(directory) / "selected-tests.txt"
         selection.write_text("0,0,0," + ",".join(str(index) for index in indices) + "\n", encoding="ascii")
         subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
                         "--parallel", "4", "--no-tests=error", "-I", str(selection),
-                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
+                        *(["--output-log", str(output_log)] if output_log else []),
+                        *(["--output-junit", str(output_junit)] if output_junit else [])], check=True)
 
 
-def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
+def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None, output_junit=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     scripts = script_test_indices(build_dir, script_tests) if script_tests else []
     script_owners = script_test_owners(build_dir, targets_by_name, script_tests) if script_tests else []
@@ -228,11 +229,11 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
-        run_ctest(build_dir, sorted({index for _, index in resolutions.values()} | set(scripts)), output_log)
+        run_ctest(build_dir, sorted({index for _, index in resolutions.values()} | set(scripts)), output_log, output_junit)
     elif scripts:
         for batch in chunks(script_owners):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        run_ctest(build_dir, scripts, output_log)
+        run_ctest(build_dir, scripts, output_log, output_junit)
     else:
         print("No core/libs test sources changed; the libs build still ran")
 
@@ -242,6 +243,7 @@ def main(argv=None):
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
     parser.add_argument("--output-log", type=Path)
+    parser.add_argument("--output-junit", type=Path)
     args = parser.parse_args(argv)
     try:
         changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
@@ -264,7 +266,7 @@ def main(argv=None):
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
         script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
-        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
+        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests, args.output_junit)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
