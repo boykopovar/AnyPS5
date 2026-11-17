@@ -604,7 +604,51 @@ An empty value of either variable is the same as an unset one. The start fails o
 
 ### Benchmark reports
 
-To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. Only completed intervals are saved, keeping the most recent 240; `intervals_dropped` counts older intervals removed from the file. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+
+Read a capture with Python 3 from the source checkout:
+
+```sh
+python3 tools/benchmark_compare.py summarize captures/run.json.gz
+python3 tools/benchmark_compare.py summarize captures/run.json.gz --intervals 1:2 --json
+```
+
+`--intervals START:COUNT` selects whole completed intervals by their zero-based position in the retained file: `1:2` selects positions 1 and 2. Without it, all retained intervals are included. An interval recorded during loading or shader compilation stays included unless you select a later range. The report shows the selected intervals' recorded times and global present numbers, including when earlier history was dropped. A selected range that crosses a gap is refused.
+
+FPS uses the frame count divided by the sum of the selected intervals' elapsed times. Mean frame time and p50, p90, p99 and maximum frame time pool their recorded frame durations, which are truncated to microseconds. Those values can differ from the reciprocal of FPS. Saturated durations produce a warning and make affected raw-duration metrics unavailable.
+
+For repeated A/B runs, write a series JSON beside the captures. List attempts in the order they ran, using `baseline` and `candidate` as the arms. Give each intended matched pair the same `pair` value. This example records A, B, B, A, then two unsuccessful attempts:
+
+```json
+{
+  "format": "aps5-bench-series/1",
+  "recipe": {
+    "scene": "Load the same save and stand still after loading",
+    "save": "Local save slot 1",
+    "input": "No input during the selected intervals",
+    "cache": "Warm caches"
+  },
+  "runs": [
+    {"id": "A1", "arm": "baseline", "pair": "1", "capture": "captures/base-1.json.gz", "intervals": [1, 2]},
+    {"id": "B1", "arm": "candidate", "pair": "1", "capture": "captures/change-1.json.gz", "intervals": [1, 2]},
+    {"id": "B2", "arm": "candidate", "pair": "2", "capture": "captures/change-2.json.gz", "intervals": [1, 2]},
+    {"id": "A2", "arm": "baseline", "pair": "2", "capture": "captures/base-2.json.gz", "intervals": [1, 2]},
+    {"id": "B3", "arm": "candidate", "pair": "3", "status": "failed", "reason": "No benchmark was produced"},
+    {"id": "A3", "arm": "baseline", "pair": "3", "status": "excluded", "reason": "The display slept during the run"}
+  ]
+}
+```
+
+Capture paths are relative to the series file. `intervals` is `[START, COUNT]` and may be omitted to include all retained intervals. An included run may supply `sha256` to require that the original capture bytes match that digest. Failed and excluded attempts require a reason and have no capture. Keep them in the series so the report shows every supplied attempt. Reusing the same capture, including a renamed or recompressed copy, is refused as duplicate evidence.
+
+```sh
+python3 tools/benchmark_compare.py compare series.json
+python3 tools/benchmark_compare.py compare series.json --require-matching-context --json
+```
+
+The comparison preserves run order, reports each pair and counts complete pairs separately. Changes are candidate minus baseline; the aggregate reports the mean and range of paired percentage changes. A pair with a failed, excluded or missing arm contributes no paired change.
+
+Recorded context differences, dirty builds and missing identity fields appear in the report. `--require-matching-context` rejects recorded context differences. The recipe records the operator's account of the scene, save, input and caches. Check that the runs reached the same scene: matching metadata and hashes do not prove independent runs or that a code change caused a speed difference. The tool reads existing files and prints Markdown, or JSON with `--json`.
 
 ### Run report
 

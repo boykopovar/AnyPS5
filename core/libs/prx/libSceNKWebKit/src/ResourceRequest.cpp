@@ -27,6 +27,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
@@ -320,6 +321,10 @@ double APS5_VABI _ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() {
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(double timeoutInterval) {
     defaultTimeoutInterval = timeoutInterval;
+}
+
+void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
+    _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(timeoutInterval);
 }
 
 }
