@@ -620,6 +620,50 @@ const LibreSsl3PkeyMethod* MethodOf(const LibreSsl3PkeyContext* context) {
     return static_cast<const LibreSsl3PkeyMethod*>(context->method);
 }
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+T CopyIn(const T* source, const char* function) {
+    T value{};
+    if (!CopyGuestInPreservingErrno(value, source))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+LibreSsl3PkeyContext ContextIn(const LibreSsl3PkeyContext* context, const char* function) {
+    return context ? CopyIn(context, function) : LibreSsl3PkeyContext{};
+}
+
+void SetOperation(LibreSsl3PkeyContext* context, std::int32_t operation, const char* function) {
+    if (!CopyGuestOutPreservingErrno(&context->operation, operation))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritablePeerKey(LibreSsl3PkeyContext* context, const char* function) {
+    if (!GuestWritable_nid_no_patch(&context->peerKey, sizeof(context->peerKey)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void SetPeerKey(LibreSsl3PkeyContext* context, LibreSsl3EvpPkey* peer, const char* function) {
+    void* const value = peer;
+    if (!CopyGuestOutPreservingErrno(&context->peerKey, value))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 LibreSsl3RsaKeyContext* RsaContextData(const LibreSsl3PkeyContext* context) {
     auto* keyContext = static_cast<LibreSsl3RsaKeyContext*>(context->data);
     if (!keyContext) NotImplemented_nid_no_patch("EVP_PKEY_CTX operation without RSA context data");
@@ -1538,9 +1582,11 @@ extern "C" {
 
 LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* key, void* engine) {
     (void) engine;
-    if (!key || (!key->method && key->type != LibreSsl3PkeyEc)) return nullptr;
-    const auto* asn1Method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
-    const auto* method = key->type == LibreSsl3PkeyEc ? &EcMethod :
+    if (!key) return nullptr;
+    const auto guestKey = CopyIn(key, __func__);
+    if (!guestKey.method && guestKey.type != LibreSsl3PkeyEc) return nullptr;
+    const auto* asn1Method = static_cast<const LibreSsl3PkeyAsn1Method*>(guestKey.method);
+    const auto* method = guestKey.type == LibreSsl3PkeyEc ? &EcMethod :
         FindNativePkeyMethod_nid_no_patch(asn1Method->keyType);
     if (!method) {
         QueueEvpError(ReasonUnsupportedAlgorithm);
@@ -1562,63 +1608,70 @@ LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix(int keyType, voi
 }
 
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->derivation) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    context->operation = LibreSsl3PkeyOperationDerive;
+    SetOperation(context, LibreSsl3PkeyOperationDerive, __func__);
     if (!method->derivationInitialize) return 1;
     const int result = method->derivationInitialize(context);
-    if (result <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    if (result <= 0) SetOperation(context, LibreSsl3PkeyOperationUndefined, __func__);
     return result;
 }
 
 int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix(LibreSsl3PkeyContext* context, LibreSsl3EvpPkey* peer) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || (!method->derivation && !method->encryption && !method->decryption) ||
         !method->control) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationDerive &&
-        context->operation != LibreSsl3PkeyOperationEncrypt && context->operation != LibreSsl3PkeyOperationDecrypt) {
+    if (guest.operation != LibreSsl3PkeyOperationDerive &&
+        guest.operation != LibreSsl3PkeyOperationEncrypt && guest.operation != LibreSsl3PkeyOperationDecrypt) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
     int result = method->control(context, LibreSsl3PkeyControlPeerKey, 0, peer);
     if (result <= 0) return result;
-    if (!context->key) {
+    const auto current = CopyIn(context, __func__);
+    if (!current.key) {
         QueueEvpError(ReasonNoKeySet);
         return -1;
     }
-    if (!peer || static_cast<LibreSsl3EvpPkey*>(context->key)->type != peer->type) {
+    const auto own = peer ? CopyIn(static_cast<const LibreSsl3EvpPkey*>(current.key), __func__) : LibreSsl3EvpPkey{};
+    const auto guestPeer = peer ? CopyIn(peer, __func__) : LibreSsl3EvpPkey{};
+    if (!peer || own.type != guestPeer.type) {
         QueueEvpError(ReasonDifferentKeyTypes);
         return -1;
     }
-    if (peer->type == LibreSsl3PkeyEc) {
-        const auto* ownKey = static_cast<const EcKey*>(static_cast<LibreSsl3EvpPkey*>(context->key)->key);
-        const auto* peerKey = static_cast<const EcKey*>(peer->key);
+    if (guestPeer.type == LibreSsl3PkeyEc) {
+        const auto* ownKey = static_cast<const EcKey*>(own.key);
+        const auto* peerKey = static_cast<const EcKey*>(guestPeer.key);
         if (ownKey && peerKey && ownKey->group && peerKey->group &&
             ownKey->group->curve.nid != peerKey->group->curve.nid) {
             QueueEvpError(ReasonDifferentParameters);
             return -1;
         }
     }
-    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->peerKey));
-    context->peerKey = peer;
+    RequireWritablePeerKey(context, __func__);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(current.peerKey));
+    SetPeerKey(context, peer, __func__);
     EVP_PKEY_up_ref_nid_postfix(peer);
     return 1;
 }
 
 int APS5_VABI EVP_PKEY_derive_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* key,
     std::size_t* keyLength) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->derivation) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationDerive) {
+    if (guest.operation != LibreSsl3PkeyOperationDerive) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
@@ -1627,26 +1680,29 @@ int APS5_VABI EVP_PKEY_derive_nid_postfix(LibreSsl3PkeyContext* context, unsigne
 
 void APS5_VABI EVP_PKEY_CTX_free_nid_postfix(LibreSsl3PkeyContext* context) {
     if (!context) return;
-    const auto* method = MethodOf(context);
+    const auto guest = CopyIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (method != nullptr && method->clear != nullptr) method->clear(context);
-    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->key));
-    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->peerKey));
+    const auto cleared = CopyIn(context, __func__);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(cleared.key));
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(cleared.peerKey));
     free_nid_postfix(context);
 }
 
 int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(LibreSsl3PkeyContext* context, int keyType, int operationType, int command,
     int first, void* second) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->control) {
         QueueEvpError(ReasonCommandNotSupported);
         return -2;
     }
     if (keyType != -1 && method->keyType != keyType) return -1;
-    if (context->operation == LibreSsl3PkeyOperationUndefined) {
+    if (guest.operation == LibreSsl3PkeyOperationUndefined) {
         QueueEvpError(ReasonNoOperationSet);
         return -1;
     }
-    if (operationType != -1 && (context->operation & operationType) == 0) {
+    if (operationType != -1 && (guest.operation & operationType) == 0) {
         QueueEvpError(ReasonInvalidOperation);
         return -1;
     }
@@ -1656,23 +1712,25 @@ int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(LibreSsl3PkeyContext* context, int k
 }
 
 int APS5_VABI EVP_PKEY_encrypt_init_nid_postfix(LibreSsl3PkeyContext* context) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->encryption) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    context->operation = LibreSsl3PkeyOperationEncrypt;
+    SetOperation(context, LibreSsl3PkeyOperationEncrypt, __func__);
     return 1;
 }
 
 int APS5_VABI EVP_PKEY_encrypt_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* output,
     std::size_t* outputLength, const unsigned char* input, std::size_t inputLength) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->encryption) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationEncrypt) {
+    if (guest.operation != LibreSsl3PkeyOperationEncrypt) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
@@ -1683,23 +1741,25 @@ int APS5_VABI EVP_PKEY_encrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
 }
 
 int APS5_VABI EVP_PKEY_decrypt_init_nid_postfix(LibreSsl3PkeyContext* context) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->decryption) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    context->operation = LibreSsl3PkeyOperationDecrypt;
+    SetOperation(context, LibreSsl3PkeyOperationDecrypt, __func__);
     return 1;
 }
 
 int APS5_VABI EVP_PKEY_decrypt_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* output,
     std::size_t* outputLength, const unsigned char* input, std::size_t inputLength) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->decryption) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationDecrypt) {
+    if (guest.operation != LibreSsl3PkeyOperationDecrypt) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
@@ -1710,26 +1770,28 @@ int APS5_VABI EVP_PKEY_decrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
 }
 
 int APS5_VABI EVP_PKEY_sign_init_nid_postfix(LibreSsl3PkeyContext* context) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->signature) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    context->operation = LibreSsl3PkeyOperationSign;
+    SetOperation(context, LibreSsl3PkeyOperationSign, __func__);
     if (!method->signatureInitialize) return 1;
     const int ret = method->signatureInitialize(context);
-    if (ret <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    if (ret <= 0) SetOperation(context, LibreSsl3PkeyOperationUndefined, __func__);
     return ret;
 }
 
 int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* signature,
     std::size_t* signatureLength, const unsigned char* content, std::size_t contentLength) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->signature) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationSign) {
+    if (guest.operation != LibreSsl3PkeyOperationSign) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
@@ -1740,26 +1802,28 @@ int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned 
 }
 
 int APS5_VABI EVP_PKEY_verify_init_nid_postfix(LibreSsl3PkeyContext* context) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->verification) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    context->operation = LibreSsl3PkeyOperationVerify;
+    SetOperation(context, LibreSsl3PkeyOperationVerify, __func__);
     if (!method->verificationInitialize) return 1;
     const int ret = method->verificationInitialize(context);
-    if (ret <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    if (ret <= 0) SetOperation(context, LibreSsl3PkeyOperationUndefined, __func__);
     return ret;
 }
 
 int APS5_VABI EVP_PKEY_verify_nid_postfix(LibreSsl3PkeyContext* context, const unsigned char* signature,
     std::size_t signatureLength, const unsigned char* content, std::size_t contentLength) {
-    const auto* method = context ? MethodOf(context) : nullptr;
+    const auto guest = ContextIn(context, __func__);
+    const auto* method = MethodOf(&guest);
     if (!context || !method || !method->verification) {
         QueueEvpError(ReasonOperationNotSupported);
         return -2;
     }
-    if (context->operation != LibreSsl3PkeyOperationVerify) {
+    if (guest.operation != LibreSsl3PkeyOperationVerify) {
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
@@ -1784,14 +1848,16 @@ int APS5_VABI EVP_DigestSignInit_nid_postfix(LibreSsl3::DigestContext* ctx,
 
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     unsigned char* sigret, std::size_t* siglen) {
-    auto* pctx = static_cast<LibreSsl3PkeyContext*>(ctx->keyContext);
+    const auto guest = CopyIn(ctx, __func__);
+    auto* pctx = static_cast<LibreSsl3PkeyContext*>(guest.keyContext);
     if (!pctx) NotImplemented_nid_no_patch("EVP_DigestSignFinal without an EVP_PKEY_CTX");
-    const auto* method = MethodOf(pctx);
+    const auto keyContext = CopyIn(pctx, __func__);
+    const auto* method = MethodOf(&keyContext);
     if (method->flags & LibreSsl3PkeyMethodFlagSignatureContextCustom)
         NotImplemented_nid_no_patch("EVP_DigestSignFinal with a custom signature context");
     if (method->signatureContext) NotImplemented_nid_no_patch("EVP_DigestSignFinal with a signctx method");
     if (sigret == nullptr) {
-        const auto size = ctx->digest->digestSize;
+        const auto size = guest.digest->digestSize;
         if (size < 0) return 0;
         return EVP_PKEY_sign_nid_postfix(pctx, nullptr, siglen, nullptr, static_cast<std::size_t>(size)) > 0;
     }
@@ -1818,6 +1884,7 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
 
     const unsigned int zero = 0;
     if (!GuestCopyOut_nid_no_patch(siglen, &zero, sizeof(zero))) return 0;
+    const LibreSsl3::DigestContext guest = ctx ? CopyIn(ctx, __func__) : LibreSsl3::DigestContext{};
 
     if (!DigestCopy(&copy, ctx)) goto err;
     if (!DigestFinal(&copy, digest, &digestLength)) goto err;
@@ -1829,7 +1896,7 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
     if (EVP_PKEY_sign_init_nid_postfix(pkctx) <= 0) goto err;
     if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
             LibreSsl3PkeyControlMessageDigest, 0,
-            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+            static_cast<void*>(const_cast<DigestMethod*>(guest.digest))) <= 0)
         goto err;
     if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
     written = static_cast<unsigned int>(sltmp);
@@ -1849,6 +1916,7 @@ int APS5_VABI EVP_VerifyFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     LibreSsl3::DigestContext copy = {};
     LibreSsl3PkeyContext* pkctx = nullptr;
     int ret = 0;
+    const LibreSsl3::DigestContext guest = ctx ? CopyIn(ctx, __func__) : LibreSsl3::DigestContext{};
 
     if (!DigestCopy(&copy, ctx)) goto err;
     if (!DigestFinal(&copy, digest, &digestLength)) goto err;
@@ -1859,7 +1927,7 @@ int APS5_VABI EVP_VerifyFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     if (EVP_PKEY_verify_init_nid_postfix(pkctx) <= 0) goto err;
     if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
             LibreSsl3PkeyControlMessageDigest, 0,
-            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+            static_cast<void*>(const_cast<DigestMethod*>(guest.digest))) <= 0)
         goto err;
     ret = EVP_PKEY_verify_nid_postfix(pkctx, sigbuf, siglen, digest, digestLength);
 
