@@ -72,6 +72,32 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
 
+    def test_same_input_output_detects_alternate_spellings_and_hard_links(self):
+        source = self.root / "uscript.h"
+        source.write_bytes(b"x")
+        self.assertTrue(generator.same_input_output(source, self.root / "." / "uscript.h"))
+        link = self.root / "linked.h"
+        try:
+            link.hardlink_to(source)
+        except OSError:
+            self.skipTest("hard links unavailable")
+        self.assertTrue(generator.same_input_output(source, link))
+
+    def test_same_input_output_is_false_for_distinct_or_missing_outputs(self):
+        source = self.root / "uscript.h"
+        other = self.root / "other.h"
+        source.write_bytes(b"x")
+        self.assertFalse(generator.same_input_output(source, self.root / "missing.hpp"))
+        other.write_bytes(b"x")
+        self.assertFalse(generator.same_input_output(source, other))
+
+    def test_a_header_with_a_duplicated_script_code_is_refused(self):
+        codes = list(range(SCRIPT_COUNT)) + [5]
+        with self.assertRaises(SystemExit) as refused:
+            self.generate(header_text(codes))
+        self.assertEqual(refused.exception.code, 2)
+        self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
