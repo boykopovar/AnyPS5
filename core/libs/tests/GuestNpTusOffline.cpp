@@ -156,7 +156,25 @@ int main() {
     std::strcpy(virtualUsers[1].data, "second");
     context = sceNpTusCreateNpTitleCtxA(1, 1);
     if (context <= 0) return 1;
-    CheckAsync("sceNpTssGetSmallStorageAsync", [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, nullptr); }, [&]() { int req = 9999; return sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, nullptr); }, [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, &buffer); });
+    CheckAsync("sceNpTssGetSmallStorageAsync", [&](int req) { return sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, nullptr); }, [&]() { int req = 9999; return sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, nullptr); }, nullptr);
+    {
+        const char* name = "sceNpTssGetSmallStorageAsync";
+        TssOption option{sizeof(TssOption), nullptr, nullptr, nullptr};
+        TssOption shortOption{sizeof(TssOption) - 8, nullptr, nullptr, nullptr};
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 64 * 1024 + 1, &length, &shortOption) == InvalidAlignment, name, "the option size was not checked before the size and the request");
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 64 * 1024 + 1, &length, &option) == InvalidArgument, name, "a valid option skipped the size check");
+        errno = 71;
+        Require(sceNpTssGetSmallStorageAsync(9999, buffer, 16, &length, reinterpret_cast<void*>(0x10)) == InvalidArgument, name, "an unreadable option was taken");
+        Require(errno == 71, name, "errno was changed");
+        const int req = NewRequest();
+        Require(sceNpTssGetSmallStorageAsync(req, buffer, 16, &length, &option) == 0, name, "an option of 0x20 bytes was refused");
+        int result = 0;
+        Require(sceNpTusWaitAsync(req, &result) == 0 && result == SignedOut, name, "the request with an option did not finish signed out");
+        sceNpTusDeleteRequest(req);
+        const int syncReq = NewRequest();
+        Require(sceNpTssGetSmallStorage(syncReq, buffer, 16, &length, &option) == SignedOut, "sceNpTssGetSmallStorage", "an option of 0x20 bytes was refused");
+        sceNpTusDeleteRequest(syncReq);
+    }
     CheckAsync("sceNpTusAddAndGetVariableAVUserAsync", [&](int req) { return sceNpTusAddAndGetVariableAVUserAsync(req, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableAVUserAsync(9999, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableAVUserAsync(req, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });
     CheckAsync("sceNpTusAddAndGetVariableAsync", [&](int req) { return sceNpTusAddAndGetVariableAsync(req, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableAsync(9999, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableAsync(req, &npId, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });
     CheckAsync("sceNpTusAddAndGetVariableForCrossSaveAsync", [&](int req) { return sceNpTusAddAndGetVariableForCrossSaveAsync(req, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&]() { int req = 9999; return sceNpTusAddAndGetVariableForCrossSaveAsync(9999, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); }, [&](int req) { return sceNpTusAddAndGetVariableForCrossSaveAsync(req, 1, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), &buffer); });

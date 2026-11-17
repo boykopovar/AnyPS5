@@ -356,7 +356,13 @@ jobs:
       - run: |
           repeat=()
           if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
-          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}" --output-log ctest.log
+      - name: Report tests slower than 30 s
+        if: ${{ !cancelled() }}
+        run: |
+          [ -f ctest.log ] || exit 0
+          awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
+            END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log
 
   relinker-asan:
     needs: eligibility
@@ -520,7 +526,20 @@ jobs:
       - name: Remove git locks left by an interrupted checkout
         shell: bash
         run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+          submodules: recursive
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again into the emptied workspace
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false

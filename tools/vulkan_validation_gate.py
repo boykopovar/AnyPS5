@@ -87,7 +87,10 @@ def git(source, *arguments):
 def identity(source, expected):
     if not re.fullmatch(r"[0-9a-f]{40}", expected):
         raise GateError("expected a full lowercase Git commit ID")
-    if Path(git(source, "rev-parse", "--show-toplevel")).resolve() != source:
+    root = Path(git(source, "rev-parse", "--show-toplevel"))
+    if os.name == "nt" and not root.is_dir():
+        root = source / git(source, "rev-parse", "--show-cdup")
+    if root.resolve() != source:
         raise GateError(f"{source}: must be a source worktree root")
     if git(source, "rev-parse", "HEAD") != expected:
         raise GateError(f"{source}: HEAD differs from {expected}")

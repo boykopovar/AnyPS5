@@ -5422,7 +5422,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         const auto fail = [&](ShaderRecompiler::BdaAbi::FaultReason reason, std::uint32_t word, std::uint32_t value, std::uint32_t otherFaults = 0) {
             ShaderResources resources(context, compiled);
             std::memcpy(access.bytes(access.descriptor(6).buffer).data() + word * sizeof(std::uint32_t), &value, sizeof(value));
-            const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, otherFaults};
+            const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, ShaderRecompiler::BdaAbi::FaultClaimed | (otherFaults != 0 ? ShaderRecompiler::BdaAbi::FaultClaimOtherFaults : 0u), 0, 0};
             std::memcpy(descriptorBytes(access, 5).data(), &report, sizeof(report));
             try {
                 resources.WriteBack();
