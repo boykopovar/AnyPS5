@@ -52,7 +52,22 @@ struct Port {
     Clock::duration grain{};
     Clock::time_point next{};
     std::int32_t mode = 0;
+    std::uint32_t freq = 0;
+    Format format{};
+    std::string defaultInput;
+    Clock::time_point nextDefaultInputCheck{};
 };
+
+constexpr auto DEFAULT_INPUT_CHECK = std::chrono::seconds(1);
+
+std::string defaultInputName() {
+    char* name = nullptr;
+    SDL_AudioSpec spec{};
+    if (SDL_GetDefaultAudioInfo(&name, &spec, 1) != 0 || name == nullptr) return {};
+    std::string result(name);
+    SDL_free(name);
+    return result;
+}
 
 std::mutex g_mutex;
 std::array<Port, 8> g_ports{};
@@ -70,7 +85,8 @@ bool formatOf(std::uint32_t param, Format& format) {
     return true;
 }
 
-SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Format& format, std::string_view requestedName) {
+SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Format& format, std::string_view requestedName, std::string& defaultInput) {
+    defaultInput.clear();
     if (!g_sdlAudio) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 0;
         g_sdlAudio = true;
@@ -96,10 +112,30 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
         if (!name) return 0;
         selectedName = name;
         deviceName = selectedName.c_str();
+    } else {
+        selectedName = defaultInputName();
+        if (!selectedName.empty()) deviceName = selectedName.c_str();
     }
     const SDL_AudioDeviceID device = SDL_OpenAudioDevice(deviceName, 1, &desired, &obtained, 0);
+    if (device != 0 && selection.kind != audioin::detail::CaptureDeviceMatchKind::Found) defaultInput = selectedName;
     if (device != 0) SDL_PauseAudioDevice(device, 0);
     return device;
+}
+
+void followDefaultInput(Port& port) {
+    if (port.device == 0 || port.defaultInput.empty()) return;
+    bool replace = SDL_GetAudioDeviceStatus(port.device) == SDL_AUDIO_STOPPED;
+    const auto now = Clock::now();
+    if (!replace && now >= port.nextDefaultInputCheck) {
+        port.nextDefaultInputCheck = now + DEFAULT_INPUT_CHECK;
+        const auto name = defaultInputName();
+        replace = !name.empty() && name != port.defaultInput;
+    }
+    if (!replace) return;
+    g_captureMuteGenerations.Forget(port.device);
+    SDL_CloseAudioDevice(port.device);
+    port.device = openDevice(port.freq, port.samples, port.format, {}, port.defaultInput);
+    port.nextDefaultInputCheck = now + DEFAULT_INPUT_CHECK;
 }
 
 int findPort(int handle, Port** port) {
@@ -156,9 +192,10 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
         if (g_ports[i].used) continue;
         const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
         const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
-        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName);
+        std::string defaultInput;
+        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName, defaultInput);
         if (explicitDevice && device == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
-        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode};
+        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode, freq, format, std::move(defaultInput), Clock::now() + DEFAULT_INPUT_CHECK};
         return static_cast<int>(HANDLE_BASE + i);
     }
     return AUDIO_IN_ERROR_PORT_FULL;
@@ -218,6 +255,7 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
     }
     const std::size_t bytes = static_cast<std::size_t>(port->samples) * port->frameBytes;
     if (bytes > MAX_CAPTURE_BYTES) throw std::logic_error("AudioIn capture block exceeds supported format");
+    followDefaultInput(*port);
     const SDL_AudioDeviceID device = port->device;
     const auto now = Clock::now();
     const auto wake = port->next > now ? port->next : now;
