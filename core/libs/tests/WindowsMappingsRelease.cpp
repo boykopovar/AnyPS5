@@ -193,6 +193,24 @@ static void CheckOpenHostWriteCollected() {
     CloseHandle(section);
 }
 
+static void CheckSectionEndingAPageEarlyIsRejected() {
+    constexpr std::size_t page = 65536;
+    auto& mappings = GuestArena::WindowsMappings::Get();
+    auto* reserved = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * page));
+    Require(reserved != nullptr);
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, page, nullptr);
+    Require(section != nullptr);
+    bool rejected = false;
+    try {
+        mappings.Map(reserved, 2 * page, section, 0, PAGE_READWRITE, false, false, PAGE_EXECUTE_READWRITE, page);
+    } catch (const std::runtime_error& failure) {
+        rejected = std::string(failure.what()).find("extends a whole page past its section") != std::string::npos;
+    }
+    Require(rejected);
+    Require(VirtualFree(reserved, 0, MEM_RELEASE));
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2) CheckMetadataMismatch(static_cast<unsigned>(argv[1][0] - '0'));
@@ -201,6 +219,7 @@ int main(int argc, char** argv) {
             CheckTouchedPagesAnyOrder();
             CheckEvictKeepsWrittenPages();
             CheckOpenHostWriteCollected();
+            CheckSectionEndingAPageEarlyIsRejected();
         }
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "%s\n", failure.what());
