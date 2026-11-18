@@ -525,6 +525,9 @@ static void CheckScopeIdText() {
     Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), nullptr) == 0 && address[0] == 0xa5 && address[15] == 0xa5);
     Require(Failed(sceNetInetPtonWithScopeId(2, "fe80::1", address.data(), &scope), 47));
     Require(Failed(sceNetInetPtonWithScopeId(28, nullptr, address.data(), &scope), 22));
+    Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", reinterpret_cast<void*>(0x10), &scope), 14));
+    Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(sceNetInetNtopWithScopeId(28, plain.data(), reinterpret_cast<char*>(0x10), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 14);
     bool threw = false;
     try {
         sceNetInetPtonWithScopeId(28, "fe80::1", nullptr, &scope);
@@ -1710,6 +1713,8 @@ static void CheckInetPtonEx() {
     address.fill(0);
     Require(sceNetInetPtonEx(28, "fe80::1:2", address.data(), 0) == 1 && address == expected);
     Require(sceNetInetPtonEx(2, "not an address", address.data(), 0) == 0);
+    Require(Failed(sceNetInetPtonEx(2, "127.0.0.1", reinterpret_cast<void*>(0x10), 0), 14));
+    Require(Failed(sceNetInetPton(28, "::1", reinterpret_cast<void*>(0x10)), 14));
     Require(Failed(sceNetInetPtonEx(99, "127.0.0.1", address.data(), 0), 47));
     Require(Failed(sceNetInetPtonEx(2, nullptr, address.data(), 0), 22));
     *sceNetErrnoLoc() = 123;
@@ -2074,6 +2079,15 @@ static void CheckDatagramAddressLengths(int family) {
     size = source.size();
     Require(sceNetGetsockname(sender, source.data(), &size) == 0 && size == addressSize);
     const char payload[] = "address length";
+    Require(sceNetSend(sender, payload, sizeof(payload), 0) == sizeof(payload));
+    std::array<std::uint8_t, 28> faultAddress{};
+    char first[sizeof(payload)]{};
+    Require(Failed(sceNetRecvfrom(receiver, first, sizeof(first), 0, faultAddress.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    size = addressSize;
+    Require(Failed(sceNetRecvfrom(receiver, first, sizeof(first), 2, reinterpret_cast<void*>(0x10), &size), 14));
+    Require(size == addressSize);
+    Require(sceNetRecvfrom(receiver, first, sizeof(first), 0, faultAddress.data(), &size) == sizeof(payload));
+    Require(std::memcmp(first, payload, sizeof(payload)) == 0);
     for (const std::uint32_t capacity : {0u, 1u, 2u, addressSize - 1, addressSize, 32u, UINT32_MAX}) {
         const auto copied = std::min(capacity, addressSize);
         std::array<std::uint8_t, 32> address;
@@ -2122,6 +2136,14 @@ static void CheckStreamAddressLengths() {
         Require(sceNetGetpeername(accepted, peer.data(), &size) == 0 && size == copied);
         Require(std::memcmp(peer.data(), clientAddress.data(), copied) == 0 && Untouched(peer, copied));
     }
+    const char payload[] = "stream";
+    Require(sceNetSend(client, payload, sizeof(payload), 0) == sizeof(payload));
+    char received[sizeof(payload)]{};
+    Require(Failed(sceNetRecvfrom(accepted, received, sizeof(received), 0, peer.data(),
+                                 reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    size = peer.size();
+    Require(sceNetRecvfrom(accepted, received, sizeof(received), 0, reinterpret_cast<void*>(0x10), &size) == sizeof(payload));
+    Require(size == 0 && std::memcmp(received, payload, sizeof(payload)) == 0);
     const int second = sceNetSocket("fault-client", 2, 1, 6);
     Require(second >= 0 && sceNetConnect(second, listening.data(), listening.size()) == 0);
     const int count = sceNetGetSockInfo(-1, nullptr, 0, 0);

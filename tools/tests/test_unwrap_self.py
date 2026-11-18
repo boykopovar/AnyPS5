@@ -588,7 +588,7 @@ class UnwrapTest(unittest.TestCase):
         try:
             os.chown(directory, -1, group)
             directory.chmod(0o2700)
-        except PermissionError as error:
+        except OSError as error:
             self.skipTest(str(error))
         if not directory.stat().st_mode & 0o2000:
             self.skipTest("filesystem does not retain the setgid bit")
@@ -1539,6 +1539,28 @@ class UnwrapTest(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous output")
+
+    def test_tls_memory_range_cannot_exceed_elf64(self):
+        output = Path(self.directory) / "output.elf"
+        for size, memory, address, accepted in ((0, 0x40, (1 << 64) - 0x3f, False),
+                                                (0x10, 0x40, (1 << 64) - 0x3f, False),
+                                                (0, 0x40, (1 << 64) - 0x40, True),
+                                                (0, 0, (1 << 64) - 1, True)):
+            with self.subTest(size=size, memory=memory, address=address):
+                segments = default_segments() + [(PT_TLS, 4, 0xA00, address, size, 8)]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, memory)
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
+                if accepted:
+                    _, headers = read_program_headers(output)
+                    self.assertEqual(headers[3][3], address)
+                    self.assertEqual(headers[3][6], memory)
+                else:
+                    self.assertIn("segment 3 memory range exceeds ELF64", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(output.read_bytes(), b"previous output")
 
     def test_invalid_non_null_segment_alignment_is_refused_before_replacing_output(self):
         output = Path(self.directory) / "output.elf"

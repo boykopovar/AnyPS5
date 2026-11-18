@@ -15,7 +15,7 @@ import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
                                   TLS_NAME, CODE_ADDRESS, DATA_ADDRESS, CALL_ADDRESS, EXPORT_ADDRESS, build_module,
-                                  code_bytes, nid, symbol_name)
+                                  append_dynamic_tags, code_bytes, nid, symbol_name)
 
 
 class GhidraSymbolsTests(unittest.TestCase):
@@ -49,6 +49,44 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertTrue(result.stdout.isascii())
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
+
+    def test_lifecycle_functions_without_exports_are_named_offline(self):
+        source = self.root / "lifecycle.prx"
+        for kind in ("sysv", "gnu"):
+            tags = tuple(GNU_HASH if tag == 4 and kind == "gnu" else tag for tag in DEFAULT_TAGS)
+            source.write_bytes(append_dynamic_tags(build_module(symbols=[], relocations=(), kind=kind, tags=tags),
+                                                   [(12, CODE_ADDRESS), (13, EXPORT_ADDRESS)]))
+            with self.subTest(kind=kind):
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), ["elf_init 0x1000 f", "elf_fini 0x100b f"])
+        self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_lifecycle_metadata_preserves_export_names_and_aliases(self):
+        image = append_dynamic_tags(build_module(), [(12, EXPORT_ADDRESS), (13, EXPORT_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+        self.assertEqual([row for row in rows if row.endswith(" f")], ["sceKernelUsleep 0x100b f"])
+        image = append_dynamic_tags(build_module(symbols=[], relocations=()), [(12, CODE_ADDRESS), (13, CODE_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertEqual(rows, ["elf_fini 0x1000 f", "elf_init 0x1000 l"])
+
+    def test_lifecycle_functions_need_executable_file_bytes(self):
+        for address, flags, size in ((DATA_ADDRESS, 5, 12), (0x9000, 5, 12), (CODE_ADDRESS + 12, 5, 12),
+                                     (CODE_ADDRESS, 4, 12), (EXPORT_ADDRESS, 5, 11)):
+            with self.subTest(address=address, flags=flags, size=size):
+                image = bytearray(append_dynamic_tags(build_module(symbols=[], relocations=(), code_flags=flags), [(12, address), (13, address)]))
+                struct.pack_into("<Q", image, 64 + 32, size)
+                self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_conflicting_lifecycle_tags_do_not_print_a_map(self):
+        source = self.root / "conflicting.prx"
+        for tag in (12, 13):
+            with self.subTest(tag=tag):
+                source.write_bytes(append_dynamic_tags(build_module(), [(tag, CODE_ADDRESS), (tag, EXPORT_ADDRESS)]))
+                result = self.cli(source, "--no-names")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("conflicting duplicate DT_", result.stderr)
 
     def test_symbol_types_and_executable_ranges_control_function_creation(self):
         symbols = [*DEFAULT_SYMBOLS, ("object", 1, 0x11, 0x2700), (TLS_NAME, 1, 0x16, 8),
