@@ -1782,4 +1782,72 @@ int APS5_VABI sceFsSaveDataDisableWriteThrottling() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceFsExfatfsMountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsExfatfsUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsDevpfsAllocateFile2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsMkfsForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsMountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsUnmountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageLocalSandboxMount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageLocalSandboxUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageGetDeviceInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageThermalShutdownTest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageQAC() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageGetDebugInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUpdatePackageMetadataFlexcont() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuInitializeParams() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuSetParams() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuEnable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuDisable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

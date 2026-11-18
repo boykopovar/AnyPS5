@@ -202,4 +202,22 @@ int APS5_VABI sceFsSaveDataGetImageType();
 int APS5_VABI sceFsSaveDataGetBlockNumber();
 int APS5_VABI sceFsSaveDataDisableWriteThrottling();
 
+int APS5_VABI sceFsExfatfsMountForCronos();
+int APS5_VABI sceFsExfatfsUnmount();
+int APS5_VABI sceFsDevpfsAllocateFile2();
+int APS5_VABI sceFsUfsMkfsForCronos();
+int APS5_VABI sceFsUfsMountForCronos();
+int APS5_VABI sceFsUfsUnmountForCronos();
+int APS5_VABI sceFsM2StorageLocalSandboxMount();
+int APS5_VABI sceFsM2StorageLocalSandboxUnmount();
+int APS5_VABI sceFsM2StorageGetDeviceInfo();
+int APS5_VABI sceFsM2StorageThermalShutdownTest();
+int APS5_VABI sceFsM2StorageQAC();
+int APS5_VABI sceFsM2StorageGetDebugInfo();
+int APS5_VABI sceFsUpdatePackageMetadataFlexcont();
+int APS5_VABI sceFsFgcEmuInitializeParams();
+int APS5_VABI sceFsFgcEmuSetParams();
+int APS5_VABI sceFsFgcEmuEnable();
+int APS5_VABI sceFsFgcEmuDisable();
+
 }
