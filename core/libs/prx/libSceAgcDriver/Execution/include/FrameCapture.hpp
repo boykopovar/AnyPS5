@@ -2,11 +2,11 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_FRAMECAPTURE_HPP
 
 #include "SceShaders.hpp"
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -90,15 +90,13 @@ public:
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
     static constexpr std::uint64_t CachedDeltaBytes = 512u * 1024u * 1024u;
 
-    using DeltaHash = std::array<std::uint64_t, 2> (*)(std::span<const std::byte> bytes);
     struct DeltaCosts {
         std::uint64_t compared = 0;
-        std::uint64_t readBack = 0;
-        double hashSeconds = 0;
+        std::uint64_t evicted = 0;
         double compareSeconds = 0;
     };
 
-    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, DeltaHash deltaHash = nullptr, std::uint64_t cacheBudget = CachedDeltaBytes);
+    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, std::uint64_t cacheBudget = CachedDeltaBytes);
     FrameCaptureWriter(const FrameCaptureWriter&) = delete;
     FrameCaptureWriter& operator=(const FrameCaptureWriter&) = delete;
 
@@ -116,18 +114,17 @@ public:
     const std::filesystem::path& Directory() const;
 
 private:
+    using DeltaKey = std::pair<std::uint64_t, std::uint64_t>;
     struct DeltaPayload {
-        std::uint64_t hash = 0;
-        std::uint64_t check = 0;
         std::uint64_t offset = 0;
         std::uint64_t compressedBytes = 0;
         std::shared_ptr<const std::vector<std::byte>> bytes;
+        std::list<DeltaKey>::iterator use;
     };
 
     std::uint64_t writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload, std::uint64_t sharedOffset = 0);
     std::vector<std::byte> compress(std::span<const std::byte> bytes) const;
-    bool storedEqual(const DeltaPayload& payload, std::span<const std::byte> bytes);
-    bool sameDelta(const DeltaPayload& payload, std::span<const std::byte> bytes);
+    void cacheDelta(const DeltaKey& key, std::uint64_t offset, std::uint64_t compressedBytes, std::shared_ptr<const std::vector<std::byte>> bytes);
 
     std::filesystem::path directory;
     int level;
@@ -141,11 +138,8 @@ private:
     std::uint64_t cachedBytes = 0;
     DeltaCosts costs;
     std::uint64_t memoryOffset = 0;
-    std::map<std::pair<std::uint64_t, std::uint64_t>, DeltaPayload> deltaPayloads;
-    DeltaHash deltaHash = nullptr;
-    std::ifstream storedMemory;
-    std::vector<std::byte> storedCompressed;
-    std::vector<std::byte> storedBytesRead;
+    std::map<DeltaKey, DeltaPayload> deltaPayloads;
+    std::list<DeltaKey> deltaUses;
     bool finished = false;
 };
 

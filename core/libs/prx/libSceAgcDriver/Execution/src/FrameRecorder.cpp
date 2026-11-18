@@ -873,9 +873,9 @@ void FrameRecorder::finish() {
     writeReferenceFrames();
     writer->Finish(header());
     const auto costs = writer->Costs();
-    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched blocks read in %.2f s, delta hashing %.2f s, %llu repeated parts compared in %.2f s (%llu read back from the file)\n",
-                 static_cast<double>(unwatchedReadBytes) / (1024.0 * 1024.0), unwatchedReadSeconds, costs.hashSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
-                 static_cast<unsigned long long>(costs.readBack));
+    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched blocks read in %.2f s, %llu repeated parts compared in %.2f s, %llu parts evicted from the delta cache\n",
+                 static_cast<double>(unwatchedReadBytes) / (1024.0 * 1024.0), unwatchedReadSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
+                 static_cast<unsigned long long>(costs.evicted));
     std::fprintf(stderr, "[frame-capture] %llu frames, %llu calls, %llu memory deltas (%.1f MiB), %.1f MiB raw, %.1f MiB stored in %s\n", static_cast<unsigned long long>(recordedFrames),
                  static_cast<unsigned long long>(recordedCalls), static_cast<unsigned long long>(deltaGroups), static_cast<double>(deltaBytes) / (1024.0 * 1024.0),
                  static_cast<double>(writer->RawBytes()) / (1024.0 * 1024.0), static_cast<double>(writer->StoredBytes()) / (1024.0 * 1024.0), directory.string().c_str());
