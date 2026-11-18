@@ -10241,10 +10241,6 @@ int APS5_VABI WKPageGetAllowsRemoteInspection() {
 }
 
 
-int APS5_VABI WKPageGetBackingScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageGetBytecodeProfile() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10279,10 +10275,6 @@ int APS5_VABI WKPageGetProcessIdentifier() {
 
 
 int APS5_VABI WKPageGetSamplingProfilerOutput() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10478,10 +10470,6 @@ int APS5_VABI WKPageSetCaretVisible() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetCustomBackingScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetIgnoresViewportScaleLimits() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10547,10 +10535,6 @@ int APS5_VABI WKPageSetPageStateClient() {
 }
 
 int APS5_VABI WKPageSetPageUIClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 

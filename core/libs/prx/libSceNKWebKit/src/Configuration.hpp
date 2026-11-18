@@ -22,6 +22,9 @@ public:
     bool selectionIsRange = false;
     bool isPlayingAudio = false;
     Retained<Frame> mainFrame;
+    float intrinsicBackingScaleFactor = 1.0f;
+    std::optional<float> customBackingScaleFactor;
+    double pageScaleFactor = 1.0;
     mutable Retained<Inspector> inspector;
     bool suppressScrollbarAnimations = false;
     bool hasHorizontalScrollbar = false;
