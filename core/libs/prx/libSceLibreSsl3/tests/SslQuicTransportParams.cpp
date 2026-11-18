@@ -65,7 +65,8 @@ int main() {
 
     failAllocation = true;
     Require(SSL_set_quic_transport_params_nid_postfix(&ssl, first.data(), first.size()) == 0);
-    Require(ssl.quicTransportParams == nullptr && ssl.quicTransportParamsLength == 0);
+    Require(ssl.quicTransportParams != nullptr && ssl.quicTransportParamsLength == 1);
+    Require(ssl.quicTransportParams[0] == 0xff);
 
     Require(SSL_set_quic_transport_params_nid_postfix(&ssl, second.data(), second.size()) == 1);
     Require(ssl.quicTransportParamsLength == 1 && ssl.quicTransportParams[0] == 0xff);
