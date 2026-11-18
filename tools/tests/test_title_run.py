@@ -1644,6 +1644,33 @@ class ModuleFileTests(unittest.TestCase):
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
 
+class CollectFramesTests(unittest.TestCase):
+    def test_keeps_first_middle_and_last_frames_in_numeric_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            for index in (0, 1, 2, 10, 11):
+                (work / f"frame_{index}.bmp").write_bytes(b"x")
+            (work / "other.txt").write_text("keep")
+            destination = Path(directory) / "out" / "frames"
+            kept = title_run.collect_frames(work, destination)
+            self.assertEqual(kept, ["frame_0.bmp", "frame_2.bmp", "frame_11.bmp"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(kept))
+            self.assertEqual(sorted(path.name for path in work.iterdir()), ["other.txt"])
+
+    def test_no_frames_still_creates_the_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "frames"
+            self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
+            self.assertTrue(destination.is_dir())
+
+    def test_single_frame_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            (work / "frame_5.bmp").write_bytes(b"x")
+            self.assertEqual(title_run.collect_frames(work, Path(directory) / "out"), ["frame_5.bmp"])
+
 
 if __name__ == "__main__":
     unittest.main()
