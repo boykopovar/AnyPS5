@@ -33,7 +33,10 @@ constexpr int ReasonExpectingAnRsaKey = 127;
 constexpr int ReasonExpectingAnEcKey = 142;
 
 const int RsaMethod = PkeyRsa;
-const int EcMethod = PkeyEc;
+
+bool IsLocalEcKey(const Pkey& pkey) {
+    return pkey.type == PkeyEc && !pkey.ameth;
+}
 
 void FreeKey(Pkey& pkey) {
     if (pkey.engine) NotImplemented_nid_no_patch("EVP_PKEY_free_it of a key with an ENGINE");
@@ -41,7 +44,7 @@ void FreeKey(Pkey& pkey) {
         auto* rsa = static_cast<LibreSslRsa*>(pkey.key);
         pkey.key = nullptr;
         if (rsa) RSA_free_nid_postfix(rsa);
-    } else if (pkey.ameth == &EcMethod || (pkey.type == PkeyEc && !pkey.ameth)) {
+    } else if (IsLocalEcKey(pkey)) {
         auto* ec = static_cast<EcKey*>(pkey.key);
         pkey.key = nullptr;
         if (ec) EC_KEY_free_nid_postfix(ec);
@@ -67,8 +70,8 @@ void APS5_VABI EVP_PKEY_free_nid_postfix(void* value) {
     auto* pkey = static_cast<Pkey*>(value);
     auto references = std::atomic_ref<int>(pkey->references);
     if (references.fetch_sub(1, std::memory_order_acq_rel) - 1 > 0) return;
-    const bool knownMethod = pkey->ameth == &RsaMethod || pkey->ameth == &EcMethod ||
-        (pkey->ameth == nullptr && ((pkey->type == 0 && !pkey->key) || pkey->type == PkeyRsa || pkey->type == PkeyEc));
+    const bool knownMethod = pkey->ameth == &RsaMethod || IsLocalEcKey(*pkey) ||
+        (pkey->ameth == nullptr && ((pkey->type == 0 && !pkey->key) || pkey->type == PkeyRsa));
     if (!knownMethod || pkey->engine || pkey->attributes) {
         references.fetch_add(1, std::memory_order_relaxed);
         NotImplemented_nid_no_patch("EVP_PKEY_free of a key that holds non-RSA/EC algorithm data, an engine or attributes");

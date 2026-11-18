@@ -200,6 +200,24 @@ int main() {
     EVP_PKEY_free_nid_postfix(soleEcPkey);
     Require(liveAllocations == 0, "freeing sole EC pkey releases all allocations");
 
+    EcKey* const replacedEc = EC_KEY_new_by_curve_name_nid_postfix(415);
+    Require(replacedEc != nullptr, "allocates replaced curve key");
+    void* const replacedEcPkey = EVP_PKEY_new_nid_postfix();
+    Require(replacedEcPkey != nullptr, "allocates replaced EC pkey");
+    auto* const replacedTestPkey = static_cast<TestPkey*>(replacedEcPkey);
+    replacedTestPkey->type = 408;
+    replacedTestPkey->saveType = 408;
+    replacedTestPkey->key = replacedEc;
+    Require(EVP_PKEY_get1_EC_KEY_nid_postfix(replacedEcPkey) == replacedEc, "retrieves replaced EC key");
+    Require(EcReferences(replacedEc) == 2, "replaced EC key holds two references");
+    Require(EVP_PKEY_set1_RSA_nid_postfix(replacedEcPkey, nullptr) == 0, "assigning a null RSA key returns zero");
+    Require(EcReferences(replacedEc) == 1, "replacing an EC key drops its EVP_PKEY reference");
+    Require(replacedTestPkey->type == 6 && replacedTestPkey->key == nullptr, "replaced key becomes an empty RSA key");
+    Require(replacedTestPkey->ameth != nullptr, "replaced key carries the RSA method");
+    EVP_PKEY_free_nid_postfix(replacedEcPkey);
+    EC_KEY_free_nid_postfix(replacedEc);
+    Require(liveAllocations == 0, "replacing and freeing an EC key releases all allocations");
+
     void* const pkeyA = EVP_PKEY_new_nid_postfix();
     void* const pkeyB = EVP_PKEY_new_nid_postfix();
     static_cast<TestPkey*>(pkeyA)->type = 408;
