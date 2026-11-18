@@ -146,7 +146,8 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
     if (!createParams || !pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto* driver = static_cast<const SysDriver*>(createParams);
     decltype(driver->init) initFn = nullptr;
-    if (!CopyInGuest(initFn, &driver->init)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    decltype(driver->term) termFn = nullptr;
+    if (!CopyInGuest(initFn, &driver->init) || !CopyInGuest(termFn, &driver->term)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto allocFn = iface.alloc;
     const auto freeFn = iface.dealloc;
     auto* lib = static_cast<FontLibNative*>(allocFn(record.mspace_handle, sizeof(FontLibNative)));
@@ -189,7 +190,7 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
     }
     lib->magic = LIBRARY_MAGIC;
     if (!CopyOutGuest(pLibrary, static_cast<FontLibrary>(lib))) {
-        if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
+        if (termFn) termFn(lib);
         freeFn(record.mspace_handle, workspace);
         freeFn(record.mspace_handle, lib);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
