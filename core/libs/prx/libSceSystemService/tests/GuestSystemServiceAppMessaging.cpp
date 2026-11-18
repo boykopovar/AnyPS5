@@ -22,6 +22,7 @@ int main() {
 
     const char text[] = "abc";
     Require(sceAppMessagingSendMsg(42, 7, text, 3, 0) == 0);
+    Require(sceAppMessagingSendMsg(1, 1, nullptr, 0, 0) == 0);
     Require(sceAppMessagingSendMsgToShellCore(9, nullptr, 0, 0) == 0);
     Require(sceAppMessagingSendMsgToShellUI(10, text, 3, 0) == 0);
     Require(sceAppMessagingTryReceiveMsg(&message) == static_cast<int>(0x80C50005));
