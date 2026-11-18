@@ -329,6 +329,99 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertIn("flags.rsp", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_dry_run_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\nsys.exit(1)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" -c -o unit.o "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{other}"')])
+        control = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertEqual(control.stderr, "")
+        self.assertEqual(json.loads(control.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        for arguments in (("unit.cpp", "loop.cpp"), ("loop.cpp",)):
+            with self.subTest(arguments=arguments):
+                result = self.tool("--dry-run", *arguments)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("loop.cpp", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists())
+        subprocess.run(["git", "-C", str(self.root), "add", "unit.cpp"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "add"], check=True)
+        result = self.tool("--dry-run", "--base", "HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        plan = json.loads(result.stdout)
+        self.assertEqual(len(plan["translation_units"]), 1)
+        self.assertEqual(plan["translation_units"][0]["source"], str(source))
+        self.assertEqual(len(plan["translation_units"][0]["commands"]), 2)
+        self.assertFalse(invoked.exists())
+        response = self.build / "flags.rsp"
+        response.write_text('"-DREQUIRED=1" "-c" "-o" "unit.o"', encoding="utf-8")
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), "@flags.rsp", str(source)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(json.loads(result.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", "-DREQUIRED=1", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        response.unlink()
+        response.symlink_to(response)
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        dangling = self.root / "dangling.cpp"
+        dangling.symlink_to(self.root / "missing.cpp")
+        for missing_arg, resolved in (("orphan.cpp", self.root / "orphan.cpp"),
+                                      ("dangling.cpp", self.root / "missing.cpp")):
+            with self.subTest(missing_arg=missing_arg):
+                result = self.tool("--dry-run", missing_arg)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(json.loads(result.stdout), {
+                    "translation_units": [{"source": str(resolved), "commands": []}],
+                })
+
     def test_syntax_arguments_does_not_call_path_resolve_on_the_source(self):
         loop = self.root / "loop.cpp"
         other = self.root / "other.cpp"

@@ -1,10 +1,16 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <string>
-#include "prx/libc/include/General.hpp"
+#include <vector>
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 
 static_assert(sizeof(LibreSslX509NameEntry) == 24);
 static_assert(offsetof(LibreSslX509NameEntry, value) == 8);
@@ -13,104 +19,67 @@ static_assert(offsetof(LibreSslX509Name, entries) == 0);
 
 namespace {
 
-struct Asn1Object {
-    const char* shortName;
-    const char* longName;
-    int nid;
-    int length;
-    const unsigned char* data;
-    int flags;
-};
+constexpr int ObjectLibrary = 8;
+constexpr int AnyFunction = 0xfff;
+constexpr int UnknownNid = 101;
 
-static_assert(sizeof(Asn1Object) == 40 && offsetof(Asn1Object, length) == 20 && offsetof(Asn1Object, data) == 24);
-
-struct NameAttribute {
-    int nid;
-    int length;
-    unsigned char der[10];
-};
-
-constexpr NameAttribute NameAttributes[] {
-    {0, 0, {}},
-    {13, 3, {0x55, 0x04, 0x03}},
-    {14, 3, {0x55, 0x04, 0x06}},
-    {15, 3, {0x55, 0x04, 0x07}},
-    {16, 3, {0x55, 0x04, 0x08}},
-    {17, 3, {0x55, 0x04, 0x0a}},
-    {18, 3, {0x55, 0x04, 0x0b}},
-    {48, 9, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x01}},
-    {99, 3, {0x55, 0x04, 0x2a}},
-    {100, 3, {0x55, 0x04, 0x04}},
-    {101, 3, {0x55, 0x04, 0x2b}},
-    {105, 3, {0x55, 0x04, 0x05}},
-    {106, 3, {0x55, 0x04, 0x0c}},
-    {107, 3, {0x55, 0x04, 0x0d}},
-    {173, 3, {0x55, 0x04, 0x29}},
-    {174, 3, {0x55, 0x04, 0x2e}},
-    {391, 10, {0x09, 0x92, 0x26, 0x89, 0x93, 0xf2, 0x2c, 0x64, 0x01, 0x19}},
-    {400, 3, {0x55, 0x04, 0x48}},
-    {458, 10, {0x09, 0x92, 0x26, 0x89, 0x93, 0xf2, 0x2c, 0x64, 0x01, 0x01}},
-    {503, 3, {0x55, 0x04, 0x2d}},
-    {509, 3, {0x55, 0x04, 0x2c}},
-    {510, 3, {0x55, 0x04, 0x41}},
-    {660, 3, {0x55, 0x04, 0x09}},
-    {661, 3, {0x55, 0x04, 0x11}},
-    {859, 3, {0x55, 0x04, 0x0e}},
-    {860, 3, {0x55, 0x04, 0x0f}},
-    {861, 3, {0x55, 0x04, 0x10}},
-    {862, 3, {0x55, 0x04, 0x12}},
-    {863, 3, {0x55, 0x04, 0x13}},
-    {864, 3, {0x55, 0x04, 0x14}},
-    {865, 3, {0x55, 0x04, 0x15}},
-    {866, 3, {0x55, 0x04, 0x16}},
-    {867, 3, {0x55, 0x04, 0x17}},
-    {868, 3, {0x55, 0x04, 0x18}},
-    {869, 3, {0x55, 0x04, 0x19}},
-    {870, 3, {0x55, 0x04, 0x1a}},
-    {871, 3, {0x55, 0x04, 0x1b}},
-    {872, 3, {0x55, 0x04, 0x1c}},
-    {873, 3, {0x55, 0x04, 0x1d}},
-    {874, 3, {0x55, 0x04, 0x1e}},
-    {875, 3, {0x55, 0x04, 0x1f}},
-    {876, 3, {0x55, 0x04, 0x20}},
-    {877, 3, {0x55, 0x04, 0x21}},
-    {878, 3, {0x55, 0x04, 0x22}},
-    {879, 3, {0x55, 0x04, 0x23}},
-    {880, 3, {0x55, 0x04, 0x24}},
-    {881, 3, {0x55, 0x04, 0x25}},
-    {882, 3, {0x55, 0x04, 0x26}},
-    {883, 3, {0x55, 0x04, 0x27}},
-    {884, 3, {0x55, 0x04, 0x28}},
-    {885, 3, {0x55, 0x04, 0x2f}},
-    {886, 3, {0x55, 0x04, 0x30}},
-    {887, 3, {0x55, 0x04, 0x31}},
-    {888, 3, {0x55, 0x04, 0x32}},
-    {889, 3, {0x55, 0x04, 0x33}},
-    {890, 3, {0x55, 0x04, 0x34}},
-    {891, 3, {0x55, 0x04, 0x35}},
-    {892, 3, {0x55, 0x04, 0x36}},
-};
-
-const NameAttribute* FindAttribute(int nid, const char* function) {
-    for (const auto& attribute : NameAttributes) {
-        if (attribute.nid == nid) return &attribute;
+const LibreSslAsn1Object* ObjectByNid(int nid) {
+    if (nid >= 0 && nid < LibreSslObjectCount) {
+        const LibreSslAsn1Object& object = LibreSslObjects_nid_no_patch[nid];
+        if (nid != 0 && object.nid == 0) {
+            LibreSslPutError_nid_no_patch(ObjectLibrary, AnyFunction, UnknownNid);
+            return nullptr;
+        }
+        return &object;
     }
-    NotImplemented_nid_no_patch((std::string(function) + ": NID " + std::to_string(nid) + " is not a name attribute type in the object identifier subset").c_str());
+    if (!LibreSslAddedObjectsExist_nid_no_patch()) return nullptr;
+    const LibreSslAsn1Object* object = LibreSslAddedObjectByNid_nid_no_patch(nid);
+    if (!object) LibreSslPutError_nid_no_patch(ObjectLibrary, AnyFunction, UnknownNid);
+    return object;
 }
 
-int IndexOf(const LibreSslX509Name* name, const NameAttribute& attribute, int lastpos, const char* function) {
+template <typename T>
+T CopyGuestInPreservingErrno(const T* source, const char* function) {
+    T destination{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return destination;
+}
+
+void CopyGuestBytesInPreservingErrno(void* destination, const void* source, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyGuestBytesOutPreservingErrno(void* destination, const void* source, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+int IndexOf(const LibreSslX509Name* name, const LibreSslAsn1Object& wanted, int lastpos, const char* function) {
     if (!name) return -1;
     if (lastpos == INT_MAX) throw std::invalid_argument(std::string(function) + ": last position overflows");
     if (lastpos < 0) lastpos = -1;
-    const int count = name->entries ? name->entries->num : -1;
+    const LibreSslStack* entries = CopyGuestInPreservingErrno(name, function).entries;
+    const int count = entries ? CopyGuestInPreservingErrno(entries, function).num : -1;
     for (++lastpos; lastpos < count; ++lastpos) {
-        const auto* entry = X509_NAME_get_entry_nid_postfix(name, lastpos);
-        if (!entry || !entry->object) throw std::invalid_argument(std::string(function) + ": null name entry or object");
-        const auto* object = static_cast<const Asn1Object*>(entry->object);
-        if (object->length != attribute.length) continue;
-        if (attribute.length == 0) return lastpos;
-        if (!object->data) throw std::invalid_argument(std::string(function) + ": null object data");
-        if (std::memcmp(object->data, attribute.der, attribute.length) == 0) return lastpos;
+        const auto* address = X509_NAME_get_entry_nid_postfix(name, lastpos);
+        if (!address) throw std::invalid_argument(std::string(function) + ": null name entry or object");
+        const LibreSslX509NameEntry entry = CopyGuestInPreservingErrno(address, function);
+        if (!entry.object) throw std::invalid_argument(std::string(function) + ": null name entry or object");
+        const auto object = CopyGuestInPreservingErrno(static_cast<const LibreSslAsn1Object*>(entry.object), function);
+        if (object.length != wanted.length) continue;
+        if (wanted.length == 0) return lastpos;
+        if (!object.data) throw std::invalid_argument(std::string(function) + ": null object data");
+        std::vector<unsigned char> data(static_cast<std::size_t>(wanted.length));
+        CopyGuestBytesInPreservingErrno(data.data(), object.data, data.size(), function);
+        if (std::memcmp(data.data(), wanted.data, data.size()) == 0) return lastpos;
     }
     return -1;
 }
@@ -120,36 +89,50 @@ int IndexOf(const LibreSslX509Name* name, const NameAttribute& attribute, int la
 extern "C" {
 
 LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX509Name* name, int loc) {
-    if (!name || loc < 0 || !name->entries || name->entries->num <= loc) return nullptr;
-    if (!name->entries->data) throw std::invalid_argument(std::string(__func__) + ": null entry array");
-    return reinterpret_cast<LibreSslX509NameEntry*>(name->entries->data[loc]);
+    if (!name || loc < 0) return nullptr;
+    const LibreSslStack* entries = CopyGuestInPreservingErrno(name, __func__).entries;
+    if (!entries) return nullptr;
+    const LibreSslStack stack = CopyGuestInPreservingErrno(entries, __func__);
+    if (stack.num <= loc) return nullptr;
+    if (!stack.data) throw std::invalid_argument(std::string(__func__) + ": null entry array");
+    return reinterpret_cast<LibreSslX509NameEntry*>(CopyGuestInPreservingErrno(stack.data + loc, __func__));
 }
 
 void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const LibreSslX509NameEntry* entry) {
     if (!entry) return nullptr;
-    return entry->value;
+    return CopyGuestInPreservingErrno(entry, __func__).value;
 }
 
 int APS5_VABI X509_NAME_get_index_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, int lastpos) {
-    const auto* attribute = FindAttribute(nid, __func__);
-    return IndexOf(name, *attribute, lastpos, __func__);
+    const LibreSslAsn1Object* object = ObjectByNid(nid);
+    if (!object) return -2;
+    return IndexOf(name, *object, lastpos, __func__);
 }
 
 int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, char* buf, int len) {
-    const auto* attribute = FindAttribute(nid, __func__);
-    const int index = IndexOf(name, *attribute, -1, __func__);
+    const LibreSslAsn1Object* object = ObjectByNid(nid);
+    if (!object) return -1;
+    const int index = IndexOf(name, *object, -1, __func__);
     if (index < 0) return -1;
-    const auto* data = static_cast<const Asn1String*>(X509_NAME_ENTRY_get_data_nid_postfix(X509_NAME_get_entry_nid_postfix(name, index)));
-    if (!data) throw std::invalid_argument(std::string(__func__) + ": null entry value");
+    const auto* value = static_cast<const Asn1String*>(X509_NAME_ENTRY_get_data_nid_postfix(X509_NAME_get_entry_nid_postfix(name, index)));
+    if (!value) throw std::invalid_argument(std::string(__func__) + ": null entry value");
     if (len == INT_MIN) throw std::invalid_argument(std::string(__func__) + ": buffer length overflows");
-    const int count = data->length > len - 1 ? len - 1 : data->length;
-    if (!buf) return data->length;
+    const Asn1String data = CopyGuestInPreservingErrno(value, __func__);
+    const int count = data.length > len - 1 ? len - 1 : data.length;
+    if (!buf) return data.length;
     if (count >= 0) {
         if (count) {
-            if (!data->data) throw std::invalid_argument(std::string(__func__) + ": null entry string");
-            std::memcpy(buf, data->data, count);
+            if (!data.data) throw std::invalid_argument(std::string(__func__) + ": null entry string");
+            unsigned char chunk[4096];
+            for (std::size_t done = 0; done < static_cast<std::size_t>(count);) {
+                const std::size_t size = std::min(static_cast<std::size_t>(count) - done, sizeof(chunk));
+                CopyGuestBytesInPreservingErrno(chunk, data.data + done, size, __func__);
+                CopyGuestBytesOutPreservingErrno(buf + done, chunk, size, __func__);
+                done += size;
+            }
         }
-        buf[count] = '\0';
+        const char terminator = '\0';
+        CopyGuestBytesOutPreservingErrno(buf + count, &terminator, sizeof(terminator), __func__);
     }
     return count;
 }

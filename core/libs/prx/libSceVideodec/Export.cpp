@@ -118,18 +118,10 @@ int CopyPicture(const SceVideodec2::OutputInfo& output, const Geometry& geometry
     const auto sourcePitch = static_cast<std::uint64_t>(output.framePitchInBytes);
     const auto* source = static_cast<const std::uint8_t*>(output.frameBuffer);
     auto* destination = static_cast<std::uint8_t*>(frameBuffer->frameBuffer);
-    for (std::uint32_t row = 0; row < geometry.height; ++row) {
-        if (!GuestCopyOut_nid_no_patch(destination + static_cast<std::uint64_t>(row) * geometry.pitch, source + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width)) {
-            return VideodecErrorFrameBufferPointer;
-        }
-    }
+    if (!GuestCopyOutRows_nid_no_patch(destination, geometry.pitch, source, sourcePitch, geometry.width, geometry.height)) return VideodecErrorFrameBufferPointer;
     const auto* sourceChroma = source + sourcePitch * geometry.height;
     auto* destinationChroma = destination + static_cast<std::uint64_t>(geometry.pitch) * geometry.height;
-    for (std::uint32_t row = 0; row < geometry.height / 2; ++row) {
-        if (!GuestCopyOut_nid_no_patch(destinationChroma + static_cast<std::uint64_t>(row) * geometry.pitch, sourceChroma + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width)) {
-            return VideodecErrorFrameBufferPointer;
-        }
-    }
+    if (!GuestCopyOutRows_nid_no_patch(destinationChroma, geometry.pitch, sourceChroma, sourcePitch, geometry.width, geometry.height / 2)) return VideodecErrorFrameBufferPointer;
     return 0;
 }
 

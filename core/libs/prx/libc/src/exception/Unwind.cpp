@@ -15,6 +15,7 @@
 #include <array>
 #include <map>
 #include <mutex>
+#include <set>
 #include <utility>
 #include <vector>
 #endif
@@ -43,13 +44,39 @@ extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
 
 namespace LibcUnwind {
 #ifdef _WIN32
-static bool Readable(Word address, std::size_t size) {
+const IMAGE_NT_HEADERS64* ImageHeaders(Word pc, const Byte*& base);
+
+static bool QueryReadable(Word address, std::size_t size) {
     for (Word cursor = address; cursor - address < size;) {
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
         if (memory.RegionSize == 0 || memory.State != MEM_COMMIT || (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 || (memory.Protect & 0xff) == PAGE_EXECUTE) return false;
         cursor = reinterpret_cast<Word>(memory.BaseAddress) + memory.RegionSize;
     }
+    return true;
+}
+
+static bool Readable(Word address, std::size_t size) {
+    const Byte* base = nullptr;
+    const auto* nt = ImageHeaders(address, base);
+    if (!nt || size == 0) return QueryReadable(address, size);
+    const Word offset = address - Word(base);
+    if (offset >= nt->OptionalHeader.SizeOfImage || size > nt->OptionalHeader.SizeOfImage - offset) return QueryReadable(address, size);
+    using PageKey = std::array<Word, 5>;
+    static std::mutex& mutex = *new std::mutex();
+    static auto& pages = *new std::set<PageKey>();
+    const auto key = [&](Word page) { return PageKey {Word(base), nt->FileHeader.TimeDateStamp, nt->OptionalHeader.CheckSum, nt->OptionalHeader.SizeOfImage, page}; };
+    const Word first = address >> 12;
+    const Word last = (address + size - 1) >> 12;
+    {
+        std::lock_guard lock(mutex);
+        bool known = true;
+        for (Word page = first; known && page <= last; ++page) known = pages.count(key(page)) != 0;
+        if (known) return true;
+    }
+    if (!QueryReadable(address, size)) return false;
+    std::lock_guard lock(mutex);
+    for (Word page = first; page <= last; ++page) pages.insert(key(page));
     return true;
 }
 
@@ -444,6 +471,8 @@ bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
     frame.lsda = entry.hasLsda ? base + entry.lsdaOffset : 0;
     frame.returnRegister = 16;
     context.region = frame.functionStart;
+    context.regionEnd = frame.functionEnd;
+    context.segment = base;
     context.lsda = frame.lsda;
     context.personality = frame.personality;
     context.textBase = base;
