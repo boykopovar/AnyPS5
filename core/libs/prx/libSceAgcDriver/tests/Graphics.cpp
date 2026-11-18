@@ -3676,6 +3676,18 @@ void DepthBoundsBiasTests() {
     }
     state = AgcDriver::Graphics::DecodeState(cleared);
     Require(state.depthBias && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.0f, "a depth bias clamp the title never writes must decode as its reset value 0");
+    for (const auto unwritten : {0x2e0u, 0x2e2u}) {
+        auto partial = queue;
+        partial.ClearContext();
+        for (const auto& [offset, value] : queue.context) {
+            if (offset != unwritten && offset != unwritten + 1u) partial.context[offset] = value;
+        }
+        partial.context[0x205] = 0x00001a40u;
+        state = AgcDriver::Graphics::DecodeState(partial);
+        const bool frontWritten = unwritten == 0x2e2u;
+        Require(state.depthBias && state.depthBiasPerFace && state.cullMode == VK_CULL_MODE_NONE, "depth bias on both faces with one face's registers never written must draw each face with its own bias");
+        Require(state.depthBiasSlope == (frontWritten ? 2.0f : 0.0f) && state.depthBiasConstant == (frontWritten ? 4.0f : 0.0f) && state.backDepthBiasSlope == (frontWritten ? 0.0f : -4.0f) && state.backDepthBiasConstant == (frontWritten ? 0.0f : 8.0f), "depth bias scale and offset registers the title never writes must decode as their reset value 0");
+    }
 }
 
 alignas(256) std::array<std::uint8_t, 4> dccKeys{};
