@@ -3417,6 +3417,63 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 }
 
+void importRetireCreditTests(const Context& context) {
+#ifndef _WIN32
+    constexpr std::size_t bytes = 1u << 20u;
+    constexpr std::size_t idle = 4;
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    ClearHostImports(context.device);
+    void* area = mmap(nullptr, 2 * (idle + 3) * bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(area != MAP_FAILED, "cannot map the import retire credit blocks");
+    const auto first = (reinterpret_cast<std::uintptr_t>(area) + bytes - 1) & ~(bytes - 1);
+    std::memset(reinterpret_cast<void*>(first), 0x44, 2 * (idle + 2) * bytes);
+    const auto registry = [&](std::uintptr_t at, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, reinterpret_cast<void*>(at), bytes, true, false, false);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, reinterpret_cast<void*>(at));
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto use = [&](std::uintptr_t at) {
+        NoteHostImportFrame();
+        GuestBufferMemory leased(importing);
+        leased.AddReadable(at, 32);
+        leased.Upload(false);
+        leased.WriteBack();
+        return HostImportCovers(importing, at, 16);
+    };
+    SetImportRetireCredit(false);
+    for (std::size_t index = 0; index < idle; ++index) registry(first + 2 * index * bytes, true);
+    for (std::size_t index = 0; index < idle; ++index) Require(use(first + 2 * index * bytes), "an idle range of the import retire credit fixture was not imported");
+    SetHostImportBudget(HostImportLiveBytes());
+    for (int frame = 0; frame < 4; ++frame) NoteHostImportFrame();
+    registry(first + 2 * idle * bytes, true);
+    registry(first + 2 * (idle + 1) * bytes, true);
+    const auto wanted = first + 2 * idle * bytes;
+    const auto second = wanted + 2 * bytes;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(importing);
+        recorder.Activate();
+        const auto before = HostImportCounters();
+        Require(!use(wanted) && HostImportCounters().retiredPinnedBytes == before.retiredPinnedBytes, "an import over the budget was made under recorded work without APS5_IMPORT_RETIRE_CREDIT");
+        SetImportRetireCredit(true);
+        Require(use(wanted), "an import that retires one idle import was refused under recorded work with APS5_IMPORT_RETIRE_CREDIT");
+        const auto credited = HostImportCounters();
+        Require(credited.liveBytes == before.liveBytes && credited.retiredPinnedBytes == before.retiredPinnedBytes + bytes && credited.credited == before.credited + 1, "the retire credit did not keep one retired import pinned beside the new one");
+        Require(!use(second) && HostImportCounters().retiredPinnedBytes == credited.retiredPinnedBytes, "the retire credit let retired bytes pass a quarter of the budget");
+    }
+    Require(use(second), "an import was refused after the recorded work released the retired bytes");
+    SetImportRetireCredit(false);
+    SetHostImportBudget(0);
+    for (std::size_t index = 0; index < idle + 2; ++index) registry(first + 2 * index * bytes, false);
+    ClearHostImports(context.device);
+    munmap(area, 2 * (idle + 3) * bytes);
+#else
+    static_cast<void>(context);
+#endif
+}
+
 void heapMirrorRetryTests(const Context& context) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() || !AddressSpaceCounters().enabled) {
@@ -5721,6 +5778,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     partialHeapImportBudgetTests(context, access);
     importedHeapMirrorTests(context, access);
     heapMirrorRetryTests(context);
+    importRetireCreditTests(context);
     retiredImportWatchTests(context);
     importWatchTests();
     importedFreshTests(context);

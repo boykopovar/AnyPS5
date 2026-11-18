@@ -112,6 +112,8 @@ struct HostImportCounts {
     std::uint64_t growing = 0;
     std::uint64_t budgetChecks = 0;
     std::uint64_t retiredPinnedBytes = 0;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -140,6 +142,7 @@ std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
 void SetHeapMirrorRetry(bool enabled);
+void SetImportRetireCredit(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);

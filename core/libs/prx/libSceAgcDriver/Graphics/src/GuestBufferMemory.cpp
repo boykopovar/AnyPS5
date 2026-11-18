@@ -186,6 +186,12 @@ void SetHeapMirrorRetry(bool enabled) {
     heapMirrorRetry.store(enabled, std::memory_order_relaxed);
 }
 
+std::atomic<bool> importRetireCredit{std::getenv("APS5_IMPORT_RETIRE_CREDIT") != nullptr};
+
+void SetImportRetireCredit(bool enabled) {
+    importRetireCredit.store(enabled, std::memory_order_relaxed);
+}
+
 namespace {
 void clearCarriedShadows(VkDevice device);
 struct RefreshBlock;
@@ -406,6 +412,8 @@ struct HostImports {
     std::uint64_t heapOwedBytes = 0;
     std::uint64_t heapOwedAt = 0;
     bool heapOwedFired = false;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
     bool heapRetrying = false;
     std::uint64_t budgetChecks = 0;
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
@@ -2430,13 +2438,16 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         }
         replaced += it->second.pinnedBytes;
     }
-    const bool immediate = retireFreesAtOnce(true);
+    const bool freed = retireFreesAtOnce(true);
     const auto pinned = pinnedTotal(state);
+    const auto retired = pinned - state.liveBytes;
+    const auto allowance = !freed && importRetireCredit.load(std::memory_order_relaxed) ? budget / 4 : 0;
+    const bool immediate = freed || (allowance != 0 && retired + replaced <= allowance);
     const auto reserved = state.heapOwedBytes != 0 && requester != ImportRequester::Build && (base + bytes <= state.heapOwedBase || base >= state.heapOwedBase + state.heapOwedBytes) ? state.heapOwedBytes : 0;
     const auto live = pinned - (immediate ? replaced : 0) + reserved;
     auto ready = std::numeric_limits<std::uint64_t>::max();
     auto readyHeld = std::numeric_limits<std::uint64_t>::max();
-    const auto evictable = evict && live + bytes > budget ? evictableBytes(state, base, base + bytes, ready, readyHeld) * (immediate ? 1 : 0) : 0;
+    const auto evictable = evict && live + bytes > budget ? std::min(evictableBytes(state, base, base + bytes, ready, readyHeld), freed ? std::numeric_limits<std::uint64_t>::max() : immediate ? allowance - retired - replaced : 0) : 0;
     if (live + bytes > budget + evictable) {
         if (state.heapRetrying && !immediate && !joined && state.heapOwedBytes == 0) {
             auto idleReady = std::numeric_limits<std::uint64_t>::max();
@@ -2471,13 +2482,17 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             std::fprintf(stderr, "[gpu] host import budget: %llu MiB pinned of %llu MiB (%s); %llu imports (%llu MiB) refused so far, %llu of them remembered, last 0x%llx+0x%llx by %s\n", static_cast<unsigned long long>(pinned >> 20u), static_cast<unsigned long long>(budget >> 20u), budgetSource(context, state, budget).c_str(), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(remembered), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), ImportRequesterName(requester));
         }
         const auto room = budget + evictable > live ? budget + evictable - live : 0;
-        if (evict) state.evictingRefusals.insert_or_assign(std::pair{base, bytes}, EvictingRefusal{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()), state.epoch, state.framesEnded, pinned, budget, room, importWindow.load(std::memory_order_relaxed), state.buildFloor, ready, readyHeld, joined, immediate});
+        if (evict) state.evictingRefusals.insert_or_assign(std::pair{base, bytes}, EvictingRefusal{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()), state.epoch, state.framesEnded, pinned, budget, room, importWindow.load(std::memory_order_relaxed), state.buildFloor, ready, readyHeld, joined, freed});
         if (stepDown && containing != run.ranges.end() && room >= (*containing)->bytes) return importAllocation(context, state, address, lease, requester, end, evict, std::min(bytes / 2, room));
         if (containing != run.ranges.end() && run.ranges.size() > 1) remember((*containing)->address, (*containing)->bytes, GuestAllocations::Mapped{*containing});
         ++state.budgetRefusals;
         return nullptr;
     }
     if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
+    if (!freed && (replaced != 0 || live + bytes > budget)) {
+        ++state.credited;
+        state.creditedBytes += bytes;
+    }
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
     entry.range = run.ranges.front();
@@ -2659,7 +2674,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (pinnedTotal(state) + bytes > budget) retireLeastRecent(context, state, lease, pinnedTotal(state) + bytes - budget, base, base + bytes);
+    if (const auto held = freed ? pinnedTotal(state) : state.liveBytes; held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
@@ -4903,7 +4918,7 @@ const char* ImportRequesterName(ImportRequester requester) {
 HostImportCounts HostImportCounters() {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire)};
+    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire), state.credited, state.creditedBytes};
 }
 
 std::string FormatHostImportCounts(const HostImportCounts& counts) {
@@ -4927,6 +4942,11 @@ std::string FormatHostImportCounts(const HostImportCounts& counts) {
         char pinned[64];
         std::snprintf(pinned, sizeof(pinned), "; %.1f MiB retired and still pinned", counts.retiredPinnedBytes / 1048576.0);
         requesters += pinned;
+    }
+    if (counts.credited != 0) {
+        char credited[96];
+        std::snprintf(credited, sizeof(credited), "; %llu (%.1f MiB) admitted on retire credit", static_cast<unsigned long long>(counts.credited), counts.creditedBytes / 1048576.0);
+        requesters += credited;
     }
     return text + requesters;
 }
