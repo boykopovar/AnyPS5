@@ -304,6 +304,10 @@ void APS5_VABI libSceLibcInternalInventory_071_nid_no_patch(void*) {
 void APS5_VABI _ZNSt6_WinitD1Ev_nid_postfix(void*) {
     ReleaseStandardStreamInit(wideStreamInitCount);
 }
+
+void APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix(void*) {
+    ReleaseStandardStreamInit(wideStreamInitCount);
+}
 APS5_EXPORT("-Bl9-SZ2noc", libSceLibcInternalInventory_071_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_072_nid_no_patch() {

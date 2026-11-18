@@ -96,6 +96,24 @@ class IntervalCsvTests(unittest.TestCase):
             self.assertEqual(empty.returncode, 0, empty.stderr)
             self.assertEqual(len(list(csv.reader(io.StringIO(empty.stdout.decode())))), 1)
 
+    def test_require_complete_rejects_empty_capture_and_changed_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            command = [sys.executable, str(Path(trace_intervals_csv.__file__)), str(path), "--require-complete"]
+            first = interval_line(0.0, 30.0, 20.0, 5.0, commit="a" * 40)
+            second = interval_line(30.0, 60.0, 20.0, 5.0, commit="b" * 40)
+            for contents in (b"", (json.dumps(first) + "\n" + json.dumps(second) + "\n").encode()):
+                with self.subTest(contents=contents[:20]):
+                    path.write_bytes(contents)
+                    completed = subprocess.run(command, capture_output=True)
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    self.assertEqual(completed.stdout, b"")
+                    self.assertIn(b"error: capture is empty, has dropped events or changing identity", completed.stderr)
+            path.write_bytes((json.dumps(first) + "\n" + json.dumps(interval_line(30.0, 60.0, 20.0, 5.0, commit="a" * 40)) + "\n").encode())
+            same = subprocess.run(command, capture_output=True)
+            self.assertEqual(same.returncode, 0, same.stderr)
+            self.assertEqual(len(list(csv.DictReader(io.StringIO(same.stdout.decode(), newline="")))), 2)
+
     def test_unusable_input_is_a_cli_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.jsonl"

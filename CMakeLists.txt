@@ -926,6 +926,12 @@ if(BUILD_TESTING)
         add_test(NAME benchmark_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_benchmark_compare.py)
         set_tests_properties(benchmark_compare PROPERTIES TIMEOUT 30)
+        add_test(NAME frame_replay_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_frame_replay_report.py)
+        set_tests_properties(frame_replay_report PROPERTIES TIMEOUT 30)
+        add_test(NAME frame_replay_compare COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_frame_replay_compare.py)
+        set_tests_properties(frame_replay_compare PROPERTIES TIMEOUT 30)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
@@ -992,11 +998,16 @@ set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
 set(SDL_HIDAPI ON CACHE BOOL "" FORCE)
 set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
-if(NOT ANYPS5_USE_SYSTEM_DEPS)
-    set(ANYPS5_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+
+function(anyps5_add_bundled_sdl2)
     set(CMAKE_EXE_LINKER_FLAGS "")
+    set(HAVE_DLOPEN OFF)
+    set(HAVE_CLOCK_GETTIME OFF)
     add_subdirectory(3rdparty/SDL2)
-    set(CMAKE_EXE_LINKER_FLAGS "${ANYPS5_EXE_LINKER_FLAGS}")
+endfunction()
+
+if(NOT ANYPS5_USE_SYSTEM_DEPS)
+    anyps5_add_bundled_sdl2()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         get_directory_property(ANYPS5_SDL_X11_XRANDR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_X11_XRANDR)
         if(NOT ANYPS5_SDL_X11_XRANDR)

@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "ustr_cnv.h"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -85,6 +86,10 @@ constexpr Signature Signatures[] = {
 }
 
 extern "C" {
+
+void APS5_VABI u_flushDefaultConverter_nid_postfix() {
+    u_flushDefaultConverter();
+}
 
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;
