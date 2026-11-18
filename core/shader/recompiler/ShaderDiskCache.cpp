@@ -330,6 +330,7 @@ public:
 
     void Spirv(const SharedSpirv& spirv, bool compress) {
         const auto words = spirv.Words();
+        if (words.size() > MaxCachedSpirvWords) throw std::runtime_error("shader disk cache: SPIR-V exceeds the cached-entry word limit");
         const auto raw = std::as_bytes(std::span<const std::uint32_t>(words));
         const auto hash = spirv.ContentHash();
         SpirvCodec codec = SpirvCodec::Raw;
@@ -444,7 +445,7 @@ public:
         const auto encodedCount = Get<std::uint64_t>();
         const SpirvContentHash hash{Get<std::uint64_t>(), Get<std::uint64_t>()};
         const auto byteCount = Count(1);
-        if (!ok || encodedCount > std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t)) {
+        if (!ok || encodedCount > MaxCachedSpirvWords || encodedCount > std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t)) {
             ok = false;
             return {};
         }
