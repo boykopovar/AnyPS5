@@ -10,8 +10,6 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-
 struct SceSigninDialogResult {
  std::int32_t result = COMMON_DIALOG_RESULT_USER_CANCELED;
  std::int32_t reserved[3] = {};
@@ -55,7 +53,7 @@ int APS5_VABI sceSigninDialogInitialize(void) {
 int APS5_VABI sceSigninDialogOpen(const void* param) {
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+ if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_RESULT_NONE;
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  std::uint8_t dummy = 0;
  const int savedErrno = errno;

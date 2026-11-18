@@ -37,6 +37,17 @@ def load_tool():
     return TOOL
 
 
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def copyable_executable():
+    for program in (sys.executable, shutil.which("py")):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return program
+    return None
+
+
 def frozen_datetime(instant):
     class FrozenDateTime(REAL_DATETIME):
         @classmethod
@@ -162,9 +173,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
 
     def fake_relinker(self):
+        program = copyable_executable()
+        if program is None:
+            self.skipTest("no interpreter to copy as the relinker: sys.executable is an App Execution Alias and py is unavailable")
         target = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         target.parent.mkdir(parents=True)
-        shutil.copy2(sys.executable, target)
+        shutil.copy2(program, target)
         self.build_from_source()
         return target
 
