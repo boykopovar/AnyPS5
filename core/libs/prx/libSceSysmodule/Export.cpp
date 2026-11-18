@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include "prx/libc/include/General.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -405,11 +406,19 @@ int APS5_VABI sceSysmoduleIsCameraPreloaded() {
 
 KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
     if (fname == nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
-    const char* sandbox = sceKernelGetFsSandboxRandomWord();
     char path[0x100];
+    std::string name;
+    const int copyError = CopyGuestString_nid_no_patch(fname, sizeof(path), name);
+    if (copyError == 63) {
+        name.resize(sizeof(path));
+        if (!GuestCopyIn_nid_no_patch(name.data(), fname, sizeof(path))) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
+    } else if (copyError != 0) {
+        return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
+    }
+    const char* sandbox = sceKernelGetFsSandboxRandomWord();
     KernelModule result = static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
     const auto attempt = [&](const char* root, const char* tier, const char* ext) {
-        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, fname, ext);
+        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, name.c_str(), ext);
         result = sceKernelLoadStartModule(path, args, argp, flags, nullptr, res);
         return result > 0;
     };
