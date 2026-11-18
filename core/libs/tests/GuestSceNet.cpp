@@ -1523,6 +1523,36 @@ static void CheckIoctl() {
     Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
+    std::array<unsigned char, 8> untouched{};
+    untouched.fill(0x5a);
+    const auto unchanged = [&untouched] { return std::all_of(untouched.begin(), untouched.end(), [](unsigned char byte) { return byte == 0x5a; }); };
+    for (const std::uint32_t request : {0x40087468u, 0x80047801u, 0xc0047801u, 0x20047801u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 49) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x40087468, nullptr), 49));
+    Require(Failed(sceNetIoctl(socket, 0x20047801, nullptr), 49));
+    Require(Failed(sceNetIoctl(socket, 0x80047801, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x80047801, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
+    for (const std::uint32_t request : {0x80007801u, 0x40007801u, 0x20087801u, 0x00047801u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 25) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x80007801, reinterpret_cast<void*>(std::uintptr_t{0x10})), 25));
+    Require(ioctl_nid_postfix(socket, 0x40087468, untouched.data()) == -1 && *__error_nid_postfix() == 49 && unchanged());
+    for (const std::uint32_t request : {0x20006601u, 0x20006602u, 0x8004667du, 0x8004667cu, 0x4004667bu, 0x40046677u, 0x40046676u,
+             0x40047307u, 0x80047308u, 0x40047309u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 25) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x80047308, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x4004667a, untouched.data()), 25) && unchanged());
+    std::array<unsigned char, 72> policy{};
+    Require(Failed(sceNetIoctl(socket, 0x8048756c, policy.data()), 49));
+    const int inet6 = sceNetSocket("ioctl6", 28, 2, 17);
+    Require(inet6 >= 0);
+    for (const std::uint32_t request : {0x40087468u, 0x80047801u, 0x20047801u}) {
+        Require(Failed(sceNetIoctl(inet6, request, untouched.data()), 45) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(inet6, 0x8048756c, policy.data()), 25));
+    Require(sceNetSocketClose(inet6) == 0);
     for (const int value : {0, 3}) {
         int request = value;
         Require(ioctl_nid_postfix(socket, 0x8004667e, &request) == 0);
@@ -1629,6 +1659,66 @@ static void CheckInetPtonRejects(int family, const char* text) {
     *sceNetErrnoLoc() = 123;
     Require(sceNetInetPton(family, text, address.data()) == 0 && *sceNetErrnoLoc() == 123);
     Require(std::all_of(address.begin(), address.end(), [](std::uint8_t byte) { return byte == 0xaa; }));
+}
+
+static void CheckInetPtonSourceFaults() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page * 2, 3, 0, physical, 0) == 0);
+    auto* boundary = static_cast<char*>(mapping) + page;
+    Require(sceKernelMprotect(boundary, page, 0) == 0);
+    for (const int family : {2, 28}) {
+        std::array<std::uint8_t, 20> address;
+        address.fill(0xaa);
+        const auto unchanged = address;
+        for (const char* source : {reinterpret_cast<const char*>(std::uintptr_t{0x10}),
+                 static_cast<const char*>(boundary), static_cast<const char*>(boundary - 1),
+                 reinterpret_cast<const char*>(UINTPTR_MAX)}) {
+            boundary[-1] = '1';
+            errno = 71;
+            Require(Failed(sceNetInetPton(family, source, address.data()), 14));
+            Require(address == unchanged && errno == 14);
+        }
+        const char* valid = family == 2 ? "1.2.3.4" : "::ffff:1.2.3.4";
+        const auto size = std::strlen(valid) + 1;
+        std::memcpy(boundary - size, valid, size);
+        *sceNetErrnoLoc() = 123;
+        errno = 71;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1);
+        Require(*sceNetErrnoLoc() == 123 && errno == 71);
+        const auto expected = address;
+        const auto bytes = family == 2 ? 4 : 16;
+        Require(address[bytes - 4] == 1 && address[bytes - 1] == 4);
+        Require(std::all_of(address.begin() + bytes, address.end(), [](auto byte) { return byte == 0xaa; }));
+        boundary[-1] = ' ';
+        address = unchanged;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1 && address == expected);
+        Require(sceKernelMprotect(mapping, page, 1) == 0);
+        address = unchanged;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1 && address == expected);
+        Require(sceKernelMprotect(mapping, page, 3) == 0);
+        address = unchanged;
+        boundary[-1] = '\0';
+        Require(sceNetInetPton(family, boundary - 1, address.data()) == 0 && address == unchanged);
+    }
+    std::array<std::uint8_t, 16> address{};
+    const auto* unreadable = static_cast<const char*>(boundary);
+    Require(Failed(sceNetInetPton(99, unreadable, address.data()), 47));
+    Require(Failed(sceNetInetPton(28, unreadable, nullptr), 22));
+    Require(Failed(sceNetInetPton(2, unreadable, nullptr), 14));
+    Require(Failed(sceNetInetPton(2, nullptr, address.data()), 22));
+    std::memcpy(boundary - 4, "::1 ", 4);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(28, boundary - 4, address.data()) == 0 && *sceNetErrnoLoc() == 123);
+    Require(std::all_of(address.begin(), address.end(), [](auto byte) { return byte == 0; }));
+    Require(sceKernelMprotect(boundary, page, 3) == 0);
+    std::memcpy(boundary - 3, "1.2.3.4", 8);
+    Require(sceNetInetPton(2, boundary - 3, address.data()) == 1);
+    Require(address[0] == 1 && address[1] == 2 && address[2] == 3 && address[3] == 4);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0);
 }
 
 static void CheckInetPtonWhitespace() {
@@ -2838,6 +2928,11 @@ static void CheckDatagramDisconnect() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--inet-pton-source-faults") == 0) {
+        CheckInetPtonSourceFaults();
+        CheckInetPtonWhitespace();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--ether-pointer-faults") == 0) {
         CheckEtherPointerFaults();
         return 0;
@@ -2909,6 +3004,7 @@ int main(int argc, char** argv) {
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckInetNtopGuestPointers();
     CheckInetPtonWhitespace();
+    CheckInetPtonSourceFaults();
     CheckInetPtonExParts();
     CheckInetPtonEx();
     CheckUsleep();

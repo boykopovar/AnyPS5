@@ -501,6 +501,17 @@ class AnnotateModuleTests(unittest.TestCase):
             summary = self.annotate(build_module())
         self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
 
+    def test_listing_marks_the_elf_entry_instruction(self):
+        image = bytearray(build_module(code=b"\xe8\x90\x90\x90\x90\xc3"))
+        entry = CODE_ADDRESS + 1
+        struct.pack_into("<Q", image, 24, entry)
+        self.annotate(image)
+        lines = self.read(".asm").splitlines()
+        self.assertEqual(lines.count("; ===== ELF entry point"), 1)
+        line = lines[lines.index("; ===== ELF entry point") + 1]
+        self.assertEqual(int(line.split(":")[0], 16), entry)
+        self.assertIn("nop", line)
+
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
         wrong.write_text("%s sceKernelOther\n" % nid(IMPORT_NAME), encoding="utf-8")
@@ -1109,6 +1120,16 @@ class LineNoteTests(unittest.TestCase):
             def resolve(self, value):
                 raise AssertionError("not expected for a plain instruction")
         self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
 class FakeNamer:
     def resolve(self, name):
         return name.upper()
