@@ -178,6 +178,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (options.ToAvx) {
         auto extensions = ElfImageExtensions(sourceBytes, result.OriginalHeaders);
         for (const auto& artifact : guestArtifacts) extensions |= artifact.RequiredExtensions;
+        if (!options.ExcludedModules.empty()) extensions = Codegen::AllCpuExtensions;
         requiredExtensions = extensions;
     }
 

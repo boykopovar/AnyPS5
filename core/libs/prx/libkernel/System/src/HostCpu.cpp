@@ -128,32 +128,6 @@ std::optional<std::uint32_t> FeatureMask(const char* name) {
     return std::nullopt;
 }
 
-std::optional<std::uint32_t> ReadNoteExtensions(const std::uint8_t* note, const std::size_t size) {
-    std::size_t offset = 0;
-    while (offset + 12 <= size) {
-        std::uint32_t namesz = 0;
-        std::uint32_t descsz = 0;
-        std::uint32_t type = 0;
-        std::memcpy(&namesz, note + offset, 4);
-        std::memcpy(&descsz, note + offset + 4, 4);
-        std::memcpy(&type, note + offset + 8, 4);
-        offset += 12;
-        const std::size_t nameStart = offset;
-        if (namesz > size - offset) return std::nullopt;
-        offset += (namesz + 3u) & ~std::size_t{3};
-        if (offset > size || descsz > size - offset) return std::nullopt;
-        const std::size_t descStart = offset;
-        offset += (descsz + 3u) & ~std::size_t{3};
-        if (type != 1 || namesz != sizeof(kRecordName) || descsz < 8) continue;
-        if (std::memcmp(note + nameStart, kRecordName, sizeof(kRecordName)) != 0) continue;
-        std::uint32_t version = 0;
-        std::uint32_t mask = 0;
-        std::memcpy(&version, note + descStart, 4);
-        std::memcpy(&mask, note + descStart + 4, 4);
-        if (version == 1) return mask;
-    }
-    return std::nullopt;
-}
 
 std::optional<std::uint32_t> RecordedExtensions() {
 #ifdef _WIN32
@@ -168,15 +142,7 @@ std::optional<std::uint32_t> RecordedExtensions() {
         const auto& section = sections[index];
         if (std::memcmp(section.Name, ".aps5cpu", 8) != 0) continue;
         if (section.Misc.VirtualSize < 16) return std::nullopt;
-        const auto* record = image + section.VirtualAddress;
-        constexpr char magic[8] = {'A', '5', 'C', 'P', 'U', 0, 0, 0};
-        if (std::memcmp(record, magic, sizeof(magic)) != 0) return std::nullopt;
-        std::uint32_t version = 0;
-        std::uint32_t mask = 0;
-        std::memcpy(&version, record + 8, 4);
-        std::memcpy(&mask, record + 12, 4);
-        if (version != 1) return std::nullopt;
-        return mask;
+        return ParseCpuExtensionRecord(image + section.VirtualAddress, 16);
     }
     return std::nullopt;
 #elif defined(__linux__)
@@ -198,7 +164,7 @@ std::optional<std::uint32_t> RecordedExtensions() {
                     mapped = true;
             }
             if (!mapped) continue;
-            result.Extensions = ReadNoteExtensions(reinterpret_cast<const std::uint8_t*>(image->dlpi_addr + header.p_vaddr), header.p_filesz);
+            result.Extensions = ParseCpuExtensionNote(reinterpret_cast<const std::uint8_t*>(image->dlpi_addr + header.p_vaddr), header.p_filesz);
             if (result.Extensions) return 1;
         }
         return 0;
@@ -218,6 +184,48 @@ std::string Join(const std::vector<std::string>& names) {
     return text;
 }
 
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionNote(const std::uint8_t* note, const std::size_t size) {
+    constexpr std::uint32_t known = kLzcnt | kBmi1 | kBmi2 | kMovbe | kAvx2 | kFma | kF16c;
+    if (note == nullptr) return std::nullopt;
+    std::size_t offset = 0;
+    while (offset + 12 <= size) {
+        std::uint32_t namesz = 0;
+        std::uint32_t descsz = 0;
+        std::uint32_t type = 0;
+        std::memcpy(&namesz, note + offset, 4);
+        std::memcpy(&descsz, note + offset + 4, 4);
+        std::memcpy(&type, note + offset + 8, 4);
+        offset += 12;
+        const std::size_t nameStart = offset;
+        if (namesz > size - offset) return std::nullopt;
+        offset += (namesz + 3u) & ~std::size_t{3};
+        if (offset > size || descsz > size - offset) return std::nullopt;
+        const std::size_t descStart = offset;
+        offset += (descsz + 3u) & ~std::size_t{3};
+        if (type != 1 || namesz != sizeof(kRecordName) || descsz < 8) continue;
+        if (std::memcmp(note + nameStart, kRecordName, sizeof(kRecordName)) != 0) continue;
+        std::uint32_t version = 0;
+        std::uint32_t mask = 0;
+        std::memcpy(&version, note + descStart, 4);
+        std::memcpy(&mask, note + descStart + 4, 4);
+        if (version != 1 || (mask & ~known) != 0) return std::nullopt;
+        return mask;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionRecord(const std::uint8_t* record, const std::size_t size) {
+    constexpr std::uint32_t known = kLzcnt | kBmi1 | kBmi2 | kMovbe | kAvx2 | kFma | kF16c;
+    constexpr char magic[8] = {'A', '5', 'C', 'P', 'U', 0, 0, 0};
+    if (record == nullptr || size < 16 || std::memcmp(record, magic, sizeof(magic)) != 0) return std::nullopt;
+    std::uint32_t version = 0;
+    std::uint32_t mask = 0;
+    std::memcpy(&version, record + 8, 4);
+    std::memcpy(&mask, record + 12, 4);
+    if (version != 1 || (mask & ~known) != 0) return std::nullopt;
+    return mask;
 }
 
 HostCpuRegisters ReadHostCpuRegisters() {

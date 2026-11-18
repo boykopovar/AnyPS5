@@ -1,5 +1,6 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
 #include <cstdint>
+#include <optional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -123,6 +124,39 @@ static void CheckError() {
     }
 }
 
+static std::vector<std::uint8_t> ExtensionNote(const std::uint32_t version, const std::uint32_t mask) {
+    return {7, 0, 0, 0, 8, 0, 0, 0, 1, 0, 0, 0, 'A', 'n', 'y', 'P', 'S', '5', 0, 0,
+            static_cast<std::uint8_t>(version), 0, 0, 0, static_cast<std::uint8_t>(mask), 0, 0, 0};
+}
+
+static std::vector<std::uint8_t> ExtensionRecord(const std::uint32_t version, const std::uint32_t mask) {
+    return {'A', '5', 'C', 'P', 'U', 0, 0, 0, static_cast<std::uint8_t>(version), 0, 0, 0,
+            static_cast<std::uint8_t>(mask), 0, 0, 0};
+}
+
+static void CheckRecordParsers() {
+    const auto note = ExtensionNote(1, 0x5);
+    Require(ParseCpuExtensionNote(note.data(), note.size()) == 0x5u, "a well-formed note was rejected");
+    Require(!ParseCpuExtensionNote(note.data(), note.size() - 4).has_value(), "a truncated note was accepted");
+    auto wrongName = note;
+    wrongName[12] = 'B';
+    Require(!ParseCpuExtensionNote(wrongName.data(), wrongName.size()).has_value(), "a note with another owner was accepted");
+    const auto wrongVersion = ExtensionNote(2, 0x5);
+    Require(!ParseCpuExtensionNote(wrongVersion.data(), wrongVersion.size()).has_value(), "a note of another version was accepted");
+    const auto unknownBit = ExtensionNote(1, 0x80);
+    Require(!ParseCpuExtensionNote(unknownBit.data(), unknownBit.size()).has_value(), "a note with an unknown extension bit was accepted");
+    const auto record = ExtensionRecord(1, 0x21);
+    Require(ParseCpuExtensionRecord(record.data(), record.size()) == 0x21u, "a well-formed record was rejected");
+    Require(!ParseCpuExtensionRecord(record.data(), record.size() - 1).has_value(), "a truncated record was accepted");
+    auto wrongMagic = record;
+    wrongMagic[0] = 'B';
+    Require(!ParseCpuExtensionRecord(wrongMagic.data(), wrongMagic.size()).has_value(), "a record with another magic was accepted");
+    const auto recordVersion = ExtensionRecord(2, 0x21);
+    Require(!ParseCpuExtensionRecord(recordVersion.data(), recordVersion.size()).has_value(), "a record of another version was accepted");
+    const auto recordUnknown = ExtensionRecord(1, 0x80);
+    Require(!ParseCpuExtensionRecord(recordUnknown.data(), recordUnknown.size()).has_value(), "a record with an unknown extension bit was accepted");
+}
+
 static void CheckExportedHelpers() {
     const auto registers = ReadHostCpuRegisters_nid_no_patch();
     const auto direct = ReadHostCpuRegisters();
@@ -171,6 +205,7 @@ int main() {
         CheckSingleMissingExtension();
         CheckAvxWithoutOsState();
         CheckPreHaswell();
+        CheckRecordParsers();
         CheckRecordedExtensions();
         CheckError();
     } catch (const std::exception& error) {
