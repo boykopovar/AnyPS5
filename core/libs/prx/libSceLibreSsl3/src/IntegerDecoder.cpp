@@ -367,10 +367,10 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
     } catch (...) {
         FreeInteger(integer);
         if (output) {
-            try {
-                GuestStore(output, previous, "d2i_ASN1_INTEGER");
-            } catch (...) {
-            }
+            const int savedErrno = errno;
+            const bool restored = GuestCopyOut_nid_no_patch(output, &previous, sizeof(previous));
+            errno = savedErrno;
+            if (!restored) throw std::runtime_error("d2i_ASN1_INTEGER: the output slot could not be restored");
         }
         throw;
     }
