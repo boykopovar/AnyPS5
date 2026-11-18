@@ -1,3 +1,10 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -5,6 +12,7 @@
 
 extern "C" {
 bool IsInitialPthread_nid_no_patch();
+bool LiveGuestThreadName_nid_no_patch(std::int64_t tid, char* name, std::size_t capacity);
 
 int APS5_VABI pthread_main_np_nid_postfix() {
     return IsInitialPthread_nid_no_patch() ? 1 : 0;
@@ -21,6 +29,14 @@ int APS5_VABI pthread_getstack_np_nid_postfix(void** stackAddress, std::size_t* 
     if (!GuestCopyOut_nid_no_patch(stackAddress, &address, sizeof(address))) return 14;
     if (!GuestCopyOut_nid_no_patch(stackSize, &size, sizeof(size))) return 14;
     return static_cast<int>(size);
+}
+
+int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name) {
+    constexpr std::size_t capacity = 32;
+    char found[capacity];
+    if (!LiveGuestThreadName_nid_no_patch(id, found, capacity)) return SCE_KERNEL_ERROR_ESRCH;
+    if (!GuestCopyOut_nid_no_patch(name, found, std::strlen(found) + 1)) return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
 }
 
 }

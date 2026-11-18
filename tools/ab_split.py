@@ -18,7 +18,8 @@ A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
-KINDS = (("present", "[present] "), ("gputime", "[gputime] "), ("draw", "[draw] pipelined"), ("syncwait", "[syncwait] "))
+KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
+         ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 
 
 def finite(value):
@@ -126,8 +127,8 @@ def read_log(lines):
                     unmatched_settlement = None
 
             continue
-        for name, prefix in KINDS:
-            if text.startswith(prefix):
+        for name, report_line in KINDS:
+            if report_line.match(text):
                 state = (current["index"], current["settled"] is not None) if current is not None else None
                 if state is not None and state[1] and previous[name] == state:
                     report = parse_report(name, text)

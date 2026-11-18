@@ -43,6 +43,14 @@ int main() {
     ::setenv("ANYPS5_STORAGE_FOLDER", (base / "missing").string().c_str(), 1);
     Check(UsbStorage::HostFolderVolumes().empty(), "ANYPS5_STORAGE_FOLDER mounts a missing folder");
     ::unsetenv("ANYPS5_STORAGE_FOLDER");
+#else
+    const auto wide = base / L"caf\u00e9\u4e2d";
+    fs::create_directories(wide);
+    _wputenv_s(L"ANYPS5_STORAGE_FOLDER", wide.c_str());
+    const auto mounted = UsbStorage::HostFolderVolumes();
+    Check(mounted.size() == 1, "ANYPS5_STORAGE_FOLDER does not mount a folder with non-ASCII characters");
+    Check(mounted.size() == 1 && mounted[0].root == wide, "ANYPS5_STORAGE_FOLDER mounts a different folder than it names");
+    _wputenv_s(L"ANYPS5_STORAGE_FOLDER", L"");
 #endif
 
     fs::remove_all(base);

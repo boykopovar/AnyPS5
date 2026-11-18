@@ -324,9 +324,11 @@ def main(argv=None):
             if result.returncode:
                 detail = (result.stdout + result.stderr).strip()
                 if result.returncode == 1 and verified and verified[3] > 0:
+                    record["reason"] = "verification_mismatch"
                     emit(f"{label}: rejected by relinker: {detail}")
                     continue
                 if result.returncode == 2:
+                    record["reason"] = "relinker_error"
                     emit(f"{label}: relinker error (exit 2): {detail}")
                     relinker_errors = True
                     continue
@@ -334,6 +336,7 @@ def main(argv=None):
             if not verified:
                 raise ValueError(f"{label}: relinker produced no verification summary")
             if verified[0] == 0 or verified[1] != verified[0] or verified[2] or verified[3]:
+                record["reason"] = "verification_unconfirmed"
                 emit(f"{label}: rejected: relinker did not confirm every patch")
                 continue
             record.update(status="verified", targets=targets, metadata=catalog_metadata,
