@@ -168,4 +168,13 @@ int APS5_VABI libSceFsInternalForVshUnknown_v9uqOhwlhjs_nid_no_patch();
 int APS5_VABI libSceFsInternalForVshUnknown_yadgQseaDKA_nid_no_patch();
 int APS5_VABI libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patch();
 
+int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry();
+int APS5_VABI sceFsBfsGetBlockStatus();
+int APS5_VABI sceFsBfsUnmount();
+int APS5_VABI sceFsBfsCopyFile();
+int APS5_VABI sceFsBfsGetRwDeactivateStatus();
+int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown();
+int APS5_VABI sceFsBfsCreateFakeSpace();
+int APS5_VABI sceFsBfsDeleteFakeSpace();
+
 }

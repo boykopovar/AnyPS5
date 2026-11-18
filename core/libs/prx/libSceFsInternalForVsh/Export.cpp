@@ -1658,4 +1658,36 @@ int APS5_VABI libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patch() {
 }
 APS5_EXPORT("ydRWehw26Kk", libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patch);
 
+int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetBlockStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsCopyFile() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetRwDeactivateStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsCreateFakeSpace() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsDeleteFakeSpace() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
