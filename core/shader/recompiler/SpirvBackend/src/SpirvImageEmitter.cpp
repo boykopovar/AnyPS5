@@ -476,10 +476,16 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
     const auto& info = RdnaImageDimensionInfoFor(dimension);
     const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
     const auto size = state.module.AllocateId();
+    std::uint32_t levels = 0u;
+    std::uint32_t inRange = 0u;
     if (info.multisampled != 0u) {
         state.module.AddFunction(spv::OpImageQuerySize, ImageViewSizeType(state, dimension), size, image);
     } else {
-        state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, dimension), size, image, AddressU32(ctx, access, 0));
+        levels = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), levels, image);
+        const auto lod = AddressU32(ctx, access, 0);
+        inRange = Binary(state, spv::OpULessThan, TypeBool(state), lod, levels);
+        state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, dimension), size, image, Select(state, TypeU32(state), inRange, lod, ConstantU32(state, 0)));
     }
     const auto components = info.coordinateComponents;
     std::uint32_t result[4] = {ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
@@ -499,8 +505,8 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
         result[2] = ConstantU32(state, 0);
     }
     if (info.multisampled == 0u) {
-        result[3] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), result[3], image);
+        for (std::uint32_t index = 0; index < 3u; index++) result[index] = Select(state, TypeU32(state), inRange, result[index], ConstantU32(state, 0));
+        result[3] = levels;
     }
     const auto vector = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), vector, result[0], result[1], result[2], result[3]);
