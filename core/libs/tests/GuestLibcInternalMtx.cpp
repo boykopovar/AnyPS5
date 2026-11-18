@@ -62,6 +62,10 @@ int main() {
     Require(_Mtxinit_nid_postfix(&longName, "ANameLongerThanTheThirtyTwoByteLabel") == 0, "a long name is truncated");
     Require(_Mtxdst_nid_postfix(&longName) == 0, "a mutex with a long name is destroyed");
 
+    PthreadMutex unreadable = nullptr;
+    Require(_Mtxinit_nid_postfix(&unreadable, reinterpret_cast<const char*>(0x10)) == 1 && unreadable == nullptr,
+        "an unreadable name is refused before the mutex is made");
+
     PthreadMutex zeroed = nullptr;
     Require(_Mtxunlock_nid_postfix(&zeroed) == 1, "unlocking a zeroed mutex fails");
     Require(LockAndUnlock(&zeroed) == 0, "a zeroed mutex is initialized on first lock");
