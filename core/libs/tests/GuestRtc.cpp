@@ -1039,9 +1039,15 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
+    const RtcTick lastTick{UINT64_MAX};
+    char sdkBoundary[40]{};
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == 0);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
     SetCompiledSdkVersion(process.data(), 0x03000000);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == invalidValue);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 1, 1) == invalidYear);
     SetCompiledSdkVersion(process.data(), 0x05050001);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(2024, 0, 1) == invalidMonth);
