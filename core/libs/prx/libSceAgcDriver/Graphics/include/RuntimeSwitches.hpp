@@ -25,6 +25,7 @@ enum class RuntimeSwitch : std::size_t {
     TableSnapshot,
     NoTargetMemo,
     NoTargetMemoOverlapCache,
+    NoStagePoolReuse,
     Count,
 };
 
