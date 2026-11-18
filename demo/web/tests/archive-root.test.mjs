@@ -53,9 +53,11 @@ for (const directory of ["Media/Modules", "Media/Plugins"]) {
     for (const selection of [await zipped(entries), entries.map(([path, , bytes = header]) => ({ path, file: new Blob([bytes]) }))]) {
       const archive = new Archive(selection);
       try {
-        await assert.rejects(archive.inspect(() => {}), {
-          message: `${directory}/provider.${suffix} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${directory}.`
-        });
+        const summary = await archive.inspect(() => {});
+        assert.equal(summary.modules, 1);
+        assert(!summary.warnings.some(warning => warning.includes("module folder")));
+        const input = await archive.conversionInput("linux", false, () => {});
+        assert.deepEqual(input.modules, [{ name: `${directory}/provider.${suffix}`, bytes: header }]);
       } finally { await archive.close(); }
     }
   }
@@ -64,6 +66,7 @@ for (const directory of ["Media/Modules", "Media/Plugins"]) {
   const archive = new Archive(await zipped([
     ["title/main.elf", false],
     [`title/${directory}/readme.txt`, false, new TextEncoder().encode("Unity asset")],
+    [`title/${directory}/assets/unrelated.elf`, false],
     [`title/${directory}/provider.guest.prx`, false],
     [`title/${directory}/encrypted.prx`, false, new Uint8Array([0x4f, 0x15, 0x3d, 0x1d])]
   ]));
