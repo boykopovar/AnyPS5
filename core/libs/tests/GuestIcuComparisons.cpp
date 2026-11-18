@@ -11,6 +11,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 
 
 namespace {
@@ -130,9 +137,75 @@ void Boundaries() {
     Require(unreadableRejected == 7, "unreadable buffers throw invalid_argument");
 }
 
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size_ = info.dwPageSize;
+        base_ = static_cast<unsigned char*>(VirtualAlloc(nullptr, size_ * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base_ != nullptr, "allocate guarded pages");
+        DWORD previous = 0;
+        Require(VirtualProtect(base_ + size_, size_, PAGE_NOACCESS, &previous) != 0, "protect trailing page");
+#else
+        size_ = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, size_ * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "allocate guarded pages");
+        base_ = static_cast<unsigned char*>(mapping);
+        Require(mprotect(base_ + size_, size_, PROT_NONE) == 0, "protect trailing page");
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base_, 0, MEM_RELEASE);
+#else
+        munmap(base_, size_ * 2);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    char16_t* Tail(std::size_t units) const { return reinterpret_cast<char16_t*>(base_ + size_) - units; }
+
+private:
+    unsigned char* base_ = nullptr;
+    std::size_t size_ = 0;
+};
+
+void Chunking() {
+    std::u16string long_(5000, u'x');
+    std::u16string longer = long_;
+    longer.back() = u'y';
+    Require(u_strlen_nid_postfix(long_.c_str()) == 5000, "strlen crosses several chunks");
+    Require(u_strcmp_nid_postfix(long_.c_str(), std::u16string(long_).c_str()) == 0, "strcmp equal across chunks");
+    Require(u_strcmp_nid_postfix(long_.c_str(), longer.c_str()) < 0, "strcmp finds the last differing unit");
+    Require(u_strncmp_nid_postfix(long_.c_str(), longer.c_str(), 4999) == 0, "strncmp stops at the bound");
+    Require(u_memcmp_nid_postfix(longer.c_str(), long_.c_str(), 5000) > 0, "memcmp finds the last differing unit");
+    Require(u_memcmpCodePointOrder_nid_postfix(long_.c_str(), longer.c_str(), 5000) < 0, "code-point order across chunks");
+    Require(u_memcmpCodePointOrder_nid_postfix(long_.c_str(), longer.c_str(), -1) < 0, "code-point order with terminator scan");
+
+    GuardedPages pages;
+    constexpr std::size_t units = 32;
+    char16_t* terminated = pages.Tail(units);
+    std::fill_n(terminated, units - 1, u'a');
+    terminated[units - 1] = 0;
+    Require(u_strlen_nid_postfix(terminated) == static_cast<std::int32_t>(units - 1), "string ending at the last readable unit is read");
+    Require(u_strcmp_nid_postfix(terminated, std::u16string(units - 1, u'a').c_str()) == 0, "strcmp stops before the guarded page");
+    errno = 71;
+    terminated[units - 1] = u'a';
+    int rejected = 0;
+    try { u_strlen_nid_postfix(terminated); } catch (const std::invalid_argument&) { Require(errno == 71, "strlen into a guarded page keeps errno"); ++rejected; }
+    try { u_strcmp_nid_postfix(terminated, std::u16string(units, u'a').c_str()); } catch (const std::invalid_argument&) { Require(errno == 71, "strcmp into a guarded page keeps errno"); ++rejected; }
+    Require(rejected == 2, "unterminated strings fault into the guarded page");
+}
+
 } // namespace
 
 int main() {
     Exhaustive();
     Boundaries();
+    Chunking();
 }
