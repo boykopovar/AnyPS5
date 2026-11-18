@@ -259,10 +259,6 @@ int APS5_VABI uloc_toLanguageTag() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_toUnicodeLocaleType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ures_getByKey() {
     NotImplemented_nid_no_patch(__func__);
 }

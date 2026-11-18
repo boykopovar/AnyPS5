@@ -2950,9 +2950,8 @@ int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
     }
     const std::string text = af == NET_AF_INET || dottedTail ? head : std::string(src);
     const int converted = af == NET_AF_INET6 ? __inet_pton_nid_postfix(af, text.c_str(), address.data()) : convert(AF_INET, text, address.data());
-    if (converted == 1 && dst != nullptr) {
-        std::memcpy(dst, address.data(), af == NET_AF_INET ? 4 : 16);
-    }
+    if (converted == 1 && dst != nullptr &&
+        !GuestCopyOut_nid_no_patch(dst, address.data(), af == NET_AF_INET ? 4 : 16)) return fail(NET_EFAULT);
     return converted;
 }
 
@@ -3629,8 +3628,7 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
     }
     const std::array<unsigned char, 4> bytes{static_cast<unsigned char>(address >> 24), static_cast<unsigned char>(address >> 16),
                                              static_cast<unsigned char>(address >> 8), static_cast<unsigned char>(address)};
-    std::memcpy(dst, bytes.data(), bytes.size());
-    return 1;
+    return GuestCopyOut_nid_no_patch(dst, bytes.data(), bytes.size()) ? 1 : fail(NET_EFAULT);
 }
 
 int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
@@ -3868,7 +3866,10 @@ const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void*
         set_errno(NET_ENOSPC);
         return nullptr;
     }
-    std::memcpy(text, scoped.c_str(), scoped.size() + 1);
+    if (!GuestCopyOut_nid_no_patch(text, scoped.c_str(), scoped.size() + 1)) {
+        set_errno(NET_EFAULT);
+        return nullptr;
+    }
     return text;
 }
 
@@ -3889,8 +3890,8 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
     const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
     if (converted != 1) return converted;
     if (address == nullptr) throw std::invalid_argument("sceNetInetPtonWithScopeId: null address");
-    std::memcpy(address, parsed.data(), parsed.size());
-    if (scopeId != nullptr) *scopeId = zone;
+    if (!GuestCopyOut_nid_no_patch(address, parsed.data(), parsed.size()) ||
+        (scopeId != nullptr && !GuestCopyOut_nid_no_patch(scopeId, &zone, sizeof(zone)))) return fail(NET_EFAULT);
     return 1;
 }
 

@@ -134,6 +134,19 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,), 
     return bytes(image)
 
 
+def build_empty_gnu_imports(overrides=None, kinds=(6, 7), indices=(1, 2)):
+    tags = {7: 0x401000, 8: 24, 9: 24, 23: 0x401018, 2: 24, 20: 7}
+    tags.update(overrides or {})
+    image = bytearray(build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION), ("beta", 0, 0x21)],
+                                          ["libExample.prx"], gnu_hash=True, gnu_buckets=(0,),
+                                          extra_dynamic=tuple((tag, value) for tag, value in tags.items() if value is not None)))
+    image.extend(bytes(0x1030 - len(image)))
+    for index, (kind, symbol_index) in enumerate(zip(kinds, indices)):
+        struct.pack_into("<QQq", image, 0x1000 + index * 24, 0x402000 + index * 8, symbol_index << 32 | kind, 0)
+    struct.pack_into("<QQ", image, 64 + 32, len(image), len(image))
+    return image
+
+
 def build_sce_module(symbols, needed=(), extra_dynamic=(), table_tags=None, block_types=(0x61000000,)):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
@@ -1692,6 +1705,50 @@ class ImportAuditTests(unittest.TestCase):
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
                          ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+
+    def test_empty_gnu_hash_imports_from_relocations(self):
+        image = build_empty_gnu_imports()
+        path = Path("imports-only.prx")
+        self.assertEqual(import_audit.elf_imports(path, image), ({"alpha": False, "beta": True}, {"libExample.prx"}))
+        self.assertEqual(import_audit.elf_exports(path, image), set())
+
+    def test_empty_gnu_hash_imports_from_sections(self):
+        image = build_dual_metadata_elf([("alpha", 0, GLOBAL_FUNCTION), ("beta", 0, 0x21)], gnu_hash=True)
+        struct.pack_into("<I", image, gnu_hash_chain_offset(image) - 4, 0)
+        self.assertEqual(import_audit.elf_imports(Path("imports-only.prx"), image), ({"alpha": False, "beta": True}, set()))
+
+    def test_empty_gnu_hash_missing_imports_fail_the_audit(self):
+        registry, report = self.work.root / "game.json", self.work.root / "audit.json"
+        write_registry(registry, [])
+        (self.work.libs / "libExample.prx").write_bytes(exporting())
+        (self.work.modules / "imports-only.prx").write_bytes(build_empty_gnu_imports())
+        code, _, error = self.work.run(registry, "--json", str(report))
+        self.assertEqual((code, error), (1, ""))
+        data = json.loads(report.read_text())
+        self.assertEqual(data["references"], 2)
+        self.assertEqual({row["nid"]: row["class"] for row in data["imports"]}, {"alpha": "absent", "beta": "absent"})
+
+    def test_empty_gnu_hash_ignores_inactive_relocations(self):
+        for options in ({"kinds": (0, 7), "indices": (0xffffffff, 2)},
+                        {"overrides": {7: 0xffffffffffffffff, 8: 0}}):
+            with self.subTest(options=options):
+                image = build_empty_gnu_imports(**options)
+                self.assertEqual(import_audit.elf_imports(Path("module.prx"), image),
+                                 ({"alpha": False, "beta": True}, {"libExample.prx"}))
+        image = build_empty_gnu_imports(kinds=(0, 0), indices=(0xffffffff, 0xffffffff))
+        self.assertEqual(import_audit.elf_imports(Path("module.prx"), image), ({}, {"libExample.prx"}))
+
+    def test_empty_gnu_hash_rejects_invalid_relocations(self):
+        cases = (({7: None}, "DT_RELA"), ({8: None}, "DT_RELA"), ({9: 16}, "DT_RELA"), ({8: 23}, "DT_RELA"),
+                 ({2: None}, "DT_JMPREL"), ({20: None}, "DT_JMPREL"), ({20: 17}, "DT_JMPREL"),
+                 ({2: 23}, "DT_JMPREL"), ({7: 0x500000}, "outside file-backed"),
+                 ({23: 0x500000}, "outside file-backed"), ({17: 0x401000}, "DT_REL"))
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(import_audit.AuditError, message):
+                    import_audit.elf_imports(Path("invalid.prx"), build_empty_gnu_imports(overrides))
+        with self.assertRaisesRegex(import_audit.AuditError, "dynamic symbol table.*outside file-backed"):
+            import_audit.elf_imports(Path("invalid.prx"), build_empty_gnu_imports(indices=(0xffffffff, 2)))
 
     def test_sectionless_elf_rejects_conflicting_dynamic_metadata(self):
         path = Path("module.prx")

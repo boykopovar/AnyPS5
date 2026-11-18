@@ -26,6 +26,8 @@ PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 ELF_SYMBOL_TAGS = {
+    2: "DT_PLTRELSZ", 7: "DT_RELA", 8: "DT_RELASZ", 9: "DT_RELAENT",
+    17: "DT_REL", 18: "DT_RELSZ", 20: "DT_PLTREL", 23: "DT_JMPREL",
     4: "DT_HASH", 5: "DT_STRTAB", 6: "DT_SYMTAB",
     10: "DT_STRSZ", 11: "DT_SYMENT", 0x6ffffef5: "DT_GNU_HASH",
     0x61000035: "DT_SCE_STRTAB", 0x61000037: "DT_SCE_STRSZ", 0x61000039: "DT_SCE_SYMTAB",
@@ -184,6 +186,27 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
                     break
                 symbol_index += 1
         symbol_count = maximum + 1
+        if not visited_chain_entries:
+            if section_symbol_count is not None:
+                symbol_count = max(symbol_count, section_symbol_count)
+            else:
+                if 17 in dynamic or dynamic.get(18, 0):
+                    raise AuditError(f"{path}: DT_REL cannot bound an empty GNU hash symbol table")
+                for address_tag, size_tag, name in ((7, 8, "DT_RELA"), (23, 2, "DT_JMPREL")):
+                    if address_tag not in dynamic and not dynamic.get(size_tag, 0):
+                        continue
+                    relocation_address, relocation_size = dynamic.get(address_tag), dynamic.get(size_tag)
+                    if relocation_address is None or relocation_size is None or relocation_size % 24:
+                        raise AuditError(f"{path}: incomplete or invalid {name} relocation table")
+                    if dynamic.get(9, 24) != 24 or (address_tag == 23 and dynamic.get(20) != 7):
+                        raise AuditError(f"{path}: {name} needs ELF64 RELA entries")
+                    if not relocation_size:
+                        continue
+                    relocation_offset = file_offset(relocation_address, relocation_size, f"{name} relocation table")
+                    for position in range(relocation_offset, relocation_offset + relocation_size, 24):
+                        _, info, _ = unpack("<QQq", data, position, path, f"{name} relocation")
+                        if info & 0xffffffff:
+                            symbol_count = max(symbol_count, (info >> 32) + 1)
     if symbol_count is None:
         if section_symbol_count is None:
             raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
