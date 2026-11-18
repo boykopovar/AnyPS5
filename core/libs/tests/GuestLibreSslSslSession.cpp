@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -74,6 +75,9 @@ static void TestGet1Session() {
     Require(session.references == 2);
     Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == &session);
     Require(session.references == 3);
+    session.references = INT_MAX;
+    RequireThrows([&] { SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)); });
+    Require(session.references == INT_MAX);
 }
 
 static void TestSessionFree() {
@@ -86,6 +90,12 @@ static void TestSessionFree() {
     Require(session.references == 1);
     RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
     Require(session.references == 1);
+    session.references = 0;
+    RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
+    Require(session.references == 0);
+    session.references = -1;
+    RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
+    Require(session.references == -1);
 }
 
 static void TestCurrentCipher() {
