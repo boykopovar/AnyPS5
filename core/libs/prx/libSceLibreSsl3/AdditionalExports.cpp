@@ -108,10 +108,6 @@ int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509V3_EXT_conf_nid_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_sign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
