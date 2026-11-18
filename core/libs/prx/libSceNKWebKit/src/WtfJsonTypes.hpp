@@ -249,4 +249,12 @@ static_assert(alignof(Array) == 8);
 static_assert(sizeof(StringBuilder) == 40);
 static_assert(alignof(StringBuilder) == 8);
 
+void PushValue(ArrayBase& array, Ref<Value>&& value);
+void SetValue(ObjectBase& object, const NKWebKit::WtfAbi::String& name, Ref<Value>&& value);
+Value* FindValue(const ObjectBase& object, const NKWebKit::WtfAbi::String& name);
+RefPtr<Value> ParseJSON(const NKWebKit::WtfAbi::String& json);
+void WriteJSON(const Value& value, NKWebKit::WtfAbi::StringBuilder& output);
+void AppendDoubleQuotedString(NKWebKit::WtfAbi::StringBuilder& output, const NKWebKit::WtfAbi::StringImpl* string);
+NKWebKit::WtfAbi::String ToJSONString(const Value& value);
+
 }  // namespace NKWebKit::JsonAbi

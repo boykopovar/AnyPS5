@@ -62,6 +62,8 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>
+#include <new>
 #include <utility>
 
 namespace {
@@ -173,6 +175,81 @@ void Rehash(StringValueMap& map, unsigned newTableSize) {
     map.table = table;
 }
 
+constexpr unsigned MaxLoad = 2;
+
+void AllocateTable(StringValueMap& map, unsigned tableSize) {
+    auto* storage = static_cast<unsigned char*>(_ZN3WTF16fastZeroedMallocEm(MetadataSize + std::size_t(tableSize) * sizeof(StringValuePair)));
+    auto* table = reinterpret_cast<StringValuePair*>(storage + MetadataSize);
+    Metadata(table)[TableSizeOffset] = tableSize;
+    Metadata(table)[TableSizeMaskOffset] = tableSize - 1U;
+    Metadata(table)[DeletedCountOffset] = 0U;
+    Metadata(table)[KeyCountOffset] = 0U;
+    map.table = table;
+}
+
+void Expand(StringValueMap& map) {
+    if (!map.table) {
+        AllocateTable(map, MinimumTableSize);
+        return;
+    }
+    unsigned* metadata = Metadata(map.table);
+    unsigned tableSize = metadata[TableSizeOffset];
+    bool rehashInPlace = metadata[KeyCountOffset] * MinLoad < tableSize * 2U;
+    Rehash(map, rehashInPlace ? tableSize : tableSize * 2U);
+}
+
+bool AddToMap(StringValueMap& map, const String& name, Ref<Value>&& value) {
+    if (!name.impl) throw std::invalid_argument("null WTF JSON object key");
+    if (!map.table) Expand(map);
+    StringValuePair* table = map.table;
+    unsigned sizeMask = Metadata(table)[TableSizeMaskOffset];
+    unsigned i = KeyHash(name.impl) & sizeMask;
+    unsigned probeCount = 0;
+    StringValuePair* deletedEntry = nullptr;
+    StringValuePair* entry;
+    while (true) {
+        entry = table + i;
+        if (IsEmptyBucket(*entry)) break;
+        if (IsDeletedBucket(*entry)) {
+            if (!deletedEntry) deletedEntry = entry;
+        } else if (_ZN3WTF5equalEPKNS_10StringImplES2_(entry->key.impl, name.impl)) {
+            Deref(entry->value.ptr);
+            entry->value.ptr = value.Leak();
+            return false;
+        }
+        ++probeCount;
+        i = (i + probeCount) & sizeMask;
+    }
+    unsigned* metadata = Metadata(table);
+    if (deletedEntry) {
+        entry = deletedEntry;
+        metadata[DeletedCountOffset] -= 1U;
+    }
+    name.impl->refCount += 2U;
+    entry->key.impl = name.impl;
+    entry->value.ptr = value.Leak();
+    metadata[KeyCountOffset] += 1U;
+    if ((metadata[KeyCountOffset] + metadata[DeletedCountOffset]) * MaxLoad >= metadata[TableSizeOffset]) Expand(map);
+    return true;
+}
+
+void AppendToOrder(Vector<String>& order, const String& name) {
+    if (order.size == order.capacity) {
+        unsigned expanded = order.capacity + order.capacity / 4U + 1U;
+        unsigned newCapacity = std::max(order.size + 1U, std::max(16U, expanded));
+        auto* buffer = static_cast<String*>(_ZN3WTF10fastMallocEm(std::size_t(newCapacity) * sizeof(String)));
+        if (order.buffer) {
+            std::memcpy(static_cast<void*>(buffer), static_cast<const void*>(order.buffer), std::size_t(order.size) * sizeof(String));
+            _ZN3WTF8fastFreeEPv(order.buffer);
+        }
+        order.buffer = buffer;
+        order.capacity = newCapacity;
+    }
+    name.impl->refCount += 2U;
+    new (&order.buffer[order.size]) String(name.impl);
+    ++order.size;
+}
+
 void RemoveFromMap(StringValueMap& map, const String& name) {
     StringValuePair* entry = Find(map, name);
     if (!entry) return;
@@ -251,8 +328,18 @@ RefPtr<Array> APS5_VABI ObjectAsArray(Value* self) {
     return RefPtr<Array>(nullptr);
 }
 
-void APS5_VABI ObjectWriteJSON(const Value*, StringBuilder&) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI ObjectWriteJSON(const Value* self, StringBuilder& output) {
+    const auto& object = static_cast<const ObjectBase&>(Checked(self));
+    auto& builder = reinterpret_cast<NKWebKit::WtfAbi::StringBuilder&>(output);
+    NKWebKit::WtfAbi::AppendCharacter(builder, '{');
+    for (unsigned i = 0U; i < object.order.size; ++i) {
+        const StringValuePair& entry = Checked(Find(object.map, object.order.buffer[i]));
+        if (i) NKWebKit::WtfAbi::AppendCharacter(builder, ',');
+        NKWebKit::JsonAbi::AppendDoubleQuotedString(builder, entry.key.impl);
+        NKWebKit::WtfAbi::AppendCharacter(builder, ':');
+        NKWebKit::JsonAbi::WriteJSON(Checked(entry.value.Get()), builder);
+    }
+    NKWebKit::WtfAbi::AppendCharacter(builder, '}');
 }
 
 std::size_t APS5_VABI ObjectVtableMemoryCost(const Value* self) {
@@ -316,3 +403,16 @@ std::size_t APS5_VABI _ZNK3WTF8JSONImpl10ObjectBase10memoryCostEv(const ObjectBa
     }
     return cost;
 }
+
+namespace NKWebKit::JsonAbi {
+
+void SetValue(ObjectBase& object, const String& name, Ref<Value>&& value) {
+    if (AddToMap(object.map, name, std::move(value))) AppendToOrder(object.order, name);
+}
+
+Value* FindValue(const ObjectBase& object, const String& name) {
+    StringValuePair* entry = Find(object.map, name);
+    return entry ? entry->value.Get() : nullptr;
+}
+
+}  // namespace NKWebKit::JsonAbi
