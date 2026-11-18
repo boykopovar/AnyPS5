@@ -1818,6 +1818,14 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
 
 extern "C" {
 
+void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
+    if (rsa && rsa->method) {
+        RSA_free_nid_postfix(reinterpret_cast<LibreSslRsa*>(rsa));
+        return;
+    }
+    LibreSsl3::FreeRsa_nid_no_patch(rsa);
+}
+
 LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix() {
     auto* rsa = static_cast<LibreSsl3Rsa*>(calloc_nid_postfix(1, sizeof(LibreSsl3Rsa)));
     if (!rsa) {

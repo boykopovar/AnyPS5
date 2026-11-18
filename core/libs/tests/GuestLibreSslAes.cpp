@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +10,14 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -69,6 +79,168 @@ template<typename TSetup> static void RequireRefusalsKeepKey(TSetup setup, const
         Require(setup(nullptr, bits, &key) == -1 && !std::memcmp(&key, &before, sizeof(key)), what);
     }
     Require(setup(userKey, 128, nullptr) == -1, what);
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info {};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr, "guarded page allocation");
+        DWORD previous {};
+        Require(VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page allocation");
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + size, size, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 2);
+#endif
+    }
+
+    unsigned char* End() const { return base + size; }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous {};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0, "read-only protection");
+#else
+        Require(mprotect(base, size, PROT_READ) == 0, "read-only protection");
+#endif
+    }
+
+private:
+    unsigned char* base = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename TSetup> static void RequireGuestKeyPointers(TSetup setup, const char* what) {
+    const auto userKey = Bytes("2b7e151628aed2a6abf7158809cf4f3c");
+    const auto* unmapped = reinterpret_cast<const unsigned char*>(std::uintptr_t {0x10});
+    const AesKey before = Sentinel();
+    AesKey key = before;
+    errno = 71;
+    RequireThrows([&] { setup(unmapped, 128, &key); }, what);
+    Require(errno == 71 && !std::memcmp(&key, &before, sizeof(key)), what);
+    RequireThrows([&] { setup(userKey.data(), 128, reinterpret_cast<AesKey*>(std::uintptr_t {0x10})); }, what);
+    Require(errno == 71, what);
+    Require(setup(unmapped, 64, &key) == -2 && errno == 71, what);
+
+    GuardedPage keyPage;
+    auto* edge = keyPage.End() - userKey.size();
+    std::memcpy(edge, userKey.data(), userKey.size());
+    AesKey expected = before;
+    Require(setup(userKey.data(), 128, &expected) == 0, what);
+    key = before;
+    Require(setup(edge, 128, &key) == 0 && !std::memcmp(&key, &expected, sizeof(key)) && errno == 71, what);
+    RequireThrows([&] { setup(keyPage.End() - 8, 128, &key); }, what);
+    Require(errno == 71, what);
+
+    GuardedPage schedulePage;
+    auto* readOnly = reinterpret_cast<AesKey*>(schedulePage.End() - sizeof(AesKey));
+    std::memcpy(static_cast<void*>(readOnly), &before, sizeof(before));
+    schedulePage.ReadOnly();
+    RequireThrows([&] { setup(userKey.data(), 128, readOnly); }, what);
+    Require(errno == 71 && !std::memcmp(readOnly, &before, sizeof(before)), what);
+}
+
+static void RequireGuestModePointers() {
+    const auto key = Bytes("2b7e151628aed2a6abf7158809cf4f3c");
+    AesKey encrypt {}, decrypt {};
+    AES_set_encrypt_key_nid_postfix(key.data(), 128, &encrypt);
+    AES_set_decrypt_key_nid_postfix(key.data(), 128, &decrypt);
+    auto* unmapped = reinterpret_cast<unsigned char*>(std::uintptr_t {0x10});
+    const auto* unmappedKey = reinterpret_cast<const AesKey*>(std::uintptr_t {0x10});
+    std::vector<unsigned char> data(64, 0x42), out(64), iv(16), keystream(16);
+    int cfbPosition = 0;
+    unsigned ctrPosition = 0;
+
+    errno = 71;
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(data.data(), out.data(), 16, unmappedKey, iv.data(), 1); }, "CBC unmapped key");
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(unmapped, out.data(), 16, &encrypt, iv.data(), 1); }, "CBC unmapped input");
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(data.data(), unmapped, 16, &encrypt, iv.data(), 1); }, "CBC unmapped output");
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(data.data(), out.data(), 16, &encrypt, unmapped, 0); }, "CBC unmapped iv");
+    RequireThrows([&] { AES_cfb128_encrypt_nid_postfix(unmapped, out.data(), 16, &encrypt, iv.data(), &cfbPosition, 1); }, "CFB128 unmapped input");
+    RequireThrows([&] { AES_cfb128_encrypt_nid_postfix(data.data(), out.data(), 16, &encrypt, iv.data(), reinterpret_cast<int*>(unmapped), 1); }, "CFB128 unmapped position");
+    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(data.data(), unmapped, 16, &encrypt, iv.data(), keystream.data(), &ctrPosition); }, "CTR unmapped output");
+    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(data.data(), out.data(), 16, &encrypt, iv.data(), unmapped, &ctrPosition); }, "CTR unmapped keystream");
+    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(data.data(), out.data(), 16, &encrypt, iv.data(), keystream.data(), reinterpret_cast<unsigned*>(unmapped)); }, "CTR unmapped position");
+    Require(errno == 71, "mode errors keep errno");
+
+    std::vector<unsigned char> large(5000);
+    for (std::size_t i = 0; i < large.size(); ++i) large[i] = static_cast<unsigned char>(i * 7 + 3);
+    std::vector<unsigned char> whole(large.size() + 16), pieces(large.size() + 16);
+    std::vector<unsigned char> wholeIv(16, 0x24), piecesIv(16, 0x24);
+    AES_cbc_encrypt_nid_postfix(large.data(), whole.data(), large.size(), &encrypt, wholeIv.data(), 1);
+    for (std::size_t done = 0; done < large.size(); done += 16)
+        AES_cbc_encrypt_nid_postfix(large.data() + done, pieces.data() + done, std::min<std::size_t>(16, large.size() - done), &encrypt, piecesIv.data(), 1);
+    Require(whole == pieces && wholeIv == piecesIv, "CBC encrypt across copy chunks matches block-by-block calls");
+    std::vector<unsigned char> backIv(16, 0x24);
+    AES_cbc_encrypt_nid_postfix(whole.data(), whole.data(), large.size(), &decrypt, backIv.data(), 0);
+    Require(std::equal(large.begin(), large.end(), whole.begin()) && backIv == wholeIv, "CBC decrypt in place across copy chunks");
+    std::vector<unsigned char> ctrWhole(large.size()), ctrPieces(large.size());
+    std::vector<unsigned char> wholeCounter(16, 0xfe), piecesCounter(16, 0xfe), wholeStream(16), piecesStream(16);
+    unsigned wholePosition = 0, piecesPosition = 0;
+    AES_ctr128_encrypt_nid_postfix(large.data(), ctrWhole.data(), large.size(), &encrypt, wholeCounter.data(), wholeStream.data(), &wholePosition);
+    for (std::size_t done = 0; done < large.size(); done += 7)
+        AES_ctr128_encrypt_nid_postfix(large.data() + done, ctrPieces.data() + done, std::min<std::size_t>(7, large.size() - done), &encrypt, piecesCounter.data(), piecesStream.data(), &piecesPosition);
+    Require(ctrWhole == ctrPieces && wholeCounter == piecesCounter && wholeStream == piecesStream && wholePosition == piecesPosition, "CTR across copy chunks matches small calls");
+
+    GuardedPage inputPage;
+    auto* edge = inputPage.End() - 20;
+    std::memcpy(edge, large.data(), 20);
+    std::vector<unsigned char> edgeOut(32), edgeIv(16), expected(32), expectedIv(16);
+    AES_cbc_encrypt_nid_postfix(large.data(), expected.data(), 20, &encrypt, expectedIv.data(), 1);
+    errno = 71;
+    AES_cbc_encrypt_nid_postfix(edge, edgeOut.data(), 20, &encrypt, edgeIv.data(), 1);
+    Require(edgeOut == expected && edgeIv == expectedIv && errno == 71, "CBC encrypt reads only the input length before a guard page");
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(edge, edgeOut.data(), 20, &decrypt, edgeIv.data(), 0); }, "CBC decrypt reads the whole last block");
+    auto* streamEdge = inputPage.End() - 3;
+    std::memcpy(streamEdge, large.data(), 3);
+    std::vector<unsigned char> cfbIv(16), cfbOut(3);
+    cfbPosition = 0;
+    AES_cfb128_encrypt_nid_postfix(streamEdge, cfbOut.data(), 3, &encrypt, cfbIv.data(), &cfbPosition, 1);
+    Require(cfbPosition == 3 && errno == 71, "CFB128 reads only the input length before a guard page");
+
+    GuardedPage statePage;
+    auto* readOnlyIv = statePage.End() - 16;
+    auto* readOnlyStream = readOnlyIv - 16;
+    auto* readOnlyPosition = reinterpret_cast<unsigned*>(readOnlyStream - 16);
+    auto* readOnlyCfbPosition = reinterpret_cast<int*>(readOnlyStream - 32);
+    std::memset(readOnlyIv, 0x11, 16);
+    std::memcpy(readOnlyStream, wholeStream.data(), 16);
+    *readOnlyPosition = 3;
+    *readOnlyCfbPosition = 5;
+    statePage.ReadOnly();
+    std::vector<unsigned char> writableIv(16, 0x11), writableStream(wholeStream);
+    unsigned writablePosition = 3;
+    std::vector<unsigned char> expectedStream(4), streamOut(4);
+    AES_ctr128_encrypt_nid_postfix(large.data(), expectedStream.data(), 4, &encrypt, writableIv.data(), writableStream.data(), &writablePosition);
+    unsigned position = 3;
+    AES_ctr128_encrypt_nid_postfix(large.data(), streamOut.data(), 4, &encrypt, readOnlyIv, readOnlyStream, &position);
+    Require(streamOut == expectedStream && position == 7 && errno == 71, "CTR inside a block leaves a read-only counter and keystream unwritten");
+    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(large.data(), streamOut.data(), 4, &encrypt, writableIv.data(), writableStream.data(), readOnlyPosition); }, "CTR read-only position");
+    position = 0;
+    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(large.data(), streamOut.data(), 4, &encrypt, readOnlyIv, writableStream.data(), &position); }, "CTR read-only counter");
+    AES_cfb128_encrypt_nid_postfix(large.data(), streamOut.data(), 0, &encrypt, readOnlyIv, readOnlyCfbPosition, 1);
+    AES_ctr128_encrypt_nid_postfix(large.data(), streamOut.data(), 0, &encrypt, readOnlyIv, readOnlyStream, readOnlyPosition);
+    AES_cbc_encrypt_nid_postfix(large.data(), out.data(), 0, &encrypt, readOnlyIv, 1);
+    Require(*readOnlyCfbPosition == 5 && *readOnlyPosition == 3 && errno == 71, "zero-length modes write nothing");
+    cfbPosition = 0;
+    RequireThrows([&] { AES_cfb128_encrypt_nid_postfix(large.data(), streamOut.data(), 4, &encrypt, readOnlyIv, &cfbPosition, 1); }, "CFB128 read-only iv");
+    RequireThrows([&] { AES_cbc_encrypt_nid_postfix(large.data(), out.data(), 16, &encrypt, readOnlyIv, 1); }, "CBC read-only iv");
+    Require(errno == 71, "read-only mode errors keep errno");
 }
 
 int main() {
@@ -214,6 +386,10 @@ int main() {
     Require(position == 5 && Hex(counter.data(), 16) == "00000000000000000000000000000002", "CTR position and counter after a partial block");
     position = 16;
     RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, counter.data(), keystream, &position); }, "CTR position out of range");
+
+    RequireGuestKeyPointers(&AES_set_encrypt_key_nid_postfix, "encrypt key setup");
+    RequireGuestKeyPointers(&AES_set_decrypt_key_nid_postfix, "decrypt key setup");
+    RequireGuestModePointers();
 
     std::puts("libSceLibreSsl AES tests passed");
 }
