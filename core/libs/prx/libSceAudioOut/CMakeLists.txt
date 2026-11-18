@@ -421,7 +421,6 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out_set_volume PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-endif()
 
     add_test_executable(guest_audio_out_port_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPortBounds.cpp)
     target_include_directories(guest_audio_out_port_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -443,4 +442,5 @@ endif()
         set_tests_properties(guest_audio_out_system_state_output_time_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
 
