@@ -322,13 +322,28 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
     if (!voice.everStarted) {
-        std::memset(info, 0, sizeof(*info));
+        const VoicePortInfo zeroInfo{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(info, &zeroInfo, sizeof(zeroInfo));
+        errno = savedErrno;
+        if (!copied) return InvalidArgument;
         return NeverStarted;
     }
-    info->port_type = port.type;
-    info->state = PortStateReady;
-    info->byte_count = 0;
-    info->frame_size = port.bitrate != 0 ? port.frameSize : 2;
+    struct PortHeader {
+        std::int32_t port_type;
+        std::int32_t state;
+    };
+    struct PortMetrics {
+        std::uint32_t byte_count;
+        std::uint32_t frame_size;
+    };
+    const PortHeader header{port.type, PortStateReady};
+    const PortMetrics metrics{0, port.bitrate != 0 ? port.frameSize : 2u};
+    const int savedErrno = errno;
+    const bool copiedHeader = GuestCopyOut_nid_no_patch(reinterpret_cast<PortHeader*>(info), &header, sizeof(header));
+    const bool copiedMetrics = copiedHeader && GuestCopyOut_nid_no_patch(reinterpret_cast<std::byte*>(info) + offsetof(VoicePortInfo, byte_count), &metrics, sizeof(metrics));
+    errno = savedErrno;
+    if (!copiedHeader || !copiedMetrics) return InvalidArgument;
     return 0;
 }
 
@@ -362,7 +377,11 @@ int APS5_VABI sceVoiceGetPortAttr(std::uint32_t portId, std::int32_t attr, void*
     const auto requiredType = attr == 1003 ? PortOutDevice : PortInDevice;
     if (found->second.type != requiredType) return InvalidArgument;
     if (attr == 1001) {
-        *static_cast<std::uint8_t*>(value) = 0;
+        const std::uint8_t zero = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(value, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!copied) return InvalidArgument;
         return 0;
     }
     Fail(__func__, "device attribute backend is not implemented");

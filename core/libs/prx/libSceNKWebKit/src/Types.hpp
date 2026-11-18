@@ -169,6 +169,9 @@ public:
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
+    std::uint64_t clearedWrappersCount = 0;
+    bool allShadowRootsOpen = false;
+    bool overrideBuiltinsDisabled = false;
     static BundleScriptWorld* NormalWorld() {
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
@@ -195,6 +198,13 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -204,18 +214,14 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
     bool mediaIsInFullscreen = false;
     std::uint32_t mediaType = 0;
-};
-
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
-public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
@@ -234,6 +240,9 @@ class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
     bool wasUserInitiated = false;
     bool isCancelled = false;
 };

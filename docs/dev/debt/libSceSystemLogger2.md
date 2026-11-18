@@ -1,5 +1,11 @@
 # libSceSystemLogger2 technical debt
 
+### Functional
+
+- [validateEvent, validateEventEx and validateEventEx2](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - the five `sceSystemLogger2Set*EventAsync` entry points still read the `event` record, and the entry name/language pointers it embeds, with raw host dereferences (`memcmp`, `memcpy`, `strnlen`) instead of `GuestCopyIn_nid_no_patch`/`CopyGuestString_nid_no_patch`; an unmapped or partially-mapped `event` still crashes the host instead of returning `0x818C0002`. Fixing this needs the record and its embedded pointers copied in bounded pieces rather than read in place, which is a larger, separate change.
+
+- [sceSystemLogger2GetTimestamp, sceSystemLogger2GetEventStatus and sceSystemLogger2SetEventAsyncInternal](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - the console's answer for an unwritable `timestamp` or `status` output, or an unreadable event name, is not measured. As a host-safety fallback these calls return `INVALID_ARGUMENT` (`0x818C0002`) for such a pointer, keeping the caller's `errno` and writing nothing.
+
 ### Silent stubs
 
 - [sceSystemLogger2Terminate](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - returns 0 and leaves the initialized flag alone, because the fw 13.40 export is a bare `xor %eax,%eax; ret`. Only `sceSystemLogger2TerminateWithResourceRelease` stops the logger.

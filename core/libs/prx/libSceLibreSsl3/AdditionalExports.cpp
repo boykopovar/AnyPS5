@@ -60,20 +60,11 @@ int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509V3_EXT_d2i_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI tls_accept_socket_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ERR_print_errors_fp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -90,11 +81,6 @@ int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t ma
 int APS5_VABI i2d_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI ERR_load_X509_strings_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -118,14 +104,6 @@ int APS5_VABI X509_print_nid_postfix() {
 }
 
 int APS5_VABI X509_CRL_get0_by_cert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ERR_load_PEM_strings_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -159,10 +137,6 @@ int APS5_VABI X509_set_issuer_name_nid_postfix() {
 }
 
 int APS5_VABI tls_connect_socket_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
