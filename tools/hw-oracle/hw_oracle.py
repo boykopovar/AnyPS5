@@ -253,7 +253,10 @@ def main():
               f"Validated {len(rows)} input rows, {padded} padded rows, {report['dispatches']} dispatches. "
               "Assembly and GPU execution were not checked.")
         return 0
-    results = run(body, rows, extra, args.wave64, args.coarse, **modes, lds=args.lds)
+    try:
+        results = run(body, rows, extra, args.wave64, args.coarse, **modes, lds=args.lds)
+    except ValueError as error:
+        parser.error(str(error))
     if args.json:
         report = {
             "schema_version": 1,

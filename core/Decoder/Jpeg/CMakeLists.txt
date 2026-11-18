@@ -5,6 +5,12 @@ function(add_jpeg_decoder target runtimeTarget)
 
     include(ExternalProject)
     if(NOT TARGET jpeg_turbo_external)
+        if(BUILD_TESTING AND Python3_EXECUTABLE)
+            add_test(NAME jpeg_external_toolchain COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/test_toolchain.py)
+            set_tests_properties(jpeg_external_toolchain PROPERTIES TIMEOUT 30
+                ENVIRONMENT "CMAKE_GENERATOR=${CMAKE_GENERATOR}")
+        endif()
         set(jpeg_turbo_prefix "${CMAKE_BINARY_DIR}/libjpeg-turbo")
         if(WIN32)
             if(MSVC)
@@ -17,6 +23,9 @@ function(add_jpeg_decoder target runtimeTarget)
         endif()
         file(MAKE_DIRECTORY "${jpeg_turbo_prefix}/include")
         set(jpeg_turbo_platform_args)
+        if(CMAKE_TOOLCHAIN_FILE)
+            list(APPEND jpeg_turbo_platform_args "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+        endif()
         if(APPLE)
             list(APPEND jpeg_turbo_platform_args
                 -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
@@ -53,6 +62,9 @@ function(add_jpeg_decoder target runtimeTarget)
             IMPORTED_LOCATION "${jpeg_turbo_library}"
             INTERFACE_INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/src;${jpeg_turbo_prefix}/include"
         )
+        if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_link_options(jpeg_turbo INTERFACE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:jpeg_turbo>")
+        endif()
         add_dependencies(jpeg_turbo jpeg_turbo_external)
     endif()
 

@@ -1,16 +1,67 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
 using LibreSsl::Bio;
 using LibreSsl::BioMethod;
+
+constexpr int BioClose = 0x01;
+constexpr int BioFileRead = 0x02;
+constexpr int BioFileWrite = 0x04;
+constexpr int BioFileAppend = 0x08;
+constexpr int BioControlSetFilename = 108;
+
+bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
+    constexpr std::uintptr_t Chunk = 4096;
+    char bytes[Chunk];
+    destination.clear();
+    for (auto address = reinterpret_cast<std::uintptr_t>(source);;) {
+        const std::size_t count = Chunk - address % Chunk;
+        if (!CopyGuestInPreservingErrno(bytes, reinterpret_cast<const void*>(address), count)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(bytes, 0, count));
+        destination.append(bytes, end ? static_cast<std::size_t>(end - bytes) : count);
+        if (end) return true;
+        address += count;
+    }
+}
+
+int FileFree(Bio* bio) {
+    if (bio->shutdown) {
+        if (bio->initialized && bio->data != nullptr) {
+            fclose_nid_postfix(static_cast<FileStream*>(bio->data));
+            bio->data = nullptr;
+            bio->flags = 0;
+        }
+        bio->initialized = 0;
+    }
+    return 1;
+}
 
 int APS5_VABI FileWrite(Bio* bio, const char* data, int size) {
     if (!bio->data || size < 0 || (size && !data)) return -1;
@@ -32,22 +83,21 @@ int APS5_VABI FileRead(Bio* bio, char* data, int size) {
 
 int APS5_VABI FilePuts(Bio* bio, const char* data) {
     if (!data) return -1;
-    const std::size_t size = std::strlen(data);
-    if (size > INT_MAX) return -1;
-    return FileWrite(bio, data, static_cast<int>(size));
+    std::string text;
+    if (!CopyGuestStringPreservingErrno(data, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (text.size() > INT_MAX) return -1;
+    return FileWrite(bio, text.data(), static_cast<int>(text.size()));
 }
 
 int APS5_VABI FileGets(Bio* bio, char* data, int size) {
-    if (!data || size <= 0) return 0;
-    int count = 0;
-    while (count < size - 1) {
-        char character = 0;
-        if (FileRead(bio, &character, 1) != 1) break;
-        data[count++] = character;
-        if (character == '\n') break;
-    }
-    data[count] = '\0';
-    return count;
+    if (!data || !bio->data) throw std::invalid_argument("BIO_gets: null line buffer or file stream");
+    std::vector<char> buffer(size > 1 ? static_cast<std::size_t>(size) : 1);
+    if (!CopyGuestInPreservingErrno(buffer.data(), data, buffer.size()) || !CopyGuestOutPreservingErrno(data, buffer.data(), buffer.size()))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    buffer[0] = 0;
+    const auto line = fgets_nid_postfix(buffer.data(), size, static_cast<FileStream*>(bio->data));
+    if (!CopyGuestOutPreservingErrno(data, buffer.data(), buffer.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return line ? static_cast<int>(std::strlen(buffer.data())) : 0;
 }
 
 std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument, void* pointer) {
@@ -68,8 +118,38 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
         return stream && fflush_nid_postfix(stream) == 0;
     case 12:
         return 1;
+    case BioControlSetFilename: {
+        FileFree(bio);
+        bio->shutdown = static_cast<int>(argument) & BioClose;
+
+        const char* mode = nullptr;
+        if ((argument & BioFileAppend) != 0) {
+            mode = (argument & BioFileRead) != 0 ? "a+" : "a";
+        } else if ((argument & (BioFileRead | BioFileWrite)) == (BioFileRead | BioFileWrite)) {
+            mode = "r+";
+        } else if ((argument & BioFileWrite) != 0) {
+            mode = "w";
+        } else if ((argument & BioFileRead) != 0) {
+            mode = "r";
+        }
+
+        if (mode == nullptr) {
+            LibreSslPutError_nid_no_patch(32, 0xfff, 101, __FILE__, __LINE__);
+            return 0;
+        }
+        auto* opened = fopen_nid_postfix(static_cast<const char*>(pointer), mode);
+        if (opened == nullptr) {
+            const int openError = errno;
+            LibreSslPutError_nid_no_patch(2, 0xfff, openError, __FILE__, __LINE__);
+            LibreSslPutError_nid_no_patch(32, 0xfff, 2, __FILE__, __LINE__);
+            return 0;
+        }
+        bio->data = opened;
+        bio->initialized = 1;
+        return 1;
+    }
     case 107:
-        if (pointer) *static_cast<FileStream**>(pointer) = stream;
+        if (pointer && !CopyGuestOutPreservingErrno(pointer, &stream, sizeof(stream))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     default:
         return 0;
@@ -98,9 +178,10 @@ int APS5_VABI SocketRead(Bio* bio, char* data, int size) {
 
 int APS5_VABI SocketPuts(Bio* bio, const char* data) {
     if (!data) return -1;
-    const std::size_t size = std::strlen(data);
-    if (size > INT_MAX) return -1;
-    return SocketWrite(bio, data, static_cast<int>(size));
+    std::string text;
+    if (!CopyGuestStringPreservingErrno(data, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (text.size() > INT_MAX) return -1;
+    return SocketWrite(bio, text.data(), static_cast<int>(text.size()));
 }
 
 std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argument, void*) {

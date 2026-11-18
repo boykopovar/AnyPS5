@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <climits>
 #include <cstring>
@@ -11,6 +12,14 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+extern "C" char* suboptarg_nid_postfix;
 
 static void Require(bool condition) {
     if (!condition) {
@@ -136,13 +145,6 @@ static void CheckBoundsCheckedFunctions() {
     char nonOverlap[16] = {};
     std::strcpy(nonOverlap + 8, "cd");
     Require(strcpy_s_nid_postfix(nonOverlap, (std::size_t{1} << 61) - 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
-    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 8) == 22 && bytes[0] == 9 && bytes[3] == 9);
-    char sentinel[4] = {1, 2, 3, 4};
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 7, 2) == 0 && sentinel[1] == 7 && sentinel[2] == 3);
-    Require(memset_s_nid_postfix(sentinel, (SIZE_MAX >> 1) + 1, 0, 1) == 22 && sentinel[0] == 7);
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 0, (SIZE_MAX >> 1) + 1) == 22 && sentinel[0] == 7 && sentinel[3] == 4);
-    Require(memset_s_nid_postfix(sentinel, SIZE_MAX >> 1, 5, 1) == 0 && sentinel[0] == 5 && sentinel[1] == 7);
-    Require(memset_s_nid_postfix(nullptr, sizeof(sentinel), 0, 1) == 22);
     Require(strnstr_nid_postfix("haystack", "st", 4) == nullptr);
     const char haystack[] = "haystack";
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
@@ -370,7 +372,45 @@ static void CheckStrtonum() {
     fails("-9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too small", 34);
     fails("9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too large", 34);
     *__error_nid_postfix() = 34;
-    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
+    errno = 34;
+    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34 && errno == 34);
+    std::size_t page = 0;
+    char* memory = nullptr;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    page = info.dwPageSize;
+    memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    page = static_cast<std::size_t>(size);
+    memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    const std::array<const char**, 2> badErrors = {
+        reinterpret_cast<const char**>(std::uintptr_t{0x10}),
+        reinterpret_cast<const char**>(memory + page)
+    };
+    for (const char** badError : badErrors) {
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("42", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("invalid", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+    }
+#ifdef _WIN32
+    VirtualFree(memory, 0, MEM_RELEASE);
+#else
+    munmap(memory, 2 * page);
+#endif
 }
 
 static void CheckStrnlenSBounds() {
@@ -445,6 +485,8 @@ int main() {
     Require(basename_r_nid_postfix(("/a/" + longest).c_str(), baseBuffer) == baseBuffer && std::strlen(baseBuffer) == 1023);
     *__error_nid_postfix() = 0;
     Require(basename_r_nid_postfix(longName.c_str(), baseBuffer) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(basename_r_nid_postfix("/one/plain", reinterpret_cast<char*>(0x10)) == nullptr && *__error_nid_postfix() == 14);
     const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
     unsigned int loopback;
     std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
@@ -554,6 +596,8 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    errno = 71;
+    Require(__inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<void*>(0x10)) == 0 && errno == 71);
     bool atonNullThrew = false;
     try {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
@@ -780,6 +824,7 @@ int main() {
     char* value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && cursor == options + 3);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 2 && std::strcmp(value, "1024") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "size") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 3 && std::strcmp(value, "test") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr && *cursor == '\0');
@@ -791,7 +836,9 @@ int main() {
     cursor = unmatched;
     value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && std::strcmp(value, "val") == 0 && std::strcmp(cursor, "ro") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "unknown") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && *cursor == '\0');
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "ro") == 0);
     char leadingEqual[] = "=val,ro";
     cursor = leadingEqual;
     value = nullptr;
@@ -803,12 +850,15 @@ int main() {
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr);
-    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char* nullCursor = nullptr;
-    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char emptyStr[] = "";
     cursor = emptyStr;
-    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr && suboptarg_nid_postfix == nullptr);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     CheckConstraintHandlerCalls();
@@ -844,5 +894,79 @@ int main() {
     Require(modeBuffer[0] == 'w');
     strmode_nid_postfix(0, modeBuffer);
     Require(std::memcmp(modeBuffer, "?--------- ", 11) == 0);
+    *__error_nid_postfix() = 71;
+    strmode_nid_postfix(0100644, reinterpret_cast<char*>(std::uintptr_t{0x10}));
+    Require(*__error_nid_postfix() == 71);
+    char modeRow[16];
+    std::memset(modeRow, '!', sizeof(modeRow));
+    strmode_nid_postfix(0106755, modeRow + 1);
+    Require(modeRow[0] == '!' && std::memcmp(modeRow + 1, "-rwsr-sr-x ", 12) == 0 && modeRow[13] == '!');
+    {
+        auto rejects = [](auto&& call) {
+            errno = 71;
+            try {
+                call();
+            } catch (const std::runtime_error&) {
+                Require(errno == 71);
+                return;
+            }
+            Require(false);
+        };
+        const std::size_t pageSize =
+#ifdef _WIN32
+            4096;
+#else
+            static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+#endif
+        void* roPage = nullptr;
+        char* roCursor = nullptr;
+#ifdef _WIN32
+        roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(roPage != nullptr);
+#else
+        roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(roPage != MAP_FAILED);
+#endif
+        std::memcpy(roPage, "ro,rw", 6);
+        roCursor = static_cast<char*>(roPage);
+        auto* roPtrSlot = reinterpret_cast<char**>(static_cast<char*>(roPage) + 64);
+        *roPtrSlot = roCursor;
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+        Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+#endif
+        char* const roTokens[] = {const_cast<char*>("ro"), const_cast<char*>("rw"), nullptr};
+        char opts[] = "ro,rw";
+        char* cur = opts;
+        char* val = opts;
+        auto* badPtr = reinterpret_cast<char*>(std::uintptr_t{0x10});
+        auto* badPtrPtr = reinterpret_cast<char**>(std::uintptr_t{0x10});
+        auto* badTokens = reinterpret_cast<char* const*>(std::uintptr_t{0x10});
+        char* badTokArray[] = {badPtr, nullptr};
+        rejects([&] { getsubopt_nid_postfix(badPtrPtr, roTokens, &val); });
+        Require(val == opts);
+        rejects([&] { getsubopt_nid_postfix(&badPtr, roTokens, &val); });
+        Require(val == opts && badPtr == reinterpret_cast<char*>(std::uintptr_t{0x10}));
+        rejects([&] { getsubopt_nid_postfix(&cur, roTokens, badPtrPtr); });
+        Require(cur == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(&cur, badTokens, &val); });
+        Require(cur == opts && val == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(&cur, badTokArray, &val); });
+        Require(cur == opts && val == opts && std::strcmp(opts, "ro,rw") == 0);
+        rejects([&] { getsubopt_nid_postfix(roPtrSlot, roTokens, &val); });
+        Require(val == opts);
+        rejects([&] { getsubopt_nid_postfix(&cur, roTokens, roPtrSlot); });
+        Require(cur == opts && std::strcmp(opts, "ro,rw") == 0);
+        char* roOptCur = roCursor;
+        rejects([&] { getsubopt_nid_postfix(&roOptCur, roTokens, &val); });
+        Require(roOptCur == roCursor && val == opts);
+#ifdef _WIN32
+        VirtualFree(roPage, 0, MEM_RELEASE);
+#else
+        munmap(roPage, pageSize);
+#endif
+    }
     return CheckMemcpyOverlap() ? 0 : 1;
 }

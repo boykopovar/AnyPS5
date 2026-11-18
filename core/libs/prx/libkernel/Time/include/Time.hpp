@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_TIME_INCLUDE_TIME_HPP
 
 #include <cstdint>
+#include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -21,12 +22,19 @@ extern "C" {
     int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error);
 #endif
     int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz);
+    void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime);
+    void ResetGuestTimezone_nid_no_patch();
 
     // Debug aid: APS5_TRACE_WAITS=1 aggregates blocking waits (event flags, semaphores, condition
     // variables, event queues) per guest call site and prints the sites that wait longest every 3 s,
     // with their timeout rate; a site that times out once per frame is a lost wake-up.
     void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint64_t waitedNanos, bool timedOut);
 
+}
+
+inline bool KernelTraceWaitEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_WAITS") != nullptr;
+    return enabled;
 }
 
 #endif
