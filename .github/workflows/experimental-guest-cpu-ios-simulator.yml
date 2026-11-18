@@ -1,0 +1,51 @@
+name: Experimental guest CPU (iOS Simulator)
+
+on:
+  push:
+    branches:
+      - experiment/ios-arm64-cpu-interpreter
+  workflow_dispatch:
+
+jobs:
+  ios-simulator-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot an iOS Simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys
+devices = json.load(sys.stdin)["devices"]
+print(next(x["udid"] for runtime in sorted(devices) if "iOS" in runtime for x in devices[runtime] if x["isAvailable"] and "iPhone" in x["name"]))')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Configure for the iOS Simulator
+        run: |
+          set -euo pipefail
+          cmake -S experimental/arm64-cpu -B guest-cpu-ios-sim -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_CROSSCOMPILING_EMULATOR="/usr/bin/xcrun;simctl;spawn;${{ steps.sim.outputs.udid }}"
+
+      - name: Build
+        run: cmake --build guest-cpu-ios-sim
+
+      - name: Sign the test binaries
+        run: |
+          set -euo pipefail
+          for binary in guest-cpu-ios-sim/anyps5_guest_*; do
+            if [ -f "$binary" ] && file "$binary" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$binary"
+            fi
+          done
+
+      - name: Run the tests on the simulator
+        run: ctest --test-dir guest-cpu-ios-sim --output-on-failure --timeout 300
