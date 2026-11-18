@@ -2267,13 +2267,15 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     const auto taken = run();
     Require(!Faulted(taken), name + ": the record's pointer faulted:\n" + taken.log);
     for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# read through the record's pointer in a waterfall loop");
+    const bool recordsBelow4GiB = (reinterpret_cast<std::uintptr_t>(records.data()) >> 32u) == 0u;
     const auto outside = [&](std::uint32_t selector, std::uint32_t arm, std::uint32_t variant, const std::string& what) {
         Keys[selector] = arm;
         Keys[5] = variant;
         const auto faulted = run();
         Keys[selector] = 0u;
         Keys[5] = 0u;
-        Require(Faulted(faulted) && faulted.log.find("outside the snapshot") != std::string::npos, name + ": " + what + " did not fault as outside the snapshot:\n" + faulted.log);
+        const bool nullPointer = recordsBelow4GiB && faulted.log.find("selected the descriptor at 0x0: unmapped") != std::string::npos;
+        Require(Faulted(faulted) && (faulted.log.find("outside the snapshot") != std::string::npos || nullPointer), name + ": " + what + " did not fault as outside the snapshot, or as unmapped at a null pointer:\n" + faulted.log);
         Require(untouched(faulted), name + ": " + what + " published copied output");
         Require(faulted.artifactId == taken.artifactId, name + ": " + what + " recompiled the shader");
     };
