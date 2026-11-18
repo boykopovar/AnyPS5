@@ -6,6 +6,7 @@
 
 #include FT_STROKER_H
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -18,6 +19,16 @@ using namespace FreeType;
 namespace {
 
 constexpr bool SharedPoints = sizeof(FT_Pos) == sizeof(std::int64_t);
+
+FT_Library ReadGuestLibrary(GuestLibrary* library, const char* function) {
+    if (!library) return nullptr;
+    FT_Library host = nullptr;
+    const int saved = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
+    errno = saved;
+    if (!read) throw std::invalid_argument(std::string(function) + ": unreadable library handle");
+    return host;
+}
 
 static_assert(!SharedPoints || (sizeof(FT_Vector) == sizeof(GuestVector) && offsetof(FT_Vector, x) == offsetof(GuestVector, x) &&
                                 offsetof(FT_Vector, y) == offsetof(GuestVector, y)));
@@ -43,9 +54,10 @@ struct NativeVector {
 int WriteCounts(std::uint32_t* points, std::uint32_t* contours, FT_UInt nativePoints, FT_UInt nativeContours, int error) {
     GuestArena::HostWrite pointsWrite(points, points ? sizeof(*points) : 0);
     GuestArena::HostWrite contoursWrite(contours, contours ? sizeof(*contours) : 0);
-    if ((points && !pointsWrite.Open()) || (contours && !contoursWrite.Open())) return error != 0 ? error : FT_Err_Invalid_Argument;
-    if (points) *points = nativePoints;
-    if (contours) *contours = nativeContours;
+    if ((points && (!pointsWrite.Open() || !GuestWritable_nid_no_patch(points, sizeof(*points)))) ||
+        (contours && (!contoursWrite.Open() || !GuestWritable_nid_no_patch(contours, sizeof(*contours))))) return error != 0 ? error : FT_Err_Invalid_Argument;
+    if (points && !GuestCopyOut_nid_no_patch(points, &nativePoints, sizeof(nativePoints))) return error != 0 ? error : FT_Err_Invalid_Argument;
+    if (contours && !GuestCopyOut_nid_no_patch(contours, &nativeContours, sizeof(nativeContours))) return error != 0 ? error : FT_Err_Invalid_Argument;
     return error;
 }
 
@@ -57,34 +69,47 @@ bool FitsInt32(std::int64_t value) {
     return value >= std::numeric_limits<std::int32_t>::min() && value <= std::numeric_limits<std::int32_t>::max();
 }
 
-void CheckOutlineArrays(const GuestOutline& outline, const char* function) {
-    if (outline.n_contours == 0) return;
-    if (!outline.points || !outline.tags || !outline.contours) NotImplemented_nid_no_patch(function);
-    for (std::size_t contour = 0; contour < outline.n_contours; ++contour) {
-        if (outline.contours[contour] >= outline.n_points) NotImplemented_nid_no_patch(function);
+struct OutlineArrays {
+    std::vector<GuestVector> points;
+    std::vector<unsigned char> tags;
+    std::vector<std::uint16_t> contours;
+};
+
+OutlineArrays ReadOutlineArrays(const GuestOutline& outline, const char* function) {
+    OutlineArrays arrays;
+    if (outline.n_contours == 0) return arrays;
+    arrays.points.resize(outline.n_points);
+    arrays.tags.resize(outline.n_points);
+    arrays.contours.resize(outline.n_contours);
+    if (!outline.points || !outline.tags || !outline.contours ||
+        !GuestCopyIn_nid_no_patch(arrays.points.data(), outline.points, arrays.points.size() * sizeof(GuestVector)) ||
+        !GuestCopyIn_nid_no_patch(arrays.tags.data(), outline.tags, arrays.tags.size()) ||
+        !GuestCopyIn_nid_no_patch(arrays.contours.data(), outline.contours, arrays.contours.size() * sizeof(std::uint16_t))) {
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
+    for (const std::uint16_t last : arrays.contours) {
+        if (last >= outline.n_points) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return arrays;
 }
 
-bool StrokedPointsFitInt32(const GuestOutline& outline) {
+bool StrokedPointsFitInt32(const OutlineArrays& arrays) {
     std::int32_t last = -1;
-    for (std::size_t contour = 0; contour < outline.n_contours; ++contour) {
+    for (const std::uint16_t end : arrays.contours) {
         const std::int32_t first = last + 1;
-        last = outline.contours[contour];
+        last = end;
         if (last <= first) continue;
         for (std::int32_t index = first; index <= last; ++index) {
-            if (!FitsInt32(outline.points[index].x) || !FitsInt32(outline.points[index].y)) return false;
+            if (!FitsInt32(arrays.points[index].x) || !FitsInt32(arrays.points[index].y)) return false;
         }
     }
     return true;
 }
 
-std::vector<FT_Vector> NativePoints(const GuestOutline& outline, const char* function) {
+std::vector<FT_Vector> NativePoints(const OutlineArrays& arrays, const char* function) {
     std::vector<FT_Vector> points;
-    if (outline.n_contours == 0) return points;
-    points.reserve(outline.n_points);
-    for (std::size_t index = 0; index < outline.n_points; ++index) {
-        points.push_back({HostCoordinate(outline.points[index].x, function), HostCoordinate(outline.points[index].y, function)});
-    }
+    points.reserve(arrays.points.size());
+    for (const GuestVector& point : arrays.points) points.push_back({HostCoordinate(point.x, function), HostCoordinate(point.y, function)});
     return points;
 }
 
@@ -105,10 +130,14 @@ void ExportBorder(void* stroker, std::int32_t border, GuestOutline* outline, con
 extern "C" {
 
 int APS5_VABI FT_Stroker_New_nid_postfix(GuestLibrary* library, void** stroker) {
-    FT_Library host = library ? library->host : nullptr;
+    GuestArena::HostWrite strokerWrite(stroker, stroker ? sizeof(*stroker) : 0);
+    if (stroker && (!strokerWrite.Open() || !GuestWritable_nid_no_patch(stroker, sizeof(*stroker)))) return FT_Err_Invalid_Argument;
+    const FT_Library host = ReadGuestLibrary(library, __func__);
     FT_Stroker native = nullptr;
     const FT_Error error = FT_Stroker_New(host, stroker ? &native : nullptr);
-    if (stroker && host) *stroker = native;
+    if (stroker && host) {
+        if (!GuestCopyOut_nid_no_patch(stroker, &native, sizeof(native))) return FT_Err_Invalid_Argument;
+    }
     return error;
 }
 
@@ -168,18 +197,20 @@ int APS5_VABI FT_Stroker_CubicTo_nid_postfix(void* stroker, const GuestVector* c
 }
 
 int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const GuestOutline* outline, std::uint8_t opened) {
-    if (!outline) return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), nullptr, opened);
-    if (stroker) CheckOutlineArrays(*outline, __func__);
+    GuestOutline header{};
+    if (!outline || !GuestCopyIn_nid_no_patch(&header, outline, sizeof(header))) return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), nullptr, opened);
+    OutlineArrays arrays;
+    if (stroker) arrays = ReadOutlineArrays(header, __func__);
     std::vector<FT_Vector> converted;
     FT_Vector* points = nullptr;
     if constexpr (SharedPoints) {
-        if (stroker && !StrokedPointsFitInt32(*outline)) NotImplemented_nid_no_patch(__func__);
-        points = reinterpret_cast<FT_Vector*>(outline->points);
+        if (stroker && !StrokedPointsFitInt32(arrays)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        points = reinterpret_cast<FT_Vector*>(arrays.points.data());
     } else if (stroker) {
-        converted = NativePoints(*outline, __func__);
+        converted = NativePoints(arrays, __func__);
         points = converted.data();
     }
-    FT_Outline native = NativeOutline(*outline, points);
+    FT_Outline native{header.n_contours, header.n_points, points, arrays.tags.data(), arrays.contours.data(), header.flags};
     return FT_Stroker_ParseOutline(static_cast<FT_Stroker>(stroker), &native, opened);
 }
 
@@ -187,9 +218,13 @@ void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t b
     ExportBorder(stroker, border, outline, __func__);
 }
 
+void StrokerExport_nid_no_patch(void* stroker, GuestOutline* outline) {
+    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, "FT_Stroker_Export_nid_postfix");
+    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, "FT_Stroker_Export_nid_postfix");
+}
+
 void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, GuestOutline* outline) {
-    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, __func__);
-    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, __func__);
+    StrokerExport_nid_no_patch(stroker, outline);
 }
 
 }

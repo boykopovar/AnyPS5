@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", "core/CMakeLists.txt", ".gitmodules")
+BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", ".gitmodules")
 
 
 def object_document(value, path, name):

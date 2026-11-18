@@ -744,6 +744,21 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
             if ((voice->rack->rackId != SCE_NGS2_RACK_ID_MASTERING && voice->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_MASTERING) || !voice->hasSamples || voice->KilledForRender()) continue;
             auto& mix = OutputMix(mixes, bufferInfo, numBufferInfo, *voice, grain);
             const std::uint32_t outputChannels = bufferInfo[voice->outputId].num_channels;
+            if (!PS4_LIBRARY && voice->rack->rackId == SCE_NGS2_RACK_ID_MASTERING) {
+                std::vector<float> mapped(grain);
+                for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
+                    std::fill(mapped.begin(), mapped.end(), 0.0f);
+                    for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
+                        const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest, false);
+                        if (map == 0.0f) continue;
+                        for (std::uint32_t i = 0; i < grain; i++) mapped[i] += voice->samples[channel * grain + i] * map;
+                    }
+                    const bool lfe = dest == 3 && voice->channels >= 4 && outputChannels >= 4;
+                    const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
+                    for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += mapped[i] * level;
+                }
+                continue;
+            }
             for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
                 const float level = lfe ? voice->lfeLevel : voice->fbwLevel;

@@ -28,13 +28,19 @@ int main() {
     WKBundlePageSetPaintedObjectsCounterThreshold();
     WKBundlePageSetTopOverhangImage();
     WKContextAddSupportedPlugin();
+    WKContextAllowSpecificHTTPSCertificateForHost();
     WKContextClearSupportedPlugins();
     WKContextGetStatistics();
     WKContextGetStatisticsWithOptions();
     WKContextMenuItemSetUserData();
+    WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
+    WKContextSetCanHandleHTTPSServerTrustEvaluation();
+    WKContextSetCustomWebContentServiceBundleIdentifier();
+    WKContextSetDiskCacheSpeculativeValidationEnabled();
     WKContextSetIconDatabasePath();
+    WKContextSetMaximumNumberOfProcesses();
     WKContextSetPlugInAutoStartOriginHashes();
     WKContextSetPlugInAutoStartOrigins();
     WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
@@ -74,6 +80,7 @@ int main() {
     _ZN3PAL13SleepDisablerD2Ev();
     _ZN3WTF11Persistence7DecoderD1Ev();
     _ZN3WTF11Persistence7DecoderD2Ev();
+    _ZN3WTF11PrintStream3endEv();
     _ZN3WTF18FunctionDispatcherD1Ev();
     _ZN3WTF18FunctionDispatcherD2Ev();
     unsigned char leakCounter = 0xA5;

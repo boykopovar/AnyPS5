@@ -14,6 +14,8 @@
 #include <cstring>
 #include <cerrno>
 #include <string>
+#include <vector>
+#include <initializer_list>
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
@@ -361,6 +363,72 @@ static void CheckIntegerScanWidths() {
     Require(sscanf_nid_postfix("1 x", "%d %d", &first, &value) == 1 && first == 1 && value == 7);
 }
 
+static int APS5_VABI PrintListS(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    VaList list;
+    std::memcpy(&list, args, sizeof(list));
+    const int result = vsprintf_s_nid_postfix(buffer, size, format, &list);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+static std::vector<std::pair<std::string, int>> terminatedCalls;
+
+static void APS5_VABI RecordTerminated(const char* message, void* pointer, int error) {
+    Require(pointer == nullptr);
+    terminatedCalls.emplace_back(message, error);
+}
+
+static bool Reported(std::initializer_list<std::pair<const char*, int>> expected) {
+    bool matches = terminatedCalls.size() == expected.size();
+    size_t index = 0;
+    for (const auto& [message, error] : expected) {
+        if (!matches) break;
+        matches = terminatedCalls[index].first == message && terminatedCalls[index].second == error;
+        ++index;
+    }
+    terminatedCalls.clear();
+    return matches;
+}
+
+static void CheckTerminatedFormat() {
+    constexpr size_t rsizeMax = (size_t{1} << 61) - 1;
+    void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordTerminated));
+    char buffer[16];
+    const auto holds = [&](const char* expected, size_t size) { return std::memcmp(buffer, expected, size) == 0; };
+    for (const bool listed : {false, true}) {
+        const std::string name = listed ? "vsprintf_s" : "sprintf_s";
+        const auto bad = name + ": bad argument";
+        const auto badFormat = name + ": bad format argument";
+        const auto overflow = name + ": buffer overflow";
+        const auto print = [&](char* destination, size_t size, const char* format, auto... args) {
+            if (destination == buffer) std::memset(buffer, '~', sizeof(buffer));
+            return listed ? PrintListS(destination, size, format, args...) : sprintf_s_nid_postfix(destination, size, format, args...);
+        };
+        Require(print(buffer, 16, "ab%d", 7) == 3 && holds("ab7\0~", 5) && Reported({}));
+        Require(print(buffer, 4, "ab%d", 7) == 3 && holds("ab7\0~", 5) && Reported({}));
+        Require(print(buffer, 1, "") == 0 && holds("\0~", 2) && Reported({}));
+        Require(print(buffer, rsizeMax, "a") == 1 && holds("a\0~", 3) && Reported({}));
+        Require(print(buffer, 3, "ab%d", 7) == 0 && holds("\0b~", 3) && Reported({{overflow.c_str(), 34}}));
+        Require(print(buffer, 1, "ab%d", 7) == 0 && holds("\0~", 2) && Reported({{overflow.c_str(), 34}}));
+        for (const size_t size : {size_t{0}, rsizeMax + 1, SIZE_MAX}) {
+            Require(print(buffer, size, "ab%d", 7) == 0 && holds("~", 1) && Reported({{bad.c_str(), 22}}));
+        }
+        Require(print(nullptr, 16, "ab%d", 7) == 0 && Reported({{bad.c_str(), 22}}));
+        Require(print(buffer, 16, nullptr) == 0 && holds("\0~", 2) && Reported({{badFormat.c_str(), 22}}));
+        int written = -7;
+        Require(print(buffer, 16, "ab%n", &written) == 0 && holds("\0b~", 3) && written == -7 && Reported({{"printf_s: %n disallowed", 22}}));
+        Require(print(buffer, 16, "a%s", static_cast<const char*>(nullptr)) == 0 && holds("\0~", 2) && Reported({{"printf_s: bad %s argument", 22}}));
+        Require(print(buffer, 2, "abc%n", &written) == 0 && holds("\0~", 2) && terminatedCalls.size() == 2 && terminatedCalls.back().first == overflow &&
+            terminatedCalls.back().second == 34);
+        terminatedCalls.clear();
+    }
+    set_constraint_handler_s_nid_postfix(previous);
+}
+
+
+
 static void CheckSecureFormat() {
     constexpr size_t rsizeMax = SIZE_MAX >> 1;
     char buffer[16];
@@ -392,6 +460,10 @@ static void CheckSecureFormat() {
     Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
     Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
+    Require(printf_s_nid_postfix(nullptr) == -1);
+    Require(printf_s_nid_postfix("ab%n", &written) == -1 && written == -7);
+    Require(printf_s_nid_postfix("a%s", static_cast<const char*>(nullptr)) == -1);
+    Require(printf_s_nid_postfix("printf_s: %d %.1f\n", 7, 2.5) == 16);
 }
 
 static void CheckScanInputFailureErrno() {
@@ -825,6 +897,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(PrintList("vprintf: %d\n", 42) == 12);
     Require(FormatListS(buffer, sizeof(buffer), "%d-%s", 42, "x") == 4 && std::strcmp(buffer, "42-x") == 0);
     CheckSecureFormat();
+    CheckTerminatedFormat();
     int scanNum = 0;
     char scanWord[8] = {};
     Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, std::size_t{8}) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
@@ -957,4 +1030,20 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--terminated-only") == 0) {
+        CheckTerminatedFormat();
+        return 0;
+    }
+    CheckPositionalUnknownConversion();
+    CheckSecureCountBeforeInputFailure();
+    CheckFloatingScanRange();
+    CheckSizeLimits();
+    CheckIgnoredLengths();
+    RunChecks();
+    CheckHexFloat();
+    CheckDecimalFloat();
+    CheckLongDoubleHexFloat();
+    CheckAllocatingFormat();
+    return CheckWidePrecision() ? 0 : 1;
+}

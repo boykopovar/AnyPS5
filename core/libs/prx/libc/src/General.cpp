@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #ifdef __linux__
 #include <sys/uio.h>
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #elif defined(__APPLE__)
 #include <mach/mach.h>
@@ -85,12 +86,22 @@ std::size_t HostPageSize() {
     return size;
 }
 
+struct RestoreErrno {
+    int value = errno;
+    ~RestoreErrno() { errno = value; }
+};
+
 bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    const RestoreErrno restore;
     if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
+    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(reinterpret_cast<std::uintptr_t>(source), destination, bytes)) return true;
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
     const int saved = errno;
@@ -825,10 +836,7 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
 }
 
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const RestoreErrno restore;
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
@@ -865,9 +873,11 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    const RestoreErrno restore;
     const GuestArena::HostWrite guard(destination, bytes);
     if (!guard.Open()) return false;
 #ifdef _WIN32
+    if (GuestArena::GuestArenaStoreOwned_nid_no_patch(start, source, bytes)) return true;
     for (auto address = start; address < start + bytes;) {
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
@@ -878,6 +888,9 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     std::memcpy(destination, source, bytes);
     return true;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
     const int saved = errno;
@@ -956,6 +969,12 @@ extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t des
     for (std::size_t row = 0; row < rows; ++row)
         if (!GuestCopyOut_nid_no_patch(target + row * destinationPitch, from + row * sourcePitch, rowBytes)) return false;
     return true;
+#endif
+}
+
+extern "C" void GuestFaultCopyReinstall_nid_no_patch() {
+#if defined(__linux__) && defined(__x86_64__)
+    GuestFaultCopy::Reinstall();
 #endif
 }
 
