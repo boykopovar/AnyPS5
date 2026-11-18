@@ -55,8 +55,16 @@
 
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace {
 
@@ -65,19 +73,55 @@ using NKWebKit::WtfAbi::String;
 
 LocalLoadPolicy localLoadPolicy = NKWebKit::WebCoreAbi::AllowLocalLoadsForLocalOnly;
 
-bool ProtocolIs(const String& string, const char* protocol) {
-    if (!string.impl) return false;
-    const auto& impl = *string.impl;
+constexpr std::string_view LongestProtocol = "https:";
+constexpr std::size_t GuestPageSize = 4096;
+
+void RequireCopied(bool copied, int savedErrno, const char* what) {
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string("WebCore::SecurityPolicy::shouldHideReferrer: unreadable ") + what);
+}
+
+std::u16string ProtocolPrefix(const String* string) {
+    const int savedErrno = errno;
+    NKWebKit::WtfAbi::StringImpl* guestImpl = nullptr;
+    RequireCopied(GuestCopyIn_nid_no_patch(&guestImpl, &string->impl, sizeof(guestImpl)), savedErrno, "referrer");
+    std::u16string prefix;
+    if (!guestImpl) return prefix;
+    NKWebKit::WtfAbi::StringImpl impl{};
+    RequireCopied(GuestCopyIn_nid_no_patch(&impl, guestImpl, sizeof(impl)), savedErrno, "referrer implementation");
+    if (impl.length && !impl.data) throw std::invalid_argument("null WTF character buffer");
+    const std::size_t width = impl.hashAndFlags & 4 ? 1 : 2;
+    const auto* cursor = static_cast<const unsigned char*>(impl.data);
+    std::uint64_t remaining = std::uint64_t{impl.length} * width;
+    unsigned char chunk[GuestPageSize];
     bool isLeading = true;
-    for (unsigned i = 0; i < impl.length; ++i) {
-        if (!impl.data) throw std::invalid_argument("null WTF character buffer");
-        auto codeUnit = impl.hashAndFlags & 4 ? static_cast<const unsigned char*>(impl.data)[i] : static_cast<const char16_t*>(impl.data)[i];
-        if (isLeading) {
-            if (codeUnit <= ' ') continue;
-            isLeading = false;
-        } else {
-            if (codeUnit == '\t' || codeUnit == '\r' || codeUnit == '\n') continue;
+    bool decided = false;
+    while (remaining && !decided) {
+        std::size_t size = GuestPageSize - reinterpret_cast<std::uintptr_t>(cursor) % GuestPageSize;
+        size = static_cast<std::size_t>(std::min<std::uint64_t>(size, remaining));
+        size -= size % width;
+        if (!size) size = width;
+        RequireCopied(GuestCopyIn_nid_no_patch(chunk, cursor, size), savedErrno, "referrer characters");
+        for (std::size_t offset = 0; offset < size && !decided; offset += width) {
+            char16_t codeUnit = chunk[offset];
+            if (width == 2) std::memcpy(&codeUnit, chunk + offset, sizeof(codeUnit));
+            if (isLeading) {
+                if (codeUnit <= ' ') continue;
+                isLeading = false;
+            } else {
+                if (codeUnit == '\t' || codeUnit == '\r' || codeUnit == '\n') continue;
+            }
+            prefix.push_back(codeUnit);
+            decided = prefix.size() == LongestProtocol.size() || (codeUnit | 32) != LongestProtocol[prefix.size() - 1];
         }
+        cursor += size;
+        remaining -= size;
+    }
+    return prefix;
+}
+
+bool ProtocolIs(const std::u16string& prefix, const char* protocol) {
+    for (const char16_t codeUnit : prefix) {
         char expectedCharacter = *protocol++;
         if (!expectedCharacter) return codeUnit == ':';
         if ((codeUnit | 32) != expectedCharacter) return false;
@@ -107,8 +151,9 @@ void APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPo
 
 bool APS5_VABI _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(const NKWebKit::WtfAbi::URL* url, const String* referrer) {
     if (!referrer) throw std::invalid_argument("null WTF::String reference");
-    bool referrerIsSecureURL = ProtocolIs(*referrer, "https");
-    bool referrerIsWebURL = referrerIsSecureURL || ProtocolIs(*referrer, "http");
+    const std::u16string prefix = ProtocolPrefix(referrer);
+    bool referrerIsSecureURL = ProtocolIs(prefix, "https");
+    bool referrerIsWebURL = referrerIsSecureURL || ProtocolIs(prefix, "http");
     if (!referrerIsWebURL) return true;
     if (!referrerIsSecureURL) return false;
     bool urlIsSecureURL = _ZNK3WTF3URL10protocolIsENS_10StringViewE(url, {"https", 5, true});

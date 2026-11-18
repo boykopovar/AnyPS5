@@ -21,6 +21,7 @@ bool IsMangledSceImport(const std::string& name) {
     if (!name.starts_with("_ZN")) return false;
     std::size_t index = 3u;
     while (index < name.size() && (name[index] == 'r' || name[index] == 'V' || name[index] == 'K')) ++index;
+    if (index < name.size() && (name[index] == 'R' || name[index] == 'O')) ++index;
     return name.size() >= index + 4u && name[index] == '3' &&
         std::tolower(static_cast<unsigned char>(name[index + 1u])) == 's' &&
         std::tolower(static_cast<unsigned char>(name[index + 2u])) == 'c' &&

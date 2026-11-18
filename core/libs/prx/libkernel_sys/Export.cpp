@@ -470,8 +470,7 @@ int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
 }
 
 int APS5_VABI sceKernelSetCpumodeGame(int mode) {
-    if (mode < 0 || mode > 7) NotImplemented_nid_no_patch("sceKernelSetCpumodeGame with a mode outside 0 to 7");
-    if (mode > 1) return SCE_KERNEL_ERROR_EINVAL;
+    if (static_cast<unsigned int>(mode) > 1) return SCE_KERNEL_ERROR_EINVAL;
     g_gameCpumode.store(mode, std::memory_order_relaxed);
     return 0;
 }
