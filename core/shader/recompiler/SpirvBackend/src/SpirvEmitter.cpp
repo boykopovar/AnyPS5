@@ -291,6 +291,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
+    state.windowSelectsRequested = target.windowSelects;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
         state.requirements.subgroupLocalInvocationId = true;
@@ -359,6 +360,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
+        info->windowSelects = state.vectorWindowSelects;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->splitStateLanes = state.splitState ? state.laneCount * MeshWindowInvocations(state) : 0u;
