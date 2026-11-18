@@ -1979,8 +1979,35 @@ VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands)
     return passedEndCommandBuffer(commands);
 }
 
+struct SubmitCapture {
+    std::uint64_t signal = 0;
+    VkSemaphore wait = VK_NULL_HANDLE;
+    std::uint64_t waitValue = 0;
+};
+std::mutex submitCaptureMutex;
+std::vector<SubmitCapture> submitCaptures;
+
+void captureSubmit(const VkSubmitInfo& submit) {
+    SubmitCapture capture;
+    for (const auto* next = static_cast<const VkBaseInStructure*>(submit.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) continue;
+        const auto& timeline = *reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(next);
+        if (timeline.signalSemaphoreValueCount != 0) capture.signal = timeline.pSignalSemaphoreValues[0];
+        if (timeline.waitSemaphoreValueCount != 0) capture.waitValue = timeline.pWaitSemaphoreValues[0];
+    }
+    if (submit.waitSemaphoreCount != 0) capture.wait = submit.pWaitSemaphores[0];
+    std::lock_guard lock(submitCaptureMutex);
+    submitCaptures.push_back(capture);
+}
+
+std::vector<SubmitCapture> takeSubmitCaptures() {
+    std::lock_guard lock(submitCaptureMutex);
+    return std::exchange(submitCaptures, {});
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
     countedSubmits.fetch_add(1);
+    for (std::uint32_t index = 0; index < count; ++index) captureSubmit(submits[index]);
     if (refusedSubmits.load()) return VK_ERROR_OUT_OF_HOST_MEMORY;
     if (lostSubmits.load() != 0) {
         lostSubmits.fetch_sub(1);
@@ -2040,6 +2067,143 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL replayFailingDeviceProc(VkDevice device
         return reinterpret_cast<PFN_vkVoidFunction>(failingWaitForFences);
     }
     return passedDeviceProc(device, name);
+}
+
+bool failedWith(const std::function<void()>& body, std::string_view reason) {
+    try {
+        body();
+    } catch (const std::exception& error) {
+        return std::string_view(error.what()).find(reason) != std::string_view::npos;
+    }
+    return false;
+}
+
+void sealedBatchTests(const Device& device) {
+    if (!device.TimelineSemaphores()) {
+        std::cout << "skipped, no timeline semaphores: sealed batch serials, holds and label marks not tested\n";
+        return;
+    }
+    const auto& context = device.GetContext();
+    passedDeviceProc = context.deviceProc;
+    passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
+    passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
+    Context failing = context;
+    failing.deviceProc = replayFailingDeviceProc;
+    VkSemaphoreTypeCreateInfoKHR type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR};
+    type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
+    type.initialValue = 8;
+    VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+    VkSemaphore holds = VK_NULL_HANDLE;
+    Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &holds) == VK_SUCCESS, "no timeline semaphore to hold submissions");
+    {
+        Recorder recorder(failing, true, true, context.queueFamily);
+        recorder.Activate();
+        const auto before = recorder.Submissions();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.HoldNextSubmit(holds, 3);
+        Require(recorder.AfterRecordedWork([] {}), "the first batch took no action behind its work");
+        const auto firstMark = Recorder::PendingLabelSince();
+        Require(firstMark.has_value(), "an action behind the first batch started no label mark");
+        const auto first = recorder.Seal();
+        Require(first == before + 1 && recorder.OpenSerial() == first + 1 && recorder.SealedBatches() == 1 && recorder.Submissions() == before && !recorder.Idle(), "sealing the first batch did not give it the next serial, or queued it");
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const auto secondStart = std::chrono::steady_clock::now();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.HoldNextSubmit(holds, 5);
+        Require(recorder.AfterRecordedWork([] {}), "the second batch took no action behind its work");
+        const auto secondEnd = std::chrono::steady_clock::now();
+        Require(Recorder::PendingLabelSince() == firstMark, "a label in the second batch moved the mark of the older sealed batch");
+        const auto second = recorder.Seal();
+        Require(second == first + 1 && recorder.SealedBatches() == 2 && recorder.Submissions() == before, "the second sealed batch did not take the serial after the first");
+        takeSubmitCaptures();
+        Require(recorder.QueueSealed() == first && recorder.Submissions() == first && recorder.SealedBatches() == 1, "the first sealed batch was not queued first");
+        const auto secondMark = Recorder::PendingLabelSince();
+        Require(secondMark.has_value() && *secondMark >= secondStart && *secondMark <= secondEnd, "after the first batch was queued, the label mark was not the second batch's own");
+        Require(recorder.QueueSealed() == second && recorder.Submissions() == second && recorder.SealedBatches() == 0, "the second sealed batch was not queued with its own serial");
+        Require(!Recorder::PendingLabelSince().has_value(), "a label mark was left after every sealed batch was queued");
+        const auto captures = takeSubmitCaptures();
+        Require(captures.size() == 2, "two sealed batches made " + std::to_string(captures.size()) + " submissions");
+        Require(captures[0].signal == first && captures[0].wait == holds && captures[0].waitValue == 3, "the first sealed batch did not submit with its own serial and hold");
+        Require(captures[1].signal == second && captures[1].wait == holds && captures[1].waitValue == 5, "the second sealed batch did not submit with its own serial and hold");
+        recorder.Sync();
+        Require(recorder.Idle(), "the recorder was not idle after both sealed batches completed");
+    }
+    {
+        Recorder recorder(failing, true, true, context.queueFamily);
+        const auto before = recorder.Submissions();
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto first = recorder.Seal();
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto second = recorder.Seal();
+        Require(second == first + 1, "two sealed batches did not take consecutive serials");
+        std::atomic<bool> waiting{false};
+        bool waiterSaw = false;
+        bool waiterTimedOut = false;
+        std::thread waiter([&] {
+            waiting.store(true);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            waiterSaw = failedWith(
+                [&] {
+                    while (!recorder.WaitSerialFor(first, 50'000'000)) {
+                        if (std::chrono::steady_clock::now() > deadline) {
+                            waiterTimedOut = true;
+                            return;
+                        }
+                    }
+                },
+                "injected failure");
+        });
+        while (!waiting.load()) std::this_thread::yield();
+        const auto submitted = countedSubmits.load();
+        Recorder::FailNextSubmitsForTest(1u);
+        const bool failed = failedWith([&] { recorder.QueueSealed(); }, "injected failure");
+        Recorder::FailNextSubmitsForTest(0u);
+        waiter.join();
+        Require(failed, "the sealed batch's failure before it was queued did not surface");
+        Require(!waiterTimedOut && waiterSaw, "a waiter on a sealed batch that failed before it was queued did not see that failure");
+        Require(failedWith([&] { recorder.WaitSerial(first); }, "injected failure"), "a later waiter on the failed sealed batch did not see its failure");
+        Require(failedWith([&] { recorder.QueueSealed(); }, "injected failure"), "the batch sealed after the failed one was not refused with that failure");
+        Require(countedSubmits.load() == submitted && recorder.SealedBatches() == 0 && recorder.Submissions() == before, "a sealed batch reached the queue after an earlier one failed before it was queued");
+    }
+    {
+        Recorder recorder(failing, true, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.HoldNextSubmit(holds, 7);
+        const auto first = recorder.Seal();
+        Recorder::FailNextSubmitsForTest(1u);
+        const bool failed = failedWith([&] { recorder.QueueSealed(); }, "injected failure");
+        Recorder::FailNextSubmitsForTest(0u);
+        Require(failed, "the newest sealed batch's failure before it was queued did not surface");
+        recordBarrierThrough(failing, recorder.Commands());
+        Require(recorder.Seal() == first, "the serial of the newest sealed batch that failed before it was queued was not returned");
+        takeSubmitCaptures();
+        Require(recorder.QueueSealed() == first, "the batch that reused a returned serial was not queued");
+        const auto captures = takeSubmitCaptures();
+        Require(captures.size() == 1 && captures[0].signal == first && captures[0].wait == holds && captures[0].waitValue == 7, "the hold of a sealed batch that failed before it was queued did not pass to the next batch");
+        recorder.Sync();
+    }
+    context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, holds, nullptr);
+    const char* recordInline = std::getenv("APS5_RECORD_INLINE");
+    if ((recordInline != nullptr && std::strcmp(recordInline, "0") != 0) || RuntimeSwitches::Set(RuntimeSwitch::DirectBatches)) {
+        std::cout << "deferred batches off: the recorder's work budget limits not tested\n";
+        return;
+    }
+    {
+        Recorder recorder(context, false, true, context.queueFamily, WorkBudget::Limits{0, 16, 64u << 20});
+        recordBarrierThrough(context, recorder.Commands());
+        recorder.Submit();
+        recorder.Sync();
+        const auto counts = recorder.StreamCounts();
+        Require(counts.deferred == 0 && counts.direct == 1 && counts.refused == 1, "a recorder limited to no encoding batches deferred its batch: " + recorder.StreamReport());
+    }
+    {
+        Recorder recorder(context, false, true, context.queueFamily, WorkBudget::Limits{1, 16, 64u << 20});
+        recordBarrierThrough(context, recorder.Commands());
+        recorder.Submit();
+        recorder.Sync();
+        const auto counts = recorder.StreamCounts();
+        Require(counts.deferred == 1 && counts.direct == 0 && counts.refused == 0, "a recorder allowed one encoding batch did not defer its batch: " + recorder.StreamReport());
+    }
 }
 
 void deferredBatchTests(const Device& device) {
@@ -18430,6 +18594,7 @@ int main(int argc, char** argv) {
         drawSnapshotEpochTests(device);
         gpu.lock();
         deferredBatchTests(device);
+        sealedBatchTests(device);
         recorder.Activate();
         const bool drew = vertexTargetRangeTests(device, recorder, false);
         const char* recordInline = std::getenv("APS5_RECORD_INLINE");

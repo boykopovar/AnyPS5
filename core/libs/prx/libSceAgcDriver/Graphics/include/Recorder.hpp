@@ -154,7 +154,7 @@ private:
 class Recorder : private StreamMaterializer {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
-    explicit Recorder(const Context& context, bool timelineSemaphores = false, bool deferredBatches = false, std::uint32_t queueFamily = 0);
+    explicit Recorder(const Context& context, bool timelineSemaphores = false, bool deferredBatches = false, std::uint32_t queueFamily = 0, WorkBudget::Limits limits = {});
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
@@ -212,8 +212,8 @@ public:
     void FlushKeyStores();
     void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes)) FlushKeyStores(); }
     bool Recording() const { return open != nullptr; }
-    bool Idle() const { return open == nullptr && inFlight.empty(); }
-    std::uint64_t OpenSerial() const { return submissions + 1; }
+    bool Idle() const { return open == nullptr && sealedBatches.empty() && inFlight.empty(); }
+    std::uint64_t OpenSerial() const { return sealedThrough + 1; }
     std::uint64_t CompletedThrough() const { return inFlight.empty() ? submissions : inFlight.front()->serial - 1; }
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
@@ -352,6 +352,9 @@ public:
     std::optional<PendingWriteInfo> DescribePendingWrite(std::uint64_t address, std::size_t bytes) const;
     // Ends and submits the open batch without waiting.
     void Submit();
+    std::uint64_t Seal();
+    std::uint64_t QueueSealed();
+    std::size_t SealedBatches() const noexcept { return sealedBatches.size(); }
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
@@ -816,6 +819,10 @@ private:
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
         std::uint64_t predictedSerial = 0;
+        std::uint64_t sealedSerial = 0;
+        VkSemaphore hold = VK_NULL_HANDLE;
+        std::uint64_t holdValue = 0;
+        std::int64_t labelSince = std::numeric_limits<std::int64_t>::min();
         AgcDriver::FaultToken firstToken = 0;
         AgcDriver::FaultToken lastToken = 0;
         std::uint64_t traceId = 0;
@@ -1040,6 +1047,11 @@ private:
     // `source` is the CountSync source the wait is attributed to.
     void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
     void discard(std::unique_ptr<Batch> batch) noexcept;
+    std::unique_ptr<Batch> sealOpen();
+    std::uint64_t queue(std::unique_ptr<Batch> batch);
+    void unqueued(std::unique_ptr<Batch> batch, std::exception_ptr reason) noexcept;
+    void markLabel(Batch& batch);
+    void refreshLabelMark() noexcept;
     void removeLabels(Batch& batch);
     void release(Batch& batch) noexcept;
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
@@ -1110,7 +1122,7 @@ private:
     CommandFunctions realCommands;
     bool realResolved = false;
     FailureLatch latch;
-    WorkBudget budget{WorkBudget::Limits{}};
+    WorkBudget budget;
     std::unique_ptr<ReplayExecutor> executor;
     std::uint32_t queueFamily = 0;
     bool deferring = false;
@@ -1131,6 +1143,8 @@ private:
     std::vector<const Batch*> finishing;
     mutable std::shared_ptr<const WriteRanges> published;
     std::uint64_t submissions = 0;
+    std::uint64_t sealedThrough = 0;
+    std::deque<std::unique_ptr<Batch>> sealedBatches;
     std::size_t inFlightKeptBytes = 0;
     std::uint64_t writeNoteCount = 0;
     std::shared_ptr<Buffer> drawUpload;

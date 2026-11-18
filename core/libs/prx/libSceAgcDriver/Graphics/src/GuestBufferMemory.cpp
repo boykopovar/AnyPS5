@@ -4247,7 +4247,7 @@ void finishLeaseBatches(std::uint64_t target, const void* site) {
     const auto& state = Leases();
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || recorder != state.leaseRecorder || target <= recorder->CompletedThrough()) return;
-    if (target >= recorder->OpenSerial()) recorder->Submit();
+    if (target > recorder->Submissions()) recorder->Submit();
     Recorder::AnnounceSyncSite(site);
     recorder->FinishUpTo(target);
 }
