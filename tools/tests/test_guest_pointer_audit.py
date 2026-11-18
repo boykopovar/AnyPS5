@@ -357,6 +357,14 @@ class CheckedDereferenceTests(unittest.TestCase):
     def test_checked_argument_dereferences_ignores_a_plain_pointer_argument(self):
         self.assertEqual(guest_pointer_audit.checked_argument_dereferences("GuestCopyIn_nid_no_patch(p, q, 1)", "p"), [])
 
+    def test_internal_linkage_detects_static_and_anonymous_namespace_definitions(self):
+        text = "static int a() {}\nint b() {}\nnamespace { int c() {} }\n"
+        spans = guest_pointer_audit.anonymous_spans(text)
+        self.assertEqual(len(spans), 1)
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int a"), spans))
+        self.assertFalse(guest_pointer_audit.internal_linkage(text, text.index("int b"), spans))
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int c"), spans))
+
 
 if __name__ == "__main__":
     unittest.main()
