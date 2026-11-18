@@ -1,5 +1,5 @@
-/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/asn1/asn1_lib.c (asn1_lib.c,v 1.54) and
- * asn1/a_int.c */
+/* Derived from LibreSSL (openbsd) src/lib/libcrypto/asn1/asn1_old_lib.c, asn1_lib.c and a_int.c; the licence text below is that of the
+ * bundled 3rdparty/libressl-openbsd asn1_lib.c */
 /* $OpenBSD: asn1_lib.c,v 1.45 2020/12/08 15:06:42 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
@@ -241,24 +241,25 @@ void ClearAndFree(void* data, std::size_t size) {
     free_nid_postfix(data);
 }
 
-void ValidateInteger(void* value) {
-    if (!value) return;
-    const Asn1String integer = GuestLoad(static_cast<const Asn1String*>(value), "ASN1_STRING");
+Asn1String ValidateInteger(void* value) {
+    Asn1String integer{};
+    if (!value) return integer;
+    integer = GuestLoad(static_cast<const Asn1String*>(value), "ASN1_STRING");
     if (!GuestWritable_nid_no_patch(value, sizeof(Asn1String))) throw std::invalid_argument("ASN1_STRING: unwritable object");
-    if ((integer.flags & 0x10) || !integer.data) return;
+    if ((integer.flags & 0x10) || !integer.data) return integer;
     if (integer.length < 0) throw std::invalid_argument("ASN1_STRING: negative length");
     if (!GuestWritable_nid_no_patch(integer.data, static_cast<std::size_t>(integer.length))) throw std::invalid_argument("ASN1_STRING: unwritable data");
+    return integer;
+}
+
+void ReleaseInteger(void* value, const Asn1String& snapshot) {
+    if (!value) return;
+    if (!(snapshot.flags & 0x10) && snapshot.data) ClearAndFree(snapshot.data, static_cast<std::size_t>(snapshot.length));
+    free_nid_postfix(value);
 }
 
 void FreeInteger(void* value) {
-    if (!value) return;
-    ValidateInteger(value);
-    auto& integer = *static_cast<Asn1String*>(value);
-    if (!(integer.flags & 0x10) && integer.data) ClearAndFree(integer.data, static_cast<std::size_t>(integer.length));
-    integer.flags &= ~std::int64_t{0x10};
-    integer.data = nullptr;
-    integer.length = 0;
-    free_nid_postfix(value);
+    ReleaseInteger(value, ValidateInteger(value));
 }
 
 }
@@ -283,8 +284,7 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
     std::size_t parsedLength;
     if (!ReadIdentifier(remaining, parsedClass, constructed, parsedTag)
         || !ReadLength(remaining, indefinite, parsedLength) || (indefinite && !constructed)
-        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
-        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
         GuestStore(tagClass, 0, "ASN1_get_object");
         GuestStore(tag, 0, "ASN1_get_object");
         GuestStore(length, std::int64_t{0}, "ASN1_get_object");
@@ -292,7 +292,8 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
         return 0x80;
     }
     int result = (constructed ? 0x20 : 0) | (indefinite ? 1 : 0);
-    if (parsedLength > remaining.Remaining()) {
+    if (parsedLength > remaining.Remaining()
+        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         PutError(TooLong);
         result |= 0x80;
     }
@@ -310,10 +311,11 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
     if (!start) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
     GuestStore(input, start, "d2i_ASN1_INTEGER");
     void* previous = nullptr;
+    Asn1String previousState{};
     if (output) {
         previous = GuestLoad(output, "d2i_ASN1_INTEGER");
         GuestStore(output, previous, "d2i_ASN1_INTEGER");
-        ValidateInteger(previous);
+        previousState = ValidateInteger(previous);
     }
     GuestInput remaining(start, static_cast<std::size_t>(length), "d2i_ASN1_INTEGER");
     auto content = ReadInteger(remaining);
@@ -366,7 +368,7 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         }
         throw;
     }
-    FreeInteger(previous);
+    ReleaseInteger(previous, previousState);
     return integer;
 }
 

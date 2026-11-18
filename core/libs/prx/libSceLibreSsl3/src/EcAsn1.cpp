@@ -388,17 +388,40 @@ bool RangeFits(const unsigned char* start, std::int64_t length) {
     return length >= 0 && reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
 }
 
+std::int64_t EncodedBytes(const unsigned char* in, std::int64_t available) {
+    std::int64_t offset = 0;
+    unsigned char byte = 0;
+    const auto next = [&] {
+        if (offset == available) return false;
+        if (!GuestBytes(in + offset).CopyIn(&byte, 1)) APS5_INVALID_ARG_EX;
+        ++offset;
+        return true;
+    };
+    if (!next()) return offset;
+    if ((byte & 0x1f) == 0x1f) {
+        do {
+            if (!next()) return offset;
+        } while (byte & 0x80);
+    }
+    if (!next()) return offset;
+    if (byte < 0x80) return std::min(available, offset + byte);
+    if (byte == 0x80) return offset;
+    std::int64_t content = 0;
+    for (int count = byte & 0x7f; count > 0; --count) {
+        if (!next()) return offset;
+        content = (content << 8) | byte;
+        if (content > MaxEncodedBytes) return available;
+    }
+    return std::min(available, offset + content);
+}
+
 EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
     const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
     if (sized && length > 0) {
-        std::int64_t copied = std::min(length, MaxEncodedBytes);
-        if (copied > 2) {
-            unsigned char header[2];
-            if (!RangeFits(in, 2) || !GuestBytes(in).CopyIn(header, sizeof(header))) APS5_INVALID_ARG_EX;
-            if ((header[0] & 0x1f) != 0x1f && header[1] < 0x80) copied = std::min<std::int64_t>(copied, 2 + header[1]);
-        }
-        if (!RangeFits(in, copied)) APS5_INVALID_ARG_EX;
+        const std::int64_t available = std::min(length, MaxEncodedBytes);
+        if (!RangeFits(in, available)) APS5_INVALID_ARG_EX;
+        const std::int64_t copied = EncodedBytes(in, available);
         bytes.resize(static_cast<std::size_t>(copied));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
@@ -432,13 +455,13 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     if (key != nullptr && (!GuestPtr<EcKey*>(key).CopyIn(current) || !GuestPtr<EcKey*>(key).CopyOut(current))) APS5_INVALID_ARG_EX;
     const unsigned char* const start = cursor;
     std::unique_ptr<EcGroup, GroupDeleter> group(DecodeGroup(cursor, length));
+    std::unique_ptr<EcKey, KeyDeleter> created;
+    if (group && current == nullptr) created.reset(EC_KEY_new_nid_postfix());
     if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     if (!group) {
         PutError(EcLibrary);
         return nullptr;
     }
-    std::unique_ptr<EcKey, KeyDeleter> created;
-    if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
     EcKey* result = created ? created.get() : current;
     if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) {
         GuestPtr<const unsigned char*>(in).CopyOut(start);

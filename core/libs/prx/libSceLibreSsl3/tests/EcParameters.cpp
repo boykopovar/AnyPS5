@@ -14,6 +14,8 @@
 #include <vector>
 
 #ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -264,16 +266,25 @@ void ReadsOnlyTheBytesTheEncodingNeeds() {
     Require(base != MAP_FAILED);
     Require(mprotect(base + page, page, PROT_NONE) == 0);
 #endif
-    unsigned char* const end = base + page - P256.size();
-    std::memcpy(end, P256.data(), P256.size());
-    for (const std::int64_t length : {std::int64_t{4096}, std::int64_t{5000}, std::int64_t{std::numeric_limits<std::int32_t>::max()}}) {
-        const unsigned char* cursor = end;
-        ERR_clear_error_nid_postfix();
-        EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, length);
-        Require(key != nullptr && cursor == end + P256.size());
-        RequireGroup(key, Secp256r1);
-        EC_KEY_free_nid_postfix(key);
+    for (const char* text : {"06082a8648ce3d030107", "0681082a8648ce3d030107", "068200082a8648ce3d030107", "1f06082a8648ce3d030107"}) {
+        const std::vector<unsigned char> der = Hex(text);
+        unsigned char* const end = base + page - der.size();
+        std::memcpy(end, der.data(), der.size());
+        for (const std::int64_t length : {std::int64_t{4096}, std::int64_t{5000}, std::int64_t{std::numeric_limits<std::int32_t>::max()}}) {
+            const unsigned char* cursor = end;
+            ERR_clear_error_nid_postfix();
+            EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, length);
+            RequireGroup(key, Secp256r1);
+            Require(cursor == end + der.size());
+            EC_KEY_free_nid_postfix(key);
+        }
     }
+    const std::vector<unsigned char> indefinite = Hex("0680");
+    unsigned char* const end = base + page - indefinite.size();
+    std::memcpy(end, indefinite.data(), indefinite.size());
+    const unsigned char* cursor = end;
+    ERR_clear_error_nid_postfix();
+    Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, 4096) == nullptr && cursor == end);
 #ifdef _WIN32
     VirtualFree(base, 0, MEM_RELEASE);
 #else
