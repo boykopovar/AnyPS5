@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import io
 import os
@@ -292,6 +293,55 @@ class RebaseDiffTextTests(unittest.TestCase):
         old, _ = self.changes("before")
         new, _ = self.changes("after")
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+
+class CountHelperTests(unittest.TestCase):
+    def test_default_onto_returns_an_explicit_name_without_asking_git(self):
+        self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+    def test_commits_and_people_count_the_commits_between_two_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "base")
+            base = run_git(root, "rev-parse", "HEAD").strip()
+            for name, email in (("Alice", "alice@example.invalid"), ("Bob", "bob@example.invalid"),
+                                ("Alice", "alice@example.invalid")):
+                run_git(root, "-c", f"user.name={name}", "-c", f"user.email={email}",
+                        "commit", "-q", "--allow-empty", "-m", f"change by {name}")
+            tip = run_git(root, "rev-parse", "HEAD").strip()
+            self.assertEqual(rebase_verify.commits(root, base, tip), 3)
+            self.assertEqual(rebase_verify.people(root, base, tip), collections.Counter({
+                "Alice <alice@example.invalid>\x1fchange by Alice": 2,
+                "Bob <bob@example.invalid>\x1fchange by Bob": 1}))
+class ChangedModeTests(unittest.TestCase):
+    def commit(self, root, message):
+        run_git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", message)
+        return run_git(root, "rev-parse", "HEAD")
+
+    def test_changed_modes_reports_a_file_whose_executable_bit_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            run_git(root, "update-index", "--chmod=+x", "--", "f.txt")
+            tip = self.commit(root, "make executable")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
+
+    def test_changed_modes_is_empty_for_a_content_only_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            (root / "f.txt").write_text("y\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            tip = self.commit(root, "edit")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {})
 
 
 if __name__ == "__main__":
