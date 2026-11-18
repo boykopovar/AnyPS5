@@ -861,6 +861,8 @@ struct MultiContext {
     CurlSockets::Multi sockets;
     void* timer = nullptr;
     void* timerData = nullptr;
+    void* push = nullptr;
+    void* pushData = nullptr;
 };
 std::unordered_map<CURLM*, std::shared_ptr<MultiContext>> multis;
 
@@ -874,6 +876,35 @@ int Timer(CURLM* multi, long timeout, void* opaque) {
     auto* context = static_cast<MultiContext*>(opaque);
     using Function = int (APS5_VABI*)(CURLM*, int64_t, void*);
     return reinterpret_cast<Function>(context->timer)(multi, timeout, context->timerData);
+}
+
+int Push(CURL* parent, CURL* easy, size_t numHeaders, struct curl_pushheaders* headers, void* opaque) {
+    auto* context = static_cast<MultiContext*>(opaque);
+    std::shared_ptr<EasyContext> source;
+    {
+        std::lock_guard lock(contextMutex);
+        const auto found = easies.find(parent);
+        if (found != easies.end()) source = found->second;
+    }
+    if (!source) throw std::invalid_argument("curl push: unknown parent easy handle");
+    std::shared_ptr<EasyContext> copy;
+    try {
+        copy = std::make_shared<EasyContext>(*source);
+        std::lock_guard lock(contextMutex);
+        easies.insert_or_assign(easy, copy);
+    } catch (const std::bad_alloc&) {
+        return CURL_PUSH_DENY;
+    }
+    CopyEasyMime(parent, easy);
+    RebindEasy(easy, copy.get());
+    using Function = int (APS5_VABI*)(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
+    const auto result = reinterpret_cast<Function>(context->push)(parent, easy, numHeaders, headers, context->pushData);
+    if (result != CURL_PUSH_OK) {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+    }
+    return result;
 }
 
 struct ShareContext {
@@ -1238,7 +1269,7 @@ CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
     try {
         context = std::make_shared<EasyContext>(*source);
         std::lock_guard lock(contextMutex);
-        easies.emplace(easy, context);
+        easies.insert_or_assign(easy, context);
     } catch (const std::bad_alloc&) {
         ::curl_easy_cleanup(easy);
         return nullptr;
@@ -1299,7 +1330,7 @@ CURL* APS5_VABI curl_easy_init_nid_postfix() {
     try {
         context = std::make_shared<EasyContext>();
         std::lock_guard lock(contextMutex);
-        easies.emplace(easy, context);
+        easies.insert_or_assign(easy, context);
     } catch (const std::bad_alloc&) {
         ::curl_easy_cleanup(easy);
         return nullptr;
@@ -1418,12 +1449,13 @@ std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::i
         if (found != multis.end()) context = found->second;
     }
     if (!context) return CURLM_BAD_HANDLE;
-    if (option == CURLMOPT_PUSHFUNCTION || option == CURLMOPT_PUSHDATA) NotImplemented_nid_no_patch(__func__);
     switch (option) {
     case CURLMOPT_SOCKETFUNCTION:
     case CURLMOPT_SOCKETDATA:
     case CURLMOPT_TIMERFUNCTION:
     case CURLMOPT_TIMERDATA:
+    case CURLMOPT_PUSHFUNCTION:
+    case CURLMOPT_PUSHDATA:
     case CURLMOPT_PIPELINING:
     case CURLMOPT_MAXCONNECTS:
     case CURLMOPT_MAX_HOST_CONNECTIONS:
@@ -1452,6 +1484,15 @@ std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::i
         auto* value = CURL_ARG(void*);
         result = ::curl_multi_setopt(multi_handle, option, context.get());
         if (result == CURLM_OK) context->timerData = value;
+    } else if (option == CURLMOPT_PUSHFUNCTION) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, CURLMOPT_PUSHDATA, context.get());
+        if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Push : nullptr);
+        if (result == CURLM_OK) context->push = value;
+    } else if (option == CURLMOPT_PUSHDATA) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, option, context.get());
+        if (result == CURLM_OK) context->pushData = value;
     } else if (static_cast<int>(option) / 10000 == 0) {
         auto value = CURL_ARG(int64_t);
         CURL_ARGS_END();
