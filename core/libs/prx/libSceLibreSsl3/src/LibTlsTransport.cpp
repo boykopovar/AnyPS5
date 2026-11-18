@@ -1,7 +1,6 @@
 #include "prx/libSceLibreSsl3/include/LibTls.hpp"
 
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -27,6 +26,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -36,7 +36,7 @@ namespace {
 
 constexpr std::int64_t WantPollIn = -2;
 constexpr std::int64_t WantPollOut = -3;
-constexpr std::size_t WriteChunkSize = 16 * 1024;
+constexpr std::size_t TransferChunkSize = 16 * 1024;
 constexpr std::uint32_t TlsProtocol12 = 0x08;
 constexpr std::uint32_t TlsProtocol13 = 0x10;
 
@@ -89,6 +89,7 @@ struct Session {
     bool connected = false;
     bool handshaken = false;
     bool closed = false;
+    bool failed = false;
     int hostError = 0;
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context random;
@@ -166,8 +167,8 @@ struct Session {
     }
 
     int Configure(const TlsTransportConfig& settings, const char* servername) {
-        if (!settings.client) return -1;
-        if ((settings.protocols & (TlsProtocol12 | TlsProtocol13)) == 0) return -1;
+        if (!settings.client) return MBEDTLS_ERR_SSL_BAD_CONFIG;
+        if ((settings.protocols & (TlsProtocol12 | TlsProtocol13)) == 0) return MBEDTLS_ERR_SSL_BAD_CONFIG;
         int result = mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0);
         if (result != 0) return result;
         result = mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -274,6 +275,10 @@ std::int64_t Handshake(TlsContext* context, Session& session) {
         TlsTransportSetError_nid_no_patch(context, "context not connected");
         return -1;
     }
+    if (session.failed) {
+        TlsTransportSetError_nid_no_patch(context, "connection is failed");
+        return -1;
+    }
     if (session.handshaken) {
         TlsTransportSetError_nid_no_patch(context, "handshake already completed");
         return -1;
@@ -286,11 +291,14 @@ std::int64_t Handshake(TlsContext* context, Session& session) {
     }
     const auto mapped = session.Map(result);
     if (mapped == WantPollIn || mapped == WantPollOut) return mapped;
+    session.failed = true;
     SetError(context, session, result, "handshake");
     return -1;
 }
 
 }
+
+extern "C" {
 
 int TlsTransportClose_nid_no_patch(TlsContext* context) {
     const auto session = Find(context);
@@ -298,11 +306,19 @@ int TlsTransportClose_nid_no_patch(TlsContext* context) {
     std::unique_lock lock(session->mutex);
     if (session->closed) return 0;
     if (!session->connected) return 0;
+    if (session->failed) {
+        session->closed = true;
+        session->socketOwner.reset();
+        session->socket = static_cast<std::uintptr_t>(-1);
+        return 0;
+    }
     session->hostError = 0;
     const int result = mbedtls_ssl_close_notify(&session->ssl);
     if (result == MBEDTLS_ERR_SSL_WANT_READ) return static_cast<int>(WantPollIn);
     if (result == MBEDTLS_ERR_SSL_WANT_WRITE) return static_cast<int>(WantPollOut);
     session->closed = true;
+    session->socketOwner.reset();
+    session->socket = static_cast<std::uintptr_t>(-1);
     if (result != 0) {
         SetError(context, *session, result, "shutdown");
         return -1;
@@ -325,6 +341,12 @@ int TlsTransportConnect_nid_no_patch(TlsContext* context, int socket, const char
     if (!TlsTransportGetConfig_nid_no_patch(context, &settings) || !settings.client) {
         TlsTransportSetError_nid_no_patch(context, "not a client context");
         return -1;
+    }
+    if ((settings.cert && settings.certLength) || (settings.key && settings.keyLength)) {
+        throw std::runtime_error("tls_connect_socket: client certificates and keys are not implemented");
+    }
+    if (settings.ciphers != nullptr) {
+        throw std::runtime_error("tls_connect_socket: configured ciphers are not implemented");
     }
     if (Find(context)) {
         TlsTransportSetError_nid_no_patch(context, "context already connected");
@@ -386,8 +408,8 @@ std::int64_t TlsTransportRead_nid_no_patch(TlsContext* context, void* buffer, st
         return -1;
     }
     std::unique_lock lock(session->mutex);
-    if (session->closed) {
-        TlsTransportSetError_nid_no_patch(context, "connection is closed");
+    if (session->closed || session->failed) {
+        TlsTransportSetError_nid_no_patch(context, session->failed ? "connection is failed" : "connection is closed");
         return -1;
     }
     if (!session->handshaken) {
@@ -395,17 +417,25 @@ std::int64_t TlsTransportRead_nid_no_patch(TlsContext* context, void* buffer, st
         if (result != 0) return result;
     }
     if (length == 0) return 0;
-    GuestArena::HostWrite destination(buffer, length);
-    if (!destination.Open()) {
+    const std::size_t chunk = std::min(length, TransferChunkSize);
+    if (!GuestWritable_nid_no_patch(buffer, chunk)) {
         TlsTransportSetError_nid_no_patch(context, "invalid read buffer");
         return -1;
     }
+    std::vector<unsigned char> output(chunk);
     session->hostError = 0;
-    const int result = mbedtls_ssl_read(&session->ssl, static_cast<unsigned char*>(buffer), length);
-    if (result > 0) return result;
+    const int result = mbedtls_ssl_read(&session->ssl, output.data(), chunk);
+    if (result > 0) {
+        if (!GuestCopyOut_nid_no_patch(buffer, output.data(), static_cast<std::size_t>(result))) {
+            TlsTransportSetError_nid_no_patch(context, "invalid read buffer");
+            return -1;
+        }
+        return result;
+    }
     if (result == 0 || result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
     const auto mapped = session->Map(result);
     if (mapped == WantPollIn || mapped == WantPollOut) return mapped;
+    session->failed = true;
     SetError(context, *session, result, "read");
     return -1;
 }
@@ -422,8 +452,8 @@ std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buf
         return -1;
     }
     std::unique_lock lock(session->mutex);
-    if (session->closed) {
-        TlsTransportSetError_nid_no_patch(context, "connection is closed");
+    if (session->closed || session->failed) {
+        TlsTransportSetError_nid_no_patch(context, session->failed ? "connection is failed" : "connection is closed");
         return -1;
     }
     if (!session->handshaken) {
@@ -431,7 +461,7 @@ std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buf
         if (result != 0) return result;
     }
     if (length == 0) return 0;
-    const std::size_t chunk = std::min(length, WriteChunkSize);
+    const std::size_t chunk = std::min(length, TransferChunkSize);
     std::vector<unsigned char> input(chunk);
     if (!GuestCopyIn_nid_no_patch(input.data(), buffer, chunk)) {
         TlsTransportSetError_nid_no_patch(context, "invalid write buffer");
@@ -442,6 +472,9 @@ std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buf
     if (result >= 0) return result;
     const auto mapped = session->Map(result);
     if (mapped == WantPollIn || mapped == WantPollOut) return mapped;
+    session->failed = true;
     SetError(context, *session, result, "write");
     return -1;
+}
+
 }

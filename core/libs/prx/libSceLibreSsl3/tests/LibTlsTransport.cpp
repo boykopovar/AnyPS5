@@ -23,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -30,6 +31,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -191,6 +193,8 @@ void TestHandshakeAndExchange(Server& server) {
 
     std::array<char, 8> reply{};
     std::size_t total = 0;
+    Check(tls_read_nid_postfix(client, const_cast<char*>("ro"), 2) == -1);
+    Check(tls_error_nid_postfix(client) != nullptr);
     while (total < 4) {
         const auto count = tls_read_nid_postfix(client, reply.data() + total, reply.size() - total);
         Check(count > 0);
@@ -313,6 +317,14 @@ void TestErrors(Server& server) {
         Check(tls_connect_socket_nid_postfix(client, sock, "wrong.example") == 0);
         Check(tls_handshake_nid_postfix(client) == -1);
         Check(tls_error_nid_postfix(client) != nullptr);
+        char byte = 0;
+        Check(tls_handshake_nid_postfix(client) == -1);
+        Check(tls_error_nid_postfix(client) != nullptr);
+        Check(tls_read_nid_postfix(client, &byte, sizeof(byte)) == -1);
+        Check(tls_error_nid_postfix(client) != nullptr);
+        Check(tls_write_nid_postfix(client, "a", 1) == -1);
+        Check(tls_error_nid_postfix(client) != nullptr);
+        Check(tls_close_nid_postfix(client) == 0);
         tls_free_nid_postfix(client);
         tls_config_free_nid_postfix(config);
         Check(close_nid_postfix(sock) == 0);
@@ -332,6 +344,40 @@ void TestErrors(Server& server) {
         tls_config_free_nid_postfix(config);
         Check(close_nid_postfix(sock) == 0);
         thread.join();
+    }
+    auto checkConnectThrows = [](TlsConfig* config, int sock) {
+        TlsContext* client = tls_client_nid_postfix();
+        Check(client != nullptr);
+        Check(tls_configure_nid_postfix(client, config) == 0);
+        bool threw = false;
+        try {
+            (void)tls_connect_socket_nid_postfix(client, sock, "localhost");
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Check(threw);
+        tls_free_nid_postfix(client);
+    };
+    {
+        const int sock = socket_nid_postfix(2, 1, 6);
+        Check(sock >= 0);
+        TlsConfig* certConfig = MakeConfig(RootPem, sizeof(RootPem) - 1);
+        const std::uint8_t dummyCert[] = {'c', 'e', 'r', 't'};
+        Check(tls_config_set_cert_mem_nid_postfix(certConfig, dummyCert, sizeof(dummyCert)) == 0);
+        checkConnectThrows(certConfig, sock);
+        tls_config_free_nid_postfix(certConfig);
+
+        TlsConfig* keyConfig = MakeConfig(RootPem, sizeof(RootPem) - 1);
+        const std::uint8_t dummyKey[] = {'k', 'e', 'y'};
+        Check(tls_config_set_key_mem_nid_postfix(keyConfig, dummyKey, sizeof(dummyKey)) == 0);
+        checkConnectThrows(keyConfig, sock);
+        tls_config_free_nid_postfix(keyConfig);
+
+        TlsConfig* cipherConfig = MakeConfig(RootPem, sizeof(RootPem) - 1);
+        Check(tls_config_set_ciphers_nid_postfix(cipherConfig, "compat") == 0);
+        checkConnectThrows(cipherConfig, sock);
+        tls_config_free_nid_postfix(cipherConfig);
+        Check(close_nid_postfix(sock) == 0);
     }
 }
 
@@ -536,6 +582,9 @@ void TestSystemCaFallback(Server& server) {
 }
 
 int main() {
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     Server server;
     TestHandshakeAndExchange(server);
     TestImplicitHandshakeAndNoVerifyName(server, "mismatch.example");
