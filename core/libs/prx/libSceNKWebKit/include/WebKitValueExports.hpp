@@ -542,6 +542,8 @@ void APS5_VABI WKContextSetAlwaysUsesComplexTextCodePath(const void* contextRef,
 void APS5_VABI WKContextSetMemoryCacheDisabled(const void* contextRef, bool disabled);
 void APS5_VABI WKContextSetHTTPPipeliningEnabled(const void* contextRef, bool enabled);
 void APS5_VABI WKContextSetShouldUseFontSmoothing(const void* contextRef, bool useFontSmoothing);
+void APS5_VABI WKContextSetPrewarmsProcessesAutomatically(const void* contextRef, bool value);
+void APS5_VABI WKContextSetFontAllowList(const void* contextRef, const void* arrayRef);
 bool APS5_VABI WKContextJavaScriptConfigurationFileEnabled(const void* contextRef);
 void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contextRef, bool enable);
 void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
