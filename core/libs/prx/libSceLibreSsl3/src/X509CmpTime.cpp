@@ -1,6 +1,10 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <array>
+#include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
 #include <optional>
@@ -12,24 +16,38 @@ constexpr int GeneralizedTime = 24;
 constexpr int UtcTimeLength = 13;
 constexpr int GeneralizedTimeLength = 15;
 
+bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return ok;
+}
+
 bool TwoDigits(const unsigned char* data, int& value) {
     if (data[0] < '0' || data[0] > '9' || data[1] < '0' || data[1] > '9') return false;
     value = (data[0] - '0') * 10 + data[1] - '0';
     return true;
 }
 
-std::optional<std::int64_t> CertificateTime(const Asn1String* time) {
-    if (!time || !time->data) return std::nullopt;
+std::optional<std::int64_t> CertificateTime(const Asn1String* time, const char* caller) {
+    if (!time) return std::nullopt;
+    Asn1String guestTime{};
+    if (!CopyGuestInPreservingErrno(&guestTime, time, sizeof(guestTime))) NotImplemented_nid_no_patch(caller);
+    if (!guestTime.data) return std::nullopt;
     int format;
-    if (time->length == UtcTimeLength) {
+    if (guestTime.length == UtcTimeLength) {
         format = UtcTime;
-    } else if (time->length == GeneralizedTimeLength) {
+    } else if (guestTime.length == GeneralizedTimeLength) {
         format = GeneralizedTime;
     } else {
         return std::nullopt;
     }
-    if (time->type != 0 && time->type != format) return std::nullopt;
-    const unsigned char* data = time->data;
+    if (guestTime.type != 0 && guestTime.type != format) return std::nullopt;
+    std::array<unsigned char, GeneralizedTimeLength> buffer{};
+    if (!CopyGuestInPreservingErrno(buffer.data(), guestTime.data, static_cast<std::size_t>(guestTime.length))) {
+        NotImplemented_nid_no_patch(caller);
+    }
+    const unsigned char* data = buffer.data();
     int year;
     int value;
     if (!TwoDigits(data, year)) return std::nullopt;
@@ -60,7 +78,7 @@ std::optional<std::int64_t> CertificateTime(const Asn1String* time) {
 
 extern "C" int APS5_VABI X509_cmp_current_time_nid_postfix(const Asn1String* time) {
     const std::int64_t now = std::time(nullptr);
-    const auto certificate = CertificateTime(time);
+    const auto certificate = CertificateTime(time, __func__);
     if (!certificate) return 0;
     return *certificate <= now ? -1 : 1;
 }
