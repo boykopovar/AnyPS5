@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <atomic>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -8,6 +9,7 @@ static_assert(sizeof(LibreSslCertKey) == 24);
 static_assert(offsetof(LibreSslCertKey, privatekey) == 8);
 static_assert(sizeof(LibreSslCert) == 256);
 static_assert(sizeof(LibreSslSession) == 232);
+static_assert(offsetof(LibreSslSession, references) == 160);
 static_assert(offsetof(LibreSslSession, cipher) == 168);
 
 namespace {
@@ -34,6 +36,20 @@ extern "C" {
 
 LibreSslSession* APS5_VABI SSL_get_session_nid_postfix(const LibreSslSsl* ssl) {
     return Session(ssl, __func__);
+}
+
+void* APS5_VABI SSL_get1_session_nid_postfix(LibreSslSsl* ssl) {
+    LibreSslSession* session = Session(ssl, __func__);
+    if (session) std::atomic_ref<int>(session->references).fetch_add(1);
+    return session;
+}
+
+void APS5_VABI SSL_SESSION_free_nid_postfix(void* value) {
+    if (!value) return;
+    auto references = std::atomic_ref<int>(static_cast<LibreSslSession*>(value)->references);
+    if (references.fetch_sub(1, std::memory_order_acq_rel) - 1 > 0) return;
+    references.fetch_add(1, std::memory_order_relaxed);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const LibreSslSsl* ssl) {
