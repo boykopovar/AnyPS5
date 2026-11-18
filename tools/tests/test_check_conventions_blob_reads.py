@@ -24,7 +24,7 @@ EXPECTED = [
 def repository(root, fillers, exports=0):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
-                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
                        cwd=root, capture_output=True, check=True)
 
     def write(path, data):

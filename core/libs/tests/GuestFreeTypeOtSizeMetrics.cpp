@@ -1,9 +1,24 @@
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -118,10 +133,108 @@ void MatchSize() {
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0 && index == 0, "a missing width takes the height and both round to pixels");
     request = {0, 12, 0, 96 * 64, 0};
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, nullptr) == 0, "the resolution scales the request and the index is optional");
+    Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, reinterpret_cast<std::uint64_t*>(0x10)) == 0x06, "an unwritable size index is refused");
     request = {3, 16 * 64, 16 * 64, 0, 0};
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0x07, "only nominal requests are matched");
     Fixture outlineOnly(1);
     Require(FT_Match_Size_nid_postfix(&outlineOnly.face, nullptr, 0, &index) == 0x23, "a face without strikes is an invalid face handle");
+}
+
+template <typename TCall> bool Invalid(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+template <typename TCall> bool InvalidArgument(TCall call) {
+    errno = 71;
+    return call() == 0x06 && errno == 71;
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(base != nullptr, "the read-only page is allocated");
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        base = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(base != MAP_FAILED, "the read-only page is allocated");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0, "the page becomes read-only");
+#else
+        Require(mprotect(base, size, PROT_READ) == 0, "the page becomes read-only");
+#endif
+    }
+
+    void* base = nullptr;
+    std::size_t size = 0;
+};
+
+void GuestPointers() {
+    auto* unmappedFace = reinterpret_cast<GuestFaceRec*>(std::uintptr_t{0x10});
+    const auto* unmappedRequest = reinterpret_cast<const GuestSizeRequestRec*>(std::uintptr_t{0x10});
+    const GuestSizeRequestRec request{0, 16 * 64, 16 * 64, 0, 0};
+    std::uint64_t index = 99;
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(unmappedFace, 0); }), "an unmapped face throws from FT_Select_Metrics");
+    Require(InvalidArgument([&] { return FT_Request_Metrics_nid_postfix(unmappedFace, &request); }), "an unmapped face is Invalid_Argument for FT_Request_Metrics");
+    Require(InvalidArgument([&] { return FT_Match_Size_nid_postfix(unmappedFace, &request, 0, &index); }) && index == 99,
+            "an unmapped face is Invalid_Argument for FT_Match_Size");
+
+    Fixture scalable(1);
+    const GuestSizeMetrics scalableBefore = scalable.size.metrics;
+    Require(InvalidArgument([&] { return FT_Request_Metrics_nid_postfix(&scalable.face, unmappedRequest); }), "an unmapped request is Invalid_Argument for FT_Request_Metrics");
+    Require(std::memcmp(&scalableBefore, &scalable.size.metrics, sizeof(scalableBefore)) == 0, "an unmapped request leaves the metrics untouched");
+    Fixture fixed(3);
+    Require(InvalidArgument([&] { return FT_Match_Size_nid_postfix(&fixed.face, unmappedRequest, 0, &index); }) && index == 99,
+            "an unmapped request is Invalid_Argument for FT_Match_Size");
+
+    Fixture unmappedSize(3);
+    unmappedSize.face.size = reinterpret_cast<GuestSizeRec*>(std::uintptr_t{0x10});
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&unmappedSize.face, 1); }), "an unmapped size throws from FT_Select_Metrics");
+    Require(InvalidArgument([&] { return FT_Request_Metrics_nid_postfix(&unmappedSize.face, &request); }), "an unmapped size is Invalid_Argument for FT_Request_Metrics");
+
+    Fixture unmappedStrikes(3);
+    unmappedStrikes.face.available_sizes = reinterpret_cast<GuestBitmapSize*>(std::uintptr_t{0x10});
+    const GuestSizeMetrics strikesBefore = unmappedStrikes.size.metrics;
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&unmappedStrikes.face, 1); }), "unmapped strikes throw from FT_Select_Metrics");
+    Require(InvalidArgument([&] { return FT_Match_Size_nid_postfix(&unmappedStrikes.face, &request, 0, &index); }) && index == 99,
+            "unmapped strikes are Invalid_Argument for FT_Match_Size");
+    Require(std::memcmp(&strikesBefore, &unmappedStrikes.size.metrics, sizeof(strikesBefore)) == 0, "unmapped strikes leave the metrics untouched");
+    unmappedStrikes.face.num_fixed_sizes = std::numeric_limits<std::int32_t>::max();
+    Require(InvalidArgument([&] { return FT_Match_Size_nid_postfix(&unmappedStrikes.face, &request, 0, &index); }) && index == 99,
+            "a huge strike count over unmapped strikes is Invalid_Argument");
+
+    ReadOnlyPage page;
+    Fixture readOnly(3);
+    auto* size = new (page.base) GuestSizeRec(readOnly.size);
+    readOnly.face.size = size;
+    const GuestSizeMetrics readOnlyBefore = size->metrics;
+    page.Protect();
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&readOnly.face, 1); }), "a read-only size throws from FT_Select_Metrics");
+    Require(InvalidArgument([&] { return FT_Request_Metrics_nid_postfix(&readOnly.face, &request); }), "a read-only size is Invalid_Argument for FT_Request_Metrics");
+    Require(std::memcmp(&readOnlyBefore, &size->metrics, sizeof(readOnlyBefore)) == 0, "a read-only size keeps its metrics");
 }
 
 }
@@ -130,6 +243,7 @@ int main() {
     RequestMetrics();
     SelectMetrics();
     MatchSize();
+    GuestPointers();
     std::puts("Guest FreeType Ot size metrics tests passed");
     return 0;
 }

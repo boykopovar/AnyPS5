@@ -145,13 +145,15 @@ int main() {
     for (const LocaleFunction function : std::array<LocaleFunction, 5>{
              uloc_getLanguage, uloc_getCountry, uloc_getScript, uloc_getBaseName, uloc_canonicalize}) {
         status = 0;
-        bool thrown = false;
-        try {
-            function(nullptr, output.data(), 16, &status);
-        } catch (const std::runtime_error&) {
-            thrown = true;
-        }
-        assert(thrown && status == 0 && output[0] == 'Q');
+        std::array<char, 32> expected{};
+        const std::int32_t expectedLength = function(uloc_getDefault(), expected.data(), 32, &status);
+        assert(status <= 0);
+        status = 0;
+        output.fill('Q');
+        assert(function(nullptr, output.data(), 16, &status) == expectedLength);
+        assert(status <= 0 && std::string_view(output.data(), static_cast<std::size_t>(std::min(expectedLength, 16))) ==
+                                  std::string_view(expected.data(), static_cast<std::size_t>(std::min(expectedLength, 16))));
+        output.fill('Q');
         status = 15;
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
@@ -184,13 +186,13 @@ int main() {
         {"en_US.utf8", "en"}, {"en@x_y", "en@x"},
     });
     status = 0;
-    bool parentThrown = false;
-    try {
-        uloc_getParent(nullptr, output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        parentThrown = true;
-    }
-    assert(parentThrown && status == 0 && output[0] == 'Q');
+    std::array<char, 32> defaultParent{};
+    const std::int32_t defaultLength = uloc_getParent(uloc_getDefault(), defaultParent.data(), 32, &status);
+    assert(status == 0);
+    output.fill('Q');
+    assert(uloc_getParent(nullptr, output.data(), 16, &status) == defaultLength);
+    assert(status == 0 && std::string_view(output.data()) == std::string_view(defaultParent.data()));
+    output.fill('Q');
     status = 15;
     assert(uloc_getParent(nullptr, output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');
@@ -249,15 +251,8 @@ int main() {
     checkIso3Country("en_XEA", "");
     checkIso3Country("en@x=y", "");
     checkIso3Country("root", "");
-    for (const auto function : std::array{&uloc_getISO3Language, &uloc_getISO3Country}) {
-        bool iso3Thrown = false;
-        try {
-            function(nullptr);
-        } catch (const std::runtime_error&) {
-            iso3Thrown = true;
-        }
-        assert(iso3Thrown);
-    }
+    for (const auto function : std::array{&uloc_getISO3Language, &uloc_getISO3Country})
+        assert(std::string_view(function(nullptr)) == std::string_view(function(uloc_getDefault())));
 
     const char* const* languages = uloc_getISOLanguages();
     assert(languages[0] == std::string_view("aa") && languages[1] == std::string_view("ab"));

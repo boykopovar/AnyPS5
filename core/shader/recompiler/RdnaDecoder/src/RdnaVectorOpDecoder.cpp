@@ -755,6 +755,8 @@ bool usesIntegerSaturateClamp(RdnaOpcode opcode) {
         case RdnaOpcode::VSubrevNcU32:
         case RdnaOpcode::VAddNcI32:
         case RdnaOpcode::VSubNcI32:
+        case RdnaOpcode::VMulI32I24:
+        case RdnaOpcode::VMulU32U24:
         case RdnaOpcode::VMadU32U24:
         case RdnaOpcode::VMadI32I24:
         case RdnaOpcode::VMadU16:
@@ -2047,7 +2049,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (isNativeVop3B16BinaryOpcode(opcode)) {
-        if (abs != 0u || (clamp != 0u && !isVop3Integer16AddSubOpcode(opcode)) || omod != 0u || neg != 0u) {
+        if (abs != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
