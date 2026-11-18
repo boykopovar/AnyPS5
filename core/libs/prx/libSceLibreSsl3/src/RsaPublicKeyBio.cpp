@@ -250,10 +250,13 @@
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -497,14 +500,31 @@ LibreSsl3Rsa* DecodeRsaPublicKey(Bytes input) {
 extern "C" {
 
 LibreSsl3Rsa* APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3Rsa** output) {
+    const int savedErrno = errno;
+    LibreSsl3Rsa* previous = nullptr;
+    if (output) {
+        const bool usable = GuestCopyIn_nid_no_patch(&previous, output, sizeof(previous)) && GuestCopyOut_nid_no_patch(output, &previous, sizeof(previous));
+        errno = savedErrno;
+        if (!usable) throw std::invalid_argument("d2i_RSAPublicKey_bio: unusable output");
+    }
     std::vector<unsigned char> bytes;
     if (!ReadDerObjectFromBio_nid_no_patch(bio, bytes)) return nullptr;
-    if (output && *output) {
-        RSA_free_nid_disambig1_nid_postfix(*output);
-        *output = nullptr;
+    if (previous) {
+        RSA_free_nid_disambig1_nid_postfix(previous);
+        LibreSsl3Rsa* const cleared = nullptr;
+        const bool stored = GuestCopyOut_nid_no_patch(output, &cleared, sizeof(cleared));
+        errno = savedErrno;
+        if (!stored) throw std::invalid_argument("d2i_RSAPublicKey_bio: unwritable output");
     }
     auto* rsa = DecodeRsaPublicKey(bytes);
-    if (rsa && output) *output = rsa;
+    if (rsa && output) {
+        const bool stored = GuestCopyOut_nid_no_patch(output, &rsa, sizeof(rsa));
+        errno = savedErrno;
+        if (!stored) {
+            RSA_free_nid_disambig1_nid_postfix(rsa);
+            throw std::invalid_argument("d2i_RSAPublicKey_bio: unwritable output");
+        }
+    }
     return rsa;
 }
 

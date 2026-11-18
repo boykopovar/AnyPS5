@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,9 +13,17 @@
 #include <exception>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using FreeRsa = void (APS5_VABI*)(LibreSsl3Rsa*);
 using ReadRsaPublicKey = LibreSsl3Rsa* (APS5_VABI*)(LibreSsl::Bio*, LibreSsl3Rsa**);
@@ -305,6 +314,63 @@ void TestOutputReplacement() {
     Require(live.size() == baseline);
 }
 
+template<typename TCall> bool Rejected(TCall call) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::invalid_argument&) { rejected = true; }
+    return rejected && errno == 71;
+}
+
+unsigned char* MapReadOnlyPage(const void* contents, std::size_t size) {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, contents, size);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, contents, size);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+void UnmapPage(unsigned char* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+void TestGuestOutput() {
+    const std::size_t baseline = live.size();
+    auto* bio = MemoryBio(RsaPkcs1PubDer);
+    Require(Rejected([&] { d2i_RSAPublicKey_bio_nid_postfix(bio, reinterpret_cast<LibreSsl3Rsa**>(std::uintptr_t{0x10})); }));
+
+    LibreSsl3Rsa* const none = nullptr;
+    unsigned char* nullPage = MapReadOnlyPage(&none, sizeof(none));
+    Require(Rejected([&] { d2i_RSAPublicKey_bio_nid_postfix(bio, reinterpret_cast<LibreSsl3Rsa**>(nullPage)); }));
+    UnmapPage(nullPage);
+
+    auto* old = ReadKey(SecondPkcs1PubDer);
+    unsigned char* keyPage = MapReadOnlyPage(&old, sizeof(old));
+    Require(Rejected([&] { d2i_RSAPublicKey_bio_nid_postfix(bio, reinterpret_cast<LibreSsl3Rsa**>(keyPage)); }));
+    Require(*reinterpret_cast<LibreSsl3Rsa**>(keyPage) == old && live.contains(old));
+    UnmapPage(keyPage);
+
+    auto* read = d2i_RSAPublicKey_bio_nid_postfix(bio, nullptr);
+    Require(read != nullptr && RSA_bits_nid_postfix(read) == 2048);
+    Require(ERR_get_error_nid_postfix() == 0);
+    BIO_free_nid_postfix(bio);
+    RSA_free_nid_disambig1_nid_postfix(read);
+    RSA_free_nid_disambig1_nid_postfix(old);
+    Require(live.size() == baseline);
+}
+
 void ExpectModulus(const char* der, std::initializer_list<unsigned char> magnitude, bool negative,
     std::source_location location = std::source_location::current()) {
     const std::size_t baseline = live.size();
@@ -417,6 +483,7 @@ int main() {
     TestDecodeMatchesSubjectPublicKeyInfo();
     TestConsecutiveKeys();
     TestOutputReplacement();
+    TestGuestOutput();
     TestIntegerContents();
     TestBerHeaders();
     TestStructureErrors();
