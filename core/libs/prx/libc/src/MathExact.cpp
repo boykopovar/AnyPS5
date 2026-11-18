@@ -927,7 +927,8 @@ short APS5_VABI _LDtest_nid_postfix(const long double* value) {
 
 namespace {
 
-short ExtendedExp(long double* value, long double y, short offset) {
+short ExtendedExp(long double* value, long double y, std::int64_t offset) {
+    offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     const long double x = *value;
     const short xKind = TestExtended(Bits(x));
     const short yKind = (std::isnan(y) ? NotANumber : std::isinf(y) ? Infinite : (y == 0.0L ? Zero : TestExtended(Bits(y))));
@@ -1005,7 +1006,7 @@ short ExtendedExp(long double* value, long double y, short offset) {
 
 extern "C" {
 
-short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offset) {
+short APS5_VABI _LExp_nid_postfix(long double* value, long double y, std::int64_t offset) {
     if (value == nullptr) throw std::invalid_argument("_LExp: null value");
     long double host = LoadGuestExtended(value, "_LExp: unreadable value");
     const bool stores = TestExtended(Bits(host)) != NotANumber;

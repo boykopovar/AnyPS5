@@ -773,6 +773,43 @@ static bool RejectsKeepingErrno(Call call) {
     return caught && errno == 71;
 }
 
+static void CheckExpOffsetsBeyond16Bits() {
+    const auto raises = [](int flag, int error) {
+        const bool matched = (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == flag && errno == error;
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return matched;
+    };
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    long double extended = -23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == -1 && SameBits(extended, Extended(0x5aa1, 0x8140e579a04783f7ull)) && raises(0, 0));
+    extended = 23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == -1 && SameBits(extended, Extended(0x255c, 0xfd846e6c1f803df8ull)) && raises(0, 0));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    double binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, 40000) == 1 && binary == std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    binary = -700.0;
+    Require(_Exp_nid_postfix(&binary, -1.0, 40000) == 1 && binary == -std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 0.0;
+    Require(_Exp_nid_postfix(&binary, 1.5, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    float single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, 40000) == 1 && single == std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, -40000) == 0 && single == 0.0f && !std::signbit(single) && raises(FE_UNDERFLOW, ERANGE));
+    single = 0.0f;
+    Require(_FExp_nid_postfix(&single, -1.5f, 40000) == 1 && single == -std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+}
+
 static void CheckGuestPointers() {
     auto* unmappedValue = reinterpret_cast<long double*>(std::uintptr_t{0x10});
     auto* unmappedExponent = reinterpret_cast<short*>(std::uintptr_t{0x10});
@@ -860,6 +897,7 @@ int main(int argc, char** argv) {
     CheckFmalDirectedZero();
     CheckFmalFarApartDirected();
     CheckExpSpecialValues();
+    CheckExpOffsetsBeyond16Bits();
     CheckLogSpecialValues();
     CheckGuestPointers();
     return 0;
