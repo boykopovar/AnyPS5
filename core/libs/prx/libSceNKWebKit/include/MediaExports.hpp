@@ -71,6 +71,7 @@ WTF::MediaTime::ComparisonFlags APS5_VABI _ZNK3WTF9MediaTime7compareERKS0_(const
 bool APS5_VABI _ZNK3WTF9MediaTime7isValidEv(const WTF::MediaTime* self);
 float APS5_VABI _ZNK3WTF9MediaTime7toFloatEv(const WTF::MediaTime* self);
 double APS5_VABI _ZNK3WTF9MediaTime8toDoubleEv(const WTF::MediaTime* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF9MediaTime8toStringEv(const WTF::MediaTime* self);
 bool APS5_VABI _ZNK3WTF9MediaTime9isBetweenERKS0_S2_(const WTF::MediaTime* self, const WTF::MediaTime& a, const WTF::MediaTime& b);
 bool APS5_VABI _ZNK3WTF9MediaTime9isInvalidEv(const WTF::MediaTime* self);
 uint8_t APS5_VABI _ZNK3WTF9MediaTime9timeFlagsEv(const WTF::MediaTime* self);

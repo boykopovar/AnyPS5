@@ -6,7 +6,7 @@
 
 ## change [Media and playback engine stubs]
 
-- [Media and playback engine stubs](../../../core/libs/prx/libSceNKWebKit/src/Media.cpp) (libSceNKWebKit) - WebCore::MediaPlayer, HTMLMediaElement::fastSeek, TextTrackCueGeneric::create, MediaTime::toJSONObject, MediaTime::toJSONString, MediaTime::toString, MediaTimeRange::toJSONString, and PlatformTimeRanges::dump(PrintStream&) exports remain throwing stubs in Export.cpp because they require the WebCore playback pipeline, DOM/engine objects, JSON object model, or PrintStream runtime.
+- [Media and playback engine stubs](../../../core/libs/prx/libSceNKWebKit/src/Media.cpp) (libSceNKWebKit) - WebCore::MediaPlayer, HTMLMediaElement::fastSeek, TextTrackCueGeneric::create, MediaTime::toJSONObject, MediaTime::toJSONString, MediaTimeRange::toJSONString, and PlatformTimeRanges::dump(PrintStream&) exports remain throwing stubs in Export.cpp because they require the WebCore playback pipeline, DOM/engine objects, JSON object model, or PrintStream runtime.
 
 ## remove | `_ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE` | `IdIO1h6EW3I` |
 
@@ -19,3 +19,5 @@
 ## remove | `_ZNK3WTF8WallTime4dumpERNS_11PrintStreamE` | `BXpm0S4olVo` |
 
 ## remove | `_ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE` | `tbWxzNR07RQ` |
+
+## remove | `_ZNK3WTF9MediaTime8toStringEv` | `GraLckR1SPU` |
