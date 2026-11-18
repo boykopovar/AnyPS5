@@ -1644,6 +1644,26 @@ class ModuleFileTests(unittest.TestCase):
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
 
+class DiffEntriesTests(unittest.TestCase):
+    def test_splits_entries_into_before_only_now_only_and_both(self):
+        before = [{"a": 1, "b": 2, "n": 3}, {"a": 1, "b": 2, "n": 4}, {"a": 1, "b": 3, "n": 1}]
+        now = [{"a": 1, "b": 2, "n": 5}, {"a": 9, "b": 9, "n": 2}]
+        diff = title_run.diff_entries(before, now, ["a", "b"], "n")
+        self.assertEqual(diff["onlyBefore"], [{"a": 1, "b": 3, "n": 1}])
+        self.assertEqual(diff["onlyNow"], [{"a": 9, "b": 9, "n": 2}])
+        self.assertEqual(diff["both"], [{"a": 1, "b": 2, "before": 7, "now": 5}])
+
+    def test_missing_side_gives_no_diff(self):
+        self.assertIsNone(title_run.diff_entries(None, [], ["a"], "n"))
+        self.assertIsNone(title_run.diff_entries([], None, ["a"], "n"))
+
+    def test_non_integer_counts_add_nothing(self):
+        diff = title_run.diff_entries([{"a": 1, "n": "x"}], [{"a": 1, "n": 2.5}], ["a"], "n")
+        self.assertEqual(diff["both"], [{"a": 1, "before": 0, "now": 0}])
+
+    def test_empty_inputs_give_empty_lists(self):
+        self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
 
 if __name__ == "__main__":
     unittest.main()
