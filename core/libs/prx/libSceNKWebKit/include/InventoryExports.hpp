@@ -5405,8 +5405,6 @@ int APS5_VABI _ZNK7WebCore6Editor7canEditEv();
 int APS5_VABI _ZNK7WebCore6Editor9canDeleteEv();
 int APS5_VABI _ZNK7WebCore6JSNode21pushEventHandlerScopeEPN3JSC14JSGlobalObjectEPNS1_7JSScopeE();
 int APS5_VABI _ZNK7WebCore6JSNode8nodeTypeERN3JSC14JSGlobalObjectE();
-int APS5_VABI _ZNK7WebCore6Length3refEv();
-int APS5_VABI _ZNK7WebCore6Length5derefEv();
 int APS5_VABI _ZNK7WebCore6Quirks25needsYouTubeMouseOutQuirkEv();
 int APS5_VABI _ZNK7WebCore6Quirks29shouldAvoidUsingIOS13ForGmailEv();
 int APS5_VABI _ZNK7WebCore6Quirks32isNeverRichlyEditableForTouchBarEv();
