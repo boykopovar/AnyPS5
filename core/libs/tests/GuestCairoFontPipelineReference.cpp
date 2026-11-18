@@ -5,9 +5,17 @@
 #include <bit>
 #include <memory>
 
+#ifdef _WIN32
+extern "C" void _cairo_mutex_initialize();
+#endif
+
 namespace CairoFontPipelineReference {
 
 namespace {
+
+#ifdef _WIN32
+const bool mutexesInitialized = (_cairo_mutex_initialize(), true);
+#endif
 
 using Font = std::unique_ptr<cairo_scaled_font_t, decltype(&aps5_cairo_scaled_font_destroy)>;
 
