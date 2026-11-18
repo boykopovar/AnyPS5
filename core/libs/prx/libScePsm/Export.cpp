@@ -1,13 +1,18 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libScePsm/include/InventoryExports.hpp"
 #include "prx/libScePsm/include/Api.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <new>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -16,6 +21,60 @@ constexpr std::size_t kMonoStringLengthOffset = 0x10;
 constexpr std::size_t kMonoStringCharsOffset = 0x14;
 constexpr std::size_t kMonoArrayLengthOffset = 0x18;
 constexpr std::size_t kMonoArrayVectorOffset = 0x20;
+
+template <typename T>
+T ReadGuestField(const void* base, std::size_t offset, const char* message) {
+    if (base == nullptr) throw std::invalid_argument(message);
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - offset) throw std::invalid_argument(message);
+    T value{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(message);
+    return value;
+}
+
+void WriteGuestPointer(void* slot, void* value, const char* message) {
+    if (slot == nullptr) throw std::invalid_argument(message);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(slot, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(message);
+}
+
+class MonoUtf16Reader {
+public:
+    explicit MonoUtf16Reader(const std::uint16_t* base) : base_(base) {}
+
+    std::uint16_t At(std::size_t index) {
+        if (index < start_ || index - start_ >= count_) Load(index);
+        return buffer_[index - start_];
+    }
+
+private:
+    static constexpr std::size_t PageBytes = 0x1000;
+
+    void Load(std::size_t index) {
+        const auto address = reinterpret_cast<std::uintptr_t>(base_);
+        if (index > (std::numeric_limits<std::uintptr_t>::max() - address) / sizeof(std::uint16_t)) {
+            throw std::invalid_argument("ScePsmMonoStringToUtf8: unreadable characters");
+        }
+        const auto at = address + index * sizeof(std::uint16_t);
+        const std::size_t units = std::max<std::size_t>((PageBytes - at % PageBytes) / sizeof(std::uint16_t), 1);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(buffer_.data(), reinterpret_cast<const void*>(at), units * sizeof(std::uint16_t));
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument("ScePsmMonoStringToUtf8: unreadable characters");
+        start_ = index;
+        count_ = units;
+    }
+
+    const std::uint16_t* base_;
+    std::array<std::uint16_t, PageBytes / sizeof(std::uint16_t)> buffer_{};
+    std::size_t start_ = 0;
+    std::size_t count_ = 0;
+};
 
 } // namespace
 
@@ -26,9 +85,7 @@ char* APS5_VABI ScePsmMonoArrayAddrWithSize(void* array, int size, std::uintptr_
 }
 
 std::uintptr_t APS5_VABI ScePsmMonoArrayLength(const void* array) {
-    std::uint32_t length;
-    std::memcpy(&length, static_cast<const char*>(array) + kMonoArrayLengthOffset, sizeof(length));
-    return length;
+    return ReadGuestField<std::uint32_t>(array, kMonoArrayLengthOffset, "ScePsmMonoArrayLength: unreadable array");
 }
 
 int APS5_VABI ScePsmMonoDomainGet() {
@@ -41,7 +98,7 @@ void APS5_VABI ScePsmMonoFree(void* memory) {
 }
 
 void APS5_VABI ScePsmMonoGcWbarrierGenericStore(void* slot, void* value) {
-    std::memcpy(slot, &value, sizeof(value));
+    WriteGuestPointer(slot, value, "ScePsmMonoGcWbarrierGenericStore: unwritable slot");
 }
 
 std::uint16_t* APS5_VABI ScePsmMonoStringChars(void* string) {
@@ -54,9 +111,7 @@ int APS5_VABI ScePsmMonoStringFromUtf16() {
 }
 
 int APS5_VABI ScePsmMonoStringLength(const void* string) {
-    std::int32_t length;
-    std::memcpy(&length, static_cast<const char*>(string) + kMonoStringLengthOffset, sizeof(length));
-    return length;
+    return ReadGuestField<std::int32_t>(string, kMonoStringLengthOffset, "ScePsmMonoStringLength: unreadable string");
 }
 
 int APS5_VABI ScePsmMonoStringNew() {
@@ -72,15 +127,18 @@ int APS5_VABI ScePsmMonoStringNewWrapper() {
 char* APS5_VABI ScePsmMonoStringToUtf8(void* string) {
     if (string == nullptr) return nullptr;
     const int length = ScePsmMonoStringLength(string);
-    const std::uint16_t* chars = ScePsmMonoStringChars(string);
+    MonoUtf16Reader chars(ScePsmMonoStringChars(string));
     std::string utf8;
     for (int i = 0; i < length; ++i) {
-        std::uint32_t c = chars[i];
+        std::uint32_t c = chars.At(static_cast<std::size_t>(i));
         if (c == 0) break;
         if (c >= 0xDC00 && c <= 0xDFFF) return nullptr;
         if (c >= 0xD800 && c <= 0xDBFF) {
-            if (i + 1 >= length || chars[i + 1] < 0xDC00 || chars[i + 1] > 0xDFFF) return nullptr;
-            c = 0x10000 + ((c - 0xD800) << 10) + (chars[++i] - 0xDC00);
+            if (i + 1 >= length) return nullptr;
+            const std::uint16_t trail = chars.At(static_cast<std::size_t>(i + 1));
+            if (trail < 0xDC00 || trail > 0xDFFF) return nullptr;
+            c = 0x10000 + ((c - 0xD800) << 10) + (trail - 0xDC00);
+            ++i;
         }
         if (c < 0x80) {
             utf8 += static_cast<char>(c);
