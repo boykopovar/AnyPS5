@@ -353,14 +353,32 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
             const auto low = scalar(lowIndex);
             const auto high = highIndex < mem.componentCount ? scalar(highIndex) : SampledComponentZero(state, valueClass);
             if (integer) {
-                const auto lowBits = SampledComponentBits(ctx, low, valueClass);
-                const auto highBits = SampledComponentBits(ctx, high, valueClass);
+                const auto saturate = [&](std::uint32_t bits) {
+                    const auto clamped = state.module.AllocateId();
+                    if (valueClass == IrTextureNumericClass::Uint) {
+                        state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, bits, ConstantU32(state, 0xffffu));
+                        return clamped;
+                    }
+                    state.module.AddFunction(spv::OpExtInst, TypeI32(state), clamped, GlslStd450(state), GLSLstd450SClamp, Unary(state, spv::OpBitcast, TypeI32(state), bits), ConstantI32(state, -32768), ConstantI32(state, 32767));
+                    return Unary(state, spv::OpBitcast, TypeU32(state), clamped);
+                };
+                const auto lowBits = saturate(SampledComponentBits(ctx, low, valueClass));
+                const auto highBits = saturate(SampledComponentBits(ctx, high, valueClass));
                 const auto mask = ConstantU32(state, 0xffffu);
                 packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lowBits, mask), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), highBits, mask), ConstantU32(state, 16u)));
             } else {
-                const auto pair = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), pair, low, high);
-                packed[word] = EmitPackHalf2x16(state, pair);
+                const auto rounded = EmitPackFloat2x16Rtz(state, low, high);
+                const auto keepNan = [&](std::uint32_t value, std::uint32_t half) {
+                    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), value);
+                    const auto mantissa = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, ConstantU32(state, 13u)), ConstantU32(state, 0x3ffu));
+                    const auto payload = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), mantissa, ConstantU32(state, 0u)), ConstantU32(state, 1u), mantissa);
+                    const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
+                    const auto nan = Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, Binary(state, spv::OpBitwiseOr, TypeU32(state), ConstantU32(state, 0x7c00u), payload));
+                    return Select(state, TypeU32(state), Unary(state, spv::OpIsNan, TypeBool(state), value), nan, half);
+                };
+                const auto lowHalf = keepNan(low, Binary(state, spv::OpBitwiseAnd, TypeU32(state), rounded, ConstantU32(state, 0xffffu)));
+                const auto highHalf = keepNan(high, Binary(state, spv::OpShiftRightLogical, TypeU32(state), rounded, ConstantU32(state, 16u)));
+                packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), lowHalf, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), highHalf, ConstantU32(state, 16u)));
             }
         }
         const auto result = state.module.AllocateId();
