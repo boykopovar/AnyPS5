@@ -255,6 +255,10 @@ Asn1String ValidateInteger(void* value) {
 void ReleaseInteger(void* value, const Asn1String& snapshot) {
     if (!value) return;
     if (!(snapshot.flags & 0x10) && snapshot.data) ClearAndFree(snapshot.data, static_cast<std::size_t>(snapshot.length));
+    auto& integer = *static_cast<Asn1String*>(value);
+    integer.flags = snapshot.flags & ~std::int64_t{0x10};
+    integer.data = nullptr;
+    integer.length = 0;
     free_nid_postfix(value);
 }
 
