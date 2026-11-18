@@ -139,6 +139,24 @@ bool SameBytes(const Asn1String* value, const void* bytes, std::size_t length) {
 
 }
 
+void FirstArcTwoAcceptsAnySecondArc() {
+    LibreSslX509Name* name = MakeName();
+    static const unsigned char combined[] = {0x81, 0x34};
+    Require(Add(name, "2.100", Asn1Utf8String, "x", -1, -1) == 1);
+    Require(ObjectOf(name, 0)->length == static_cast<std::int32_t>(sizeof(combined)));
+    Require(std::memcmp(ObjectOf(name, 0)->data, combined, sizeof(combined)) == 0);
+    static const unsigned char large[] = {0x83, 0x31};
+    Require(Add(name, "2.353", Asn1Utf8String, "x", -1, -1) == 1);
+    Require(ObjectOf(name, 1)->length == static_cast<std::int32_t>(sizeof(large)));
+    Require(std::memcmp(ObjectOf(name, 1)->data, large, sizeof(large)) == 0);
+    static const unsigned char thirtyNine[] = {0x4f};
+    Require(Add(name, "1.39", Asn1Utf8String, "x", -1, -1) == 1);
+    Require(ObjectOf(name, 2)->length == 1);
+    Require(ObjectOf(name, 2)->data[0] == thirtyNine[0]);
+    FreeName(name);
+    Require(allocations.empty());
+}
+
 void SetIncrementIsFailureAtomic() {
     LibreSslX509Name* name = MakeName();
     Require(Add(name, "CN", MbstringUtf8, "a", -1, 0) == 1);
@@ -196,6 +214,7 @@ int main() {
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     SetIncrementIsFailureAtomic();
+    FirstArcTwoAcceptsAnySecondArc();
 
     Require(X509_NAME_add_entry_by_txt_nid_postfix(nullptr, "CN", MbstringUtf8,
         reinterpret_cast<const unsigned char*>("x"), 1, -1, -1) == 0);
