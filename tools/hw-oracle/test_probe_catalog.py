@@ -323,6 +323,79 @@ class ProbeRunTests(unittest.TestCase):
                 probe_catalog.run_probes(self.catalog["probes"][:1], self.digest, temporary, "../gpu")
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    def test_ps5_run_rejects_other_hardware_before_dispatch(self):
+        identity = {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "AMD BC-250",
+            "chip_id": 0x13fe,
+            "asic_revision": 1,
+            "compute_units": 24,
+        }
+        cases = (
+            (identity, "gfx1013", "hsa", "Linux", "PCI device 0x13fc"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1030", "hsa", "Linux", "gfx1013 agent"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1013", "hip", "Linux", "HSA runtime"),
+            ({**identity, "chip_id": 0x13fc}, "gfx1013", "hsa", "Darwin", "Linux on the console"),
+        )
+        for observed, target, runtime, system, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                probe_catalog.require_ps5_identity(observed, target, runtime, system)
+        with patch.object(probe_catalog.platform, "system", return_value="Darwin"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", side_effect=AssertionError("oracle built")):
+            with self.assertRaisesRegex(ValueError, "Linux on the console"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, "/tmp/unused-ps5-run", "ps5-linux")
+        with patch.object(probe_catalog.platform, "system", return_value="Linux"), \
+                patch.dict(os.environ, {"HSA_OVERRIDE_GFX_VERSION": "10.1.3"}), \
+                patch.object(probe_catalog.hw_oracle, "oracle", side_effect=AssertionError("oracle built")):
+            with self.assertRaisesRegex(ValueError, "reject HSA_OVERRIDE_GFX_VERSION"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, "/tmp/unused-ps5-run", "ps5-linux")
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", return_value=Path("oracle")), \
+                patch.object(probe_catalog.hw_oracle, "hsa_identity", return_value=identity), \
+                patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1013"), \
+                patch.object(probe_catalog.hw_oracle, "run") as run, \
+                patch.object(probe_catalog.platform, "system", return_value="Linux"):
+            with self.assertRaisesRegex(ValueError, "PCI device 0x13fc"):
+                probe_catalog.run_ps5_probes(
+                    self.catalog["probes"][:1], self.digest, temporary, "ps5-linux")
+            run.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_ps5_run_records_verified_identity(self):
+        probe = self.catalog["probes"][0]
+        identity = {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "PlayStation 5 GPU",
+            "chip_id": 0x13fc,
+            "asic_revision": 1,
+            "compute_units": 36,
+        }
+        outputs = [(index,) * 16 for index in range(len(probe["rows"]))]
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                patch.object(probe_catalog.hw_oracle, "oracle", return_value=Path("oracle")), \
+                patch.object(probe_catalog.hw_oracle, "hsa_identity", return_value=identity), \
+                patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1013"), \
+                patch.object(probe_catalog.hw_oracle, "run", return_value=outputs), \
+                patch.object(probe_catalog.platform, "system", return_value="Linux"), \
+                patch.object(probe_catalog.platform, "release", return_value="7.2.3-ps5"):
+            paths = probe_catalog.run_ps5_probes(
+                [probe], self.digest, temporary, "ps5-linux")
+            report = probe_catalog.compare_results.read_report(paths[0])
+            self.assertEqual(report["runtime"], "hsa")
+            self.assertEqual(report["assembly_target"], "gfx1013")
+            self.assertEqual(report["hardware_identity"], {
+                **identity,
+                "kind": "ps5-linux-hsa",
+                "operating_system": "Linux",
+                "kernel_release": "7.2.3-ps5",
+            })
+
 
 class ProbeCoverageTests(unittest.TestCase):
     def setUp(self):
