@@ -1244,6 +1244,93 @@ static void TestBundleFrameScroll() {
     Require(threw);
 }
 
+static void TestBundleFrameState() {
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    Require(!WKBundleFrameIsMainFrame(ref));
+    Require(WKBundleFrameGetParentFrame(ref) == nullptr);
+    Require(WKBundleFrameCopyURL(ref) == nullptr);
+    Require(WKBundleFrameCopyProvisionalURL(ref) == nullptr);
+    Require(WKBundleFrameCopySecurityOrigin(ref) == nullptr);
+    Require(WKBundleFrameGetFrameLoadState(ref) == 2);
+    const void* emptyName = WKBundleFrameCopyName(ref);
+    Require(emptyName != nullptr && WKStringGetLength(emptyName) == 0);
+    WKRelease(emptyName);
+    const void* emptyChildren = WKBundleFrameCopyChildFrames(ref);
+    Require(emptyChildren != nullptr && WKArrayGetSize(emptyChildren) == 0);
+    WKRelease(emptyChildren);
+
+    auto child = NKWebKit::Make<NKWebKit::BundleFrame>();
+    frame->isMainFrame = true;
+    frame->loadState = 1;
+    frame->name = NKWebKit::String::FromUtf8("top");
+    frame->url = NKWebKit::Make<NKWebKit::URL>("https://example.test/a");
+    frame->provisionalURL = NKWebKit::Make<NKWebKit::URL>("https://example.test/b");
+    frame->securityOrigin = NKWebKit::Make<NKWebKit::SecurityOrigin>(*NKWebKit::String::FromUtf8("https"), *NKWebKit::String::FromUtf8("example.test"), std::optional<std::uint16_t>{});
+    frame->childFrames = NKWebKit::Make<NKWebKit::Array>();
+    frame->childFrames->elements.push_back(NKWebKit::Retained<NKWebKit::BundleFrame>(child));
+    child->parentFrame = frame;
+
+    Require(WKBundleFrameIsMainFrame(ref));
+    Require(!WKBundleFrameIsMainFrame(child.Get()));
+    Require(WKBundleFrameGetParentFrame(child.Get()) == ref);
+    Require(WKBundleFrameGetFrameLoadState(ref) == 1);
+
+    const void* name = WKBundleFrameCopyName(ref);
+    Require(WKStringIsEqualToUTF8CString(name, "top"));
+    WKRelease(name);
+
+    const void* url = WKBundleFrameCopyURL(ref);
+    Require(url != nullptr);
+    const void* urlText = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlText, "https://example.test/a"));
+    WKRelease(urlText);
+    WKRelease(url);
+
+    const void* provisional = WKBundleFrameCopyProvisionalURL(ref);
+    Require(provisional != nullptr);
+    const void* provisionalText = WKURLCopyString(provisional);
+    Require(WKStringIsEqualToUTF8CString(provisionalText, "https://example.test/b"));
+    WKRelease(provisionalText);
+    WKRelease(provisional);
+
+    const void* origin = WKBundleFrameCopySecurityOrigin(ref);
+    Require(origin == frame->securityOrigin.Get());
+    WKRelease(origin);
+
+    const void* children = WKBundleFrameCopyChildFrames(ref);
+    Require(WKArrayGetSize(children) == 1);
+    Require(WKArrayGetItemAtIndex(children, 0) == child.Get());
+    WKRelease(children);
+
+    child->parentFrame = nullptr;
+
+    for (const auto call : {+[](const void* r) { WKBundleFrameIsMainFrame(r); },
+                            +[](const void* r) { WKBundleFrameGetParentFrame(r); },
+                            +[](const void* r) { WKBundleFrameCopyChildFrames(r); },
+                            +[](const void* r) { WKBundleFrameCopyName(r); },
+                            +[](const void* r) { WKBundleFrameCopyURL(r); },
+                            +[](const void* r) { WKBundleFrameCopyProvisionalURL(r); },
+                            +[](const void* r) { WKBundleFrameCopySecurityOrigin(r); },
+                            +[](const void* r) { WKBundleFrameGetFrameLoadState(r); }}) {
+        bool threw = false;
+        try {
+            call(nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        threw = false;
+        try {
+            call(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get());
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -3022,6 +3109,7 @@ int main() {
     TestBundleHitTestResult();
     TestBundleNodeHandle();
     TestBundleFrameScroll();
+    TestBundleFrameState();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

@@ -9254,10 +9254,6 @@ int APS5_VABI WKBundleFrameContainsAnyFormElements() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleFrameCopyChildFrames() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleFrameCopyCounterValue() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9274,23 +9270,7 @@ int APS5_VABI WKBundleFrameCopyMIMETypeForResourceWithURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleFrameCopyName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyProvisionalURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopySecurityOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleFrameCopySuggestedFilenameForResourceWithURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameCopyURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9309,10 +9289,6 @@ int APS5_VABI WKBundleFrameForJavaScriptContext() {
 }
 
 int APS5_VABI WKBundleFrameGetDocumentBackgroundColor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameGetFrameLoadState() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9336,15 +9312,7 @@ int APS5_VABI WKBundleFrameGetPage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleFrameGetParentFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleFrameGetPendingUnloadCount() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleFrameIsMainFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 

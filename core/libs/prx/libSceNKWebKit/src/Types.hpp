@@ -178,6 +178,19 @@ public:
     }
 };
 
+class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
+public:
+    SecurityOrigin() = default;
+    SecurityOrigin(const String& protocol, const String& host, std::optional<std::uint16_t> port)
+        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+
+    std::u16string protocol;
+    std::u16string host;
+    std::optional<std::uint16_t> port;
+    bool protocolNull = false;
+    bool hostNull = false;
+};
+
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
     RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
@@ -186,6 +199,14 @@ public:
     SizeValue scrollOffset{0.0, 0.0};
     bool hasHorizontalScrollbar = false;
     bool hasVerticalScrollbar = false;
+    bool isMainFrame = false;
+    std::uint32_t loadState = 2;
+    Retained<BundleFrame> parentFrame;
+    Retained<Array> childFrames;
+    Retained<String> name;
+    Retained<URL> url;
+    Retained<URL> provisionalURL;
+    Retained<SecurityOrigin> securityOrigin;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -433,19 +454,6 @@ public:
     Retained<Object> protectionSpace;
     bool isForMainResource = false;
     bool isInMainFrame = false;
-};
-
-class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
-public:
-    SecurityOrigin() = default;
-    SecurityOrigin(const String& protocol, const String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
-
-    std::u16string protocol;
-    std::u16string host;
-    std::optional<std::uint16_t> port;
-    bool protocolNull = false;
-    bool hostNull = false;
 };
 
 class ResourceCacheManager final : public ObjectOf<ObjectType::CacheManager> {
