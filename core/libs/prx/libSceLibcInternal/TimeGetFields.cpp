@@ -105,8 +105,7 @@ TSlot LoadTimeGetSlot(const GuestLocale::TimeGetVtable* vtable, TSlot GuestLocal
 }
 
 template<typename TChar>
-std::vector<TChar> CopyFacetTable(const TChar* table, const char* caller) {
-    RequireArgument(table != nullptr, caller);
+std::vector<TChar> CopyGuestTable(const TChar* table, const char* caller) {
     GuestFormat<TChar> source(table, SIZE_MAX, caller, "facet table");
     std::vector<TChar> copy;
     for (std::size_t index = 0;; ++index) {
@@ -114,6 +113,12 @@ std::vector<TChar> CopyFacetTable(const TChar* table, const char* caller) {
         copy.push_back(character);
         if (character == TChar{}) return copy;
     }
+}
+
+template<typename TChar>
+std::vector<TChar> CopyFacetTable(const TChar* table, const char* caller) {
+    RequireArgument(table != nullptr, caller);
+    return CopyGuestTable(table, caller);
 }
 
 static_assert(sizeof(char16_t) == sizeof(std::uint16_t));
@@ -1092,7 +1097,7 @@ int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT
     if (first == nullptr || ptr == nullptr) {
         return -2;
     }
-    const std::vector<char> table = CopyFacetTable(ptr, __func__);
+    const std::vector<char> table = CopyGuestTable(ptr, __func__);
     GuestLocale::InputIterator current = Load<GuestLocale::InputIterator>(first, __func__, "iterator");
     const int result = GetLocaleText<char>(current, &last, numFields, table.data());
     Store(first, current, __func__, "iterator");
