@@ -217,6 +217,7 @@ struct Picture {
     Crop crop{};
     bool hevcIdr = false;
     std::uint8_t bitDepthMinus8 = 0;
+    bool avcIdr = false;
     Videodec2Hevc::Metadata hevc;
     Videodec2Avc::Metadata avc;
 };
@@ -385,6 +386,16 @@ bool StartsHevcIdr(const std::vector<std::uint8_t>& unit) {
     return false;
 }
 
+bool StartsAvcIdr(const std::vector<std::uint8_t>& unit) {
+    for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
+        if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
+        const auto type = unit[index + 3] & 0x1fu;
+        if (type >= 1 && type <= 5) return type == 5;
+        index += 2;
+    }
+    return false;
+}
+
 void Receive(Decoder& decoder) {
     for (;;) {
         FramePointer frame(av_frame_alloc());
@@ -529,16 +540,24 @@ int APS5_VABI sceVideodec2ReleaseComputeQueue_nid_postfix(std::uint64_t queue) {
 }
 
 int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfigInfo* config, DecoderMemoryInfo* memory) {
-    if (!config || !memory) throw std::runtime_error("Videodec2: invalid argument pointer");
-    if (Trace()) std::fprintf(stderr, "[videodec2] QueryDecoderMemoryInfo config=%llu memory=%llu codec=%u profile=%u %dx%d dpb=%d\n", static_cast<unsigned long long>(config->thisSize), static_cast<unsigned long long>(memory->thisSize), config->codecType, config->profile, config->maxFrameWidth, config->maxFrameHeight, config->maxDpbFrameCount);
-    memory->cpuMemorySize = WorkMemoryBytes;
-    memory->gpuMemorySize = WorkMemoryBytes;
-    memory->cpuGpuMemorySize = WorkMemoryBytes;
-    if (config->maxFrameWidth <= 0 || config->maxFrameHeight <= 0) throw std::runtime_error("Videodec2: invalid frame dimensions");
-    const auto width = static_cast<std::uint32_t>(config->maxFrameWidth);
-    const auto height = static_cast<std::uint32_t>(config->maxFrameHeight);
-    memory->maxFrameBufferSize = LumaBytes(width, height, ConfiguredSampleBytes(config->codecType, config->profile)) * 3 / 2;
-    memory->frameBufferAlignment = PitchAlignment;
+    DecoderConfigInfo localConfig{};
+    DecoderMemoryInfo localMemory{};
+    if (!config || !memory || !CopyInGuest(localConfig, config) || !CopyInGuest(localMemory, memory)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    if (Trace()) std::fprintf(stderr, "[videodec2] QueryDecoderMemoryInfo config=%llu memory=%llu codec=%u profile=%u %dx%d dpb=%d\n", static_cast<unsigned long long>(localConfig.thisSize), static_cast<unsigned long long>(localMemory.thisSize), localConfig.codecType, localConfig.profile, localConfig.maxFrameWidth, localConfig.maxFrameHeight, localConfig.maxDpbFrameCount);
+    localMemory.cpuMemorySize = WorkMemoryBytes;
+    localMemory.gpuMemorySize = WorkMemoryBytes;
+    localMemory.cpuGpuMemorySize = WorkMemoryBytes;
+    if (localConfig.maxFrameWidth <= 0 || localConfig.maxFrameHeight <= 0) {
+        if (!CopyOutGuest(memory, localMemory)) throw std::runtime_error("Videodec2: invalid argument pointer");
+        throw std::runtime_error("Videodec2: invalid frame dimensions");
+    }
+    const auto width = static_cast<std::uint32_t>(localConfig.maxFrameWidth);
+    const auto height = static_cast<std::uint32_t>(localConfig.maxFrameHeight);
+    localMemory.maxFrameBufferSize = LumaBytes(width, height, ConfiguredSampleBytes(localConfig.codecType, localConfig.profile)) * 3 / 2;
+    localMemory.frameBufferAlignment = PitchAlignment;
+    if (!CopyOutGuest(memory, localMemory)) throw std::runtime_error("Videodec2: invalid argument pointer");
     return 0;
 }
 
@@ -642,6 +661,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     packet->pts = decoder.nextKey;
     auto tagged = picture;
     tagged.hevcIdr = decoder.codec == CodecHevc && StartsHevcIdr(*unit);
+    tagged.avcIdr = decoder.codec == CodecAvc && StartsAvcIdr(*unit);
     if (decoder.codec == CodecHevc) {
         tagged.hevc = Videodec2Hevc::Parse_nid_no_patch(decoder.hevc, *unit);
         tagged.hevc.info.ptsData = picture.pts;
@@ -809,7 +829,8 @@ void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frame
     const auto picture = decoder.pictures.find(frameBuffer);
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
     const auto& stored = picture->second;
-    *header = {stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+    const PictureHeader localHeader{stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8, stored.avcIdr};
+    if (!CopyOutGuest(header, localHeader)) throw std::runtime_error("Videodec2: invalid argument pointer");
 }
 
 void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Vp9PictureInfo* info) {
@@ -823,7 +844,7 @@ void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* fram
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
     auto snapshot = picture->second.vp9;
     snapshot.thisSize = sizeof(*info);
-    *info = snapshot;
+    if (!CopyOutGuest(info, snapshot)) throw std::runtime_error("Videodec2: invalid argument pointer");
 }
 
 }

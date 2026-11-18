@@ -16,12 +16,14 @@
 constexpr int SYSTEM_SERVICE_OK = 0;
 constexpr int SYSTEM_SERVICE_ERROR_PARAMETER = -2136932349;
 constexpr int SYSTEM_SERVICE_ERROR_NO_EVENT = -2136932348;
+constexpr int SYSTEM_SERVICE_ERROR_INTERNAL = static_cast<int>(0x80a10001u);
 
 constexpr int SYSTEM_SERVICE_RUNNING_APP_ID = 1;
 constexpr int SYSTEM_SERVICE_INVALID_TITLE_APP_ID = -1;
 constexpr std::size_t SYSTEM_SERVICE_TITLE_ID_LENGTH = 9;
 
 constexpr int LNC_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80940005u);
+constexpr int LNC_UTIL_ERROR_GAME_PROCESS = static_cast<int>(0x8094000fu);
 constexpr int SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80e30003u);
 
 constexpr int SYSTEM_SERVICE_PARAM_ID_LANG = 1;

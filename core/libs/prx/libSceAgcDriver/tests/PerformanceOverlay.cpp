@@ -1130,7 +1130,22 @@ void costReport(const Device& device, PerformanceOverlay& overlay) {
 
 }
 
+void ColorblindPaletteChangesOnlyGraphAndAccent() {
+    const auto base = AgcDriver::OverlayPalette(VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
+    const auto blind = AgcDriver::ColorblindOverlayPalette(base);
+    const auto graph = static_cast<std::size_t>(AgcDriver::OverlayColor::Graph);
+    const auto accent = static_cast<std::size_t>(AgcDriver::OverlayColor::Accent);
+    for (std::size_t index = 0; index < AgcDriver::OverlayColorCount; ++index) {
+        if (index == graph || index == accent) {
+            Require(blind[index] != base[index], "the colour-blind palette replaces the graph and accent colours");
+        } else {
+            Require(blind[index] == base[index], "the colour-blind palette keeps the other colours");
+        }
+    }
+}
+
 int main(int argc, char** argv) {
+    ColorblindPaletteChangesOnlyGraphAndAccent();
     try {
         const std::string_view mode = argc > 1 ? argv[1] : "";
         Require(argc <= 2 && (mode.empty() || mode == "device-selection" || mode == "device-selection-cpu"), "unknown performance-overlay test mode");

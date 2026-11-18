@@ -52,6 +52,26 @@ FREETYPEOL_STUB("SDPzjFN7y4E", sceFreeTypeOlFtaSupportHinterAutoFitter)
 FREETYPEOL_STUB("3dTNNBoujn0", sceFreeTypeOlFtaSupportRendererRaster1)
 FREETYPEOL_STUB("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth)
 FREETYPEOL_STUB("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot)
+FREETYPEOL_STUB("bZYqFlUVPCY", sceFreeTypeOlFtaExportModuleAutofitter)
+FREETYPEOL_STUB("ZhVdSRyrpUI", sceFreeTypeOlFtaExportModuleBdf)
+FREETYPEOL_STUB("phi4au-2t04", sceFreeTypeOlFtaExportModuleCff)
+FREETYPEOL_STUB("qC+tiGwcW7E", sceFreeTypeOlFtaExportModuleGxvalid)
+FREETYPEOL_STUB("rl7aW17qQb8", sceFreeTypeOlFtaExportModuleOtvalid)
+FREETYPEOL_STUB("-qwk1RxUuDA", sceFreeTypeOlFtaExportModulePcf)
+FREETYPEOL_STUB("mQYQAi8B0Yo", sceFreeTypeOlFtaExportModulePfr)
+FREETYPEOL_STUB("4TJ1qJGXAV8", sceFreeTypeOlFtaExportModulePsaux)
+FREETYPEOL_STUB("IewcaRR3F8I", sceFreeTypeOlFtaExportModulePshinter)
+FREETYPEOL_STUB("vuuFugcw5ss", sceFreeTypeOlFtaExportModulePsnames)
+FREETYPEOL_STUB("xaswa+ndZS0", sceFreeTypeOlFtaExportModuleRaster1)
+FREETYPEOL_STUB("5-z1quqcDYo", sceFreeTypeOlFtaExportModuleSfnt)
+FREETYPEOL_STUB("VVfxa65sWF0", sceFreeTypeOlFtaExportModuleSmooth)
+FREETYPEOL_STUB("aX8PI-h3+dE", sceFreeTypeOlFtaExportModuleT1cid)
+FREETYPEOL_STUB("KIKL0rz6o-A", sceFreeTypeOlFtaExportModuleTruetype)
+FREETYPEOL_STUB("QPh+yb2Y8AQ", sceFreeTypeOlFtaExportModuleType1)
+FREETYPEOL_STUB("u36SHyuWQCA", sceFreeTypeOlFtaExportModuleType42)
+FREETYPEOL_STUB("ZHsmiChQLTk", sceFreeTypeOlFtaExportModuleWinfonts)
+FREETYPEOL_STUB("mCIXittfvrw", sceFreeTypeOlFtaAddModule)
+FREETYPEOL_STUB("LonHHN98tMI", sceFreeTypeOlAddModule)
 #undef FREETYPEOL_STUB
 }
 #else
@@ -60,10 +80,15 @@ FREETYPEOL_STUB("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot)
 
 #include <ft2build.h>
 #include FT_MODULE_H
+#include FT_RENDER_H
 #include <freetype/internal/ftdrv.h>
 #include <freetype/internal/ftobjs.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <vector>
 
 using namespace FreeType;
 
@@ -119,6 +144,144 @@ int RemoveModule(void* library, const char* name) {
             return FT_Err_Invalid_Argument;
     }
     return FT_Remove_Module(host, module);
+}
+
+struct GuestModuleClass {
+    std::uint64_t moduleFlags;
+    std::int64_t moduleSize;
+    const char* moduleName;
+    std::int64_t moduleVersion;
+    std::int64_t moduleRequires;
+    const void* moduleInterface;
+    const void* moduleInit;
+    const void* moduleDone;
+    const void* getInterface;
+};
+static_assert(sizeof(GuestModuleClass) == 72);
+static_assert(offsetof(GuestModuleClass, moduleName) == 16 && offsetof(GuestModuleClass, moduleInit) == 48);
+
+struct GuestDriverClass {
+    GuestModuleClass root;
+    std::int64_t faceObjectSize;
+    std::int64_t sizeObjectSize;
+    std::int64_t slotObjectSize;
+    const void* methods[12];
+};
+static_assert(sizeof(GuestDriverClass) == 192 && offsetof(GuestDriverClass, methods) == 96);
+
+struct GuestRendererClass {
+    GuestModuleClass root;
+    std::uint32_t glyphFormat;
+    const void* methods[4];
+    const void* rasterClass;
+};
+static_assert(sizeof(GuestRendererClass) == 120 && offsetof(GuestRendererClass, methods) == 80);
+
+void APS5_VABI GuestModuleMethod_nid_no_patch() {
+    NotImplemented_nid_no_patch("a method of a FreeTypeOl exported module class");
+}
+
+template <typename TFunction>
+const void* GuestMethod(TFunction native) {
+    return native ? reinterpret_cast<const void*>(&GuestModuleMethod_nid_no_patch) : nullptr;
+}
+
+GuestModuleClass GuestRoot(const FT_Module_Class& native) {
+    GuestModuleClass root{};
+    root.moduleFlags = native.module_flags;
+    root.moduleSize = native.module_size;
+    root.moduleName = native.module_name;
+    root.moduleVersion = native.module_version;
+    root.moduleRequires = native.module_requires;
+    root.moduleInit = GuestMethod(native.module_init);
+    root.moduleDone = GuestMethod(native.module_done);
+    root.getInterface = GuestMethod(native.get_interface);
+    return root;
+}
+
+GuestRendererClass GuestRenderer(const FT_Renderer_Class& native) {
+    GuestRendererClass renderer{};
+    renderer.root = GuestRoot(native.root);
+    renderer.glyphFormat = static_cast<std::uint32_t>(native.glyph_format);
+    renderer.methods[0] = GuestMethod(native.render_glyph);
+    renderer.methods[1] = GuestMethod(native.transform_glyph);
+    renderer.methods[2] = GuestMethod(native.get_glyph_cbox);
+    renderer.methods[3] = GuestMethod(native.set_mode);
+    return renderer;
+}
+
+GuestDriverClass GuestDriver(const FT_Driver_ClassRec& native) {
+    GuestDriverClass driver{};
+    driver.root = GuestRoot(native.root);
+    driver.faceObjectSize = native.face_object_size;
+    driver.sizeObjectSize = native.size_object_size;
+    driver.slotObjectSize = native.slot_object_size;
+    const void* const methods[] = {
+        GuestMethod(native.init_face), GuestMethod(native.done_face),
+        GuestMethod(native.init_size), GuestMethod(native.done_size),
+        GuestMethod(native.init_slot), GuestMethod(native.done_slot),
+        GuestMethod(native.load_glyph), GuestMethod(native.get_kerning),
+        GuestMethod(native.attach_file), GuestMethod(native.get_advances),
+        GuestMethod(native.request_size), GuestMethod(native.select_size)};
+    static_assert(std::size(methods) == std::size(driver.methods));
+    std::copy(std::begin(methods), std::end(methods), driver.methods);
+    return driver;
+}
+
+struct ExportedModule {
+    const FT_Module_Class* native = nullptr;
+    GuestDriverClass driver{};
+    GuestRendererClass renderer{};
+
+    explicit ExportedModule(const FT_Module_Class* module) : native(module) {
+        if (IsRenderer()) {
+            renderer = GuestRenderer(*reinterpret_cast<const FT_Renderer_Class*>(native));
+        } else if (native->module_flags & FT_MODULE_FONT_DRIVER) {
+            driver = GuestDriver(*reinterpret_cast<const FT_Driver_ClassRec*>(native));
+        } else {
+            driver.root = GuestRoot(*native);
+        }
+    }
+
+    bool IsRenderer() const { return native->module_flags & FT_MODULE_RENDERER; }
+
+    const void* Guest() const {
+        return IsRenderer() ? static_cast<const void*>(&renderer) : static_cast<const void*>(&driver);
+    }
+};
+
+const std::vector<ExportedModule>& ExportedModules() {
+    static const std::vector<ExportedModule> modules = [] {
+        const FT_Module_Class* const natives[] = {
+            ModuleClass(autofit_module_class), ModuleClass(bdf_driver_class), ModuleClass(cff_driver_class),
+            ModuleClass(gxv_module_class), ModuleClass(otv_module_class), ModuleClass(pcf_driver_class),
+            ModuleClass(pfr_driver_class), ModuleClass(psaux_module_class), ModuleClass(pshinter_module_class),
+            ModuleClass(psnames_module_class), ModuleClass(ft_raster1_renderer_class), ModuleClass(sfnt_module_class),
+            ModuleClass(ft_smooth_renderer_class), ModuleClass(t1cid_driver_class), ModuleClass(tt_driver_class),
+            ModuleClass(t1_driver_class), ModuleClass(t42_driver_class), ModuleClass(winfnt_driver_class)};
+        std::vector<ExportedModule> result;
+        result.reserve(std::size(natives));
+        for (const auto* native : natives) result.emplace_back(native);
+        return result;
+    }();
+    return modules;
+}
+
+const void* ExportModule(const FT_Module_Class* native) {
+    for (const auto& entry : ExportedModules()) {
+        if (entry.native == native) return entry.Guest();
+    }
+    NotImplemented_nid_no_patch(native->module_name);
+}
+
+int AddGuestModule(void* library, const void* module, const char* caller) {
+    const auto host = library ? static_cast<GuestLibrary*>(library)->host : nullptr;
+    if (!host) return FT_Err_Invalid_Library_Handle;
+    if (!module) return FT_Err_Invalid_Argument;
+    for (const auto& entry : ExportedModules()) {
+        if (entry.Guest() == module) return AddModule(library, entry.native);
+    }
+    NotImplemented_nid_no_patch(caller);
 }
 }
 
@@ -393,6 +556,106 @@ void APS5_VABI sceFreeTypeOlDoneGlyphSlot_nid_postfix(GuestGlyphSlotRec* slot) {
     if (owner->host->glyph) FT_Done_GlyphSlot(owner->host->glyph);
 }
 APS5_EXPORT("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleAutofitter_nid_postfix() {
+    return ExportModule(ModuleClass(autofit_module_class));
+}
+APS5_EXPORT("bZYqFlUVPCY", sceFreeTypeOlFtaExportModuleAutofitter_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleBdf_nid_postfix() {
+    return ExportModule(ModuleClass(bdf_driver_class));
+}
+APS5_EXPORT("ZhVdSRyrpUI", sceFreeTypeOlFtaExportModuleBdf_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleCff_nid_postfix() {
+    return ExportModule(ModuleClass(cff_driver_class));
+}
+APS5_EXPORT("phi4au-2t04", sceFreeTypeOlFtaExportModuleCff_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleGxvalid_nid_postfix() {
+    return ExportModule(ModuleClass(gxv_module_class));
+}
+APS5_EXPORT("qC+tiGwcW7E", sceFreeTypeOlFtaExportModuleGxvalid_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleOtvalid_nid_postfix() {
+    return ExportModule(ModuleClass(otv_module_class));
+}
+APS5_EXPORT("rl7aW17qQb8", sceFreeTypeOlFtaExportModuleOtvalid_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePcf_nid_postfix() {
+    return ExportModule(ModuleClass(pcf_driver_class));
+}
+APS5_EXPORT("-qwk1RxUuDA", sceFreeTypeOlFtaExportModulePcf_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePfr_nid_postfix() {
+    return ExportModule(ModuleClass(pfr_driver_class));
+}
+APS5_EXPORT("mQYQAi8B0Yo", sceFreeTypeOlFtaExportModulePfr_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePsaux_nid_postfix() {
+    return ExportModule(ModuleClass(psaux_module_class));
+}
+APS5_EXPORT("4TJ1qJGXAV8", sceFreeTypeOlFtaExportModulePsaux_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePshinter_nid_postfix() {
+    return ExportModule(ModuleClass(pshinter_module_class));
+}
+APS5_EXPORT("IewcaRR3F8I", sceFreeTypeOlFtaExportModulePshinter_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePsnames_nid_postfix() {
+    return ExportModule(ModuleClass(psnames_module_class));
+}
+APS5_EXPORT("vuuFugcw5ss", sceFreeTypeOlFtaExportModulePsnames_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleRaster1_nid_postfix() {
+    return ExportModule(ModuleClass(ft_raster1_renderer_class));
+}
+APS5_EXPORT("xaswa+ndZS0", sceFreeTypeOlFtaExportModuleRaster1_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleSfnt_nid_postfix() {
+    return ExportModule(ModuleClass(sfnt_module_class));
+}
+APS5_EXPORT("5-z1quqcDYo", sceFreeTypeOlFtaExportModuleSfnt_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleSmooth_nid_postfix() {
+    return ExportModule(ModuleClass(ft_smooth_renderer_class));
+}
+APS5_EXPORT("VVfxa65sWF0", sceFreeTypeOlFtaExportModuleSmooth_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleT1cid_nid_postfix() {
+    return ExportModule(ModuleClass(t1cid_driver_class));
+}
+APS5_EXPORT("aX8PI-h3+dE", sceFreeTypeOlFtaExportModuleT1cid_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleTruetype_nid_postfix() {
+    return ExportModule(ModuleClass(tt_driver_class));
+}
+APS5_EXPORT("KIKL0rz6o-A", sceFreeTypeOlFtaExportModuleTruetype_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleType1_nid_postfix() {
+    return ExportModule(ModuleClass(t1_driver_class));
+}
+APS5_EXPORT("QPh+yb2Y8AQ", sceFreeTypeOlFtaExportModuleType1_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleType42_nid_postfix() {
+    return ExportModule(ModuleClass(t42_driver_class));
+}
+APS5_EXPORT("u36SHyuWQCA", sceFreeTypeOlFtaExportModuleType42_nid_postfix);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleWinfonts_nid_postfix() {
+    return ExportModule(ModuleClass(winfnt_driver_class));
+}
+APS5_EXPORT("ZHsmiChQLTk", sceFreeTypeOlFtaExportModuleWinfonts_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaAddModule_nid_postfix(void* library, const void* module) {
+    return AddGuestModule(library, module, __func__);
+}
+APS5_EXPORT("mCIXittfvrw", sceFreeTypeOlFtaAddModule_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlAddModule_nid_postfix(void* library, const void* module) {
+    return AddGuestModule(library, module, __func__);
+}
+APS5_EXPORT("LonHHN98tMI", sceFreeTypeOlAddModule_nid_postfix);
 
 }
 

@@ -56,8 +56,10 @@ void Require(bool value) { if (!value) std::abort(); }
 constexpr int kErrInvalidCode = static_cast<int>(0x80412106);
 constexpr int kErrInvalidAddr = static_cast<int>(0x80412107);
 constexpr int kErrNotConnected = static_cast<int>(0x80412108);
+constexpr int kErrResultEventRefused = static_cast<int>(0x8041210F);
 constexpr int kStateIpObtained = 3;
 constexpr int kEventDisconnected = 1;
+constexpr int kEventDisconnectReqFinished = 2;
 constexpr int kEventIpObtained = 3;
 constexpr std::uint8_t kFill = 0xa5;
 constexpr std::size_t kAddressLength = 16;
@@ -193,10 +195,15 @@ void CheckIpcIntGetters() {
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetResultV6IpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
-    for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
+    int ipcResult = -1;
+    Require(sceNetCtlGetResultIpcInt(kEventDisconnected, &ipcResult) == 0 && ipcResult == 0);
+    for (const int eventType : {kEventDisconnectReqFinished, kEventIpObtained}) {
+        ipcResult = static_cast<int>(0xcccccccc);
+        Require(sceNetCtlGetResultIpcInt(eventType, &ipcResult) == kErrResultEventRefused);
+        Require(ipcResult == static_cast<int>(0xcccccccc));
+    }
+    for (const int eventType : {kEventDisconnected, kEventDisconnectReqFinished, kEventIpObtained}) {
         int errorCode = -1;
-        Require(sceNetCtlGetResultIpcInt(eventType, &errorCode) == 0 && errorCode == 0);
-        errorCode = -1;
         Require(sceNetCtlGetResultV6IpcInt(eventType, &errorCode) == 0 && errorCode == 0);
     }
 
@@ -734,7 +741,8 @@ int main() {
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(kEventDisconnected, unwritable) == kErrInvalidAddr);
-    Require(sceNetCtlGetResult(kEventIpObtained, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(kEventDisconnectReqFinished, unwritable) == kErrResultEventRefused);
+    Require(sceNetCtlGetResult(kEventIpObtained, unwritable) == kErrResultEventRefused);
     Require(sceNetCtlGetEtherLinkMode(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetWifiType(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetNatInfo(nullptr) == kErrInvalidAddr);
@@ -765,9 +773,23 @@ int main() {
     Require(stateV6 == 0 || stateV6 == kStateIpObtained);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(kEventDisconnected, nullptr) == kErrInvalidAddr);
-    for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
-        int errorCode = -1;
-        Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
+    int errorResult = static_cast<int>(0xcccccccc);
+    Require(sceNetCtlGetResult(kEventDisconnected, &errorResult) == 0 && errorResult == 0);
+    for (const int eventType : {kEventDisconnectReqFinished, kEventIpObtained}) {
+        errorResult = static_cast<int>(0xcccccccc);
+        Require(sceNetCtlGetResult(eventType, &errorResult) == kErrResultEventRefused);
+        Require(errorResult == static_cast<int>(0xcccccccc));
+    }
+    Require(sceNetCtlGetResult(kEventDisconnectReqFinished, nullptr) == kErrInvalidAddr);
+    for (const int eventType : {0, 4, -1}) {
+        bool threw = false;
+        errorResult = static_cast<int>(0xcccccccc);
+        try {
+            sceNetCtlGetResult(eventType, &errorResult);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
     }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
     errno = 71;
