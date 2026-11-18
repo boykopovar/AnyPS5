@@ -511,13 +511,17 @@ void testInternedSpirvSharesEqualWords() {
     const auto first = InternSpirv(words);
     const auto second = InternSpirv(words);
     const auto other = InternSpirv(changed);
-    check(std::ranges::equal(first.Words(), words) && std::ranges::equal(other.Words(), changed), "interned SPIR-V changed its words");
-    check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
-    check(first.data() != other.data(), "different SPIR-V was interned into one copy");
+    const auto firstWords = first.Words();
+    const auto secondWords = second.Words();
+    const auto otherWords = other.Words();
+    check(std::ranges::equal(firstWords, words) && std::ranges::equal(otherWords, changed), "interned SPIR-V changed its words");
+    check(firstWords.data() == secondWords.data(), "two equal specialized modules kept separate copies of their words");
+    check(firstWords.data() != otherWords.data(), "different SPIR-V was interned into one copy");
     auto edited = second;
     edited[6] = spv::CapabilityFloat64;
     const auto again = InternSpirv(words);
-    check(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
+    const auto againWords = again.Words();
+    check(edited[6] == spv::CapabilityFloat64 && firstWords[6] == spv::CapabilityShader && againWords.data() == firstWords.data(), "a write to one holder of interned SPIR-V changed the others");
 }
 
 void testInternedSpirvReleasesUnusedWords() {
@@ -526,7 +530,9 @@ void testInternedSpirvReleasesUnusedWords() {
     {
         const auto first = InternSpirv(words);
         const auto second = InternSpirv(words);
-        check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+        const auto firstWords = first.Words();
+        const auto secondWords = second.Words();
+        check(firstWords.data() == secondWords.data(), "two equal specialized modules kept separate copies of their words");
         released = first.Weaken();
     }
     check(released.Expired(), "the SPIR-V interning table kept words no holder uses");

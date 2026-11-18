@@ -187,9 +187,10 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     if (mesh) {
         for (const auto required : {ShaderRecompiler::PipelineSpecialization::MeshLayerBase, ShaderRecompiler::PipelineSpecialization::MeshLayerCount}) {
             bool found = false;
-            for (std::size_t at = 5; at < geometryResult.spirv.size();) {
-                const auto length = geometryResult.spirv[at] >> 16u;
-                if ((geometryResult.spirv[at] & 0xffffu) == 71u && length == 4u && geometryResult.spirv[at + 2u] == 1u && geometryResult.spirv[at + 3u] == required) found = true;
+            const auto words = geometryResult.spirv.Words();
+            for (std::size_t at = 5; at < words.size();) {
+                const auto length = words[at] >> 16u;
+                if ((words[at] & 0xffffu) == 71u && length == 4u && words[at + 2u] == 1u && words[at + 3u] == required) found = true;
                 at += length;
             }
             Require(found, "mesh layer specialization was frozen: " + std::to_string(required));

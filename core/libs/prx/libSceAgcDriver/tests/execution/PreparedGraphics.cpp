@@ -228,7 +228,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     }
     if (!dump.empty()) {
         for (std::size_t index = 0; index < stages.size(); ++index) {
-            const auto& words = GetPreparedArtifact(*stages[index].entry.handle).spirv;
+            const auto words = GetPreparedArtifact(*stages[index].entry.handle).spirv.Words();
             const auto name = dump / (std::to_string(static_cast<unsigned>(path)) + "-" + std::to_string(index) + ".spv");
             std::ofstream output(name, std::ios::binary);
             output.write(reinterpret_cast<const char*>(words.data()), static_cast<std::streamsize>(words.size() * sizeof(std::uint32_t)));

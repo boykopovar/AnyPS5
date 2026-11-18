@@ -546,7 +546,7 @@ bool DeclaresCapability(std::span<const std::uint32_t> words, spv::Capability ca
 std::vector<std::array<float, 4>> RunLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, bool arrayed, std::uint32_t fragments) {
     std::vector<std::uint32_t> userData;
     const auto program = CompileLoad(device, texture, userData, arrayed);
-    Require(!DeclaresCapability(program.spirv, spv::CapabilityImageMSArray), "the multisampled image_load declared ImageMSArray, which only multisampled arrayed storage images need");
+    Require(!DeclaresCapability(program.spirv.Words(), spv::CapabilityImageMSArray), "the multisampled image_load declared ImageMSArray, which only multisampled arrayed storage images need");
     std::vector<std::array<float, 4>> loaded(Side * Side * fragments);
     const auto codeAddress = reinterpret_cast<std::uintptr_t>((arrayed ? ArrayLoadCode : LoadCode).data());
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {
