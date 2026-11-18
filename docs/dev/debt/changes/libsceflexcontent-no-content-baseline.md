@@ -1,0 +1,5 @@
+# libSceFlexContent
+
+## change [12 exports (5 without a known name, bound by NID)]
+
+- [7 exports: sceFlexContentMount, sceFlexContentDelete and 5 unknown-name entries (bound by NID)](../../../core/libs/prx/libSceFlexContent/Export.cpp) (libSceFlexContent) - these seven still throw. Every function export of `libSceFlexContent.sprx` was taken from the firmware 13.60 export table, names from aerolib.csv only where `tools/nid_names.py` `compute_nid` reproduces the NID. Signatures, parameter layouts and behaviour of the named entries are unverified; the five NID-only exports have no published name or shape. `sceFlexContentInitialize`, `sceFlexContentTerminate`, `sceFlexContentGetDownloadProgress`, `sceFlexContentGetLatestVersion` and `sceFlexContentGetInstalledVersion` return 0: no host flex-content pipeline is attached, so init and term keep no state, no download is in progress, and no installed or latest version is reported. This is a scene-source baseline, not a PS5 10.6 console measurement.

@@ -7,12 +7,10 @@
 extern "C" {
 
 int APS5_VABI sceFlexContentInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFlexContentTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -40,7 +38,6 @@ int APS5_VABI sceFlexContentUnknown02(void) {
 }
 
 int APS5_VABI sceFlexContentGetDownloadProgress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -50,12 +47,10 @@ int APS5_VABI sceFlexContentDelete(void) {
 }
 
 int APS5_VABI sceFlexContentGetLatestVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFlexContentGetInstalledVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
