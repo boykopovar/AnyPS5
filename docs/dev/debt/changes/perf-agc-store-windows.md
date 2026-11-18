@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Store windows](../../../core/libs/prx/libSceAgcDriver/Graphics/src/ShaderAddressResources.cpp) (libSceAgcDriver) - an address-based use whose stores all go through V#s read from a table at run time notes only the ranges those V#s can reach as pending reach. The key of the table must be bounded by its value range (selects of immediates, through `ReadFirstLane` phis whose selects the read mask implies, or masks and shifts), by an unsigned `key < bound` on a scalar branch that dominates the store, or by the size of the buffer holding the table; a signed compare, a bound behind another pointer, or more than 4096 records keeps the whole reach. A V# in raw or index-checked-only bounds mode with a stride and a store index without a bound, a swizzled V#, and PS4 (GCN) shaders keep the whole reach. The V#s are read on the CPU when the use is recorded; a pending GPU write over the table keeps the whole reach, but a CPU write to the table between recording and the GPU's read is not seen.

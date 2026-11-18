@@ -621,6 +621,7 @@ private:
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
+    void narrowToStoreWindows(Recorder& recorder, std::vector<std::pair<std::uint64_t, std::uint64_t>>& reachable) const;
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
     void noteReusable();
@@ -725,6 +726,8 @@ private:
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    std::vector<ShaderRecompiler::StoreTablesSnapshot> storeWindows;
+    ShaderRecompiler::StoreTableFallback storeWindowFallback = ShaderRecompiler::StoreTableFallback::None;
     bool spaceReuse = false;
     bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
