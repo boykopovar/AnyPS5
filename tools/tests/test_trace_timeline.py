@@ -215,6 +215,19 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
 
+    def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
+        directory = Path(self.tmp.name) / "界"
+        directory.mkdir()
+        path = directory / "a.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = directory / "a.html"
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(out)],
+                              capture_output=True, env=environment)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        self.assertEqual(done.stdout.decode("utf-8"), f"wrote {out}\n".replace("\n", os.linesep))
+        self.assertIn("<svg", out.read_text(encoding="utf-8"))
+
 
     def check_input_alias(self, path, output=None, cwd=None):
         before = path.read_bytes()
