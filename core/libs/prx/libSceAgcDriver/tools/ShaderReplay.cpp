@@ -217,9 +217,9 @@ bool Replay(const char* path) {
                 phase = "materialize";
                 const auto result = invocation->Materialize(*capture);
                 std::printf("  materialized: %zu SPIR-V words\n", result->spirv.size());
-                return OutputSpirv(path, result->spirv);
+                return OutputSpirv(path, result->spirv.Words());
             }
-            return OutputSpirv(path, ShaderRecompiler::GetPreparedArtifact(*handle).spirv);
+            return OutputSpirv(path, ShaderRecompiler::GetPreparedArtifact(*handle).spirv.Words());
         } catch (const std::exception& error) {
             std::printf("  %s failed: %s\n", phase, FirstLine(error.what()).c_str());
             return false;
@@ -238,7 +238,7 @@ bool Replay(const char* path) {
                 }
             }
         }
-        return OutputSpirv(path, result.spirv);
+        return OutputSpirv(path, result.spirv.Words());
     } catch (const std::exception& error) {
         std::printf("  recompile failed: %s\n", FirstLine(error.what()).c_str());
         return false;

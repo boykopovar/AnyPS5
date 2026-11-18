@@ -64,7 +64,7 @@ Module recompile(std::uint32_t control, bool layerExtension) {
     else request.target.supportedCapabilities = without;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    return inspect(Recompile(request).spirv);
+    return inspect(Recompile(request).spirv.Words());
 }
 
 }
