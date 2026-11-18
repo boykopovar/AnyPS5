@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import argparse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1332,6 +1333,21 @@ class CheckCompileLauncherTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
+
+class PositiveIntegerTests(unittest.TestCase):
+    def test_returns_positive_integers(self):
+        self.assertEqual(check_compile.positive_integer("3"), 3)
+        self.assertEqual(check_compile.positive_integer(" 12 "), 12)
+
+    def test_zero_and_negative_values_are_argument_errors(self):
+        for value in ("0", "-4"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    check_compile.positive_integer(value)
+
+    def test_non_numbers_raise_value_error(self):
+        with self.assertRaises(ValueError):
+            check_compile.positive_integer("many")
 
 
 if __name__ == "__main__":
