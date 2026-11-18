@@ -73,6 +73,7 @@
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/SVGPathStringBuilderExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
+#include "prx/libSceNKWebKit/include/DisplayListItemExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
