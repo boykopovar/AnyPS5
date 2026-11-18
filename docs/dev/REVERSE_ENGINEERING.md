@@ -116,6 +116,10 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
    or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
 
+   Local `R_X86_64_IRELATIVE` resolver addresses inside executable file-backed segments get
+   `irelative_resolver_<address>` function names unless a function export already names that address.
+   These are the resolver functions, not the implementations they return. The tool does not execute them.
+
    A disassembler that loads the program headers (Ghidra, IDA) does the same segment loading.
 4. Log strings near the call confirm which import it is: `strings -t x eboot.elf`, then the `lea` that loads that address.
 

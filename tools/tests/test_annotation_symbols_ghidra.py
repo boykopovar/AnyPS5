@@ -84,6 +84,50 @@ class GhidraSymbolsTests(unittest.TestCase):
                 self.assertEqual(rows[0].split()[1:], ["0x100b", "f"])
                 self.assertEqual(set(self.root.iterdir()), {source})
 
+    def test_irelative_resolvers_without_symbols_are_function_entries(self):
+        source = self.root / "local-ifunc.prx"
+        for table in (0x2200, 0x2280):
+            image = bytearray(build_module(symbols=[], relocations=(), tags=DEFAULT_TAGS + (7, 8),
+                                          values={8 if table == 0x2200 else 2: 24}))
+            struct.pack_into("<QQq", image, table, DATA_ADDRESS + 0x800, 37, EXPORT_ADDRESS)
+            source.write_bytes(image)
+            with self.subTest(table=table):
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), ["irelative_resolver_100b 0x100b f"])
+        self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_irelative_resolvers_keep_exported_names_and_deduplicate_targets(self):
+        for symbols, expected in (([], "irelative_resolver_100b 0x100b f"),
+                                  ([(EXPORT_NAME, 1, 0x1a, EXPORT_ADDRESS)], "sceKernelUsleep 0x100b f")):
+            image = bytearray(build_module(symbols=symbols, relocations=(), values={2: 48}))
+            for index in range(2):
+                struct.pack_into("<QQq", image, 0x2280 + index * 24, DATA_ADDRESS + 0x800 + index * 8, 37, EXPORT_ADDRESS)
+            rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+            self.assertEqual(rows, [expected])
+
+    def test_irelative_resolver_entries_require_executable_file_bytes(self):
+        for address, flags, size in ((DATA_ADDRESS, 5, 12), (0x9000, 5, 12), (CODE_ADDRESS + 12, 5, 12),
+                                     (CODE_ADDRESS, 4, 12), (EXPORT_ADDRESS, 5, 11)):
+            with self.subTest(address=address, flags=flags, size=size):
+                image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}, code_flags=flags))
+                struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, 37, address)
+                struct.pack_into("<Q", image, 64 + 32, size)
+                self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_relative_data_and_none_relocations_are_not_resolvers(self):
+        for kind in (0, 8):
+            image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}))
+            struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, kind, EXPORT_ADDRESS)
+            self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_irelative_addends_are_elf64_virtual_addresses(self):
+        image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}))
+        struct.pack_into("<Q", image, 64 + 16, 0xfffffffffffff000)
+        struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, 37, -4096)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})),
+                         ["irelative_resolver_fffffffffffff000 0xfffffffffffff000 f"])
+
     def test_ifunc_function_entries_require_executable_file_bytes(self):
         for address, flags, distance, marker in (
                 (CODE_ADDRESS, 5, None, "f"), (EXPORT_ADDRESS, 5, None, "f"),
