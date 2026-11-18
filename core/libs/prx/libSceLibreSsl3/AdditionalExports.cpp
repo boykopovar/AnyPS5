@@ -32,10 +32,6 @@ int APS5_VABI i2d_SSL_SESSION_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI i2d_X509_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_read_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -145,10 +141,6 @@ int APS5_VABI ECDSA_do_sign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI X509_digest_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI SSL_provide_quic_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
