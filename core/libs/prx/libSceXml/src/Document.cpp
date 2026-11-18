@@ -203,16 +203,8 @@ XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery 
     return GenerationNode(result, generation, query, OffsetOf(node));
 }
 
-XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node) {
-    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
-    if (document->impl == nullptr) {
-        SetString(result, nullptr);
-        return result;
-    }
-    Live(document);
-    Generation& generation = *RefOf(document)->generation;
+XmlString* GenerationString(XmlString* result, Generation& generation, StringQuery query, std::uint64_t offset) {
     const Reader reader(generation.buffers);
-    const std::uint64_t offset = OffsetOf(node);
     const char* text = nullptr;
     switch (query) {
     case StringQuery::NodeName:
@@ -237,6 +229,16 @@ XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQu
     if (text != nullptr) generation.lent = true;
     SetString(result, text);
     return result;
+}
+
+XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node) {
+    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr) {
+        SetString(result, nullptr);
+        return result;
+    }
+    Live(document);
+    return GenerationString(result, *RefOf(document)->generation, query, OffsetOf(node));
 }
 
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name) {

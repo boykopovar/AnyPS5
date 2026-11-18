@@ -217,6 +217,28 @@ bool SameId(XmlNodeId left, XmlNodeId right) {
     return left.first == right.first && left.second == right.second && left.flag == right.flag;
 }
 
+std::string Text(XmlString string) {
+    return string.buffer == nullptr ? std::string("<null>") : std::string(string.buffer, string.size);
+}
+
+std::string NodeName(const XmlNode* node) {
+    XmlString result{reinterpret_cast<const char*>(1), 7};
+    Require(_ZNK3sce3Xml3Dom4Node11getNodeNameEv(&result, node) == &result, "getNodeName returns its result pointer");
+    return Text(result);
+}
+
+std::string NodeValue(const XmlNode* node) {
+    XmlString result{reinterpret_cast<const char*>(1), 7};
+    Require(_ZNK3sce3Xml3Dom4Node12getNodeValueEv(&result, node) == &result, "getNodeValue returns its result pointer");
+    return Text(result);
+}
+
+std::string DocumentRead(XmlString* (APS5_VABI* read)(XmlString*, const XmlHandle*, XmlNodeId), const XmlHandle* document, XmlNodeId id) {
+    XmlString result{};
+    read(&result, document, id);
+    return Text(result);
+}
+
 void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
     if (IdIsNull(id)) return;
     ++visited;
@@ -229,6 +251,20 @@ void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
         navigation.document(&fromDocument, document, id);
         Require(SameId(fromNode, fromDocument), navigation.name);
     }
+    const int type = DocumentType(document, id);
+    std::string name = "<null>";
+    std::string value = DocumentRead(&_ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE, document, id);
+    if (type == 0) {
+        name = "xml";
+        value = "version=\"1.0\"";
+    } else if (type == 1) {
+        name = DocumentRead(&_ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE, document, id);
+        value = DocumentRead(&_ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE, document, id);
+    } else if (type == 4) {
+        name = DocumentRead(&_ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE, document, id);
+    }
+    Require(NodeName(&node) == name, "getNodeName follows the node type");
+    Require(NodeValue(&node) == value, "getNodeValue follows the node type");
     XmlNodeId attribute{};
     _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(&attribute, document, id);
     Visit(document, attribute, visited);
@@ -255,12 +291,29 @@ void TestNavigation() {
     Visit(&document, Root(&document), visited);
     Require(visited >= 10, "the walk reaches every node");
 
+    XmlNode declaration{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&declaration, docRoot);
+    Require(NodeName(&declaration) == "xml" && NodeValue(&declaration) == "version=\"1.0\"", "the document node reads as the XML declaration");
+    const XmlNodeId root = Root(&document);
+    XmlNode element{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&element, root);
+    Require(NodeName(&element) == "r", "an element node name");
+    XmlNodeId attributeId{};
+    _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(&attributeId, &document, root);
+    XmlNode attribute{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&attribute, attributeId);
+    Require(NodeName(&attribute) == "a" && NodeValue(&attribute) == "1", "an attribute node name and value");
+    XmlNode text{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&text, FirstChild(&document, FirstChild(&document, root)));
+    Require(NodeValue(&text) == "one", "a text node value");
+
     XmlNode empty{};
     _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&empty, XmlNodeId{nullptr, nullptr, 0});
     for (const Navigation& navigation : Navigations) {
         XmlNodeId result{reinterpret_cast<void*>(1), reinterpret_cast<void*>(2), 3};
         navigation.node(&result, &empty);
         Require(IdIsNull(result), "a node without a document has no relatives");
+        Require(NodeName(&empty) == "<null>" && NodeValue(&empty) == "<null>", "a node without a document has no name or value");
         bool threw = false;
         try {
             navigation.node(nullptr, &empty);
@@ -289,6 +342,14 @@ void TestNavigation() {
             threw = true;
         }
         Require(threw, "reading a relative after the builder parsed again throws");
+        XmlString string{};
+        threw = false;
+        try {
+            _ZNK3sce3Xml3Dom4Node11getNodeNameEv(&string, &stale);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        Require(threw, "reading a name after the builder parsed again throws");
     }
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }

@@ -13,5 +13,7 @@ std::uint32_t NodeTypeOf(const XmlNode* self);
 bool NodeHasChildNodes(const XmlNode* self);
 bool NodeHasAttributes(const XmlNode* self);
 XmlNodeId* NodeRelative(XmlNodeId* result, const XmlNode* self, NodeQuery query);
+XmlString* NodeName(XmlString* result, const XmlNode* self);
+XmlString* NodeValue(XmlString* result, const XmlNode* self);
 
 }
