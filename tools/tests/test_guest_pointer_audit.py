@@ -53,6 +53,25 @@ class AccessTests(unittest.TestCase):
             ("sceExampleNested", "table", ["dereference"]),
         ])
 
+    def test_accesses_through_a_cast_and_offset_are_reported(self):
+        source = (
+            "int APS5_VABI sceExampleOffset(const void* mode) { unsigned long long v;\n"
+            "  memcpy(&v, static_cast<const unsigned char*>(mode) + 0x10, sizeof(v)); return static_cast<int>(v); }\n"
+            "int APS5_VABI sceExampleParen(const void* mode) { unsigned int v;\n"
+            "  memcpy(&v, (mode) + 4, sizeof(v)); return static_cast<int>(v); }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleOffset", "mode", ["library call"]),
+            ("sceExampleParen", "mode", ["library call"]),
+        ])
+
+    def test_an_offset_on_another_pointer_is_not_reported(self):
+        source = (
+            "int APS5_VABI sceExampleOther(const void* mode) { unsigned long long v;\n"
+            "  memcpy(&v, other + 0x10, sizeof(v)); return static_cast<int>(v); }\n"
+        )
+        self.assertEqual(findings(source), [])
+
     def test_safe_helpers_and_non_pointer_parameters_are_not_reported(self):
         source = (
             "int APS5_VABI sceExampleOut(std::uint64_t* out) { const std::uint64_t v = 7;\n"
@@ -337,6 +356,14 @@ class CheckedDereferenceTests(unittest.TestCase):
 
     def test_checked_argument_dereferences_ignores_a_plain_pointer_argument(self):
         self.assertEqual(guest_pointer_audit.checked_argument_dereferences("GuestCopyIn_nid_no_patch(p, q, 1)", "p"), [])
+
+    def test_internal_linkage_detects_static_and_anonymous_namespace_definitions(self):
+        text = "static int a() {}\nint b() {}\nnamespace { int c() {} }\n"
+        spans = guest_pointer_audit.anonymous_spans(text)
+        self.assertEqual(len(spans), 1)
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int a"), spans))
+        self.assertFalse(guest_pointer_audit.internal_linkage(text, text.index("int b"), spans))
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int c"), spans))
 
 
 if __name__ == "__main__":

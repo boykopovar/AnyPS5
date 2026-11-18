@@ -1512,6 +1512,17 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(self.library.stat().st_mtime_ns, before)
                 self.assertEqual((web / package_release.WEB_FILES[0]).stat().st_mtime, timestamp)
 
+    def test_cmake_option_reads_cache_values_case_insensitively(self):
+        self.assertFalse(package_release.cmake_option(self.build, "FLAG"))
+        cache = self.build / "CMakeCache.txt"
+        cases = (("FLAG:BOOL=ON", True), ("FLAG:BOOL=yes", True), ("FLAG:BOOL=1", True), ("FLAG:BOOL=OFF", False),
+                 ("FLAG:BOOL=false", False), ("FLAG:BOOL=", False), ("FLAG:BOOL=x-NOTFOUND", False),
+                 ("OTHER:BOOL=ON", False), ("FLAGGED:BOOL=ON", False))
+        for line, expected in cases:
+            with self.subTest(line=line):
+                cache.write_text("// comment\n" + line + "\n", encoding="utf-8")
+                self.assertIs(package_release.cmake_option(self.build, "FLAG"), expected)
+
 
 
 class DocumentationAssetsTests(unittest.TestCase):

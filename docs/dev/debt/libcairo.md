@@ -35,6 +35,8 @@
 
 - [FreeType font faces](../../../core/libs/prx/libcairo/FontFace.cpp) follow Cairo 1.18.0 for lifetime only: `cairo_ft_font_face_create_for_ft_face` returns the cached face for the same guest `FT_Face`, `face_index` and load flags with one more reference, the face does not reference the `FT_Face`, and user data is released in reverse order after the face leaves the cache. Cairo's "zombie" face, kept while a scaled font still holds the unscaled font, is not modelled because scaled fonts throw. A null face or font face throws because Cairo dereferences it, and setting user data on a font face from its own finalizer, or destroying it there without a reference of the finalizer's own, throws because Cairo then modifies or frees what it is finalizing. The PS5 prototypes are unverified.
 
+- [FreeType font faces from patterns](../../../core/libs/prx/libcairo/src/FtFontFace.cpp) follow Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c) through the guest Fontconfig and `access` exports. A pattern's `ftface`, else a readable `file` and its `index`, together with the load flags and options Cairo derives from the pattern, look up the face cache `cairo_ft_font_face_create_for_ft_face` also uses; an unreadable file gives the file-not-found nil face. A pattern with neither keeps a copy and gets a new face on each call; Cairo matches that copy through Fontconfig only when a scaled font is created, which throws here. No guest export can store an `FT_Face` in a pattern yet, so the `ftface` branch is untested; a null pattern or null `ftface` throws because Cairo dereferences it. Console behaviour is unmeasured.
+
 ### Functional toy-font text
 
 - [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
@@ -53,7 +55,6 @@
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
-| `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |

@@ -4,6 +4,7 @@
 
 #include FT_STROKER_H
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -209,6 +210,10 @@ static void TestNew(GuestLibrary& library, FT_Library native) {
     Require(FT_Stroker_New_nid_postfix(&empty, &guest) == FT_Stroker_New(nullptr, &expected));
     Require(guest == sentinel && expected == sentinel);
     Require(RefusesUnreadable([&] { FT_Stroker_New_nid_postfix(reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10}), &guest); }));
+    Require(guest == sentinel);
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(RefusesUnreadable([&] { FT_Stroker_New_nid_postfix(misaligned, &guest); }));
     Require(guest == sentinel);
     guest = nullptr;
     expected = nullptr;

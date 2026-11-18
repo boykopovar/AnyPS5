@@ -71,7 +71,8 @@ def stage_files(files, work, content):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.unlink(missing_ok=True)
         if "text" in source:
-            target.write_text(source["text"], encoding="utf-8", newline="\n")
+            with target.open("w", encoding="utf-8", newline="\n") as output:
+                output.write(source["text"])
         elif content and (content / source["content"]).is_file():
             shutil.copyfile(content / source["content"], target)
         else:
@@ -494,6 +495,20 @@ def link_file(source, target):
         shutil.copy2(source, target)
 
 
+def copy_asset(source, target):
+    if sys.platform == "linux" and source.is_file():
+        try:
+            import fcntl
+            with source.open("rb") as original, target.open("xb") as cloned:
+                fcntl.ioctl(cloned.fileno(), getattr(fcntl, "FICLONE", 0x40049409), original.fileno())
+        except (ImportError, OSError):
+            pass
+        else:
+            shutil.copystat(source, target)
+            return
+    shutil.copy2(source, target)
+
+
 def link_tree(source, target, skip):
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
@@ -503,7 +518,7 @@ def link_tree(source, target, skip):
             (target / relative).mkdir(parents=True, exist_ok=True)
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            link_file(path, target / relative)
+            copy_asset(path, target / relative)
 
 
 def lock_work(path):
@@ -1243,6 +1258,8 @@ def run_cli(argv, capture_resources):
     packages = []
     found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
+    if not ids:
+        raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
