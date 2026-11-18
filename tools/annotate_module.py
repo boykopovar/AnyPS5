@@ -42,6 +42,7 @@ SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
 DYNAMIC_VALUE_TAGS = {
+    12: "DT_INIT", 13: "DT_FINI",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
     DT_RELA: "DT_RELA", DT_RELASZ: "DT_RELASZ", DT_RELAENT: "DT_RELAENT",
     DT_STRSZ: "DT_STRSZ", DT_SYMENT: "DT_SYMENT", DT_JMPREL: "DT_JMPREL",
@@ -49,6 +50,7 @@ DYNAMIC_VALUE_TAGS = {
 }
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
+ENDBR64 = re.compile(r"^\s*([0-9a-f]+):\s+endbr64\s*$")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
@@ -261,6 +263,15 @@ class Namer:
 
 def ghidra_symbols(module, namer):
     rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
+    exported_functions = {address for _, section, address, kind in module.exported_symbols()
+                          if kind in (STT_FUNC, STT_GNU_IFUNC) and section != SHN_COMMON}
+    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+        address = module.tags.get(tag)
+        if address is None or address in exported_functions:
+            continue
+        if any(flags & PF_X and start <= address < start + size and offset + address - start < len(module.data)
+               for start, offset, size, flags in module.loads):
+            rows.add((address, True, name, name))
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue
@@ -337,11 +348,17 @@ def referenced_address(line):
 
 def find_stubs(listing, slots, namer):
     stubs = {}
+    landing = None
     for line in listing:
         match = STUB.match(line)
         target = referenced_address(line)
         if match and target in slots:
-            stubs[int(match.group(1), 16)] = namer.resolve(slots[target])
+            address = int(match.group(1), 16)
+            stubs[address] = namer.resolve(slots[target])
+            if landing is not None and address == landing + 4:
+                stubs[landing] = stubs[address]
+        endbr = ENDBR64.match(line)
+        landing = int(endbr.group(1), 16) if endbr else None
     return stubs
 
 

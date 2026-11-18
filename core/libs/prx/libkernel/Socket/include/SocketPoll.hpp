@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -50,6 +51,10 @@ struct Description {
     int type;
     bool nonblocking;
 };
+
+inline std::size_t SelectSetBytes(int scanned) {
+    return static_cast<std::size_t>((scanned + 63) / 64) * sizeof(std::uint64_t);
+}
 }
 
 extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards);
@@ -71,3 +76,5 @@ extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native);
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number);
 extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description);
 extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors);
+extern "C" bool KernelSelectCheckSets_nid_no_patch(int nfds, const void* readfds, const void* writefds, const void* exceptfds, int* scanned, int* error);
+extern "C" int KernelSelectCheckedSets_nid_no_patch(int scanned, void* readfds, void* writefds, void* exceptfds, const void* limit);

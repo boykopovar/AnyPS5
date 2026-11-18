@@ -73,9 +73,14 @@ void APS5_VABI AbortingGamePresenceCallback(const void*, const void*, void*) {
     std::abort();
 }
 
-void APS5_VABI AbortingReachabilityCallback(int, std::uint32_t, void*) {
-    std::fprintf(stderr, "NpManager: the reachability callback was called\n");
-    std::abort();
+int reachabilityCalls = 0;
+int reachabilityUserId = 0;
+std::uint32_t reachabilityState = 99;
+
+void APS5_VABI CountingReachabilityCallback(int userId, std::uint32_t state, void*) {
+    ++reachabilityCalls;
+    reachabilityUserId = userId;
+    reachabilityState = state;
 }
 
 struct SelfUnregister {
@@ -123,13 +128,14 @@ void CheckStateCallbacksA() {
     Require(ids[0] >= 1 && ids[0] <= 8, "state callback id outside 1..8");
     Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[1]) == AlreadyRegistered, "duplicate state callback");
     Require(stateCallsA[0].calls == 0, "registering calls the state callback");
-    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&AbortingReachabilityCallback), nullptr) == 0,
+    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&CountingReachabilityCallback), nullptr) == 0,
         "registering the reachability callback");
     sceNpRegisterGamePresenceCallback(nullptr, nullptr);
     sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&AbortingGamePresenceCallback), &userdata[0]);
 
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed");
     Require(SignedOutOnce(stateCallsA[0], &userdata[0]), "sceNpCheckCallback must deliver SIGNED_OUT once");
+    Require(reachabilityCalls == 1 && reachabilityUserId == InitialUserId && reachabilityState == 0, "sceNpCheckCallback must deliver UNAVAILABLE reachability once");
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0, "unregistering the reachability callback");
     Require(sceNpCheckCallback() == 0, "second sceNpCheckCallback failed");
     Require(stateCallsA[0].calls == 1, "the second sceNpCheckCallback delivered the state again");
@@ -580,6 +586,8 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
     for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
     for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    errno = 71;
+    Require(sceNpManagerIntGetNpEnv(reinterpret_cast<void*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetNpEnv unwritable output");
     Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
     Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
     std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
