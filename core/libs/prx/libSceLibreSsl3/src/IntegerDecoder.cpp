@@ -245,11 +245,14 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
     if (!input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
     const unsigned char* const start = GuestLoad(input, "d2i_ASN1_INTEGER");
     if (!start) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
+    GuestStore(input, start, "d2i_ASN1_INTEGER");
     GuestInput remaining(start, static_cast<std::size_t>(length), "d2i_ASN1_INTEGER");
     auto content = ReadInteger(remaining);
     if (!content) return nullptr;
     if (output) {
-        FreeInteger(GuestLoad(output, "d2i_ASN1_INTEGER"));
+        void* const previous = GuestLoad(output, "d2i_ASN1_INTEGER");
+        GuestStore(output, previous, "d2i_ASN1_INTEGER");
+        FreeInteger(previous);
         GuestStore(output, static_cast<void*>(nullptr), "d2i_ASN1_INTEGER");
     }
     if (content->empty()) {

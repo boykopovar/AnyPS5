@@ -146,6 +146,17 @@ void Integers() {
     }
 }
 
+void ReadsContentLargerThanOneChunk() {
+    std::vector<unsigned char> encoded(70000 + 5, 0x55);
+    encoded[0] = 2;
+    encoded[1] = 0x83;
+    encoded[2] = 0x01;
+    encoded[3] = 0x11;
+    encoded[4] = 0x70;
+    encoded[5] = 0x01;
+    Check(encoded, std::span<const unsigned char>(encoded).subspan(5));
+}
+
 void Ownership() {
     const unsigned char encoded[] = {2, 1, 42};
     const unsigned char* cursor = encoded;
@@ -350,6 +361,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     Integers();
     BerExtremes();
+    ReadsContentLargerThanOneChunk();
     Ownership();
     FaultingArguments();
     Rejections();

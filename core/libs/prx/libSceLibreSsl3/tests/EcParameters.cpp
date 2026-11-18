@@ -7,7 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -225,6 +227,36 @@ void RejectsMalformedDer() {
     Fails("050100", 0, {NullWrongLength, Nested, Nested, D2iFailure, EcLibraryFailure});
     Fails("1000", 0, {SequenceNotConstructed, Nested, Nested, D2iFailure, EcLibraryFailure});
     Fails(P256, -1, 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+    Fails(P256, std::int64_t{std::numeric_limits<std::int32_t>::max()} + 1, 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+    Fails(P256, std::numeric_limits<std::int64_t>::max(), 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+}
+
+void BoundsWhatItCopies() {
+    std::vector<unsigned char> padded = P256;
+    padded.resize(5000, 0);
+    ERR_clear_error_nid_postfix();
+    const unsigned char* cursor = padded.data();
+    EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+    Require(key != nullptr && cursor == padded.data() + P256.size());
+    RequireGroup(key, Secp256r1);
+    EC_KEY_free_nid_postfix(key);
+}
+
+void RejectsARangeThatWrapsTheAddressSpace() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
+    Require(key != nullptr);
+    EcKey* const original = key;
+    const EcGroup* const group = key->group;
+    const unsigned char* const top = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    const unsigned char* cursor = top;
+    bool threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&key, &cursor, 8);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && cursor == top && key == original && key->group == group);
+    EC_KEY_free_nid_postfix(key);
 }
 
 void RejectsANullInput() {
@@ -249,6 +281,8 @@ int main() {
     FillsOrReusesTheCallersKey();
     RejectsCurvesItCannotName();
     RejectsMalformedDer();
+    BoundsWhatItCopies();
+    RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
     std::puts("libSceLibreSsl3 d2i_ECParameters tests passed");
 }

@@ -197,6 +197,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestPtr.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -374,6 +375,8 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
     return nullptr;
 }
 
+constexpr std::int64_t MaxEncodedBytes = 4096;
+
 bool RangeFits(const unsigned char* start, std::int64_t length) {
     return reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
 }
@@ -382,8 +385,9 @@ EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
     const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
     if (sized && length > 0) {
-        if (!RangeFits(in, length)) APS5_INVALID_ARG_EX;
-        bytes.resize(static_cast<std::size_t>(length));
+        const std::int64_t copied = std::min(length, MaxEncodedBytes);
+        if (!RangeFits(in, copied)) APS5_INVALID_ARG_EX;
+        bytes.resize(static_cast<std::size_t>(copied));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
     const std::optional<Parameters> parameters = sized ? DecodeParameters({bytes.data(), bytes.size()}) : std::nullopt;
@@ -412,7 +416,8 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
         return nullptr;
     }
     EcKey* current = nullptr;
-    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyIn(current)) APS5_INVALID_ARG_EX;
+    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
+    if (key != nullptr && (!GuestPtr<EcKey*>(key).CopyIn(current) || !GuestPtr<EcKey*>(key).CopyOut(current))) APS5_INVALID_ARG_EX;
     std::unique_ptr<EcKey, KeyDeleter> created;
     if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
     EcKey* result = created ? created.get() : current;
@@ -441,13 +446,13 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
     }
     if (in == nullptr) APS5_INVALID_ARG_EX;
     const unsigned char* cursor = nullptr;
-    if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor)) APS5_INVALID_ARG_EX;
+    if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor) || !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     if (result->publicKey == nullptr && (result->publicKey = EC_POINT_new_nid_postfix(result->group)) == nullptr) {
         PutError(MallocFailure);
         return nullptr;
     }
     std::vector<unsigned char> bytes;
-    if (length > 0 && length <= std::numeric_limits<std::int32_t>::max()) {
+    if (length > 0 && length <= MaxEncodedBytes) {
         if (!RangeFits(cursor, length)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;

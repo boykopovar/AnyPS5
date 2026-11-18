@@ -3,10 +3,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
@@ -147,6 +147,10 @@ void RejectsBadEncodings() {
     Rejects(key, compressedOffCurve, 33, P256Uncompressed);
     Rejects(key, P256Uncompressed, 64, P256Uncompressed);
     Rejects(key, P256Uncompressed, 0, P256Uncompressed);
+    Rejects(key, P256Uncompressed, -1, P256Uncompressed);
+    Rejects(key, std::vector<unsigned char>(5000, 0x04), 4097, P256Uncompressed);
+    Rejects(key, P256Uncompressed, std::int64_t{std::numeric_limits<std::int32_t>::max()} + 1, P256Uncompressed);
+    Rejects(key, P256Uncompressed, std::numeric_limits<std::int64_t>::max(), P256Uncompressed);
     Rejects(key, P384Uncompressed, static_cast<std::int64_t>(P384Uncompressed.size()), P256Uncompressed);
     std::vector<unsigned char> offCurve = P256Uncompressed;
     offCurve.back() ^= 1;
