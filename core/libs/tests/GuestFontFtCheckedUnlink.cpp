@@ -168,6 +168,27 @@ static void CheckCloseUnlink() {
     Require(SetWritable(shared, true));
     Require(sceFontCloseFont(sharedSecond) == SCE_FONT_OK && shared->refcount == 1);
     Require(sceFontCloseFont(sharedFirst) == SCE_FONT_OK && closePages.empty());
+    FontHandle retained = nullptr;
+    Require(sceFontOpenFontMemory(library, collection.data(), static_cast<std::uint32_t>(collection.size()), &detail, &retained) == SCE_FONT_OK);
+    shared = FontHead(retained);
+    Require(shared && shared->refcount == 1 && closePages.count(shared) == 1);
+    Require(SetWritable(shared, false));
+    FontHandle failedMemory = nullptr;
+    FontHandle failedInstance = nullptr;
+    errno = 71;
+    Require(sceFontOpenFontMemory(library, collection.data(), static_cast<std::uint32_t>(collection.size()), &detail, &failedMemory) == SCE_FONT_ERROR_FATAL);
+    Require(failedMemory == nullptr && shared->refcount == 1 && errno == 71);
+    Require(sceFontOpenFontInstance(retained, nullptr, &failedInstance) == SCE_FONT_ERROR_FATAL);
+    Require(failedInstance == nullptr && shared->refcount == 1 && errno == 71);
+    Require(FontHead(retained) == shared && reinterpret_cast<const Font::FontHandleNative*>(retained)->magic == Font::HANDLE_MAGIC);
+    Require(SetWritable(shared, true));
+    Require(sceFontOpenFontMemory(library, collection.data(), static_cast<std::uint32_t>(collection.size()), &detail, &failedMemory) == SCE_FONT_OK);
+    Require(shared->refcount == 2);
+    Require(sceFontOpenFontInstance(retained, nullptr, &failedInstance) == SCE_FONT_OK);
+    Require(shared->refcount == 3);
+    Require(sceFontCloseFont(failedInstance) == SCE_FONT_OK && shared->refcount == 2);
+    Require(sceFontCloseFont(failedMemory) == SCE_FONT_OK && shared->refcount == 1);
+    Require(sceFontCloseFont(retained) == SCE_FONT_OK && closePages.empty());
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
 }
 

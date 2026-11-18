@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -38,6 +39,12 @@ struct OpenRequest {
     std::uint32_t subFontIndex;
     std::int32_t uniqueId;
 };
+
+bool RetainFontObject(FontObj* node) {
+    std::uint32_t refcount = 0;
+    if (!CopyInGuest(refcount, &node->refcount) || refcount == std::numeric_limits<std::uint32_t>::max()) return false;
+    return CopyOutGuest(&node->refcount, refcount + 1);
+}
 
 FontHandle PrepareHandle(FontLibNative* library, FontHandle existing) {
     if (existing) {
@@ -164,9 +171,12 @@ int OpenFontInContext(const OpenRequest& request, std::uint32_t libraryLock, Fon
         rc = SCE_FONT_ERROR_FONT_OPEN_MAX;
         if ((lockWord & COUNT_MASK) != COUNT_MASK) {
             if (FontObj* node = FindSubFont(fontObj, request.subFontIndex)) {
-                ++node->refcount;
-                fontObj = node;
-                rc = SCE_FONT_OK;
+                if (RetainFontObject(node)) {
+                    fontObj = node;
+                    rc = SCE_FONT_OK;
+                } else {
+                    rc = SCE_FONT_ERROR_FATAL;
+                }
             } else {
                 needOpen = true;
             }
@@ -380,9 +390,10 @@ int APS5_VABI sceFontOpenFontInstance(FontHandle fontHandle, FontHandle setupFon
                 rc = SCE_FONT_ERROR_FONT_OPEN_MAX;
             } else if (!node) {
                 rc = SCE_FONT_ERROR_FATAL;
-            } else {
-                ++node->refcount;
+            } else if (RetainFontObject(node)) {
                 ++updated;
+            } else {
+                rc = SCE_FONT_ERROR_FATAL;
             }
             std::atomic_ref<std::uint32_t>(*lockWord).store(updated & ~LOCK_BIT, std::memory_order_release);
         }
