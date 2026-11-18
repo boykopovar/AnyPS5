@@ -3,6 +3,7 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libSceCommonDialog/include/Exports.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <array>
 #include <cerrno>
@@ -53,6 +54,16 @@ bool ThrowsRuntimeError(Fn&& fn) {
 
 constexpr int kErrAlreadySystemInitialized = static_cast<int>(0x80B80002);
 constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
+
+int appStatusResult = 0;
+std::int32_t appStatusId = 0;
+int appStatusCalls = 0;
+
+int GetAppStatus(LncAppStatus* status) {
+    ++appStatusCalls;
+    status->appId = appStatusId;
+    return appStatusResult;
+}
 
 class GuardedBefore {
 public:
@@ -120,6 +131,19 @@ int main() {
     Require(!sceCommonDialogIsUsed());
     Require(CommonDialogAcquire_nid_no_patch());
     CommonDialogRelease_nid_no_patch();
+
+    GuestSceCommonDialogTest::SetGetAppStatus_nid_no_patch(GetAppStatus);
+    appStatusId = 0x12345678;
+    Require(_ZN3sce16CommonDialogUtil12getSelfAppIdEv() == 0x12345678 && appStatusCalls == 1);
+    appStatusResult = 1;
+    appStatusId = 0x23456789;
+    Require(_ZN3sce16CommonDialogUtil12getSelfAppIdEv() == -1 && appStatusCalls == 2);
+    appStatusResult = -1;
+    Require(_ZN3sce16CommonDialogUtil12getSelfAppIdEv() == -1 && appStatusCalls == 3);
+    appStatusResult = 0;
+    appStatusId = -17;
+    Require(_ZN3sce16CommonDialogUtil12getSelfAppIdEv() == -17 && appStatusCalls == 4);
+    GuestSceCommonDialogTest::SetGetAppStatus_nid_no_patch(nullptr);
 
     CommonDialogBaseParam base{};
     base.size = sizeof(base);

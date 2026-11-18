@@ -243,6 +243,15 @@ static_assert(sizeof(G2PDialogParam) == 128);
 static_assert(sizeof(PlayerReviewDialogParam) == 168);
 static_assert(offsetof(CommonDialogResultPrefix, result) == 8);
 
+struct LncAppStatus;
+
+namespace GuestSceCommonDialogTest {
+
+using GetAppStatusFunction = int (*)(LncAppStatus* status);
+void SetGetAppStatus_nid_no_patch(GetAppStatusFunction getAppStatus);
+
+} // namespace GuestSceCommonDialogTest
+
 inline bool ValidateCommonDialogBaseParam(const CommonDialogBaseParam& param, std::uintptr_t guestAddress = 0) {
     const auto address = guestAddress != 0 ? guestAddress : reinterpret_cast<std::uintptr_t>(&param);
     return param.size == sizeof(param) && param.magic == static_cast<std::uint32_t>(address) - 1060003575u && std::all_of(std::begin(param.reserved), std::end(param.reserved), [](std::uint8_t value) { return value == 0; });

@@ -1,4 +1,6 @@
 #include "prx/libSceCommonDialog/include/Exports.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +12,12 @@
 namespace {
 
 constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
+
+int GetAppStatusDefault(LncAppStatus* status) {
+    return sceLncUtilGetAppStatus(status);
+}
+
+GuestSceCommonDialogTest::GetAppStatusFunction getAppStatus = GetAppStatusDefault;
 
 bool HasClientImplementation(const void* client) {
     std::uint64_t implementation = 0;
@@ -26,11 +34,19 @@ bool HasClientImplementation(const void* client) {
 
 } // namespace
 
+namespace GuestSceCommonDialogTest {
+
+void SetGetAppStatus_nid_no_patch(GetAppStatusFunction replacement) {
+    getAppStatus = replacement != nullptr ? replacement : GetAppStatusDefault;
+}
+
+} // namespace GuestSceCommonDialogTest
+
 extern "C" {
 
 int APS5_VABI _ZN3sce16CommonDialogUtil12getSelfAppIdEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    LncAppStatus status{};
+    return getAppStatus(&status) == 0 ? status.appId : -1;
 }
 
 int APS5_VABI _ZN3sce16CommonDialogUtil6Client11closeModuleEv(void* self) {

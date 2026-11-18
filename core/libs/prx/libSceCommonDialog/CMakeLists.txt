@@ -1,5 +1,6 @@
 add_library(libSceCommonDialog SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp AdditionalExports.cpp)
 target_include_directories(libSceCommonDialog PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceCommonDialog PRIVATE libSceSystemService)
 configure_windows_unwind(libSceCommonDialog)
 
 if(BUILD_TESTING)
