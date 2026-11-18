@@ -98,12 +98,14 @@ def checked_argument_dereferences(body, name):
 
 def names_parameter(argument, name):
     argument = argument.strip()
+    pattern = re.compile(rf"\(?\s*{re.escape(name)}\b")
     while True:
+        if pattern.match(argument):
+            return True
         stripped = CAST.sub("", argument, count=1)
         if stripped == argument:
-            break
+            return False
         argument = stripped
-    return re.match(rf"{re.escape(name)}\b", argument) is not None
 
 
 def accesses(body, name):
