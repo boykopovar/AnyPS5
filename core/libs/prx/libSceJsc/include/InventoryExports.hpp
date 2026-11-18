@@ -95,14 +95,6 @@ int APS5_VABI _ZN3JSC16IsoSubspacePerVMC2EN3WTF8FunctionIFNS0_18SubspaceParamete
 int APS5_VABI _ZN3JSC17DebuggerCallFrame5scopeEv();
 int APS5_VABI _ZN3JSC17createJSMicrotaskERNS_2VMENS_7JSValueE();
 int APS5_VABI _ZN3JSC17weakClearSlowCaseERPNS_8WeakImplE();
-int APS5_VABI _ZN3JSC19ArrayBufferContents5clearEv();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC1EOS0_();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC1Ev();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC2EOS0_();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC2Ev();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsD1Ev();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsD2Ev();
-int APS5_VABI _ZN3JSC19ArrayBufferContentsaSEOS0_();
 int APS5_VABI _ZN3JSC19JSSymbolTableObject14deletePropertyEPNS_6JSCellEPNS_14JSGlobalObjectENS_12PropertyNameERNS_18DeletePropertySlotE();
 int APS5_VABI _ZN3JSC20speculationFromValueENS_7JSValueE();
 int APS5_VABI _ZN3JSC23JSModuleNamespaceObject10putByIndexEPNS_6JSCellEPNS_14JSGlobalObjectEjNS_7JSValueEb();
