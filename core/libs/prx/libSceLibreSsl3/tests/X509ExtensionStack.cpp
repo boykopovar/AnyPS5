@@ -69,10 +69,10 @@ void Require(bool condition, std::source_location location) {
 Asn1Object_nid_no_patch* MakeObject() {
     auto* object = static_cast<Asn1Object_nid_no_patch*>(Callocate_nid_no_patch(1, sizeof(Asn1Object_nid_no_patch)));
     auto* shortName = static_cast<char*>(Allocate_nid_no_patch(3));
-    auto* longName = static_cast<char*>(Allocate_nid_no_patch(4));
+    auto* longName = static_cast<char*>(Allocate_nid_no_patch(5));
     auto* data = static_cast<unsigned char*>(Allocate_nid_no_patch(3));
     std::memcpy(shortName, "SN", 3);
-    std::memcpy(longName, "Long", 4);
+    std::memcpy(longName, "Long", 5);
     data[0] = 0x55; data[1] = 0x1d; data[2] = 0x13;
     object->shortName = shortName;
     object->longName = longName;
@@ -132,7 +132,7 @@ Extension* MakeStaticExtension(unsigned char* data) {
 }
 
 int main() {
-    std::array<void*, 7> api{
+    std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Callocate_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch), reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),

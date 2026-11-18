@@ -1,4 +1,4 @@
-import {actions, canonicalChord, canonicalValue, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
 export const settings = [
@@ -18,6 +18,22 @@ export const settings = [
 ];
 
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
+const sdlControllerButtons = [
+    'a', 'b', 'x', 'y', 'back', 'guide', 'start', 'leftstick', 'rightstick', 'leftshoulder', 'rightshoulder',
+    'dpup', 'dpdown', 'dpleft', 'dpright', 'misc1', 'paddle1', 'paddle2', 'paddle3', 'paddle4', 'touchpad'
+];
+const controllerDestinations = [...chordButtons, 'None'];
+
+function parseControllerRemap(button, value, used) {
+    const name = typeof button === 'string' ? button.trim() : '';
+    const source = canonicalValue(name, sdlControllerButtons);
+    if (!source) throw new Error(`Unknown SDL controller button '${name}'.`);
+    if (used.has(source)) throw new Error(`SDLButton:${source} is set more than once.`);
+    const destination = canonicalValue(value, controllerDestinations);
+    if (!destination) throw new Error(`SDLButton:${source}: expected a PlayStation button or None.`);
+    used.add(source);
+    return {button: source, destination};
+}
 
 export function settingValue(setting, value) {
     const text = typeof value === 'string' ? value.trim() : '';
@@ -34,7 +50,8 @@ export function settingValue(setting, value) {
         if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
-    if (parsed === undefined || !Number.isFinite(parsed) || parsed < setting.minimum || parsed > setting.maximum) {
+    const underflows = parsed === 0 && /[1-9]/u.test(text.split(/e/iu, 1)[0]);
+    if (parsed === undefined || !Number.isFinite(parsed) || underflows || parsed < setting.minimum || parsed > setting.maximum) {
         return `${setting.name} must be a number from ${setting.minimum} to ${setting.maximum}.`;
     }
     return '';
@@ -117,11 +134,12 @@ export function validate(entries) {
     return {errors, warnings, bindings};
 }
 
-export function serialize(entries, configuration = []) {
+export function serialize(entries, configuration = [], controllerRemaps = []) {
     const result = validate(entries);
     if (result.errors.length) throw new Error(result.errors.map(error => error.message).join('\n'));
     const checked = validateSettings(configuration);
     if (checked.errors.length) throw new Error(checked.errors.map(error => error.message).join('\n'));
+    if (!Array.isArray(controllerRemaps)) throw new TypeError('Controller remaps must be a list.');
     const lines = [];
     for (const action of actions) {
         for (const binding of result.bindings.filter(binding => binding.action === action)) {
@@ -132,6 +150,11 @@ export function serialize(entries, configuration = []) {
         const found = checked.settings.find(item => item.name === setting.name);
         if (found) lines.push(`${found.name} = ${found.value}`);
     }
+    const used = new Set();
+    for (const remap of controllerRemaps) {
+        const {button, destination} = parseControllerRemap(remap?.button, remap?.destination, used);
+        lines.push(`SDLButton:${button} = ${destination}`);
+    }
     return lines.length ? `${lines.join('\n')}\n` : '';
 }
 
@@ -139,6 +162,8 @@ export function parseIni(text) {
     if (typeof text !== 'string') throw new TypeError('INI content must be text.');
     const entries = [];
     const configuration = [];
+    const controllerRemaps = [];
+    const controllerButtons = new Set();
     const errors = [];
     const warnings = [];
     const identities = new Set();
@@ -147,7 +172,17 @@ export function parseIni(text) {
         if (!content) return;
         const separator = content.indexOf('=');
         const source = content.slice(separator + 1);
-        const setting = findSetting(content.slice(0, separator));
+        const name = content.slice(0, separator);
+        const nameColon = name.indexOf(':');
+        if (separator !== -1 && nameColon !== -1 && name.slice(0, nameColon).trim().toUpperCase() === 'SDLBUTTON') {
+            try {
+                controllerRemaps.push(parseControllerRemap(name.slice(nameColon + 1), source, controllerButtons));
+            } catch (error) {
+                errors.push({line: index + 1, message: error.message});
+            }
+            return;
+        }
+        const setting = findSetting(name);
         if (separator !== -1 && setting !== undefined) {
             if (configuration.some(item => item.name === setting.name)) {
                 errors.push({line: index + 1, message: `${setting.name} is set more than once.`});
@@ -163,7 +198,7 @@ export function parseIni(text) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
             return;
         }
-        const entry = {action: content.slice(0, separator), type: source.slice(0, colon), value: source.slice(colon + 1)};
+        const entry = {action: name, type: source.slice(0, colon), value: source.slice(colon + 1)};
         const result = validate([entry]);
         if (result.errors.length) {
             errors.push(...result.errors.map(error => ({line: index + 1, message: error.message})));
@@ -175,5 +210,5 @@ export function parseIni(text) {
         else entries.push(binding);
         identities.add(identity);
     });
-    return {entries, settings: configuration, errors, warnings};
+    return {entries, settings: configuration, controllerRemaps, errors, warnings};
 }

@@ -40,10 +40,10 @@ int main() {
     CHECK(FcPatternAddString(pattern, "family", Text("Other")));
     CHECK(FcPatternAddString(pattern, "style", Text("Book")));
     CHECK(FcPatternAddString(pattern, "file", Text("/fonts/Test.ttf")));
-    CHECK(FcPatternAddInteger(pattern, "index", 2));
-    CHECK(FcPatternAddInteger(pattern, "weight", 80));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "index", 2));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "weight", 80));
     CHECK(FcPatternAddDouble(pattern, "size", 12.5));
-    CHECK(FcPatternAddBool(pattern, "antialias", 1));
+    CHECK(FcPatternAddBool_nid_postfix(pattern, "antialias", 1));
     const FcMatrix matrix{1, 2, 3, 4};
     CHECK(FcPatternAddMatrix(pattern, "matrix", &matrix));
     Expect(pattern, "", "");
@@ -130,7 +130,7 @@ int main() {
     CHECK(ordered);
     for (const auto* language : {"ff", "fr", "be", "bm", "zz-extra", "aa-extra"})
         CHECK(FcLangSetAdd(ordered, Text(language)));
-    CHECK(FcPatternDel(pattern, "lang"));
+    CHECK(FcPatternDel_nid_postfix(pattern, "lang"));
     CHECK(FcPatternAddLangSet(pattern, "lang", ordered));
     FcLangSetDestroy(ordered);
     Expect(pattern, "%{lang}", "bm|be|fr|ff|zz-extra|aa-extra");
@@ -140,7 +140,7 @@ int main() {
     CHECK(FcPatternAddString(escaped, "family", Text("a-b:c,d\\e")));
     CHECK(FcPatternAddString(escaped, "style", Text("s=t_u:v,w\\x")));
     Expect(escaped, "%{=unparse}", "a\\-b\\:c\\,d\\\\e:style=s\\=t\\_u\\:v\\,w\\\\x");
-    FcPatternDestroy(escaped);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(escaped);
+    FcPatternDestroy_nid_postfix(pattern);
     std::puts("Fontconfig format checks passed");
 }

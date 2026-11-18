@@ -169,6 +169,9 @@ public:
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
+    std::uint64_t clearedWrappersCount = 0;
+    bool allShadowRootsOpen = false;
+    bool overrideBuiltinsDisabled = false;
     static BundleScriptWorld* NormalWorld() {
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
@@ -177,6 +180,12 @@ public:
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
+    RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBoundsExcludingScrollbars{{0.0, 0.0}, {0.0, 0.0}};
+    SizeValue scrollOffset{0.0, 0.0};
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -189,6 +198,13 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -198,6 +214,9 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
@@ -205,17 +224,25 @@ public:
     std::uint32_t mediaType = 0;
 };
 
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
 public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    mutable Retained<BundleInspector> inspector;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
     bool wasUserInitiated = false;
     bool isCancelled = false;
 };
@@ -226,6 +253,14 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+};
+
+class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
+public:
+    Retained<String> title;
+    Retained<String> album;
+    Retained<String> artist;
+    Retained<URL> artworkURL;
 };
 
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
@@ -347,6 +382,13 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    std::uint64_t frameID = 0;
+    std::uint32_t loadState = 2;
+    Retained<URL> url;
+    Retained<String> title;
+    Retained<String> mimeType;
+    Retained<URL> provisionalURL;
+    Retained<URL> unreachableURL;
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -422,6 +464,12 @@ public:
         lastCachesCleared = cachesToClear;
         std::erase(origins, origin);
     }
+};
+
+class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
+public:
+    std::u16string path;
+    std::map<std::u16string, Retained<Object>> filters;
 };
 
 }  // namespace NKWebKit

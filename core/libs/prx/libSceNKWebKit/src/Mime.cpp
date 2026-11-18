@@ -54,6 +54,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/SecurityOriginAbi.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -904,3 +905,17 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry25mediaMIMETypeF
 }
 
 }
+
+namespace NKWebKit::WebCoreAbi {
+
+bool ShouldTreatURLSchemeAsNoAccess(const WtfAbi::StringImpl* scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_noAccessSchemes, scheme);
+}
+
+bool ShouldPartitionCacheForURLScheme(const WtfAbi::StringImpl* scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_cachePartitionedSchemes, scheme);
+}
+
+}  // namespace NKWebKit::WebCoreAbi

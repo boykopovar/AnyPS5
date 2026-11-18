@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <type_traits>
 
@@ -79,7 +80,8 @@ void Release(CStringBuffer* buffer);
 
 struct String {
     StringImpl* impl;
-    explicit String(StringImpl* value = nullptr) : impl(value) {}
+    String() : impl(nullptr) {}
+    explicit String(StringImpl* value) : impl(value) {}
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
@@ -88,6 +90,7 @@ struct String {
 
 StringView ViewOf(const StringImpl* impl);
 char16_t CodeUnitAt(const StringView& view, unsigned index);
+std::optional<std::uint16_t> PortOf(const URL& url);
 
 struct StringViewWithUnderlyingString {
     StringView view;
