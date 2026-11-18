@@ -123,6 +123,11 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const auto target = device->Target();
+        if (!TargetHasCapability(target, spv::CapabilityFloat16) || !TargetHasCapability(target, spv::CapabilityRoundingModeRTE) || !TargetHasCapability(target, spv::CapabilityDenormPreserve)) {
+            std::puts("f16 scalar arithmetic NaN tests skipped: native f16 arithmetic is unavailable");
+            return VulkanTestSkipped;
+        }
         Run(*device, false);
         Check(IeeeOff, "with IEEE mode off");
         Run(*device, true);
