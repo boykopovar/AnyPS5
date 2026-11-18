@@ -35,8 +35,8 @@ int main() {
 
     EcPoint* copy = EC_POINT_dup_nid_postfix(source, group);
     Require(copy != nullptr && copy != source);
-    Require(Encoding(group, copy) == Encoding(group, source));
-    EC_POINT_clear_free_nid_postfix(copy);
+    const auto copied = Encoding(group, copy);
+    Require(copied == Encoding(group, source));
 
     Require(EC_POINT_dup_nid_postfix(nullptr, group) == nullptr);
     Require(EC_POINT_dup_nid_postfix(source, other) == nullptr);
@@ -50,6 +50,8 @@ int main() {
     Require(threw);
 
     EC_KEY_free_nid_postfix(key);
+    Require(Encoding(group, copy) == copied);
+    EC_POINT_clear_free_nid_postfix(copy);
     EC_GROUP_free_nid_postfix(other);
     EC_GROUP_free_nid_postfix(group);
     std::puts("libSceLibreSsl3 EC_POINT_dup tests passed");
