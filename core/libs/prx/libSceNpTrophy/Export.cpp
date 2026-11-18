@@ -185,18 +185,30 @@ std::uint32_t Progress(const Context& context) {
 int CopyIcon(const Context& context, const std::string& name, void* buffer, std::uint64_t* size) {
     const auto entry = context.entries.find(name);
     if (entry == context.entries.end()) return NP_TROPHY_ERROR_ICON_FILE_NOT_FOUND;
+    const std::uint64_t iconSize = entry->second.size;
     if (buffer == nullptr) {
-        *size = entry->second.size;
-        return 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(size, &iconSize, sizeof(iconSize));
+        errno = savedErrno;
+        return copied ? 0 : NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
-    if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
+    std::uint64_t capacity = 0;
+    {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&capacity, size, sizeof(capacity));
+        errno = savedErrno;
+        if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
+    if (capacity < iconSize) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
     const GuestArena::HostWrite destination(buffer, entry->second.size);
     if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
-    *size = entry->second.size;
-    return 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &iconSize, sizeof(iconSize));
+    errno = savedErrno;
+    return copied ? 0 : NP_TROPHY_ERROR_INVALID_ARGUMENT;
 }
 
 }

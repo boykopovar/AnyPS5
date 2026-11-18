@@ -457,6 +457,37 @@ void CheckLookupNetInitVariants() {
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
 }
 
+void CheckLookupNetConcurrency() {
+    std::atomic<int> errors{0};
+    constexpr int ThreadCount = 4;
+    constexpr int Iterations = 2000;
+    std::thread threads[ThreadCount];
+    for (int t = 0; t < ThreadCount; ++t) {
+        threads[t] = std::thread([&] {
+            for (int i = 0; i < Iterations; ++i) {
+                if (sceNpLookupNetInit() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                const int ctx = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
+                if (ctx <= 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                } else if (sceNpLookupNetDeleteTitleCtx(ctx) != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (sceNpLookupNetTerm() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        });
+    }
+    for (auto& worker : threads) worker.join();
+    Require(errors.load(std::memory_order_relaxed) == 0, "sceNpLookupNetTerm", "concurrent init/term reset a live title context");
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "concurrent init/term left the service initialized");
+}
+
 void CheckBandwidthTestInitStart() {
     Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
     Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
@@ -604,6 +635,7 @@ int main() {
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckLookupNet();
     CheckLookupNetInitVariants();
+    CheckLookupNetConcurrency();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();

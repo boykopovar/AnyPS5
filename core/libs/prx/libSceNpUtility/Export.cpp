@@ -584,12 +584,10 @@ int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetr
     return SetTimeout(lookupNet, id, resolveRetry, static_cast<std::uint32_t>(resolveTimeout), static_cast<std::uint32_t>(connectTimeout), static_cast<std::uint32_t>(sendTimeout), static_cast<std::uint32_t>(receiveTimeout));
 }
 int APS5_VABI sceNpLookupNetTerm(void) {
-    {
-        std::lock_guard lock(lookupNetStateMutex);
-        if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
-        if (--lookupNetRefCount > 0) return 0;
-        lookupNetInitialized = false;
-    }
+    std::lock_guard lock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (--lookupNetRefCount > 0) return 0;
+    lookupNetInitialized = false;
     LookupNetReset();
     return 0;
 }

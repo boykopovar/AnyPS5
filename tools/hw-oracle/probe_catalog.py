@@ -20,6 +20,7 @@ MODE_LIMITS = {"ieee": 2, "denorm32": 4, "denorm16": 4, "dx10_clamp": 2,
                "round32": 4, "round16": 4, "fp16_overflow": 2}
 PROBE_KEYS = {"id", "instruction", "description", "body", "output_registers", "wave_size",
               "floating_point_modes", "lds_bytes", "memory", "rows"}
+OPTIONAL_PROBE_KEYS = {"default"}
 CATALOG_KEYS = {"schema_version", "probes"}
 ROW_KEYS = {"name", "input"}
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -47,9 +48,10 @@ def validate_probe(probe, index):
     context = f"probe {index}"
     if not isinstance(probe, dict):
         raise ValueError(f"{context} must be an object")
-    if set(probe) != PROBE_KEYS:
+    keys = set(probe)
+    if not PROBE_KEYS <= keys or not keys <= PROBE_KEYS | OPTIONAL_PROBE_KEYS:
         missing = sorted(PROBE_KEYS - probe.keys())
-        extra = sorted(probe.keys() - PROBE_KEYS)
+        extra = sorted(probe.keys() - PROBE_KEYS - OPTIONAL_PROBE_KEYS)
         details = []
         if missing:
             details.append("missing " + ", ".join(missing))
@@ -59,6 +61,8 @@ def validate_probe(probe, index):
     probe_id = probe["id"]
     if not isinstance(probe_id, str) or not IDENTIFIER.fullmatch(probe_id):
         raise ValueError(f"{context} id must contain lowercase letters, digits and single hyphens")
+    if "default" in probe and type(probe["default"]) is not bool:
+        raise ValueError(f"probe {probe_id} default must be boolean")
     instruction = probe["instruction"]
     if not isinstance(instruction, str) or not INSTRUCTION.fullmatch(instruction):
         raise ValueError(f"{context} instruction must be an assembly mnemonic")
@@ -67,9 +71,11 @@ def validate_probe(probe, index):
         raise ValueError(f"probe {probe_id} description must be nonempty text")
     body = probe["body"]
     body_lines = [line.strip() for line in body.splitlines() if line.strip()] if isinstance(body, str) else []
-    if len(body_lines) != 1 or body_lines[0].split()[0] != instruction or any(
-            marker in body_lines[0] for marker in ("#", ";")):
-        raise ValueError(f"probe {probe_id} body must contain one uncommented declared instruction")
+    mnemonics = [line.split()[0] for line in body_lines]
+    if not body_lines or mnemonics.count(instruction) != 1 or any(
+            not INSTRUCTION.fullmatch(mnemonic) or mnemonic == "s_endpgm" for mnemonic in mnemonics) or any(
+            marker in line for line in body_lines for marker in ("#", ";")):
+        raise ValueError(f"probe {probe_id} body must contain exactly one uncommented declared instruction and explicit support instructions")
     output_registers = probe["output_registers"]
     if type(output_registers) is not int or output_registers not in range(1, 17):
         raise ValueError(f"probe {probe_id} output_registers must be from 1 to 16")
@@ -140,7 +146,7 @@ def read_catalog(path=DEFAULT_CATALOG):
 
 def select_probes(probes, identifiers):
     if not identifiers:
-        return list(probes)
+        return [probe for probe in probes if probe.get("default", True)]
     by_id = {probe["id"]: probe for probe in probes}
     selected = []
     seen = set()
@@ -283,6 +289,7 @@ def run_probes(probes, digest, output_dir, device_label):
     directory.mkdir(parents=True, exist_ok=True)
     runtime = hw_oracle.runtime()
     target = hw_oracle.target()
+    reports = []
     for probe, destination in zip(probes, destinations):
         rows = [tuple(row["input"]) for row in probe["rows"]]
         outputs = hw_oracle.run(
@@ -296,7 +303,9 @@ def run_probes(probes, digest, output_dir, device_label):
                for output in outputs for word in output[:probe["output_registers"]]):
             raise ValueError(f"hardware oracle returned a non-dword result for {probe['id']}")
         report = make_result(probe, digest, device_label, target, runtime, outputs)
-        write_atomic(destination, json.dumps(report, indent=2) + "\n")
+        reports.append((probe, destination, json.dumps(report, indent=2) + "\n"))
+    for probe, destination, report in reports:
+        write_atomic(destination, report)
         print(f"Measured {probe['id']}: {destination}")
     return destinations
 
@@ -382,7 +391,7 @@ def build_parser():
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
         command.add_argument("--probe", action="append", dest="probe_ids",
-                             help="select a probe id; repeat to select more than one (default: all)")
+                             help="select a probe id; repeat to select more than one (default: default probe set)")
         if name == "generate":
             command.add_argument("--output-dir", type=Path, required=True)
         else:

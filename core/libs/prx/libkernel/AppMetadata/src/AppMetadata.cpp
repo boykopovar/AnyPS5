@@ -14,6 +14,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -42,9 +43,20 @@ void copyToFixedBuffer(char* destination, std::size_t destinationSize, const std
     std::memcpy(destination, source.c_str(), source.size() + 1);
 }
 
+bool fileExists(const std::filesystem::path& path) {
+    std::error_code error;
+    return std::filesystem::exists(path, error);
+}
+
+bool mountDirectory(const std::filesystem::path& path) {
+    std::error_code error;
+    std::filesystem::create_directories(path, error);
+    return !error && std::filesystem::is_directory(path, error);
+}
+
 ParsedParamJson parseParams(const std::filesystem::path& paramJson, const std::filesystem::path& paramSfo) {
-    if (std::filesystem::exists(paramJson)) return parseParamJson(paramJson);
-    if (std::filesystem::exists(paramSfo)) return parseParamSfo(paramSfo);
+    if (fileExists(paramJson)) return parseParamJson(paramJson);
+    if (fileExists(paramSfo)) return parseParamSfo(paramSfo);
     throw std::runtime_error("param.json or param.sfo not found");
 }
 
@@ -100,12 +112,13 @@ const bool g_sandboxApp0Mounted = [] {
 
 const bool g_downloadDataMounted = [] {
     try {
-        const auto run = std::filesystem::current_path();
+        std::error_code error;
+        const auto run = std::filesystem::current_path(error);
+        if (error) return false;
         const auto metadata = run / "app0" / "sce_sys";
-        if (!std::filesystem::exists(metadata / "param.json") && !std::filesystem::exists(metadata / "param.sfo")) return false;
+        if (!fileExists(metadata / "param.json") && !fileExists(metadata / "param.sfo")) return false;
         if (parseParams(metadata / "param.json", metadata / "param.sfo").downloadDataSizeMiB == 0) return false;
-        std::filesystem::create_directories(run / "download0");
-        return true;
+        return mountDirectory(run / "download0");
     } catch (const std::exception&) {
         return false;
     }
@@ -113,11 +126,12 @@ const bool g_downloadDataMounted = [] {
 
 const bool g_dataMounted = [] {
     try {
-        const auto run = std::filesystem::current_path();
+        std::error_code error;
+        const auto run = std::filesystem::current_path(error);
+        if (error) return false;
         const auto metadata = run / "app0" / "sce_sys";
-        if (!std::filesystem::exists(metadata / "param.json") && !std::filesystem::exists(metadata / "param.sfo")) return false;
-        std::filesystem::create_directories(run / "data");
-        return true;
+        if (!fileExists(metadata / "param.json") && !fileExists(metadata / "param.sfo")) return false;
+        return mountDirectory(run / "data");
     } catch (const std::exception&) {
         return false;
     }
@@ -128,7 +142,7 @@ void ensureIconLoaded() {
     if (g_iconAttempted) return;
     g_iconAttempted = true;
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataIconGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) return;
+    if (!fileExists(resolvedPath)) return;
     std::ifstream file(resolvedPath, std::ios::binary);
     if (!file.is_open()) throw std::runtime_error("failed to open icon0.png");
     file.seekg(0, std::ios::end);
@@ -186,7 +200,7 @@ AppTitleId GetAppTitleId_nid_postfix() {
 }
 
 bool HasAppParamJson_nid_no_patch() {
-    return std::filesystem::exists(ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath));
+    return fileExists(ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath));
 }
 
 AppContentVersion GetAppContentVersion_nid_no_patch() {

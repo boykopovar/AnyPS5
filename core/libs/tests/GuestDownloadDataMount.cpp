@@ -24,6 +24,11 @@ static void WriteParamSfo(const std::filesystem::path& path) {
 int main(int argc, char** argv) {
     Require(argc == 2);
     const std::string_view mode = argv[1];
+    if (mode == "blocked") {
+        Require(std::filesystem::is_regular_file("download0") && std::filesystem::is_regular_file("data"));
+        Require(std::strcmp(GetAppTitleId_nid_postfix().value, "PPSA00000") == 0);
+        return 0;
+    }
     Require(std::filesystem::is_directory("download0") == (mode == "declared" || mode == "sfo-child"));
     const bool data = std::filesystem::is_directory("data");
     std::filesystem::remove_all("data");
