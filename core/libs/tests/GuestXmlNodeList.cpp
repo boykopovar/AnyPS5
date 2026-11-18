@@ -1,5 +1,6 @@
 #include "prx/libSceXml/include/Api.hpp"
 #include "prx/libSceXml/include/InventoryExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -238,6 +246,43 @@ void TestDocumentLists() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+class GuardedPage {
+    char* allocation;
+    std::size_t size;
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        allocation = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(allocation != nullptr, "allocate pages");
+        DWORD previous;
+        Require(VirtualProtect(allocation + size, size, PAGE_NOACCESS, &previous) != 0, "protect page");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size");
+        size = static_cast<std::size_t>(page);
+        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "allocate pages");
+        allocation = static_cast<char*>(mapped);
+        Require(mprotect(allocation + size, size, PROT_NONE) == 0, "protect page");
+#endif
+        char value = 0;
+        Require(!GuestCopyIn_nid_no_patch(&value, allocation + size, 1), "the guard page is unreadable");
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(allocation, 0, MEM_RELEASE);
+#else
+        munmap(allocation, size * 2);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    char* End() { return allocation + size; }
+};
+
 bool Same(XmlNodeId left, XmlNodeId right) {
     return left.first == right.first && left.second == right.second && left.flag == right.flag;
 }
@@ -290,6 +335,16 @@ void TestFindByName() {
         threw = true;
     }
     Require(threw, "a null name buffer throws");
+    GuardedPage guarded;
+    std::memcpy(guarded.End() - 2, "bb", 2);
+    const XmlString runsIntoGuard{guarded.End() - 2, 2};
+    threw = false;
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &runsIntoGuard);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a name that runs into unreadable memory throws instead of matching as empty");
 
     Require(_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(&document, root, &list) == 0, "the children again");
     Require(f.Parse("<s/>") == 0, "parse again");

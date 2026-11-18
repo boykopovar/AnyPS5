@@ -1062,7 +1062,9 @@ XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(const XmlH
     if (name == nullptr || !CopyInGuest(string, name)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: null or unreadable name");
     char first = 0;
     if (string.buffer == nullptr || !CopyInGuest(first, string.buffer)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
-    std::string wanted(GuestStringLength(string.buffer), '\0');
+    const std::size_t length = GuestStringLength(string.buffer);
+    if (length == 0 && first != '\0') throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
+    std::string wanted(length, '\0');
     if (!wanted.empty() && !GuestCopyIn_nid_no_patch(wanted.data(), string.buffer, wanted.size())) throw std::logic_error("sce::Xml::Dom::NodeList::findItem: the name changed while it was read");
     return XmlDom::NodeListFindByName(self, wanted);
 }
