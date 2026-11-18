@@ -255,6 +255,7 @@ static void RequireJoinWindowKeepsReference() {
             std::this_thread::yield();
         }
     }
+    Require(WorkerFinished(thread));
     watchedThread.store(thread, std::memory_order_release);
     finalReleaseDuringWindow.store(false, std::memory_order_relaxed);
     APS5_Test_SetFinalThreadReleaseHook(thread, MarkFinalReleaseDuringWindow);
