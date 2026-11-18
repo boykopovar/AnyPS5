@@ -436,6 +436,24 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual(instruction(listing, "ret"), listing[header + 1])
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
+    def test_direct_calls_and_tail_jumps_name_exported_functions(self):
+        code = b"\xe8\x06\x00\x00\x00\xe9\x01\x00\x00\x00\x90\xc3"
+        symbols = [(EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        names = ", ".join(sorted((EXPORT_NAME, SECOND_IMPORT_NAME)))
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> " + names), listing)
+
+    def test_direct_branch_target_requires_a_defined_function_in_executable_code(self):
+        for section, kind, target in ((1, 0x11, EXPORT_ADDRESS), (1, 0x16, EXPORT_ADDRESS),
+                                      (0, 0x12, EXPORT_ADDRESS), (0xfff2, 0x12, EXPORT_ADDRESS),
+                                      (1, 0x12, DATA_ADDRESS)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\xe8" + struct.pack("<i", target - CODE_ADDRESS - 5) + bytes(6) + b"\xc3"
+                self.annotate(build_module(code=code, symbols=[(EXPORT_NAME, section, kind, target)], relocations=()))
+                self.assertNotIn("; ->", instruction(self.read(".asm").splitlines(), "call"))
+
     def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
         for address in (0, CODE_ADDRESS, 0x100001000):
             for prefix in (b"", b"\xf2", b"\x67", b"\xf2\x67"):
