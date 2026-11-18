@@ -54,7 +54,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <climits>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
@@ -105,7 +104,7 @@ bool CopyOutChunks(unsigned char* destination, const unsigned char* host, std::s
 extern "C" {
 
 int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, unsigned char* out, const unsigned char* in, unsigned int length) {
-    if ((length & 0x7) || length < 24 || length > static_cast<unsigned int>(INT_MAX))
+    if ((length & 0x7) || length < 24)
         return -1;
     if (!key || !out || !in)
         throw std::invalid_argument("AES_unwrap_key requires a key, input and output");
