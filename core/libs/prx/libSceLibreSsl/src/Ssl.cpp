@@ -4,6 +4,7 @@
 
 #include <limits>
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -237,8 +238,13 @@ void APS5_VABI SSL_set_verify_nid_postfix(LibreSslSsl* ssl, int mode, void* call
 void APS5_VABI SSL_get0_alpn_selected_nid_postfix(const LibreSslSsl* ssl, const unsigned char** data, unsigned int* length) {
     if (!data || !length) throw std::invalid_argument(std::string(__func__) + ": null output");
     const Ssl3StateInternal* state = Ssl3Internal(Connection(ssl, __func__), __func__);
-    *data = state ? state->alpnSelected : nullptr;
-    *length = state ? state->alpnSelectedLength : 0;
+    const unsigned char* const selected = state ? state->alpnSelected : nullptr;
+    const unsigned int selectedLength = state ? state->alpnSelectedLength : 0;
+    const int savedErrno = errno;
+    const bool written = GuestWritable_nid_no_patch(data, sizeof(*data)) && GuestWritable_nid_no_patch(length, sizeof(*length))
+        && GuestCopyOut_nid_no_patch(data, &selected, sizeof(selected)) && GuestCopyOut_nid_no_patch(length, &selectedLength, sizeof(selectedLength));
+    errno = savedErrno;
+    if (!written) throw std::invalid_argument(std::string(__func__) + ": unwritable output");
 }
 
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl) {

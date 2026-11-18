@@ -203,6 +203,12 @@ static void TestGetAlpnSelected() {
     data = nullptr;
     SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, &length);
     Require(data == protocol && length == 2);
+    data = nullptr;
+    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, reinterpret_cast<unsigned int*>(std::uintptr_t{0x10})); });
+    Require(data == nullptr);
+    length = 77;
+    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), reinterpret_cast<const unsigned char**>(std::uintptr_t{0x10}), &length); });
+    Require(length == 77);
     stateInternal.alpnSelected = nullptr;
     stateInternal.alpnSelectedLength = 0;
     SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, &length);
