@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -35,18 +36,19 @@ constexpr std::uint32_t DsWord1(std::uint32_t address, std::uint32_t data, std::
     return address | (data << 8u) | (destination << 24u);
 }
 
-constexpr auto BuildCode() {
-    std::array<std::uint32_t, 5 + Operations * 12 + 19> code{};
+constexpr auto BuildCode(bool unalignedOddLanes) {
+    std::array<std::uint32_t, 7 + Operations * 13 + 19> code{};
     std::size_t at = 0;
-    for (const std::uint32_t word : {0x34020084u, 0xe0381000u, 0x80000201u, 0x340c0083u, 0xbf8c3f70u}) code[at++] = word;
+    for (const std::uint32_t word : {0x34020084u, 0xe0381000u, 0x80000201u, 0x340c0083u, 0xbf8c3f70u, unalignedOddLanes ? 0x36120081u : 0x36120080u, 0x34121282u}) code[at++] = word;
     for (std::uint32_t op = 0; op < Operations; ++op) {
         const bool sourceBelow = op % 2u == 0u;
         const std::uint32_t target = RegionBytes * (2u * op + (sourceBelow ? 1u : 0u));
         const std::uint32_t source = RegionBytes * (2u * op + (sourceBelow ? 0u : 1u));
-        const std::uint32_t dwords = sourceBelow ? 0x8000u - (RegionBytes / 4u - 1u) : RegionBytes / 4u + 1u;
-        for (const std::uint32_t word : {0x4a0e0cffu, target, 0x4a100cffu, source,
+        const std::uint32_t slack = unalignedOddLanes ? 0u : 1u;
+        const std::uint32_t dwords = sourceBelow ? 0x8000u - (RegionBytes / 4u - slack) : RegionBytes / 4u + slack;
+        for (const std::uint32_t word : {0x4a0e0cffu, target, 0x4a100cffu, source, 0x4a500f09u,
                  DsWord0(0x4du, 0u), DsWord1(7u, 2u, 0u), DsWord0(0x4du, 0u), DsWord1(8u, 4u, 0u),
-                 DsWord0(Opcodes[op], dwords & 0x7fffu), DsWord1(7u, 0u, 0u),
+                 DsWord0(Opcodes[op], dwords & 0x7fffu), DsWord1(40u, 0u, 0u),
                  DsWord0(0x76u, 0u), DsWord1(7u, 0u, 10u + 2u * op)}) {
             code[at++] = word;
         }
@@ -61,7 +63,8 @@ constexpr auto BuildCode() {
     return code;
 }
 
-alignas(256) constexpr auto Code = BuildCode();
+alignas(256) constexpr auto Code = BuildCode(false);
+alignas(256) constexpr auto UnalignedCode = BuildCode(true);
 
 alignas(256) constexpr std::array<std::uint32_t, 3> AddressOffsetCode{0xdb008000u, 0x00000000u, 0xbf810000u};
 
@@ -104,7 +107,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint64_t a = ValueA(tid);
         const std::uint64_t b = ValueB(tid);
@@ -114,12 +117,12 @@ void Run(AgcDriver::VulkanDevice& device) {
         Input[tid * Inputs + 3] = static_cast<std::uint32_t>(b >> 32u);
     }
     Output.fill(0xdeadbeefu);
-    const auto result = Compile(device, Code);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    const auto result = Compile(device, code);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-void CheckLanes() {
+void CheckLanes(const std::string& pass) {
     constexpr std::array<const char*, Operations> names{
         "ds_add_src2_u64", "ds_sub_src2_u64", "ds_rsub_src2_u64", "ds_inc_src2_u64", "ds_dec_src2_u64", "ds_min_src2_i64", "ds_max_src2_i64", "ds_min_src2_u64",
         "ds_max_src2_u64", "ds_and_src2_b64", "ds_or_src2_b64", "ds_xor_src2_b64", "ds_write_src2_b64", "ds_min_src2_f64", "ds_max_src2_f64",
@@ -138,7 +141,7 @@ void CheckLanes() {
         };
         for (std::uint32_t op = 0; op < Operations; ++op) {
             const std::uint64_t actual = Output[tid * Results + 2u * op] | (static_cast<std::uint64_t>(Output[tid * Results + 2u * op + 1u]) << 32u);
-            Require(actual == expected[op], "lds src2 64: lane " + std::to_string(tid) + " " + names[op] + " is " + Hex(actual) + ", expected " + Hex(expected[op]));
+            Require(actual == expected[op], "lds src2 64 " + pass + ": lane " + std::to_string(tid) + " " + names[op] + " is " + Hex(actual) + ", expected " + Hex(expected[op]));
         }
     }
 }
@@ -158,8 +161,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
-        CheckLanes();
+        Run(*device, Code);
+        CheckLanes("aligned");
+        Run(*device, UnalignedCode);
+        CheckLanes("unaligned");
         CheckAddressOffsetRejected(*device);
         std::puts("lds src2 64 tests passed");
         return 0;

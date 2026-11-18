@@ -198,7 +198,8 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     }
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     const std::uint32_t width = memory.dataDwords;
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 operand = readU32(inst.source0);
+    const IrU32 address = width == 2u ? IrU32(ir.BitwiseAnd(operand.Value(), ir.Constant(~7u))) : operand;
     MemoryInfo source = memory;
     source.offset = memory.secondaryOffset;
     source.secondaryOffset = 0u;
