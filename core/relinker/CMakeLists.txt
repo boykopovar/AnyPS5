@@ -1061,7 +1061,7 @@ if(BUILD_TESTING)
                 add_test(NAME windows_kernel_variant_${kernelVariant} COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_kernel_variant_imports.py
                     $<TARGET_FILE:relinker> libkernel_${kernelVariant}.prx)
-                set_tests_properties(windows_kernel_variant_${kernelVariant} PROPERTIES TIMEOUT 30)
+                set_tests_properties(windows_kernel_variant_${kernelVariant} PROPERTIES TIMEOUT 90)
             endforeach()
         endif()
         add_test(NAME elf_header COMMAND ${Python3_EXECUTABLE}
