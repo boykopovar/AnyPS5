@@ -279,7 +279,8 @@ struct LibreSslSslInternal {
     void* msgCallbackArg;
     unsigned char beforeVerifyCallback[8];
     void* verifyCallback;
-    unsigned char beforeRwstate[60];
+    void* infoCallback;
+    unsigned char beforeRwstate[52];
     int rwstate;
     unsigned char beforeShutdown[8];
     int shutdown;
