@@ -1111,12 +1111,13 @@ int Request::Send(const void* data, std::size_t size) {
     if (state->started && state->ended) return AlreadySent;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
-    Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
-    Require(state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
+    const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
+    Require(disconnected || state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
+    Require(disconnected || state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
-        if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+        if (disconnected) {
             state->Check(state->Total());
             state->Raise(NetworkError, "sceHttp2: network disconnected");
         }
