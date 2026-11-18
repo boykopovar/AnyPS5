@@ -638,6 +638,23 @@ class ChangeClassification(unittest.TestCase):
     def test_test_owner_of_an_empty_command_is_none(self):
         self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
 
+class CoreLibTestTargetsTests(unittest.TestCase):
+    def test_guest_and_host_only_targets_are_merged_sorted_and_deduplicated(self):
+        root, targets, changed = Path("root"), {"t": {}}, ["core/libs/x.cpp"]
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=["beta", "Alpha", "shared"]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=["shared", "alpha2"]) as host:
+            result = build_changed_guest_tests.core_lib_test_targets(root, targets, changed)
+        self.assertEqual(result, ["Alpha", "alpha2", "beta", "shared"])
+        guest.assert_called_once_with(root, targets, changed)
+        host.assert_called_once_with(root, targets, changed)
+
+    def test_changed_paths_default_to_none(self):
+        with mock.patch.object(build_changed_guest_tests, "guest_test_targets", return_value=[]) as guest, \
+                mock.patch.object(build_changed_guest_tests.host_only, "host_only_test_targets", return_value=[]) as host:
+            self.assertEqual(build_changed_guest_tests.core_lib_test_targets(Path("root"), {}), [])
+        guest.assert_called_once_with(Path("root"), {}, None)
+        host.assert_called_once_with(Path("root"), {}, None)
+
 
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
