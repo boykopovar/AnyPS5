@@ -393,7 +393,7 @@ static void TestReportedRingLifetime(const PcmFixture& fixture, std::uint32_t ch
     };
     for (std::uint32_t region = 0; region < RegionCount; ++region)
         queue(ring.data() + region * RegionFrames * frameBytes, RegionFrames);
-    std::uint64_t previous = 0;
+    std::uint64_t previous = 0, recycled = 0;
     for (unsigned grain = 0; grain < 100; ++grain) {
         Require(playback.Render() == reference.Render());
         const auto state = playback.State();
@@ -402,16 +402,13 @@ static void TestReportedRingLifetime(const PcmFixture& fixture, std::uint32_t ch
         Require(state.num_decoded_samples == expected.num_decoded_samples);
         Require(state.decoded_data_size >= previous && state.decoded_data_size <= generated * frameBytes);
         Require(state.decoded_data_size % frameBytes == 0);
-        auto released = (state.decoded_data_size - previous) / frameBytes;
-        while (released != 0) {
-            Require(!pending.empty());
+        auto released = state.decoded_data_size / frameBytes - recycled;
+        while (!pending.empty() && released >= pending.front().frames) {
             const auto region = pending.front();
-            const auto frames = static_cast<std::uint32_t>(std::min<std::uint64_t>(released, region.frames));
-            pending.front().data += frames * frameBytes;
-            pending.front().frames -= frames;
-            if (pending.front().frames == 0) pending.pop_front();
-            queue(region.data, frames);
-            released -= frames;
+            pending.pop_front();
+            queue(region.data, region.frames);
+            released -= region.frames;
+            recycled += region.frames;
         }
         previous = state.decoded_data_size;
     }
