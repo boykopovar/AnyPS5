@@ -37,7 +37,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControl
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();
 int APS5_VABI _ZN3JSC20TypedArrayControllerC2Ev();
-int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD0Ev();
 int APS5_VABI _ZN3JSC49throwConstructorCannotBeCalledAsFunctionTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEPKc();
 int APS5_VABI WKNotificationManagerProviderDidUpdateNotificationPolicy();
 bool APS5_VABI _ZN7WebCore29isCharacterSmartReplaceExemptEib(int character, bool isPreviousCharacter);
@@ -78,7 +77,6 @@ int APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_();
 int APS5_VABI _ZNK7WebCore11MessagePort5derefEv();
 int APS5_VABI _ZNK7WebCore17MouseRelatedEvent1yEv();
 int APS5_VABI WKContextSetDownloadClient();
-int APS5_VABI _ZN9Inspector23CanvasBackendDispatcher6createERNS_17BackendDispatcherEPNS_30CanvasBackendDispatcherHandlerE();
 int APS5_VABI _ZN7WebCore15DeferredPromise12callFunctionERN3JSC14JSGlobalObjectENS0_11ResolveModeENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore21PlatformKeyboardEvent24disambiguateKeyDownEventENS_13PlatformEvent4TypeEb();
 int APS5_VABI _ZN7WebCore9JSElementD2Ev();

@@ -75,4 +75,5 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorBackendDispatcherExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorDomainDispatcherExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
