@@ -634,6 +634,19 @@ class EnvReferenceTests(unittest.TestCase):
         python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
+class ListNamesTests(unittest.TestCase):
+    def test_names_are_sorted_and_every_use_is_listed(self):
+        found = {"APS5_B": [("core/b.cpp", 7, "string", "")],
+                 "APS5_A": [("core/a.cpp", 3, "integer", "0"), ("core/c.cpp", 9, "presence", "")]}
+        out = io.StringIO()
+        env_reference.list_names(found, out)
+        self.assertEqual(out.getvalue(), "APS5_A\tinteger\tcore/a.cpp:3\t0\nAPS5_A\tpresence\tcore/c.cpp:9\t\nAPS5_B\tstring\tcore/b.cpp:7\t\n")
+
+    def test_no_names_writes_nothing(self):
+        out = io.StringIO()
+        env_reference.list_names({}, out)
+        self.assertEqual(out.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
