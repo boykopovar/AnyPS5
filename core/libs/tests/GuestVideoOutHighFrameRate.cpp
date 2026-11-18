@@ -5,8 +5,8 @@
 #include "tests/VideoOutTestEnvironment.hpp"
 #ifdef _WIN32
 #include "SDL.h"
-#endif
 #undef main
+#endif
 #include <chrono>
 #include <cstdio>
 #include <cstring>
