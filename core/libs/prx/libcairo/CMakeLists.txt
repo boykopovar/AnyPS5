@@ -289,7 +289,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_cairo_ft_font_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(guest_cairo_ft_font_face_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoFtFontFace.cpp)
+    target_include_directories(guest_cairo_ft_font_face_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_ft_font_face_tests PRIVATE libcairo libfontconfig libc)
+    configure_windows_unwind(guest_cairo_ft_font_face_tests)
+    add_test(NAME guest_cairo_ft_font_face COMMAND guest_cairo_ft_font_face_tests)
+    set_tests_properties(guest_cairo_ft_font_face PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_ft_font_face PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
-target_sources(libcairo PRIVATE src/FtFontOptions.cpp)
+target_sources(libcairo PRIVATE src/FtFontOptions.cpp src/FtFontFace.cpp)
 target_link_libraries(libcairo PRIVATE libfontconfig)

@@ -33,10 +33,6 @@ int APS5_VABI cairo_pattern_set_extend() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_ft_font_face_create_for_pattern() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 
 

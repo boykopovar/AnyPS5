@@ -52,7 +52,6 @@ int APS5_VABI cairo_ft_scaled_font_lock_face();
 int APS5_VABI cairo_pattern_reference();
 int APS5_VABI cairo_scaled_font_get_font_options();
 int APS5_VABI cairo_pattern_set_extend();
-int APS5_VABI cairo_ft_font_face_create_for_pattern();
 int APS5_VABI cairo_pattern_create_linear();
 int APS5_VABI cairo_set_scaled_font();
 int APS5_VABI cairo_arc();
