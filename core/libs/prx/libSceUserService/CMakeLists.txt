@@ -162,4 +162,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_user_service_age_level_guest_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
+
+    add_test_executable(guest_user_service_user_group_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceUserGroupBounds.cpp Export.cpp)
+    target_include_directories(guest_user_service_user_group_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_user_group_bounds_tests PRIVATE libSceSystemService libc libkernel)
+    configure_windows_unwind(guest_user_service_user_group_bounds_tests)
+    add_test(NAME guest_user_service_user_group_bounds COMMAND guest_user_service_user_group_bounds_tests)
+    set_tests_properties(guest_user_service_user_group_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_user_group_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
 endif()
