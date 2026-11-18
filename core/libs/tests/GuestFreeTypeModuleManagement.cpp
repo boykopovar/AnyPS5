@@ -5,7 +5,9 @@
 #include FT_MODULE_H
 #include FT_RENDER_H
 
+#include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -111,6 +113,12 @@ static void TestInvalidGuestPointers() {
     Require(Rejects([&] { FT_Get_Renderer_nid_postfix(badLibrary, FT_GLYPH_FORMAT_OUTLINE); }));
     Require(Rejects([&] { FT_Remove_Module_nid_postfix(badLibrary, nullptr); }));
     Require(Rejects([&] { FT_Add_Default_Modules_nid_postfix(badLibrary); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(Rejects([&] { FT_Get_Module_nid_postfix(misaligned, "truetype"); }));
+    Require(Rejects([&] { FT_Get_Renderer_nid_postfix(misaligned, FT_GLYPH_FORMAT_OUTLINE); }));
+    Require(Rejects([&] { FT_Remove_Module_nid_postfix(misaligned, nullptr); }));
+    Require(Rejects([&] { FT_Add_Default_Modules_nid_postfix(misaligned); }));
     Require(FT_Get_Module_nid_postfix(&libraries.guest, nullptr) == nullptr);
     Require(FT_Get_Module_nid_postfix(nullptr, badName) == nullptr);
 }
