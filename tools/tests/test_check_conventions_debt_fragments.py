@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from check_conventions import is_debt_fragment, link_base
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -69,6 +70,17 @@ class DebtFragmentTests(unittest.TestCase):
     def test_a_link_to_a_missing_file_is_reported(self):
         findings = self.check("# libSceExample\n\n## add Silent stubs\n\n- [sceExampleD](../../../core/libs/prx/libSceExample/Gone.cpp) (libSceExample) - throws\n")
         self.assertEqual(findings, [("doc-link", FRAGMENT, 5, "../../../core/libs/prx/libSceExample/Gone.cpp")])
+
+class DebtFragmentPathTests(unittest.TestCase):
+    def test_fragment_paths_are_markdown_files_directly_under_changes(self):
+        self.assertTrue(is_debt_fragment("docs/dev/debt/changes/fix-foo.md"))
+        for path in ("docs/dev/debt/changes/sub/x.md", "docs/dev/debt/changes/x.txt", "docs/dev/debt/x.md", "docs/dev/debt/changes"):
+            with self.subTest(path=path):
+                self.assertFalse(is_debt_fragment(path))
+
+    def test_link_base_maps_fragments_next_to_the_debt_files(self):
+        self.assertEqual(link_base("docs/dev/debt/changes/fix-foo.md"), "docs/dev/debt/fragment.md")
+        self.assertEqual(link_base("docs/dev/debt/libkernel.md"), "docs/dev/debt/libkernel.md")
 
 
 if __name__ == "__main__":
