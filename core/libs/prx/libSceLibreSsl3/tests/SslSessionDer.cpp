@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <ctime>
 #include <initializer_list>
@@ -722,27 +723,46 @@ void TestAllocationFailures() {
 void TestExactBytesNegativeControl() {
     LibreSsl3SslSession session = MinimalSession();
     const Bytes expected = MinimalEncoding();
-    const Bytes encoded = Encode(session);
-    Require(encoded == expected);
-    for (std::size_t index = 0; index < expected.size(); ++index) {
-        Bytes corrupted = expected;
-        corrupted[index] ^= 0x01;
-        Require(corrupted != expected);
-        Require(encoded != corrupted);
-    }
+    Require(Encode(session) == expected);
+
+    LibreSsl3SslSession keyed = MinimalSession();
+    keyed.masterKeyLength = 4;
+    keyed.masterKey[0] = 0x11;
+    keyed.masterKey[1] = 0x22;
+    keyed.masterKey[2] = 0x33;
+    keyed.masterKey[3] = 0x44;
+    const Bytes encodedKeyed = Encode(keyed);
+    const Bytes keyElement {0x04, 0x04, 0x11, 0x22, 0x33, 0x44};
+    Bytes corrupted = encodedKeyed;
+    auto at = std::search(corrupted.begin(), corrupted.end(), keyElement.begin(), keyElement.end());
+    Require(at != corrupted.end());
+    *(at + 5) ^= 0x01;
+    const unsigned char* cursor = corrupted.data();
+    auto* decoded = d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(corrupted.size()));
+    Require(decoded != nullptr);
+    Require(decoded->masterKeyLength == 4);
+    Require(decoded->masterKey[3] != keyed.masterKey[3]);
+    free_nid_postfix(decoded);
+
+    Bytes shortened = expected;
+    shortened[1] = static_cast<unsigned char>(shortened[1] - 1);
+    const unsigned char* shortCursor = shortened.data();
+    Require(d2i_SSL_SESSION_nid_postfix(nullptr, &shortCursor,
+        static_cast<std::int64_t>(shortened.size())) == nullptr);
+    DrainErrors();
 }
 
 }
 
 int main() {
-    std::array<void*, 7> api{
-        reinterpret_cast<void*>(Allocate_nid_no_patch),
-        reinterpret_cast<void*>(Free_nid_no_patch),
-        reinterpret_cast<void*>(Callocate_nid_no_patch),
-        reinterpret_cast<void*>(Reallocate_nid_no_patch),
-        reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch),
-        reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),
-        reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
+    std::array<void*, 10> api{};
+    api[0] = reinterpret_cast<void*>(Allocate_nid_no_patch);
+    api[1] = reinterpret_cast<void*>(Free_nid_no_patch);
+    api[2] = reinterpret_cast<void*>(Callocate_nid_no_patch);
+    api[3] = reinterpret_cast<void*>(Reallocate_nid_no_patch);
+    api[4] = reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch);
+    api[5] = reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch);
+    api[6] = reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch);
     ApplicationHeapRegister_nid_no_patch(api.data());
     DrainErrors();
     TestMinimalExactBytes();

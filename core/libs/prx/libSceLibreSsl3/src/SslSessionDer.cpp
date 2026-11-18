@@ -19,13 +19,13 @@ constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
 constexpr int BadObjectHeader = 102;
 constexpr int TooLong = 155;
+constexpr int MallocFailure = 65;
 constexpr int WrongTag = 168;
 
 constexpr char DecodeCaller[] = "d2i_SSL_SESSION";
 
 constexpr std::uint64_t SessionAsn1Version = 1;
 constexpr std::uint64_t DefaultSessionTimeout = 3;
-constexpr std::uint64_t MaxLifetime = 0xffffffffu;
 
 constexpr unsigned char IntegerTag = 0x02;
 constexpr unsigned char OctetStringTag = 0x04;
@@ -387,10 +387,6 @@ bool DecodeSession(std::span<const unsigned char> input, std::span<const unsigne
 
     std::uint64_t lifetime = 0;
     if (!ReadOptionalInteger(content, LifetimeTag, lifetime, 0)) return false;
-    if (lifetime > MaxLifetime) {
-        PutError(TooLong);
-        return false;
-    }
     if (lifetime != 0) NotImplemented_nid_no_patch(DecodeCaller);
 
     std::span<const unsigned char> ticket;
@@ -471,7 +467,10 @@ LibreSsl3SslSession* APS5_VABI d2i_SSL_SESSION_nid_postfix(
         if (!CopyOut(decoded, &session, sizeof(session))) NotImplemented_nid_no_patch(__func__);
     } else {
         decoded = static_cast<LibreSsl3SslSession*>(calloc_nid_postfix(1, sizeof(LibreSsl3SslSession)));
-        if (!decoded) return nullptr;
+        if (!decoded) {
+            PutError(MallocFailure);
+            return nullptr;
+        }
         std::memcpy(decoded, &session, sizeof(session));
     }
 
