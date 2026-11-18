@@ -251,6 +251,55 @@ void BoundsWhatItCopies() {
     EC_KEY_free_nid_postfix(key);
 }
 
+void RejectsCallerPointersThatCannotBeWritten() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    void* base = VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(base != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* base = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(base != MAP_FAILED);
+#endif
+    EcKey* existing = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
+    Require(existing != nullptr);
+    const EcGroup* const group = existing->group;
+    auto* keySlot = static_cast<EcKey**>(base);
+    auto* cursorSlot = reinterpret_cast<const unsigned char**>(reinterpret_cast<unsigned char*>(base) + sizeof(EcKey*));
+    *keySlot = existing;
+    *cursorSlot = P256.data();
+#ifdef _WIN32
+    DWORD previous;
+    Require(VirtualProtect(base, page, PAGE_READONLY, &previous));
+#else
+    Require(mprotect(base, page, PROT_READ) == 0);
+#endif
+    const unsigned char* cursor = P256.data();
+    bool threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(keySlot, &cursor, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && cursor == P256.data() && *keySlot == existing && existing->group == group);
+    EcKey* none = nullptr;
+    threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&none, cursorSlot, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && none == nullptr && *cursorSlot == P256.data());
+    EC_KEY_free_nid_postfix(existing);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page);
+#endif
+}
+
 void ReadsOnlyTheBytesTheEncodingNeeds() {
 #ifdef _WIN32
     SYSTEM_INFO info;
@@ -332,6 +381,7 @@ int main() {
     RejectsCurvesItCannotName();
     RejectsMalformedDer();
     BoundsWhatItCopies();
+    RejectsCallerPointersThatCannotBeWritten();
     ReadsOnlyTheBytesTheEncodingNeeds();
     RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
