@@ -716,8 +716,8 @@ void TestAllocationFailures() {
     const unsigned char* cursor = der.data();
     Require(d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size())) == nullptr);
     Require(cursor == der.data());
+    RequireQueue({65});
     Require(allocations.empty());
-    DrainErrors();
 }
 
 void TestExactBytesNegativeControl() {
@@ -741,7 +741,8 @@ void TestExactBytesNegativeControl() {
     auto* decoded = d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(corrupted.size()));
     Require(decoded != nullptr);
     Require(decoded->masterKeyLength == 4);
-    Require(decoded->masterKey[3] != keyed.masterKey[3]);
+    Require(decoded->masterKey[3] == 0x45);
+    Require(std::memcmp(decoded->masterKey, keyed.masterKey, 3) == 0);
     free_nid_postfix(decoded);
 
     Bytes shortened = expected;
