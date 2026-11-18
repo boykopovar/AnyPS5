@@ -40,6 +40,7 @@ struct CompiledVariant {
     CompiledBindingLayout bindings;
     CompiledShaderArtifact artifact;
     std::shared_ptr<BufferSubstituteTable> substitutes;
+    std::vector<std::byte> artifactIdentity;
 };
 
 }
