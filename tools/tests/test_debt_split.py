@@ -587,6 +587,15 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(debt_split.render_index(index), "# T\n\nnote\n\n### S\n\n- a\n- b\n")
         self.assertEqual(debt_split.render_index([("entry", "- a"), ("entry", "- b")]), "- a\n- b\n")
 
+class SectionsOfTests(unittest.TestCase):
+    def test_lists_third_level_headings_in_order(self):
+        text = "# Title\n\n### Alpha\n- a\n\n### Beta\n- b\n"
+        self.assertEqual(debt_split.sections_of(text), ["Alpha", "Beta"])
+
+    def test_text_without_sections_has_none(self):
+        self.assertEqual(debt_split.sections_of("# Title\n- a\nbody\n"), [])
+        self.assertEqual(debt_split.sections_of(""), [])
+
 
 if __name__ == "__main__":
     unittest.main()
