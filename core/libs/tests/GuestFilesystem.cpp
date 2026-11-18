@@ -820,6 +820,7 @@ int main() {
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
     Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelDebugOutText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000eu));
     auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
 #ifdef _WIN32
