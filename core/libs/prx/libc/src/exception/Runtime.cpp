@@ -154,8 +154,42 @@ static void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exc
     } else Release(header + 1);
 }
 
+#ifdef __APPLE__
+static bool LibcxxStdNameMatches(const char* versioned, const char* name) {
+    constexpr char prefix[] = "NSt3__1";
+    if (std::strncmp(versioned, prefix, sizeof(prefix) - 1) != 0) return false;
+    const char* rest = versioned + sizeof(prefix) - 1;
+    const char* cursor = rest;
+    unsigned components = 0;
+    while (*cursor >= '1' && *cursor <= '9') {
+        std::size_t length = 0;
+        while (*cursor >= '0' && *cursor <= '9') {
+            length = length * 10 + static_cast<std::size_t>(*cursor++ - '0');
+            if (length > 4096) return false;
+        }
+        if (strnlen(cursor, length + 1) <= length) return false;
+        cursor += length;
+        ++components;
+    }
+    if (components == 0 || std::strcmp(cursor, "E") != 0) return false;
+    const std::size_t restLength = static_cast<std::size_t>(cursor - rest);
+    if (components == 1)
+        return std::strncmp(name, "St", 2) == 0 && std::strlen(name + 2) == restLength && std::strncmp(name + 2, rest, restLength) == 0;
+    return std::strncmp(name, "NSt", 3) == 0 && std::strcmp(name + 3, rest) == 0;
+}
+#endif
+
 bool Equal(const std::type_info* a, const std::type_info* b) {
-    return a == b || (a && b && std::strcmp(a->name(), b->name()) == 0);
+    if (a == b) return true;
+    if (!a || !b) return false;
+    const char* first = a->name();
+    const char* second = b->name();
+    if (std::strcmp(first, second) == 0) return true;
+#ifdef __APPLE__
+    return LibcxxStdNameMatches(first, second) || LibcxxStdNameMatches(second, first);
+#else
+    return false;
+#endif
 }
 
 static const std::type_info* TypeOfTypeInfo(const std::type_info* type) {
