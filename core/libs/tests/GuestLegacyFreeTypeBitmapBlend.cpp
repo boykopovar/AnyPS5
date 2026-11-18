@@ -9,6 +9,7 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -210,6 +211,8 @@ static void CheckErrors(const Api& api, FreeType::GuestLibrary* library, FT_Libr
     GuestBitmap empty{};
     GuestVector offset{5, 6};
     Require(api.blend(nullptr, &source.guest, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    errno = 71;
+    Require(api.blend(reinterpret_cast<FreeType::GuestLibrary*>(std::uintptr_t{0x10}), &source.guest, {}, &empty, &offset, color) == FT_Err_Invalid_Argument && errno == 71);
     Require(api.blend(library, nullptr, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
     Require(api.blend(library, &source.guest, {}, nullptr, &offset, color) == FT_Err_Invalid_Argument);
     Require(api.blend(library, &source.guest, {}, &empty, nullptr, color) == FT_Err_Invalid_Argument);

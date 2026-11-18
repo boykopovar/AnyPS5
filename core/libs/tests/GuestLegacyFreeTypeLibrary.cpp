@@ -9,6 +9,7 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -97,6 +98,8 @@ static void CheckGeometryErrors(const Api& api, FreeType::GuestLibrary* library)
     Require(api.geometry(nullptr, geometry.data()) == FT_Err_Invalid_Library_Handle);
     Require(api.geometry(library, nullptr) == FT_Err_Invalid_Argument);
     Require(api.geometry(library, reinterpret_cast<const FreeType::GuestVector*>(std::uintptr_t{0x10})) == FT_Err_Invalid_Argument);
+    errno = 71;
+    Require(api.geometry(reinterpret_cast<FreeType::GuestLibrary*>(std::uintptr_t{0x10}), geometry.data()) == FT_Err_Invalid_Library_Handle && errno == 71);
 }
 
 static Rendered RenderGuest(const Api& api, FreeType::GuestFaceRec* face, std::int32_t mode) {
