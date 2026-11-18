@@ -132,6 +132,15 @@ void RequestMetrics() {
     Require(Equals(Request(4, 0x8000, 0, 0, 0), 16, 16, 32768, 32768, 960, -256, 1216, 1280), "scales request copies the given scale to the missing axis");
     Require(Equals(Request(0, -16 * 64, 8 * 64, 0, 0), 65520, 8, -32768, 16384, 512, -128, 576, -1280), "negative widths keep their sign and truncate the ppem");
 
+    for (const std::uint32_t type : {std::uint32_t{5}, std::numeric_limits<std::uint32_t>::max()}) {
+        Fixture unsupported(1);
+        const GuestSizeMetrics unsupportedBefore = unsupported.size.metrics;
+        const GuestSizeRequestRec unsupportedRequest{type, 16 * 64, 16 * 64, 0, 0};
+        Require(FT_Request_Metrics_nid_postfix(&unsupported.face, &unsupportedRequest) == 0x06, "an unsupported request type is invalid");
+        Require(std::memcmp(&unsupportedBefore, &unsupported.size.metrics, sizeof(unsupportedBefore)) == 0,
+                "an unsupported request type leaves the metrics untouched");
+    }
+
     Fixture bitmapOnly(2);
     const GuestSizeRequestRec request{0, 16 * 64, 16 * 64, 0, 0};
     FT_Request_Metrics_nid_postfix(&bitmapOnly.face, &request);
@@ -148,9 +157,25 @@ void RequestMetrics() {
     Require(FT_Request_Metrics_nid_postfix(&flat.face, &realDim) == 0x85, "a zero face dimension is a division by zero");
     Require(std::memcmp(&before, &flat.size.metrics, sizeof(before)) == 0, "a division by zero leaves the metrics untouched");
 
+    Fixture zeroWidth(1);
+    zeroWidth.face.bbox.xMin = zeroWidth.face.bbox.xMax;
+    const GuestSizeMetrics zeroWidthBefore = zeroWidth.size.metrics;
+    const GuestSizeRequestRec bbox{2, 16 * 64, 16 * 64, 0, 0};
+    Require(FT_Request_Metrics_nid_postfix(&zeroWidth.face, &bbox) == 0x85, "a zero requested face width is a division by zero");
+    Require(zeroWidth.size.metrics.x_scale == zeroWidthBefore.x_scale && zeroWidth.size.metrics.y_scale != zeroWidthBefore.y_scale,
+            "a width division failure keeps the preceding height scale update");
+
+    Fixture oversized(1);
+    const GuestSizeMetrics oversizedBefore = oversized.size.metrics;
+    const GuestSizeRequestRec scales{4, 0x7FFFFFFF, 0x7FFFFFFF, 0, 0};
+    Require(FT_Request_Metrics_nid_postfix(&oversized.face, &scales) == 0x17, "an oversized ppem is an invalid pixel size");
+    Require(oversized.size.metrics.x_ppem == oversizedBefore.x_ppem && oversized.size.metrics.y_ppem == oversizedBefore.y_ppem &&
+                oversized.size.metrics.x_scale == scales.width && oversized.size.metrics.y_scale == scales.height,
+            "an invalid pixel size keeps the scale updates and old ppems");
+
     Fixture scalable(1);
-    Require(Throws([&] { FT_Request_Metrics_nid_postfix(&scalable.face, nullptr); }), "a null request on a scalable face throws");
-    Require(Throws([] { FT_Request_Metrics_nid_postfix(nullptr, nullptr); }), "a null face throws");
+    Require(Invalid([&] { FT_Request_Metrics_nid_postfix(&scalable.face, nullptr); }), "a null request on a scalable face throws");
+    Require(Invalid([] { FT_Request_Metrics_nid_postfix(nullptr, nullptr); }), "a null face throws");
 }
 
 void SelectMetrics() {
@@ -301,6 +326,7 @@ void GuestPointers() {
 
     Fixture unmappedStrikes(3);
     unmappedStrikes.face.available_sizes = reinterpret_cast<GuestBitmapSize*>(std::uintptr_t{0x10});
+    Require(FT_Request_Metrics_nid_postfix(&unmappedStrikes.face, &request) == 0, "FT_Request_Metrics does not read bitmap strikes");
     const GuestSizeMetrics strikesBefore = unmappedStrikes.size.metrics;
     Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&unmappedStrikes.face, 1); }), "unmapped strikes throw from FT_Select_Metrics");
     Require(InvalidArgument([&] { return FT_Match_Size_nid_postfix(&unmappedStrikes.face, &request, 0, &index); }) && index == 99,
