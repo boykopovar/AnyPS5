@@ -10,6 +10,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 namespace UcolClose {
 
@@ -181,13 +182,13 @@ void Run() {
     }
 
     for (const auto incoming : passing) {
-        std::int32_t status = incoming;
-        RequireThrows([&] { ucol_open_nid_postfix("en", &status); });
-        Require(status == incoming);
-
-        status = incoming;
-        RequireThrows([&] { ucol_open_nid_postfix("und", &status); });
-        Require(status == incoming);
+        for (const char* locale : {"en", "und", "", static_cast<const char*>(nullptr)}) {
+            std::int32_t status = incoming;
+            UCollator* collator = ucol_open_nid_postfix(locale, &status);
+            Require(collator != nullptr);
+            Require(status <= 0);
+            ucol_close_nid_postfix(collator);
+        }
     }
 
     RequireThrows([&] { ucol_open_nid_postfix("en", nullptr); });
@@ -279,6 +280,160 @@ void Run() {
 
 } // namespace UcolSetAttribute
 
+namespace UcolCollation {
+
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+
+static_assert(std::is_same_v<decltype(&ucol_strcoll_nid_postfix),
+                             UCollationResult (APS5_VABI*)(const UCollator*, const char16_t*, std::int32_t, const char16_t*, std::int32_t)>);
+static_assert(std::is_same_v<decltype(&ucol_strcollUTF8_nid_postfix),
+                             UCollationResult (APS5_VABI*)(const UCollator*, const char*, std::int32_t, const char*, std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucol_getStrength_nid_postfix), UCollationStrength (APS5_VABI*)(const UCollator*)>);
+static_assert(std::is_same_v<decltype(&ucol_setStrength_nid_postfix), void (APS5_VABI*)(UCollator*, UCollationStrength)>);
+
+namespace {
+
+UCollator* Open(const char* locale) {
+    std::int32_t status = 0;
+    UCollator* collator = ucol_open_nid_postfix(locale, &status);
+    Require(collator != nullptr);
+    Require(status <= 0);
+    return collator;
+}
+
+UCollationResult Compare(const UCollator* collator, const char16_t* source, const char16_t* target) {
+    return ucol_strcoll_nid_postfix(collator, source, -1, target, -1);
+}
+
+void Lengths(const UCollator* root) {
+    Require(Compare(root, u"a", u"b") == UCOL_LESS);
+    Require(Compare(root, u"b", u"a") == UCOL_GREATER);
+    Require(Compare(root, u"a", u"a") == UCOL_EQUAL);
+    Require(ucol_strcoll_nid_postfix(root, u"ab", 1, u"a", -1) == UCOL_EQUAL);
+    Require(ucol_strcoll_nid_postfix(root, u"a", -1, u"ab", 2) == UCOL_LESS);
+    Require(ucol_strcoll_nid_postfix(root, nullptr, 0, u"", -1) == UCOL_EQUAL);
+    Require(ucol_strcoll_nid_postfix(root, nullptr, 0, u"a", -1) == UCOL_LESS);
+    Require(ucol_strcoll_nid_postfix(root, nullptr, 1, u"a", -1) == UCOL_EQUAL);
+    Require(ucol_strcoll_nid_postfix(root, u"a", -1, nullptr, -1) == UCOL_EQUAL);
+}
+
+void PageCrossing(const UCollator* root) {
+    std::vector<char16_t> left(5000, u'a');
+    left.back() = 0;
+    std::vector<char16_t> right(left);
+    Require(Compare(root, left.data(), right.data()) == UCOL_EQUAL);
+    right[4998] = u'b';
+    Require(Compare(root, left.data(), right.data()) == UCOL_LESS);
+    Require(ucol_strcoll_nid_postfix(root, left.data(), 4998, right.data(), 4998) == UCOL_EQUAL);
+}
+
+void Strength(UCollator* root) {
+    Require(ucol_getStrength_nid_postfix(root) == UCOL_TERTIARY);
+    Require(Compare(root, u"a", u"A") == UCOL_LESS);
+    ucol_setStrength_nid_postfix(root, UCOL_PRIMARY);
+    Require(ucol_getStrength_nid_postfix(root) == UCOL_PRIMARY);
+    Require(Compare(root, u"a", u"A") == UCOL_EQUAL);
+    Require(Compare(root, u"a", u"á") == UCOL_EQUAL);
+    ucol_setStrength_nid_postfix(root, UCOL_SECONDARY);
+    Require(Compare(root, u"a", u"á") == UCOL_LESS);
+    Require(Compare(root, u"a", u"A") == UCOL_EQUAL);
+    ucol_setStrength_nid_postfix(root, UCOL_DEFAULT);
+    Require(ucol_getStrength_nid_postfix(root) == UCOL_TERTIARY);
+    Require(ucol_getStrength_nid_postfix(nullptr) == UCOL_DEFAULT);
+    ucol_setStrength_nid_postfix(nullptr, UCOL_PRIMARY);
+}
+
+void Attributes(UCollator* root) {
+    std::int32_t status = 0;
+    Require(ucol_getAttribute_nid_postfix(root, UCOL_NUMERIC_COLLATION, &status) == UCOL_OFF);
+    Require(status == 0);
+    Require(Compare(root, u"9", u"10") == UCOL_GREATER);
+    ucol_setAttribute_nid_postfix(root, UCOL_NUMERIC_COLLATION, UCOL_ON, &status);
+    Require(status == 0);
+    Require(ucol_getAttribute_nid_postfix(root, UCOL_NUMERIC_COLLATION, &status) == UCOL_ON);
+    Require(Compare(root, u"9", u"10") == UCOL_LESS);
+    ucol_setAttribute_nid_postfix(root, UCOL_NUMERIC_COLLATION, UCOL_OFF, &status);
+    Require(status == 0);
+
+    for (std::int32_t incoming : {0, -128}) {
+        status = incoming;
+        Require(ucol_getAttribute_nid_postfix(root, 100, &status) == UCOL_DEFAULT);
+        Require(status == 1);
+        status = incoming;
+        Require(ucol_getAttribute_nid_postfix(root, -1, &status) == UCOL_DEFAULT);
+        Require(status == 1);
+        status = incoming;
+        ucol_setAttribute_nid_postfix(root, UCOL_STRENGTH, static_cast<UColAttributeValue>(100), &status);
+        Require(status == 1);
+        status = incoming;
+        ucol_setAttribute_nid_postfix(root, static_cast<UColAttribute>(100), UCOL_ON, &status);
+        Require(status == 1);
+        status = incoming;
+        ucol_setAttribute_nid_postfix(root, UCOL_FRENCH_COLLATION, UCOL_PRIMARY, &status);
+        Require(status == 1);
+    }
+    status = 0;
+    Require(ucol_getAttribute_nid_postfix(root, UCOL_STRENGTH, &status) == UCOL_TERTIARY);
+    Require(status == 0);
+}
+
+void Utf8(const UCollator* root) {
+    std::int32_t status = 0;
+    Require(ucol_strcollUTF8_nid_postfix(root, "a", -1, "b", -1, &status) == UCOL_LESS);
+    Require(ucol_strcollUTF8_nid_postfix(root, "ab", 1, "a", 1, &status) == UCOL_EQUAL);
+    Require(status == 0);
+    Require(ucol_strcollUTF8_nid_postfix(root, nullptr, 1, "a", -1, &status) == UCOL_EQUAL);
+    Require(status == 1);
+    for (std::int32_t failure : {1, 15}) {
+        status = failure;
+        Require(ucol_strcollUTF8_nid_postfix(nullptr, "a", -1, "b", -1, &status) == UCOL_EQUAL);
+        Require(status == failure);
+    }
+    status = 0;
+    RequireThrows([&] { ucol_strcollUTF8_nid_postfix(nullptr, "a", -1, "b", -1, &status); });
+    RequireThrows([&] { ucol_strcollUTF8_nid_postfix(root, "a", -1, "b", -1, nullptr); });
+}
+
+void Locales() {
+    UCollator* german = Open("de");
+    UCollator* swedish = Open("sv");
+    Require(Compare(german, u"ä", u"z") == UCOL_LESS);
+    Require(Compare(swedish, u"ä", u"z") == UCOL_GREATER);
+    std::int32_t status = 0;
+    Require(ucol_strcollUTF8_nid_postfix(german, "\xc3\xa4", -1, "z", -1, &status) == UCOL_LESS);
+    Require(ucol_strcollUTF8_nid_postfix(swedish, "\xc3\xa4", -1, "z", -1, &status) == UCOL_GREATER);
+    Require(status == 0);
+    ucol_close_nid_postfix(german);
+    ucol_close_nid_postfix(swedish);
+}
+
+void Handles() {
+    UCollator* collator = Open("und");
+    ucol_close_nid_postfix(collator);
+    RequireThrows([&] { ucol_close_nid_postfix(collator); });
+    RequireThrows([&] { Compare(collator, u"a", u"b"); });
+    RequireThrows([&] { ucol_getStrength_nid_postfix(collator); });
+    RequireThrows([&] { ucol_setStrength_nid_postfix(collator, UCOL_PRIMARY); });
+    RequireThrows([] { ucol_strcoll_nid_postfix(nullptr, u"a", -1, u"b", -1); });
+}
+
+}
+
+void Run() {
+    UCollator* root = Open("und");
+    Lengths(root);
+    PageCrossing(root);
+    Strength(root);
+    Attributes(root);
+    Utf8(root);
+    ucol_close_nid_postfix(root);
+    Locales();
+    Handles();
+}
+
+} // namespace UcolCollation
+
 namespace CollatorGuestPointers {
 
 void Run() {
@@ -299,6 +454,19 @@ void Run() {
     rejectsRuntime([&] { ucol_getTailoredSet_nid_postfix(nullptr, badStatus); });
     rejectsRuntime([&] { ucol_open_nid_postfix("en", badStatus); });
     rejectsRuntime([&] { ucol_setAttribute_nid_postfix(nullptr, UCOL_STRENGTH, UCOL_PRIMARY, badStatus); });
+
+    std::int32_t status = 0;
+    UCollator* collator = ucol_open_nid_postfix("und", &status);
+    IcuRecoveredTest::Require(collator != nullptr);
+    auto* badText = reinterpret_cast<const char16_t*>(std::uintptr_t{0x10});
+    auto* badBytes = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    rejectsRuntime([&] { ucol_open_nid_postfix(badBytes, &status); });
+    rejectsRuntime([&] { ucol_strcoll_nid_postfix(collator, badText, -1, u"a", -1); });
+    rejectsRuntime([&] { ucol_strcoll_nid_postfix(collator, u"a", -1, badText, 4); });
+    rejectsRuntime([&] { ucol_strcollUTF8_nid_postfix(collator, badBytes, -1, "a", -1, &status); });
+    rejectsRuntime([&] { ucol_strcollUTF8_nid_postfix(collator, "a", -1, "b", -1, badStatus); });
+    rejectsRuntime([&] { ucol_getAttribute_nid_postfix(collator, UCOL_STRENGTH, badStatus); });
+    ucol_close_nid_postfix(collator);
 }
 
 }
@@ -393,5 +561,6 @@ void CheckIcuCollator() {
     UcolOpen::Run();
     UcolQueries::Run();
     UcolSetAttribute::Run();
+    UcolCollation::Run();
     CollatorGuestPointers::Run();
 }
