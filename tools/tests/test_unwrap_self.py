@@ -588,7 +588,7 @@ class UnwrapTest(unittest.TestCase):
         try:
             os.chown(directory, -1, group)
             directory.chmod(0o2700)
-        except PermissionError as error:
+        except OSError as error:
             self.skipTest(str(error))
         if not directory.stat().st_mode & 0o2000:
             self.skipTest("filesystem does not retain the setgid bit")
