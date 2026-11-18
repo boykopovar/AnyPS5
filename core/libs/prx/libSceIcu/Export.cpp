@@ -98,10 +98,6 @@ int APS5_VABI u_getDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI ubrk_close() {
     NotImplemented_nid_no_patch(__func__);

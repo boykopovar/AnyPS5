@@ -91,6 +91,10 @@ void APS5_VABI u_flushDefaultConverter_nid_postfix() {
     u_flushDefaultConverter();
 }
 
+void APS5_VABI u_releaseDefaultConverter_nid_postfix(UConverter* converter) {
+    u_releaseDefaultConverter(converter);
+}
+
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;
     auto first = reinterpret_cast<const unsigned char*>(left);
