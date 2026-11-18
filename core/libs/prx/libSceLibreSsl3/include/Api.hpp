@@ -294,6 +294,7 @@ void APS5_VABI PKCS7_free_nid_postfix(void* pkcs7);
 void APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(LibreSsl3Pkcs8PrivKeyInfo* info);
 int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa);
 void APS5_VABI RSA_get0_key_nid_postfix(const LibreSsl3Rsa* rsa, const void** n, const void** e, const void** d);
+void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa);
 LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix();
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded,
     const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const LibreSsl3::DigestMethod* maskDigest,
@@ -329,7 +330,7 @@ int APS5_VABI d2i_PKCS7_nid_postfix(void);
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(
     LibreSsl::Bio* bio, LibreSsl3Pkcs8PrivKeyInfo** output);
 LibreSsl3EvpPkey* APS5_VABI d2i_PrivateKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey** output);
-int APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(void);
+LibreSsl3Rsa* APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3Rsa** output);
 int APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(void);
 int APS5_VABI d2i_X509_bio_nid_postfix(void);
 EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** in, std::int64_t length);
