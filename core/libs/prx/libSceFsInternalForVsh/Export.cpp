@@ -1690,4 +1690,40 @@ int APS5_VABI sceFsBfsDeleteFakeSpace() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceFsNTBCreatePartitionTable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBVerifyPartitionTable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBAddDevice() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBRemoveDevice() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBGetDeviceInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBGetAttachedDeviceType() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBInvalidateBlockRange() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBCronosUserPersonalizedKey() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBCreateSavedataSnapshot() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

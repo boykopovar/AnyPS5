@@ -177,4 +177,14 @@ int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown();
 int APS5_VABI sceFsBfsCreateFakeSpace();
 int APS5_VABI sceFsBfsDeleteFakeSpace();
 
+int APS5_VABI sceFsNTBCreatePartitionTable();
+int APS5_VABI sceFsNTBVerifyPartitionTable();
+int APS5_VABI sceFsNTBAddDevice();
+int APS5_VABI sceFsNTBRemoveDevice();
+int APS5_VABI sceFsNTBGetDeviceInfo();
+int APS5_VABI sceFsNTBGetAttachedDeviceType();
+int APS5_VABI sceFsNTBInvalidateBlockRange();
+int APS5_VABI sceFsNTBCronosUserPersonalizedKey();
+int APS5_VABI sceFsNTBCreateSavedataSnapshot();
+
 }
