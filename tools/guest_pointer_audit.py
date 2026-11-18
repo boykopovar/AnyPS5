@@ -108,7 +108,7 @@ def names_parameter(argument, name):
 
 def accesses(body, name):
     word = re.escape(name)
-    operand = rf"(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
+    operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
     for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
                           ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
@@ -151,9 +151,27 @@ def source_code(text):
     return progress.CPP_TOKEN.sub(keep_lines, splice_lines(text))
 
 
+def anonymous_spans(text):
+    spans = []
+    for match in re.finditer(r"\bnamespace\s*\{", text):
+        brace = match.end() - 1
+        spans.append((brace, progress.body_end(text, brace)))
+    return spans
+
+
+def internal_linkage(text, start, spans):
+    if any(open_brace < start < close for open_brace, close in spans):
+        return True
+    boundary = max(text.rfind(character, 0, start) for character in ";{}")
+    return bool(re.search(r"\bstatic\b", text[boundary + 1:start]))
+
+
 def audit_text(text):
     results = []
+    spans = anonymous_spans(text)
     for match in progress.DEFINITION.finditer(text):
+        if internal_linkage(text, match.start(), spans):
+            continue
         open_paren = text.index("(", match.start(1))
         close_paren = text.rindex(")", 0, match.end())
         body_start = match.end() - 1
@@ -181,7 +199,7 @@ def audit(libraries):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="List exported functions that access a guest pointer parameter directly instead of through GuestCopyIn, GuestCopyOut or the CopyGuest* helpers. A report, not a gate: it always exits 0 and does not follow a pointer passed to another function.")
+    parser = argparse.ArgumentParser(description="List exported functions that access a guest pointer parameter directly instead of through GuestCopyIn, GuestCopyOut or the CopyGuest* helpers. A report, not a gate: it always exits 0 and does not follow a pointer passed to another function. Definitions with internal linkage are callbacks rather than exports and are left out.")
     parser.add_argument("libraries", nargs="*", help="library directories under core/libs/prx (default: all)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = parser.parse_args(argv)

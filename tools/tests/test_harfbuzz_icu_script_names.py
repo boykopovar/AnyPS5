@@ -48,6 +48,17 @@ class GeneratorTests(unittest.TestCase):
         rows = [line for line in text.splitlines() if line.startswith('    "')]
         self.assertEqual([row.count('"') // 2 for row in rows], [10] * 19 + [3])
 
+    def test_input_header_is_not_overwritten_by_the_output(self):
+        header = header_text(range(SCRIPT_COUNT))
+        source = self.root / "uscript.h"
+        source.write_bytes(header)
+        argv = ["harfbuzz_icu_script_names.py", str(source), str(source)]
+        with mock.patch.object(generator, "ICU_68_2_SHA256", hashlib.sha256(header).hexdigest()):
+            with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit) as refused:
+                generator.main()
+        self.assertEqual(refused.exception.code, 2)
+        self.assertEqual(source.read_bytes(), header)
+
     def test_a_header_with_another_checksum_is_refused_and_nothing_is_written(self):
         with self.assertRaises(SystemExit) as refused:
             self.generate(header_text(range(SCRIPT_COUNT)), checksum="0" * 64)

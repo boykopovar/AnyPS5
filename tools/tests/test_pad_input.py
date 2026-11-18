@@ -191,9 +191,16 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(1000, "cross", "--left-stick", "0", "255", "--touch", "0", "0", "0", "1"),
                          [1003, 16384, 300, 0, 255, 128, 128, "touch(0,0,0,1)"])
 
+    def test_full_dualsense_touch_height_preserves_sequence(self):
+        for y in (942, 943, 1079):
+            with self.subTest(y=y):
+                self.path.write_text(f"2000 0 300 touch(1919,{y},127,1)\n", encoding="utf-8")
+                self.assertEqual(self.queue(1000, "release", "--touch", "1919", str(y), "127", "1"),
+                                 [2001, 0, 300, f"touch(1919,{y},127,1)"])
+
     def test_invalid_touch_arguments_preserve_command(self):
         original = "2000 0 300 touch(100,200,3,1)\n"
-        for coordinates in [(1920, 0, 0, 1), (0, 943, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1)]:
+        for coordinates in [(1920, 0, 0, 1), (0, 1080, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1), (0, -1, 0, 1)]:
             with self.subTest(coordinates=coordinates):
                 self.path.write_text(original, encoding="utf-8")
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -202,7 +209,7 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(self.path.read_text(encoding="utf-8"), original)
 
     def test_invalid_touch_file_does_not_preserve_sequence(self):
-        for token in ["touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
+        for token in ["touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
                       "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)", "touch(0,,0,1)", "touch(0,0,0,1)x"]:
             with self.subTest(token=token):
                 self.path.write_text(f"2000 0 300 {token}\n", encoding="utf-8")
@@ -300,6 +307,29 @@ class PadInputTests(unittest.TestCase):
             pad_input.main()
         self.assertEqual(error.exception.code, 2)
         self.assertIn("is a directory", errors.getvalue())
+
+
+class ButtonMaskTests(unittest.TestCase):
+    def test_button_mask_ors_joined_button_names(self):
+        self.assertEqual(pad_input.button_mask('l3'), pad_input.BUTTONS['l3'])
+        self.assertEqual(pad_input.button_mask('cross+circle'), pad_input.BUTTONS['cross'] | pad_input.BUTTONS['circle'])
+
+    def test_button_mask_refuses_unknown_release_and_repeated_names(self):
+        import argparse
+        for value in ('bogus', 'release+cross', 'cross+cross'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                pad_input.button_mask(value)
+class TimelineHeaderTests(unittest.TestCase):
+    def test_timeline_sequence_refuses_a_non_timeline_header_and_other_versions(self):
+        import io
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'junk\n'), 0)
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'APS5_PAD_TIMELINE 2 5 1\n'), 0)
+class NextSequenceTests(unittest.TestCase):
+    def test_next_sequence_is_positive_and_fits_64_bits_without_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = pad_input.next_sequence(Path(directory) / 'missing.cmd')
+        self.assertGreater(value, 0)
+        self.assertLess(value, 2 ** 64)
 
 
 if __name__ == "__main__":

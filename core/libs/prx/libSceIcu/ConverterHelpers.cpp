@@ -1,10 +1,26 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "ustr_cnv.h"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 
 namespace {
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
 
 bool IsDigit(unsigned char value, bool ebcdic) {
     const unsigned char zero = ebcdic ? 0xf0 : 0x30;
@@ -71,6 +87,10 @@ constexpr Signature Signatures[] = {
 
 extern "C" {
 
+void APS5_VABI u_flushDefaultConverter_nid_postfix() {
+    u_flushDefaultConverter();
+}
+
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;
     auto first = reinterpret_cast<const unsigned char*>(left);
@@ -94,30 +114,43 @@ char* APS5_VABI ucnv_io_stripEBCDICForCompare_nid_postfix(char* destination, con
 
 const char* APS5_VABI ucnv_detectUnicodeSignature_nid_postfix(const char* source, std::int32_t sourceLength,
                                                          std::int32_t* signatureLength, std::int32_t* errorCode) {
-    if (!errorCode || *errorCode > 0) return nullptr;
+    if (!errorCode) return nullptr;
+    std::int32_t status = 0;
+    CopyIn(&status, errorCode, sizeof(status), __func__);
+    if (status > 0) return nullptr;
     if (!source || sourceLength < -1) {
-        *errorCode = 1;
+        const std::int32_t illegalArgument = 1;
+        CopyOut(errorCode, &illegalArgument, sizeof(illegalArgument), __func__);
         return nullptr;
     }
     std::array<unsigned char, 5> prefix{};
     std::int32_t available = 0;
-    while (available < static_cast<std::int32_t>(prefix.size()) && (sourceLength < 0 || available < sourceLength)) {
-        const auto value = static_cast<unsigned char>(source[available]);
-        if (sourceLength < 0 && !value) break;
-        prefix[available++] = value;
+    if (sourceLength >= 0) {
+        available = sourceLength < static_cast<std::int32_t>(prefix.size()) ? sourceLength : static_cast<std::int32_t>(prefix.size());
+        if (available > 0) CopyIn(prefix.data(), source, static_cast<std::size_t>(available), __func__);
+    } else {
+        while (available < static_cast<std::int32_t>(prefix.size())) {
+            unsigned char value = 0;
+            CopyIn(&value, source + available, 1, __func__);
+            if (!value) break;
+            prefix[available++] = value;
+        }
     }
+    const char* name = nullptr;
+    std::int32_t length = 0;
     for (const auto& signature : Signatures) {
         if (available < signature.length) continue;
         bool matches = true;
         for (std::int32_t i = 0; i < signature.length; ++i)
             if (prefix[i] != signature.bytes[i]) matches = false;
         if (matches) {
-            if (signatureLength) *signatureLength = signature.length;
-            return signature.name;
+            name = signature.name;
+            length = signature.length;
+            break;
         }
     }
-    if (signatureLength) *signatureLength = 0;
-    return nullptr;
+    if (signatureLength) CopyOut(signatureLength, &length, sizeof(length), __func__);
+    return name;
 }
 
 }

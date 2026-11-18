@@ -302,6 +302,16 @@ static void CheckOpWaitUntilDelegation(const std::string& file) {
     REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
     sceFiosOpDelete(op);
     REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_ERROR_BAD_OP);
+
+    sceFiosSuspend();
+    const SceFiosOp pending = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(pending > 0);
+    const auto start = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) REQUIRE(sceFiosOpWaitUntil(pending, sceFiosTimeGetCurrent() + 1000000) == SCE_FIOS_ERROR_TIMEOUT);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+    sceFiosOpDelete(pending);
+    sceFiosResume();
 }
 
 static void CheckOperationLifecycle(const std::string& file) {
@@ -527,6 +537,28 @@ static void CheckMutations(const std::string& directory) {
     sceFiosOpDelete(created);
     const SceFiosOp removed = sceFiosDelete(&attr, sub.c_str());
     REQUIRE(g_completed == 2 && sceFiosOpSyncWait(removed) == SCE_FIOS_OK);
+}
+
+static void CheckDirectoryCreateWithModeAnswers(const std::string& directory) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    const std::string withMode = directory + "/mode777";
+    const SceFiosOp created = sceFiosDirectoryCreateWithMode(nullptr, withMode.c_str(), 0x1ff);
+    REQUIRE(created > 0);
+    REQUIRE(sceFiosOpWait(created) == SCE_FIOS_OK);
+    sceFiosOpDelete(created);
+    REQUIRE(sceFiosDirectoryExistsSync(nullptr, withMode.c_str()));
+
+    const SceFiosOp duplicate = sceFiosDirectoryCreateWithMode(nullptr, withMode.c_str(), 0x1b6);
+    REQUIRE(sceFiosOpWait(duplicate) == SCE_FIOS_ERROR_ALREADY_EXISTS);
+    sceFiosOpDelete(duplicate);
+    REQUIRE(sceFiosDirectoryCreateWithModeSync(nullptr, withMode.c_str(), 0x1b6) == SCE_FIOS_ERROR_ALREADY_EXISTS);
+
+    const std::string syncForm = directory + "/mode666";
+    REQUIRE(sceFiosDirectoryCreateWithModeSync(nullptr, syncForm.c_str(), 0x1b6) == SCE_FIOS_OK);
+    REQUIRE(sceFiosDirectoryExistsSync(nullptr, syncForm.c_str()));
+
+    REQUIRE(sceFiosDirectoryDeleteSync(nullptr, withMode.c_str()) == SCE_FIOS_OK);
+    REQUIRE(sceFiosDirectoryDeleteSync(nullptr, syncForm.c_str()) == SCE_FIOS_OK);
 }
 
 static void CheckFileHandles(const std::string& directory) {
@@ -780,6 +812,18 @@ static void CheckAsyncHandleAnswers(const std::string& directory, const std::str
 
     REQUIRE(sceFiosFileGetSizeSync(nullptr, scratch.c_str()) == 2);
     REQUIRE(sceFiosDeleteSync(nullptr, scratch.c_str()) == SCE_FIOS_OK);
+}
+
+static void CheckCacheContainsFileProbe(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    std::uint64_t cached = 0x7B7B7B7B7B7B7B7BULL;
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), &cached) == SCE_FIOS_OK);
+    REQUIRE(cached == 0);
+    const std::string missing = directory + "/absent.bin";
+    REQUIRE(sceFiosCacheContainsFileSync(missing.c_str(), &cached) == SCE_FIOS_ERROR_BAD_PATH);
+    REQUIRE(sceFiosCacheContainsFileSync(nullptr, &cached) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), nullptr) == SCE_FIOS_OK);
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), reinterpret_cast<std::uint64_t*>(0x10)) == SCE_FIOS_ERROR_BAD_PTR);
 }
 
 static void CheckAsyncPositionedVectors(const std::string& directory, const std::string& file) {
@@ -1079,8 +1123,10 @@ int main() {
     CheckCallbacks(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
+    CheckDirectoryCreateWithModeAnswers(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckAsyncHandleAnswers(directory.generic_string(), file);
+    CheckCacheContainsFileProbe(directory.generic_string(), file);
     CheckAsyncPositionedVectors(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
