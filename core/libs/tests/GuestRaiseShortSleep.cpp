@@ -56,7 +56,7 @@ int main() {
         if (!done.load()) std::abort();
     });
     Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Handler)) == 0);
-    for (const KernelUseconds micros : {100u, 200u, 400u}) RaiseAtNapper(micros);
+    for (const KernelUseconds micros : {20u, 100u, 200u, 400u}) RaiseAtNapper(micros);
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
     std::printf("%d raises delivered\n", deliveries.load());
     done.store(true);

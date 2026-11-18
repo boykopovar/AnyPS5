@@ -42,6 +42,9 @@ int main() {
     }
 
     ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(nullptr, 1.0f, 0); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(reinterpret_cast<VideoOutColorSpaceConversionSettings*>(0x10), 1.0f, 0); });
+    Require(errno == 71);
     Require(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(&settings, 1.0f, 0) == 0);
 
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(0, nullptr); });
@@ -89,6 +92,12 @@ int main() {
     Require(colorOut.dynamicRange == 1 || colorOut.dynamicRange == 2);
 
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(handle, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColor(handle, reinterpret_cast<const VideoOutColorSettings*>(0x10)); });
+    Require(errno == 71);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
     Require(sceVideoOutSetGlobalBlendSpace(handle, 0, 0) == 0);
 

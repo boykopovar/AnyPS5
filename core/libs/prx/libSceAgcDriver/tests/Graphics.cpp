@@ -3187,6 +3187,15 @@ void depthMaintenanceTests() {
         queue.context[0x8f] = 0xf;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a resummarize draw with color writes passed");
     }
+    for (const auto expand : {0u, 0x20u, 0x40u, 0x60u}) {
+        auto queue = makeState();
+        queue.context[0x000] = 0x10u | expand;
+        queue.context[0x200] = 0;
+        queue.context[0x8e] = 0xf;
+        queue.context[0x8f] = 0xf;
+        queue.context[0x202] = 0x00cc0000;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "a resummarize draw with disabled color was rejected");
+    }
     auto absent = makeState();
     absent.context.erase(0x000);
     Require(AgcDriver::Graphics::DepthMaintenanceRejection(absent).empty(), "an absent depth control produced a maintenance verdict");
@@ -5885,8 +5894,26 @@ void InitialContextTests() {
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "sparse guest setup lost its render target");
-    Require(state.viewport.x == 0.0f && state.viewport.y == 0.0f && state.viewport.width == static_cast<float>(state.renderExtent.width) && state.viewport.height == static_cast<float>(state.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
+    const auto scaleX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x10f)));
+    const auto offsetX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x110)));
+    const auto scaleY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x111)));
+    const auto offsetY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x112)));
+    Require(state.viewport.x == offsetX - scaleX && state.viewport.y == offsetY - scaleY && state.viewport.width == 2 * scaleX && state.viewport.height == 2 * scaleY, "a draw that programmed its viewport transform but never wrote the viewport control lost the transform");
     Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the reset viewport control was rejected for its viewport control");
+    {
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-scaleY);
+        const auto flipped = AgcDriver::Graphics::DecodeState(queue);
+        Require(flipped.viewport.y == offsetY + scaleY && flipped.viewport.height == -2 * scaleY, "a negative Y scale was dropped for a draw that never wrote the viewport control");
+        std::array<std::uint32_t, 6> words{};
+        for (std::uint32_t word = 0; word < 6; ++word) {
+            words[word] = queue.context.at(0x10f + word);
+            queue.context[0x10f + word] = word % 2 == 0 ? 0x3f800000u : 0u;
+        }
+        const auto untouched = AgcDriver::Graphics::DecodeState(queue);
+        Require(untouched.viewport.x == 0.0f && untouched.viewport.y == 0.0f && untouched.viewport.width == static_cast<float>(untouched.renderExtent.width) && untouched.viewport.height == static_cast<float>(untouched.renderExtent.height), "a draw that never programmed a viewport did not get a viewport covering its render target");
+        for (std::uint32_t word = 0; word < 6; ++word) queue.context[0x10f + word] = words[word];
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(scaleY);
+    }
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_VTE_CNTL=0x");
@@ -11948,7 +11975,18 @@ void uintTargetTests() {
     auto bytes = queue;
     bytes.context[0x31c] = (bytes.context.at(0x31c) & ~0x1f7cu) | (1u << 2u) | (4u << 8u);
     const auto eight = AgcDriver::Graphics::DecodeState(bytes);
-    Require(eight.color.format == VK_FORMAT_R8_UINT && eight.color.packing == ColorExportPacking::Uint && !eight.blends.at(0).blendEnable, "an 8-bit UINT target did not get the unsigned integer export packing");
+    Require(eight.color.format == VK_FORMAT_R8_UINT && eight.color.packing == ColorExportPacking::UintClamp8 && !eight.blends.at(0).blendEnable, "a 32_ABGR export into an 8-bit UINT target did not get the clamping packing");
+    auto halfwords = queue;
+    halfwords.context[0x31c] = (halfwords.context.at(0x31c) & ~0x1f7cu) | (2u << 2u) | (4u << 8u);
+    Require(AgcDriver::Graphics::DecodeState(halfwords).color.packing == ColorExportPacking::UintClamp16, "a 32_ABGR export into a 16-bit UINT target did not get the clamping packing");
+    for (const auto& [exportFormat, eightPacking, sixteenPacking] : std::array<std::tuple<std::uint32_t, ColorExportPacking, ColorExportPacking>, 3>{{{1u, ColorExportPacking::UintMask8, ColorExportPacking::UintMask16}, {2u, ColorExportPacking::UintClamp8, ColorExportPacking::UintClamp16}, {3u, ColorExportPacking::Uint, ColorExportPacking::Uint}}}) {
+        auto narrow = bytes;
+        narrow.context[0x1c5] = exportFormat;
+        auto wider = halfwords;
+        wider.context[0x1c5] = exportFormat;
+        const auto narrowState = AgcDriver::Graphics::DecodeState(narrow);
+        Require(narrowState.color.packing == eightPacking && AgcDriver::Graphics::ExportPackings(narrowState)[0] == eightPacking && AgcDriver::Graphics::DecodeState(wider).color.packing == sixteenPacking, "a 32-bit export into an 8- or 16-bit UINT target did not get the packing of its export format");
+    }
     auto words = queue;
     words.context[0x1c5] = 7u;
     words.context[0x1e0] = 0;
@@ -12521,7 +12559,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(7);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(9);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -14667,6 +14705,14 @@ void commandStateTests() {
         tracker.SetViewport(context, negative);
         tracker.SetViewport(context, positive);
         expectStateLog({stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f), stateLine("viewport", -0.0f, 0.0f, 640.0f, 480.0f, -0.0f, 1.0f), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "viewports that differ in the sign of zero");
+        const VkViewport first{0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f};
+        const std::array<VkViewport, 2> pair{first, VkViewport{320.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f}};
+        const std::array<VkRect2D, 2> pairScissors{VkRect2D{{0, 0}, {320, 240}}, VkRect2D{{320, 0}, {320, 240}}};
+        tracker.SetViewports(context, pair, pairScissors);
+        tracker.SetViewport(context, first);
+        tracker.SetScissor(context, pairScissors[0]);
+        tracker.SetViewport(context, positive);
+        expectStateLog({stateLine("viewport", 0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f), stateLine("scissor", 0, 0, 320u, 240u), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "a single viewport after a viewport array that set the same viewport 0");
         tracker.SetDepthBias(context, 0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);

@@ -538,7 +538,7 @@ void RunBdaExecutionTests(const Context& context) {
         pipeline.Run(1);
         Abi::Fault report{};
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
-        Require(report.state == Abi::FaultState::Ready && report.reason == recorded && report.otherFaults == otherFaults, "BDA faults of one dispatch were not recorded with the first reason and the sticky other-fault flag");
+        Require(report.state == Abi::FaultState::Ready && report.reason == recorded && Abi::OtherFaults(report) == otherFaults, "BDA faults of one dispatch were not recorded with the first reason and the sticky other-fault flag");
     };
     sequence({Abi::FaultReason::Unaligned, Abi::FaultReason::Unaligned}, Abi::FaultReason::Unaligned, 0);
     sequence({Abi::FaultReason::Unaligned, Abi::FaultReason::Unmapped}, Abi::FaultReason::Unaligned, 1);
@@ -576,9 +576,9 @@ void RunBdaStoreExecutionTests(const Context& context) {
         Abi::Fault report{};
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
         if (reason == Abi::FaultReason{}) {
-            Require(report.state == Abi::FaultState::Empty && report.reason == Abi::FaultReason{} && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, label + "mapped store published a fault");
+            Require(report.state == Abi::FaultState::Empty && report.reason == Abi::FaultReason{} && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.claim == 0, label + "mapped store published a fault");
         } else {
-            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && report.otherFaults == 1, label + "incorrect first fault metadata");
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && Abi::OtherFaults(report) == 1, label + "incorrect first fault metadata");
         }
         std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
         std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));
