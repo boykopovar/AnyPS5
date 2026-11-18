@@ -618,6 +618,85 @@ void RunBdaExecutionTests(const Context& context) {
     RunBdaAnchorTests(context);
 }
 
+static void RunBdaCoarseStoreTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::uint64_t page = std::uint64_t{1} << Abi::WrittenPageShift;
+    constexpr std::uint64_t granuleShift = 21;
+    constexpr std::uint64_t firstBytes = std::uint64_t{8} << 20;
+    constexpr std::uint64_t secondBytes = std::uint64_t{4} << 20;
+    constexpr std::uint64_t firstGuest = 0x7f0000000000ULL;
+    constexpr std::uint64_t secondGuest = firstGuest + (Abi::WrittenPageMapBits << Abi::WrittenPageShift);
+    Buffer first(context, firstBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer second(context, secondBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer table(context, sizeof(Abi::Header) + 2 * sizeof(Abi::Range), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const std::array<Abi::Range, 2> ranges{{
+        {firstGuest, firstGuest + firstBytes, first.DeviceAddress(), Abi::Read | Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, granuleShift})},
+        {secondGuest, secondGuest + secondBytes, second.DeviceAddress(), Abi::Read | Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord + 1, granuleShift})},
+    }};
+    const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
+    std::memcpy(table.Bytes().data(), &header, sizeof(header));
+    std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+    constexpr std::uint64_t wide = std::uint64_t{1} << 63;
+    const std::array<std::uint32_t, 4> values{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
+    const auto check = [&](const std::string& name, const std::vector<std::uint64_t>& addresses) {
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        std::set<std::uint64_t> stored;
+        for (const auto entry : addresses) {
+            const auto address = entry & ~wide;
+            const auto bytes = (entry & wide) != 0 ? 16u : 4u;
+            Pipeline pipeline(context, (entry & wide) != 0 ? MakeBdaDwordWriteTestShader(address, 4, values.data()) : MakeBdaStoreTestShader(address, 0xa1b2c3d4u, 32, false), {&table, &fault, &output});
+            pipeline.Run(1);
+            for (auto at = address; at < address + bytes; ++at) stored.insert(at >> Abi::WrittenPageShift);
+        }
+        Abi::Fault report{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        Require(report.state == Abi::FaultState::Empty, "BDA coarse store " + name + ": a mapped store published a fault");
+        std::vector<std::uint32_t> words(Abi::FaultBufferBytes / sizeof(std::uint32_t));
+        std::memcpy(words.data(), fault.Bytes().data(), words.size() * sizeof(std::uint32_t));
+        std::set<std::uint64_t> marked;
+        std::set<std::uint64_t> granted;
+        for (const auto& range : ranges) {
+            Require(Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) {
+                for (auto at = address >> Abi::WrittenPageShift; at <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++at) marked.insert(at);
+            }, [&](std::uint64_t address, std::size_t bytes) {
+                for (auto at = address >> Abi::WrittenPageShift; at <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++at) granted.insert(at);
+            }), "BDA coarse store " + name + ": invalid written-page record");
+        }
+        std::set<std::uint64_t> residues;
+        for (const auto stored_page : stored) residues.insert(stored_page % Abi::WrittenPageMapBits);
+        std::set<std::uint64_t> expected;
+        for (const auto candidate : granted) {
+            if (residues.contains(candidate % Abi::WrittenPageMapBits)) expected.insert(candidate);
+        }
+        Require(std::includes(marked.begin(), marked.end(), stored.begin(), stored.end()), "BDA coarse store " + name + ": a stored page was not marked");
+        Require(marked == expected, "BDA coarse store " + name + ": marked pages other than the stored pages and their page-map aliases inside set granules");
+        return std::vector<std::uint64_t>(marked.begin(), marked.end());
+    };
+    const auto pageOf = [](std::uint64_t address) { return address >> Abi::WrittenPageShift; };
+
+    const auto exact = check("scattered", {firstGuest, firstGuest + page + 8, firstGuest + 37 * page, firstGuest + 511 * page + 4,
+        firstGuest + 101 * page - 2, firstGuest + 1029 * page + 100, firstGuest + firstBytes - 4, wide | (firstGuest + 512 * page - 8)});
+    Require(exact == std::vector<std::uint64_t>{pageOf(firstGuest), pageOf(firstGuest) + 1, pageOf(firstGuest) + 37, pageOf(firstGuest) + 100, pageOf(firstGuest) + 101,
+        pageOf(firstGuest) + 511, pageOf(firstGuest) + 512, pageOf(firstGuest) + 1029, pageOf(firstGuest + firstBytes) - 1}, "BDA coarse store scattered: the marked pages are not exactly the stored pages");
+
+    const auto alias = check("alias", {firstGuest + 3 * page, secondGuest + 5 * page});
+    Require(alias == std::vector<std::uint64_t>{pageOf(firstGuest) + 3, pageOf(firstGuest) + 5, pageOf(secondGuest) + 3, pageOf(secondGuest) + 5}, "BDA coarse store alias: the marked pages are not the two stored pages and their two aliases");
+
+    std::vector<std::uint64_t> addresses;
+    std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+    for (int index = 0; index < 48; ++index) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const bool inSecond = (state >> 63) != 0;
+        const auto span = inSecond ? secondBytes : firstBytes;
+        const auto offset = ((state >> 20) % (span / 4)) * 4;
+        addresses.push_back((inSecond ? secondGuest : firstGuest) + offset);
+        if (index % 8 == 0) addresses.push_back((inSecond ? firstGuest : secondGuest) + (offset % (inSecond ? firstBytes : secondBytes)));
+    }
+    check("random", addresses);
+}
+
 void RunBdaStoreExecutionTests(const Context& context) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     Buffer first(context, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
@@ -685,6 +764,7 @@ void RunBdaStoreExecutionTests(const Context& context) {
         ranges = {{{guest + 3, guest + 5, first.DeviceAddress(), writable, 0}, {guest + 5, guest + 8, second.DeviceAddress(), writable, 0}}};
         run("split aligned dword", guest + 3, 32, coherent, {0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, {}, Abi::FaultReason::Unmapped, guest + 3, 4);
     }
+    RunBdaCoarseStoreTests(context);
 }
 
 void RunBdaFaultSlotExecutionTests(const Context& context) {
