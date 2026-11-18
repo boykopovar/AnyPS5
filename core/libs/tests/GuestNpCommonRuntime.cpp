@@ -585,6 +585,14 @@ void APS5_VABI ExRelease(void* pointer, void* context) {
     record->released = pointer;
 }
 
+void* APS5_VABI VectorAllocate(std::size_t size, void* context) {
+    auto* storage = static_cast<std::vector<char>*>(context);
+    storage->assign(size, 'x');
+    return storage->data();
+}
+
+void APS5_VABI VectorRelease(void*, void*) {}
+
 void TestAllocatorExRecorded() {
     ExRecord record {};
     NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
@@ -612,6 +620,21 @@ void TestAllocatorExRecorded() {
     Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
             && std::memcmp(record.block.data(), "xyz", 4) == 0,
         "the limit bounds the read of an unterminated buffer");
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    const int allocations = record.allocations;
+    errno = 71;
+    Require(_sceNpAllocatorExStrdup(&allocator, unreadable) == nullptr && record.allocations == allocations && errno == 71,
+        "an unreadable string is refused before allocating and errno is kept");
+    Require(_sceNpAllocatorExStrndup(&allocator, unreadable, 8) == nullptr && record.allocations == allocations && errno == 71,
+        "an unreadable bounded string is refused before allocating and errno is kept");
+    Require(_sceNpAllocatorExStrndup(&allocator, unreadable, 0) != nullptr && record.size == 1 && record.block[0] == 0,
+        "a zero limit reads nothing and duplicates an empty string");
+    std::vector<char> storage;
+    NpAllocatorEx vectorAllocator {{VectorAllocate, nullptr, VectorRelease, &storage}, 0};
+    const std::string longText(5000, 'n');
+    Require(_sceNpAllocatorExStrdup(&vectorAllocator, longText.c_str()) == storage.data() && storage.size() == 5001
+            && std::memcmp(storage.data(), longText.c_str(), 5001) == 0,
+        "a string longer than one copy chunk is duplicated whole");
 }
 
 void TestRingBuf() {
