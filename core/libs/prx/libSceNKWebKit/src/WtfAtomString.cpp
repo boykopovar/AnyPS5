@@ -98,6 +98,10 @@ constexpr unsigned IsAtomFlag = 16;
 constexpr unsigned IsSymbolFlag = 32;
 constexpr unsigned FlagMask = 255;
 constexpr std::size_t LocalBufferSize = 100;
+constexpr unsigned BufferSubstring = 2;
+constexpr std::size_t SubstringOwnerOffset = 24;
+constexpr std::size_t SubstringAllocationSize = 32;
+constexpr std::size_t ImplHeaderSize = 20;
 
 struct Characters {
     const void* data;
@@ -224,14 +228,29 @@ String AddCharacters(const Characters& characters) {
     return AddToTable(characters, [&] { return CopyCharacters(characters); });
 }
 
+String CreateSubstringSharingImpl(StringImpl& base, unsigned start, unsigned length) {
+    if (start || length != base.length) {
+        const String owner(Retained(&base));
+        return NKWebKit::WtfAbi::SubstringSharingImpl(owner, start, length);
+    }
+    const Characters characters = CharactersOf(base);
+    const std::size_t width = characters.is8Bit ? 1 : 2;
+    if (SubstringAllocationSize >= ImplHeaderSize + width * length) {
+        if (characters.is8Bit) return _ZN3WTF10StringImpl6createEPKhj(static_cast<const unsigned char*>(characters.data), length);
+        return _ZN3WTF10StringImpl6createEPKDsj(static_cast<const char16_t*>(characters.data), length);
+    }
+    StringImpl* owner = (base.hashAndFlags & BufferOwnershipMask) == BufferSubstring ? *reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(&base) + SubstringOwnerOffset) : &base;
+    auto* memory = static_cast<unsigned char*>(NKWebKit::Allocate(SubstringAllocationSize));
+    auto* string = new (memory) StringImpl{2, length, characters.data, (characters.is8Bit ? Is8BitFlag : 0U) | BufferSubstring};
+    *reinterpret_cast<StringImpl**>(memory + SubstringOwnerOffset) = Retained(owner);
+    return String(string);
+}
+
 String AddSubstring(StringImpl& base, unsigned start, unsigned length) {
     const Characters whole = CharactersOf(base);
     const std::size_t width = whole.is8Bit ? 1 : 2;
     const Characters characters{static_cast<const unsigned char*>(whole.data) + width * start, length, whole.is8Bit};
-    return AddToTable(characters, [&] {
-        const String owner(Retained(&base));
-        return NKWebKit::WtfAbi::SubstringSharingImpl(owner, start, length);
-    });
+    return AddToTable(characters, [&] { return CreateSubstringSharingImpl(base, start, length); });
 }
 
 String AddStatic(const StringImpl& base) {

@@ -488,6 +488,17 @@ static void TestEdges() {
     const AtomString utf8 = _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_("caf\xC3\xA9", nullptr);
     Require(utf8.string.impl->length == 4 && !(utf8.string.impl->hashAndFlags & 4));
 
+    static const unsigned char symbolText[] = "symbol-description-text";
+    StringImpl symbol{4, 23, symbolText, 4 | 32};
+    String fromSymbol = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(&symbol);
+    Require(fromSymbol.impl != &symbol && !(symbol.hashAndFlags & 16) && symbol.refCount == 6);
+    Require((fromSymbol.impl->hashAndFlags & 3) == 2 && fromSymbol.impl->data == symbolText && (fromSymbol.impl->hashAndFlags & 16));
+    Require(Text(fromSymbol.impl) == "symbol-description-text");
+    fromSymbol = String();
+    Require(symbol.refCount == 4);
+    StringImpl shortSymbol{4, 6, symbolText, 4 | 32};
+    String fromShort = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(&shortSymbol);
+    Require((fromShort.impl->hashAndFlags & 3) == 0 && fromShort.impl->data != symbolText && Text(fromShort.impl) == "symbol");
     Require(Throws<std::logic_error>([&] { _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(body.impl); }));
     Require(Throws<std::logic_error>([&] { _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(body.impl); }));
     Require(Throws<std::invalid_argument>([] { _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(nullptr); }));
