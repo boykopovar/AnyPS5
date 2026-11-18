@@ -60,18 +60,30 @@ public:
         if (copyDacl && !ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;OW)", SDDL_REVISION_1, &backupDescriptor, nullptr)) return;
         const std::unique_ptr<void, decltype(&LocalFree)> backupSecurity(backupDescriptor, LocalFree);
         SECURITY_ATTRIBUTES backupAttributes{sizeof(SECURITY_ATTRIBUTES), backupDescriptor, FALSE};
+        const auto parent = target.parent_path().empty() ? std::filesystem::path(L".") : target.parent_path();
+        const auto raw = CreateFileW(parent.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (raw == INVALID_HANDLE_VALUE) return;
+        const std::unique_ptr<void, decltype(&CloseHandle)> held(raw, CloseHandle);
+        const auto length = GetFinalPathNameByHandleW(raw, nullptr, 0, FILE_NAME_OPENED | VOLUME_NAME_DOS);
+        if (length == 0) return;
+        std::wstring resolved(length, L'\0');
+        const auto written = GetFinalPathNameByHandleW(raw, resolved.data(), length, FILE_NAME_OPENED | VOLUME_NAME_DOS);
+        if (written == 0 || written >= length) return;
+        resolved.resize(written);
+        const std::filesystem::path stageParent(resolved);
         constexpr std::wstring_view characters = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         std::random_device device;
         for (int attempt = 0; attempt < 100; ++attempt) {
             std::wstring name = L".anyps5-";
             for (int index = 0; index < 12; ++index) name += characters[device() % characters.size()];
-            const auto candidate = target.parent_path() / name;
+            const auto candidate = stageParent / name;
             if (!CreateDirectoryW(candidate.c_str(), backupDescriptor ? &backupAttributes : nullptr)) {
                 if (GetLastError() == ERROR_ALREADY_EXISTS) continue;
                 return;
             }
             directory = candidate;
-            file = target.parent_path() / (name + L".output");
+            file = stageParent / (name + L".output");
             handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (handle == INVALID_HANDLE_VALUE) file.clear();
             return;

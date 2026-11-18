@@ -68,6 +68,7 @@ void makePrivate(const std::filesystem::path& path, DWORD rights = FILE_ALL_ACCE
     SECURITY_DESCRIPTOR descriptor;
     require(InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) != 0, "Cannot initialize fixture security");
     require(SetSecurityDescriptorDacl(&descriptor, TRUE, dacl, FALSE) != 0, "Cannot set the private DACL");
+    require(SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED) != 0, "Cannot protect fixture control");
     require(SetFileSecurityW(path.c_str(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, &descriptor) != 0, "Cannot protect the fixture");
 }
 
@@ -168,6 +169,42 @@ BOOL WINAPI reuseReplacedPath(LPCWSTR target, LPCWSTR replacement, LPCWSTR backu
     return TRUE;
 }
 
+void requireExtendedStage(const std::filesystem::path& path) {
+    const auto& name = path.native();
+    require(name.starts_with(L"\\\\?\\"), "The staging path is not an extended absolute path");
+}
+
+class CurrentDirectory {
+    std::filesystem::path previous = std::filesystem::current_path();
+
+public:
+    explicit CurrentDirectory(const std::filesystem::path& directory) {
+        std::filesystem::current_path(directory);
+    }
+
+    ~CurrentDirectory() {
+        std::error_code ignored;
+        std::filesystem::current_path(previous, ignored);
+    }
+};
+
+BOOL WINAPI extendedMove(LPCWSTR source, LPCWSTR target, DWORD flags) {
+    ++probe.Moves;
+    requireExtendedStage(source);
+    require(std::filesystem::path(source).native().size() > MAX_PATH, "The long-path move does not exceed MAX_PATH");
+    return MoveFileExW(source, target, flags);
+}
+
+BOOL WINAPI extendedReplace(LPCWSTR target, LPCWSTR replacement, LPCWSTR backup, DWORD flags, LPVOID exclude, LPVOID reserved) {
+    ++probe.Replaces;
+    requireExtendedStage(replacement);
+    requireExtendedStage(backup);
+    require(std::filesystem::path(replacement).native().size() > MAX_PATH && std::filesystem::path(backup).native().size() > MAX_PATH,
+            "The long-path replacement does not exceed MAX_PATH");
+    require(readFile(target) == previous, "The old long-path output changed before replacement");
+    return ReplaceFileW(target, replacement, backup, flags, exclude, reserved);
+}
+
 std::vector<std::filesystem::path> stages(const std::filesystem::path& directory) {
     std::vector<std::filesystem::path> result;
     for (const auto& entry : std::filesystem::directory_iterator(directory))
@@ -183,6 +220,49 @@ std::string failure(TAction action) {
         return error.what();
     }
     throw std::runtime_error("The injected output failure reported success");
+}
+
+void runLongPaths(const std::filesystem::path& root, const std::ios::openmode mode, const std::string& data, const std::string& expected) {
+    constexpr std::size_t parentLength = 245;
+    require(root.native().size() + 10 < parentLength, "The test root is too long for a near-MAX_PATH fixture");
+    const auto directory = root / (std::wstring(L"\u65e5\u672c-") + std::wstring(parentLength - root.native().size() - 4, L'x'));
+    require(directory.native().size() == parentLength, "The long-path fixture has an unexpected length");
+    const auto& name = directory.native();
+    const auto extendedDirectory = std::filesystem::path(name.starts_with(L"\\\\?\\") ? name :
+        name.starts_with(L"\\\\") ? L"\\\\?\\UNC\\" + name.substr(2) : L"\\\\?\\" + name);
+    std::filesystem::create_directory(extendedDirectory);
+    const CurrentDirectory working(directory);
+    for (const bool relative : {false, true}) {
+        for (const bool existing : {false, true}) {
+            probe = {};
+            const auto output = directory / (std::string(relative ? "r" : "a") + (existing ? "old" : "new") + ".bin");
+            require(output.native().size() < MAX_PATH, "The requested destination exceeds MAX_PATH");
+            if (existing) std::ofstream(output, std::ios::binary) << previous;
+            probe.Target = relative ? output.filename() : output;
+            require(!probe.Target.empty() && probe.Target.is_relative() == relative, "Cannot form the requested relative output");
+            Io::Detail::WindowsFileOperations operations;
+            operations.Move = extendedMove;
+            operations.Replace = extendedReplace;
+            require(Io::Detail::ReplaceWindowsFile(probe.Target, Io::Utf8Path(probe.Target), mode, data.data(), data.size(), operations),
+                    "A near-MAX_PATH output could not be written");
+            require(probe.Moves == (existing ? 0u : 1u) && probe.Replaces == (existing ? 1u : 0u), "The long-path test did not exercise its promotion path");
+            require(readFile(output) == expected, "A near-MAX_PATH output has incorrect bytes");
+            require(stages(extendedDirectory).empty(), "A long-path output leaked temporary files");
+        }
+    }
+}
+
+void runCurrentDirectory(const std::filesystem::path& root, const std::ios::openmode mode, const std::string& data, const std::string& expected) {
+    const auto directory = root / "current-directory";
+    std::filesystem::create_directory(directory);
+    const CurrentDirectory working(directory);
+    for (const bool existing : {false, true}) {
+        const auto target = std::filesystem::path(existing ? "old.bin" : "new.bin");
+        if (existing) std::ofstream(target, std::ios::binary) << previous;
+        require(Io::Detail::ReplaceWindowsFile(target, Io::Utf8Path(target), mode, data.data(), data.size()), "A bare relative output could not be written");
+        require(readFile(target) == expected, "A bare relative output has incorrect bytes");
+        require(stages(directory).empty(), "A bare relative output leaked temporary files");
+    }
 }
 
 void run(const std::filesystem::path& root, const std::ios::openmode mode, const std::string& data, const std::string& expected) {
@@ -211,6 +291,7 @@ void run(const std::filesystem::path& root, const std::ios::openmode mode, const
     }
     {
         const auto directory = setup("backup-cleanup");
+        makePrivate(directory);
         makePrivate(probe.Target, FILE_ALL_ACCESS & ~(DELETE | FILE_DELETE_CHILD));
         require(write({}), "A file deletable through its parent could not be replaced");
         require(readFile(probe.Target) == expected, "Backup cleanup changed the completed bytes");
@@ -323,8 +404,16 @@ int main(int argc, char** argv) {
         std::filesystem::create_directory(directory);
         const std::string mode(argv[1]);
         const std::string data("first\n\0last\n", 12);
-        if (mode == "binary") run(directory, std::ios::binary, data, data);
-        else if (mode == "text") run(directory, std::ios::out, data, std::string("first\r\n\0last\r\n", 14));
+        if (mode == "binary") {
+            run(directory, std::ios::binary, data, data);
+            runLongPaths(directory, std::ios::binary, data, data);
+            runCurrentDirectory(directory, std::ios::binary, data, data);
+        } else if (mode == "text") {
+            const std::string expected("first\r\n\0last\r\n", 14);
+            run(directory, std::ios::out, data, expected);
+            runLongPaths(directory, std::ios::out, data, expected);
+            runCurrentDirectory(directory, std::ios::out, data, expected);
+        }
         else throw std::runtime_error("Expected binary or text");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
@@ -333,6 +422,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::filesystem::remove_all(directory);
-    std::cout << "15 deterministic Windows output cases passed\n";
+    std::cout << "21 deterministic Windows output cases passed\n";
     return 0;
 }
