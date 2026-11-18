@@ -14,7 +14,6 @@ int APS5_VABI sceNpTcsIntDownloadData() {
 }
 
 int APS5_VABI sceNpTcsIntUploadDataToNewSlotAbort() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -40,15 +39,15 @@ int APS5_VABI sceNpTcsIntUploadDataToNewSlotEnd() {
 }
 
 int APS5_VABI sceNpTcsIntDestroyContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpTcsIntAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpTcsIntDestroyRequest() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpTcsIntUploadDataToNewSlotWrite() {

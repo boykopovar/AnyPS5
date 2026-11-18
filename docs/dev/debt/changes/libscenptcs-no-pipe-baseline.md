@@ -1,0 +1,9 @@
+# libSceNpTcs
+
+## change [sceNpTcsIntDownloadData, sceNpTcsIntUploadDataToNewSlotAbort and sceNpTcsIntUploadDataToNewSlotBegin]
+
+- [sceNpTcsIntDownloadData and sceNpTcsIntUploadDataToNewSlotBegin](../../../core/libs/prx/libSceNpTcs/Export.cpp) (libSceNpTcs) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpTcs.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified. `sceNpTcsIntUploadDataToNewSlotAbort` returns 0: no upload is ever started on the host, so abort is a safe no-op.
+
+## change [Older callable NIDs]
+
+- [Older callable NIDs](../../../core/libs/prx/libSceNpTcs/Export.cpp): The [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) names these exports `sceNpTcsIntAbortRequest`, `sceNpTcsIntCreateContext`, `sceNpTcsIntCreateRequest`, `sceNpTcsIntDestroyContext`, `sceNpTcsIntDestroyRequest`, `sceNpTcsIntUploadDataToNewSlot`, `sceNpTcsIntUploadDataToNewSlotEnd` and `sceNpTcsIntUploadDataToNewSlotWrite`, and the NID of each name matches. Signatures and behavior are unverified. `sceNpTcsIntDestroyContext`, `sceNpTcsIntDestroyRequest` and `sceNpTcsIntAbortRequest` return 0 as idempotent no-ops because no host context, request or in-flight operation is ever created. `sceNpTcsIntCreateContext`, `sceNpTcsIntCreateRequest`, `sceNpTcsIntUploadDataToNewSlot`, `sceNpTcsIntUploadDataToNewSlotEnd` and `sceNpTcsIntUploadDataToNewSlotWrite` keep throwing because they would return a handle or move title data without a backend. No matching NIDs were found in the later module inventory.
