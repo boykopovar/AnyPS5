@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -807,13 +808,16 @@ void SocketPartialWrites() {
     int pair[2] = {-1, -1};
     Require(socketpair_nid_postfix(AfUnix, SockStream, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], FSetfl, ONonblock) == 0);
-    while (_write_nid_postfix(pair[0], data.data(), Large) > 0) {
-    }
+    std::int64_t filled = 0;
+    for (std::int64_t sent = 0; (sent = _write_nid_postfix(pair[0], data.data(), Large)) > 0;) filled += sent;
     Require(Error() == Eagain);
     Require(fcntl_nid_postfix(pair[0], FSetfl, 0) == 0);
     auto blocking = Request(pair[0], data.data(), Large);
     Require(aio_write_nid_postfix(&blocking) == 0);
-    Require(recv_nid_postfix(pair[1], sink.data(), 1 << 16, 0) > 0);
+    for (std::int64_t drained = 0, got = 0; drained < filled; drained += got) {
+        got = recv_nid_postfix(pair[1], sink.data(), static_cast<std::size_t>(std::min<std::int64_t>(filled - drained, Large)), 0);
+        Require(got > 0);
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     Require(aio_error_nid_postfix(&blocking) == Einprogress);
     Require(aio_cancel_nid_postfix(pair[0], &blocking) == AioNotCanceled);
