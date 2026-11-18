@@ -154,7 +154,6 @@ std::size_t Run(AgcDriver::VulkanDevice& device, bool ieee) {
     };
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false};
     request.useCache = false;
-    // The reference is the same program with speculation suppressed, so the NaN payloads and signs are the exact path's, not a model's.
     const auto address = request.shader.codeAddress;
     const bool wasSuppressed = ShaderRecompiler::NanSpeculationSuppressed(address);
     if (!wasSuppressed) static_cast<void>(ShaderRecompiler::SuppressNanSpeculation(address));
@@ -183,18 +182,12 @@ std::size_t Run(AgcDriver::VulkanDevice& device, bool ieee) {
         const auto* actual = &Outputs[lane * Words];
         for (std::uint32_t word = 0; word < Words; ++word) {
             bool matches = actual[word] == expected[word];
-            // The speculated copy must also agree with the exact path on every word, bit for bit.
             if (word != 7u && actual[word] != reference[lane * Words + word]) matches = false;
             if (word == 7u) {
                 const auto x = v4 & 0xffffu;
                 const auto y = v2 & 0xffffu;
                 const auto z = v1 & 0xffffu;
                 const auto low = actual[word] & 0xffffu;
-                // v_fma_mixlo_f16 does not repair NaNs (writeF16 gets no invalid-operation value for it), so with a NaN
-                // operand the payload is whatever the host fma returns. Which operand's payload a host picks depends on how
-                // the compiler orders the commutative operands, so two compilations of the same shader can differ
-                // (llvmpipe on LLVM 21 returned a source payload where LLVM 20 returned the first NaN, quieted). The program
-                // must still produce a NaN, and without a NaN operand it must match the exact path and the model bit for bit.
                 if (Nan(x) || Nan(y) || Nan(z)) {
                     matches = Nan(low);
                 } else {
@@ -284,11 +277,10 @@ std::vector<std::uint32_t> PruneProgram(const PruneCase& test) {
     const bool word = test.checked == WordChecked;
     std::vector<std::uint32_t> code{0x34140084u, 0x34160084u, 0xe03c1000u, 0x8001010au, 0xbf8c3f70u};
     if (test.partialExec) code.insert(code.end(), {0x7d8800b0u, 0xbe88246au});
-    if (test.execBetween) code.push_back(0xbe88047eu);  // s_mov_b64 s[8:9], exec
+    if (test.execBetween) code.push_back(0xbe88047eu);
     code.insert(code.end(), {0x7e0e0280u, 0x7d8800c0u});
     if (word) code.push_back(0x10080501u);
     else code.insert(code.end(), {0xcc104004u, 0x18020501u});
-    // v_cmpx_gt_u32 48, v0: lanes from 48 up stop executing the consumer, inside the same region as the producer.
     if (test.execBetween) code.push_back(0x7da800b0u);
     code.insert(code.end(), test.consumer.begin(), test.consumer.end());
     if (test.checked == PackedChecked) code.insert(code.end(), {0xcc0f4006u, 0x18020705u});
@@ -379,7 +371,6 @@ std::size_t RunPruneCase(AgcDriver::VulkanDevice& device, const PruneCase& test,
         if (test.partialExec && lane >= 48u) {
             if (actual[0] == 0xdeadbeefu && actual[1] == 0xdeadbeefu && actual[2] == 0xdeadbeefu) continue;
         } else if (test.execBetween && lane >= 48u) {
-            // The lanes the EXEC write removed never ran the consumer, but their producer result must stay exact.
             if (actual[0] == v4) continue;
         } else if (actual[0] == v4 && actual[1] == v5 && w == v6) {
             continue;

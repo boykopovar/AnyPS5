@@ -465,7 +465,6 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::uint64_t planShaderHash = 0;
     std::uint64_t planBytes = 0;
     std::uint64_t planUsed = 0;
-    // A variant of this code was compiled with NaN speculation, or came from the disk cache while it was enabled: any address running it may need the exact fallback.
     bool nanSpeculated = false;
     bool runtimeCaptured = false;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
@@ -1771,7 +1770,6 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
-            // The artifact does not record whether it was speculated, so it counts as speculated while the feature is on.
             if (NanSpeculation().enabled) {
                 source.nanSpeculated = true;
                 MarkNanSpeculationApplied(request.shader.codeAddress);
@@ -2363,9 +2361,6 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
 }
 
-// `retry` runs after a failure with speculation suppressed. It defaults to `impl`; a caller whose
-// `impl` holds state built before the suppression (a capture over a speculated source entry) passes
-// one that does not reuse that state.
 template <typename Impl, typename Retry>
 auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl, Retry&& retry) -> decltype(impl()) {
     if (!NanSpeculation().enabled || NanSpeculationSuppressed(request.shader.codeAddress)) return impl();
@@ -2667,7 +2662,6 @@ RecompileResult Recompile(const RecompileRequest& request) {
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
-    // The capture holds the speculated source entry: the retry compiles the exact program over the captured snapshot instead of reusing it.
     return recompileReporting(request, [&] {
         return withNanSpeculationFallback(
             request, [&] { return RecompileImpl(request, capture, memoHit); },

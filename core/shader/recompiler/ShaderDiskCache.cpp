@@ -1931,7 +1931,6 @@ std::uint64_t SourceVersion() {
 std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32) {
     auto version = exactF32 ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
     if (!speculation.enabled) return version;
-    // Fold every setting through a mixing step: XOR-ing scaled values let different settings (a compute minimum of 128 and a vertex minimum of 64) cancel into one key.
     const auto mix = [&](std::uint64_t value) {
         version = (version ^ value) * 0x9e3779b97f4a7c15ull;
         version ^= version >> 29u;

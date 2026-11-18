@@ -2975,9 +2975,9 @@ void verifyNanSpeculationKey() {
     base.enabled = true;
     const auto version = [](const NanSpeculationConfig& config) { return ShaderDiskCache::SourceVersionFor(config, true); };
     NanSpeculationConfig computeMinimum = base;
-    computeMinimum.stageMinimum[0 /* Compute */] = 128u;
+    computeMinimum.stageMinimum[0] = 128u;
     NanSpeculationConfig vertexMinimum = base;
-    vertexMinimum.stageMinimum[1 /* Vertex */] = 64u;
+    vertexMinimum.stageMinimum[1] = 64u;
     require(version(computeMinimum) != version(vertexMinimum), "a compute minimum of 128 and a vertex minimum of 64 share a cache version");
     require(version(computeMinimum) != version(base) && version(vertexMinimum) != version(base), "a stage minimum does not change the cache version");
     NanSpeculationConfig density = base;

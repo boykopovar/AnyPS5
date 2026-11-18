@@ -93,7 +93,6 @@ int main() {
     _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
     _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
 #else
-    // A disk hit would serve the variants the injected failures are meant to hit.
     setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
     setenv("APS5_NAN_SPECULATION", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
@@ -163,7 +162,6 @@ int main() {
         const auto retried = PreparedShaderInvocation::TryCreate(prepared, after);
         if (!retried.has_value()) return fail("a shader prepared again without speculation does not match its request");
         if (retried->Materialize(*retried->Capture(SrtRuntime{})) == nullptr) return fail("a shader prepared again without speculation did not materialize");
-        // The fallback itself, with a speculated emission that fails.
         const auto stats = [] { return NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack; };
         const auto uncached = [&](std::uint64_t address) {
             auto copy = prepared;
@@ -201,10 +199,8 @@ int main() {
             if (stats() != fellBackBefore) return fail("a failed retry was counted as a fallback");
         }
         {
-            // A capture taken over the speculated source entry: the exact retry must not reuse that entry.
             auto captured = prepared;
             captured.shader.codeAddress = 0xa003u;
-            // Other code than the earlier cases, so that no variant of this source entry exists yet.
             static constexpr std::array<std::uint32_t, 3> capturedCode{0x06040300u, 0x06040300u, 0xbf810000u};
             captured.shader.code = capturedCode;
             const auto capture = CaptureResources(captured, SrtRuntime{});
@@ -222,7 +218,6 @@ int main() {
             if (result == nullptr || !NanSpeculationSuppressed(0xa003u) || stats() != fellBackBefore + 1u) return fail("a recovered captured compile is not suppressed and counted");
         }
         {
-            // Identical code at another address reuses the speculated variant and must stay eligible for the fallback.
             auto first = prepared;
             first.shader.codeAddress = 0xa004u;
             static_cast<void>(ShaderRecompiler::Recompile(first));
@@ -233,8 +228,6 @@ int main() {
             if (!NanSpeculationApplied(0xa005u)) return fail("a program that reused a speculated variant is not marked as speculated");
         }
         {
-            // A prepared capture that fails: the library suppresses speculation so the program can be prepared again, but the
-            // fallback is counted only once that preparation worked, and the suppression goes again when it did not.
             const auto retryCase = [&](std::uint64_t address, std::span<const std::uint32_t> words, bool secondWorks) -> const char* {
                 auto retrying = prepared;
                 retrying.shader.codeAddress = address;

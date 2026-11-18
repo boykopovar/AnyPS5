@@ -1416,7 +1416,6 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         std::lock_guard lock(snapshot.prepared->mutex);
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
     };
-    // The library suppresses speculation before it asks for a second preparation; the fallback only counts, and stays in force, once that preparation captured.
     ShaderRecompiler::NanSpeculationRetryScope retry(request.shader.codeAddress, static_cast<std::uint32_t>(request.shader.stage));
     const auto abandon = [&] { retry.Abandoned(); };
     while (true) {
