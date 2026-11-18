@@ -98,6 +98,10 @@ instruction probes. The catalog starts with f32 and f16 arithmetic edge cases, i
 ties, denormals and overflow modes. It does not generate instruction semantics from the ISA form list and it stores no
 expected outputs. A measurement is only the result returned by the configured hardware oracle.
 
+A probe body may contain explicit setup, waits and readback around exactly one instruction under test. Probes for an ISA
+target that most supported GPUs cannot assemble are excluded from the default generate, run and coverage sets; select
+them by ID with `--probe` on a compatible device.
+
 List the curated cases, then generate portable input bundles without a GPU:
 
 ```sh
@@ -116,7 +120,7 @@ python3 tools/hw-oracle/probe_catalog.py run --results-dir measurements --device
 python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --device-label rx-6750-xt
 ```
 
-`run` measures every catalog entry by default; repeat `--probe ID` to select a subset. It does not overwrite an existing
+`run` measures every default catalog entry; repeat `--probe ID` to select explicit entries. It does not overwrite an existing
 measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
 and output words, and the user-supplied device label. The label is not checked against the physical GPU, and the
 assembly target alone does not identify a GPU model or driver. `coverage` checks the individual probe definition

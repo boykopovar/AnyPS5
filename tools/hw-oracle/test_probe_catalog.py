@@ -79,27 +79,34 @@ class CatalogLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "id must contain lowercase"):
                 probe_catalog.read_catalog(path)
 
-    def test_instruction_body_must_start_with_the_declared_form(self):
+    def test_instruction_body_must_contain_the_declared_form(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
             malformed = copy.deepcopy(self.catalog)
             malformed["probes"][0]["body"] = "v_sub_f32 v10, v4, v5"
             path.write_text(json.dumps(malformed), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "one uncommented declared instruction"):
+            with self.assertRaisesRegex(ValueError, "exactly one uncommented declared instruction"):
                 probe_catalog.read_catalog(path)
             malformed["probes"][0]["instruction"] = "bad mnemonic"
             path.write_text(json.dumps(malformed), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "instruction must be an assembly mnemonic"):
                 probe_catalog.read_catalog(path)
 
-    def test_probe_body_cannot_add_implicit_instructions_or_expected_results(self):
+    def test_probe_body_accepts_explicit_support_instructions_but_not_terminators_or_expected_results(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "catalog"
-            malformed = copy.deepcopy(self.catalog)
-            malformed["probes"][0]["body"] += "\n  s_endpgm"
-            path.write_text(json.dumps(malformed), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "one uncommented declared instruction"):
-                probe_catalog.read_catalog(path)
+            sequence = copy.deepcopy(self.catalog)
+            sequence["probes"][0]["body"] = "v_mov_b32 v9, v4\nv_add_f32 v10, v4, v5\ns_waitcnt vmcnt(0)"
+            path.write_text(json.dumps(sequence), encoding="utf-8")
+            loaded, _ = probe_catalog.read_catalog(path)
+            self.assertEqual(loaded["probes"][0]["body"], sequence["probes"][0]["body"])
+            for suffix in ("\ns_endpgm", "\nv_add_f32 v11, v4, v5", "\n# comment"):
+                with self.subTest(suffix=suffix):
+                    malformed = copy.deepcopy(self.catalog)
+                    malformed["probes"][0]["body"] += suffix
+                    path.write_text(json.dumps(malformed), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "exactly one uncommented declared instruction"):
+                        probe_catalog.read_catalog(path)
             malformed = copy.deepcopy(self.catalog)
             malformed["probes"][0]["expected"] = [0]
             path.write_text(json.dumps(malformed), encoding="utf-8")
@@ -166,6 +173,11 @@ class CatalogLoadingTests(unittest.TestCase):
             path.write_text(json.dumps(malformed), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "mode ieee must be"):
                 probe_catalog.read_catalog(path)
+            malformed = copy.deepcopy(self.catalog)
+            malformed["probes"][0]["default"] = 1
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "default must be boolean"):
+                probe_catalog.read_catalog(path)
 
 
 class ProbeGenerationTests(unittest.TestCase):
@@ -215,6 +227,12 @@ class ProbeGenerationTests(unittest.TestCase):
         identifier = self.catalog["probes"][0]["id"]
         with self.assertRaisesRegex(ValueError, "selected more than once"):
             probe_catalog.select_probes(self.catalog["probes"], [identifier, identifier])
+
+    def test_target_specific_probes_require_explicit_selection(self):
+        probe = next(item for item in self.catalog["probes"] if item["id"] == "ds-write-src2-b64-unaligned-positive")
+        self.assertFalse(probe["default"])
+        self.assertNotIn(probe, probe_catalog.select_probes(self.catalog["probes"], None))
+        self.assertEqual(probe_catalog.select_probes(self.catalog["probes"], [probe["id"]]), [probe])
 
     def test_generation_does_not_replace_existing_case_directories(self):
         probe = self.catalog["probes"][0]
@@ -466,7 +484,8 @@ class ProbeCatalogCliTests(unittest.TestCase):
             report = json.loads(output.getvalue())
             self.assertEqual(result, 1)
             self.assertEqual(report["measured"], 0)
-            self.assertEqual(report["total"], len(probe_catalog.read_catalog()[0]["probes"]))
+            probes = probe_catalog.read_catalog()[0]["probes"]
+            self.assertEqual(report["total"], len(probe_catalog.select_probes(probes, None)))
             self.assertTrue(all(item["status"] == "missing" for item in report["probes"]))
 
     def test_cli_rejects_unknown_probes_without_running_them(self):
