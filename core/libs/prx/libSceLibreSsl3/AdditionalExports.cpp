@@ -149,9 +149,6 @@ void APS5_VABI EC_POINT_clear_free_nid_postfix(EcPoint* point) {
     EC_POINT_free_nid_postfix(point);
 }
 
-int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
