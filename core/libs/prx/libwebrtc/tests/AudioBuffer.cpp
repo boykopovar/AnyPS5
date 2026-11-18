@@ -138,6 +138,23 @@ void TestStereoRoundTrip() {
     Require(output == input);
 }
 
+void TestUnmappedSamplesAndConfigThrow() {
+    Buffer buffer(16000, 2, 16000, 2, 16000, 2);
+    std::vector<std::int16_t> input(320, 7);
+    const auto config = Config(16000, 2);
+    const std::uintptr_t unmapped = 0x10;
+    const auto* const unreadableConfig = reinterpret_cast<const WebRtcStreamConfig*>(unmapped);
+    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, reinterpret_cast<const std::int16_t*>(unmapped), &config); });
+    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, input.data(), unreadableConfig); });
+    _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, input.data(), &config);
+    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(&buffer.object, &config, reinterpret_cast<std::int16_t*>(unmapped)); });
+    std::vector<std::int16_t> output(320, 0x5555);
+    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(&buffer.object, unreadableConfig, output.data()); });
+    Require(output == std::vector<std::int16_t>(320, 0x5555));
+    _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(&buffer.object, &config, output.data());
+    Require(output == input);
+}
+
 void TestDownmixByAveragingTruncates() {
     Buffer buffer(8000, 2, 8000, 1, 8000, 1);
     std::vector<std::int16_t> input(160);
@@ -230,6 +247,7 @@ int main() {
     TestTwoBandsAt32kHz();
     TestResamplersPerBufferChannel();
     TestStereoRoundTrip();
+    TestUnmappedSamplesAndConfigThrow();
     TestDownmixByAveragingTruncates();
     TestMonoBufferFillsEveryOutputChannel();
     TestResamplingMatchesPushSincResampler();
