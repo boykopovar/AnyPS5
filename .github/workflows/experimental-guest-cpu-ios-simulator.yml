@@ -1,0 +1,54 @@
+name: Experimental guest CPU (iOS Simulator)
+
+on:
+  push:
+    branches:
+      - ci/ios-sim-test
+  workflow_dispatch:
+
+jobs:
+  ios-simulator-tests:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot an iOS Simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | jq -r '[.devices|to_entries[]|select(.key|test("iOS"))|.value[]|select(.isAvailable and (.name|startswith("iPhone")))]|sort_by(.state != "Booted")|.[0].udid')
+          echo "Selected simulator: $UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Configure for the iOS Simulator
+        run: |
+          set -euo pipefail
+          # A simulator can only run binaries matching the host CPU, so follow
+          # the runner architecture instead of hard-coding arm64.
+          ARCH=$(uname -m)
+          echo "Host architecture: $ARCH"
+          cmake -S experimental/arm64-cpu -B guest-cpu-ios-sim -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_CROSSCOMPILING_EMULATOR="/usr/bin/xcrun;simctl;spawn;${{ steps.sim.outputs.udid }}"
+
+      - name: Build
+        run: cmake --build guest-cpu-ios-sim
+
+      - name: Sign the test binaries
+        run: |
+          set -euo pipefail
+          for binary in guest-cpu-ios-sim/anyps5_guest_*; do
+            if [ -f "$binary" ] && file "$binary" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$binary"
+            fi
+          done
+
+      - name: Run the tests on the simulator
+        run: ctest --test-dir guest-cpu-ios-sim --output-on-failure --timeout 300
