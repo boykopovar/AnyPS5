@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -40,9 +41,38 @@ void TestNullExponent() {
     Require(_LPow_nid_postfix(2.0L, -2.0L, nullptr) == 0.25L, "_LPow 2 -2");
 }
 
+void TestNonNullExponent() {
+    struct Storage {
+        short exponent = 1234;
+        short marker = 5678;
+    } storage;
+
+    const double resultD = _Pow_nid_postfix(2.0, 10.0, &storage.exponent);
+    Require(resultD == 1024.0, "_Pow 2^10 with exponent pointer");
+    Require(storage.exponent == 1234, "_Pow exponent unchanged");
+    Require(storage.marker == 5678, "_Pow marker unchanged");
+
+    storage.exponent = -7;
+    storage.marker = 99;
+    const float resultF = _FPow_nid_postfix(3.0f, 2.0f, &storage.exponent);
+    Require(resultF == 9.0f, "_FPow 3^2 with exponent pointer");
+    Require(storage.exponent == -7, "_FPow exponent unchanged");
+    Require(storage.marker == 99, "_FPow marker unchanged");
+
+    short lpowExp = 0;
+    bool lpowThrew = false;
+    try {
+        _LPow_nid_postfix(2.0L, 10.0L, &lpowExp);
+    } catch (const std::runtime_error&) {
+        lpowThrew = true;
+    }
+    Require(lpowThrew, "_LPow non-null exponent throws NotImplemented");
+}
+
 }
 
 int main() {
     TestNullExponent();
+    TestNonNullExponent();
     return 0;
 }
