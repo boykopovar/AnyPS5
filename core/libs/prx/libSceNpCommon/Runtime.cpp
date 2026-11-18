@@ -1032,7 +1032,11 @@ int APS5_VABI _ZN3sce2np4Time20GetDebugNetworkClockEPS1_(NpTime* time) {
 }
 
 int APS5_VABI _ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(NpTime* self, const RtcDateTime* dateTime) {
-    const RtcDateTime copy = *dateTime;
+    RtcDateTime copy {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, dateTime, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     const int result = sceRtcGetTick(&copy, self);
     return result < 0 ? result : 0;
 }
@@ -1342,6 +1346,12 @@ int APS5_VABI sceNpCalloutStartOnCtx(NpCalloutContext* context, NpCallout* callo
 
 int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callout, int* wasPending) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
+    if (wasPending != nullptr) {
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(wasPending, sizeof(*wasPending));
+        errno = savedErrno;
+        if (!writable) return NP_ERROR_INVALID_ARGUMENT;
+    }
     sceNpMutexLock(&context->mutex);
 
     int removed = 0;
@@ -1351,8 +1361,13 @@ int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callou
         removed = 1;
         break;
     }
-    if (wasPending != nullptr) *wasPending = removed;
     sceNpMutexUnlock(&context->mutex);
+    if (wasPending != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(wasPending, &removed, sizeof(removed));
+        errno = savedErrno;
+        if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    }
 
     return 0;
 }

@@ -60,6 +60,9 @@ int main() {
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, &dateTime) == 0 && std::memcmp(&dateTime, &secondDay, sizeof(dateTime)) == 0);
     errno = 71;
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, reinterpret_cast<RtcDateTime*>(0x10)) == invalidArgument && errno == 71);
+    NpTime kept{12345};
+    CHECK(_ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(&kept, reinterpret_cast<const RtcDateTime*>(0x10)) == invalidArgument && errno == 71
+        && kept.tick == 12345);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&time, &seconds) == 0 && seconds == 97445);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&zero, &seconds) == invalidArgument);
 

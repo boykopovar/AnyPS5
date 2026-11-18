@@ -1007,6 +1007,9 @@ void TestCallouts() {
         "a queued callout cannot be queued again");
     Require(sceNpCalloutStopOnCtx(&context, &stopped, &wasPending) == 0 && wasPending == 1, "a queued callout is removed");
     Require(sceNpCalloutStopOnCtx(&context, &stopped, &wasPending) == 0 && wasPending == 0, "removing twice reports nothing pending");
+    Require(sceNpCalloutStartOnCtx(&context, &stopped, 60000000, RecordUnexpected, nullptr) == 0, "a stopped callout can be queued again");
+    Require(sceNpCalloutStopOnCtx(&context, &stopped, reinterpret_cast<int*>(0x10)) == NpInvalidArgument, "an unwritable pending flag is refused");
+    Require(sceNpCalloutStopOnCtx(&context, &stopped, &wasPending) == 0 && wasPending == 1, "a refused stop leaves the callout queued");
 
     NpCallout queuedFirst {};
     NpCallout queuedSecond {};
