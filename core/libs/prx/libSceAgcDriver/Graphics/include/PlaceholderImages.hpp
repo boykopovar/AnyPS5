@@ -52,9 +52,13 @@ constexpr PlaceholderImageShape PlaceholderImageShapeOf(std::uint32_t heap) {
             samples[dimension]};
 }
 
-constexpr std::optional<PlaceholderImageShape> PlaceholderImageShapeForDevice(std::uint32_t heap, bool storageImageMultisample) {
-    const auto shape = PlaceholderImageShapeOf(heap);
+constexpr std::optional<PlaceholderImageShape> PlaceholderImageShapeForDevice(std::uint32_t heap, bool storageImageMultisample, bool imageInt64Atomics) {
+    auto shape = PlaceholderImageShapeOf(heap);
     if (!storageImageMultisample && (shape.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 && shape.samples != VK_SAMPLE_COUNT_1_BIT) return std::nullopt;
+    if (!imageInt64Atomics && shape.format == VK_FORMAT_R64_UINT) {
+        shape.format = VK_FORMAT_R32G32_UINT;
+        shape.features = static_cast<VkFormatFeatureFlags>(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
+    }
     return shape;
 }
 

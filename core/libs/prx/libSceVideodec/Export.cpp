@@ -118,18 +118,10 @@ int CopyPicture(const SceVideodec2::OutputInfo& output, const Geometry& geometry
     const auto sourcePitch = static_cast<std::uint64_t>(output.framePitchInBytes);
     const auto* source = static_cast<const std::uint8_t*>(output.frameBuffer);
     auto* destination = static_cast<std::uint8_t*>(frameBuffer->frameBuffer);
-    for (std::uint32_t row = 0; row < geometry.height; ++row) {
-        if (!GuestCopyOut_nid_no_patch(destination + static_cast<std::uint64_t>(row) * geometry.pitch, source + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width)) {
-            return VideodecErrorFrameBufferPointer;
-        }
-    }
+    if (!GuestCopyOutRows_nid_no_patch(destination, geometry.pitch, source, sourcePitch, geometry.width, geometry.height)) return VideodecErrorFrameBufferPointer;
     const auto* sourceChroma = source + sourcePitch * geometry.height;
     auto* destinationChroma = destination + static_cast<std::uint64_t>(geometry.pitch) * geometry.height;
-    for (std::uint32_t row = 0; row < geometry.height / 2; ++row) {
-        if (!GuestCopyOut_nid_no_patch(destinationChroma + static_cast<std::uint64_t>(row) * geometry.pitch, sourceChroma + static_cast<std::uint64_t>(row) * sourcePitch, geometry.width)) {
-            return VideodecErrorFrameBufferPointer;
-        }
-    }
+    if (!GuestCopyOutRows_nid_no_patch(destinationChroma, geometry.pitch, sourceChroma, sourcePitch, geometry.width, geometry.height / 2)) return VideodecErrorFrameBufferPointer;
     return 0;
 }
 
@@ -325,7 +317,26 @@ int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
     }
     return 0;
 }
-int APS5_VABI sceVideodecMapMemory(void) {
+int APS5_VABI sceVideodecMapMemory(Ctrl* ctrl, const void* memory) {
+    if (ctrl == nullptr || memory == nullptr) return VideodecErrorArgumentPointer;
+    std::uint64_t ctrlSize = 0;
+    if (GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) {
+        if (ctrlSize != sizeof(Ctrl)) return VideodecErrorStructSize;
+        std::uint64_t memorySize = 0;
+        if (GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize))) {
+            if (memorySize != 0x20 && memorySize != 0x28 && memorySize != 0x48) return VideodecErrorStructSize;
+            void* handle = nullptr;
+            if (GuestCopyIn_nid_no_patch(&handle, &ctrl->handle, sizeof(handle))) {
+                if (handle == nullptr) return VideodecErrorHandle;
+                unsigned char fields[0x1c]{};
+                if (memorySize != 0x20 && GuestCopyIn_nid_no_patch(fields, static_cast<const unsigned char*>(memory) + 0x8, sizeof(fields))) {
+                    std::uint32_t flags = 0;
+                    std::memcpy(&flags, fields + 0x18, sizeof(flags));
+                    if (flags != 0) return VideodecErrorApiFail;
+                }
+            }
+        }
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

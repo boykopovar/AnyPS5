@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <stdexcept>
 
 using NKWebKit::WebCoreAbi::HistoryItem;
+using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WebCoreAbi::HistoryItemChangedHook;
 using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
@@ -141,6 +143,16 @@ static void TestContainers() {
     Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
 }
 
+static void TestCachedPageExpiry() {
+    HistoryItem item;
+    const double now = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    CachedPage page{nullptr, now + 60};
+    item.cachedPage = &page;
+    Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+    page.expirationTime = now - 1;
+    Require(_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+}
+
 static void TestNull() {
     bool threw = false;
     try {
@@ -218,11 +230,83 @@ static void TestChangedHook() {
     value.impl = nullptr;
 }
 
+static void TestTarget() {
+    HistoryItem item;
+    Require(!_ZNK7WebCore11HistoryItem6targetEv(&item).impl);
+
+    auto target = Make("_blank");
+    String targetString(&target);
+    target.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+    Require(_ZNK7WebCore11HistoryItem6targetEv(&item).impl == &target);
+    Require(target.refCount == 6);
+
+    static int calls = 0;
+    calls = 0;
+    {
+        ScopedChangedHook guard(+[](HistoryItem*) { ++calls; });
+        _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+        Require(calls == 1);
+    }
+
+    HistoryItem first;
+    HistoryItem second;
+    auto firstName = Make("main");
+    auto secondName = Make("side");
+    String firstString(&firstName);
+    String secondString(&secondName);
+    firstName.refCount = secondName.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &firstString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &secondString);
+
+    HistoryItem* storage[2] = {&first, &second};
+    HistoryItem parent;
+    parent.children = {storage, 2, 2};
+
+    auto lookupMain = Make("main");
+    auto lookupSide = Make("side");
+    auto lookupMissing = Make("gone");
+    String mainString(&lookupMain);
+    String sideString(&lookupSide);
+    String missingString(&lookupMissing);
+    lookupMain.refCount = lookupSide.refCount = lookupMissing.refCount = 4;
+
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &mainString) == &first);
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &sideString) == &second);
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &missingString));
+
+    HistoryItem empty;
+    empty.children = {nullptr, 0, 0};
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&empty, &mainString));
+
+    bool threw = false;
+    try { _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(nullptr, &mainString); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    String emptyString;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &emptyString);
+    for (auto* impl : {&target, &firstName, &secondName, &lookupMain, &lookupSide, &lookupMissing}) impl->refCount = 2;
+    targetString.impl = firstString.impl = secondString.impl = mainString.impl = sideString.impl = missingString.impl = nullptr;
+}
+
 int main() {
     TestStrings();
     TestScalars();
     TestContainers();
+    TestCachedPageExpiry();
     TestNull();
     TestChangedHook();
+    TestTarget();
     return 0;
 }
