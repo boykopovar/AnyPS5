@@ -374,10 +374,15 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
     return nullptr;
 }
 
+bool RangeFits(const unsigned char* start, std::int64_t length) {
+    return reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
+}
+
 EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
     const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
     if (sized && length > 0) {
+        if (!RangeFits(in, length)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
@@ -411,8 +416,9 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     std::unique_ptr<EcKey, KeyDeleter> created;
     if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
     EcKey* result = created ? created.get() : current;
+    const unsigned char* const start = cursor;
     EcGroup* group = DecodeGroup(cursor, length);
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
+    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
         EC_GROUP_free_nid_postfix(group);
         APS5_INVALID_ARG_EX;
     }
@@ -442,6 +448,7 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
     }
     std::vector<unsigned char> bytes;
     if (length > 0 && length <= std::numeric_limits<std::int32_t>::max()) {
+        if (!RangeFits(cursor, length)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }

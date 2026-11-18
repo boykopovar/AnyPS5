@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -165,6 +166,21 @@ void RejectsBadEncodings() {
     EC_KEY_free_nid_postfix(key);
 }
 
+void RejectsARangeThatWrapsTheAddressSpace() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
+    Require(key != nullptr);
+    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 8);
+    bool threw = false;
+    try {
+        o2i_ECPublicKey_nid_postfix(&key, &cursor, 65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(cursor == reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 8));
+    EC_KEY_free_nid_postfix(key);
+}
+
 void RejectsANullInput() {
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
     Require(key != nullptr);
@@ -186,6 +202,7 @@ int main() {
     ReusesTheExistingPoint();
     RejectsAMissingKeyOrGroup();
     RejectsBadEncodings();
+    RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
     std::puts("libSceLibreSsl3 o2i_ECPublicKey tests passed");
 }
