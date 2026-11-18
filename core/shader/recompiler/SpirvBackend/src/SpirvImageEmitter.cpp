@@ -1410,8 +1410,9 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
                     if (opcode == IrOpcode::ImageAtomicInc64) {
                         return Select(state, scalar, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), current, value), constant(0u), Binary(state, spv::OpIAdd, scalar, current, constant(1u)));
                     }
-                    const auto wraps = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpIEqual, TypeBool(state), current, constant(0u)), Binary(state, spv::OpUGreaterThan, TypeBool(state), current, value));
-                    return Select(state, scalar, wraps, value, Binary(state, spv::OpISub, scalar, current, constant(1u)));
+                    const auto next = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpExtInst, scalar, next, GlslStd450(state), GLSLstd450UMin, Binary(state, spv::OpISub, scalar, current, constant(1u)), value);
+                    return next;
                 });
                 return Unary(state, spv::OpBitcast, TypeU64(state), updated);
             }
