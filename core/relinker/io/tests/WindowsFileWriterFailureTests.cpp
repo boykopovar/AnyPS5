@@ -262,6 +262,14 @@ void runCurrentDirectory(const std::filesystem::path& root, const std::ios::open
         require(Io::Detail::ReplaceWindowsFile(target, Io::Utf8Path(target), mode, data.data(), data.size()), "A bare relative output could not be written");
         require(readFile(target) == expected, "A bare relative output has incorrect bytes");
         require(stages(directory).empty(), "A bare relative output leaked temporary files");
+        if (directory.has_root_name() && directory.root_name().native().size() == 2) {
+            const auto driveRelative = directory.root_name() / (existing ? "drive-old.bin" : "drive-new.bin");
+            if (existing) std::ofstream(driveRelative, std::ios::binary) << previous;
+            require(Io::Detail::ReplaceWindowsFile(driveRelative, Io::Utf8Path(driveRelative), mode, data.data(), data.size()),
+                    "A drive-relative output could not be written");
+            require(readFile(driveRelative) == expected, "A drive-relative output has incorrect bytes");
+            require(stages(directory).empty(), "A drive-relative output leaked temporary files");
+        }
     }
 }
 
@@ -422,6 +430,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::filesystem::remove_all(directory);
-    std::cout << "21 deterministic Windows output cases passed\n";
+    std::cout << "Windows output failure and path cases passed\n";
     return 0;
 }

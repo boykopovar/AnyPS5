@@ -60,7 +60,8 @@ public:
         if (copyDacl && !ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;OW)", SDDL_REVISION_1, &backupDescriptor, nullptr)) return;
         const std::unique_ptr<void, decltype(&LocalFree)> backupSecurity(backupDescriptor, LocalFree);
         SECURITY_ATTRIBUTES backupAttributes{sizeof(SECURITY_ATTRIBUTES), backupDescriptor, FALSE};
-        const auto parent = target.parent_path().empty() ? std::filesystem::path(L".") : target.parent_path();
+        auto parent = target.parent_path().empty() ? std::filesystem::path(L".") : target.parent_path();
+        if (parent.has_root_name() && !parent.has_root_directory() && !parent.has_relative_path()) parent /= L".";
         const auto raw = CreateFileW(parent.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (raw == INVALID_HANDLE_VALUE) return;
