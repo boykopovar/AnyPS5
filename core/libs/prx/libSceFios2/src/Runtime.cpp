@@ -1,10 +1,11 @@
 #include "Runtime.hpp"
+#include "prx/libSceFios2/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
-#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -49,7 +50,7 @@ struct Op {
 
 struct State {
     std::mutex mutex;
-    std::condition_variable finished;
+    TimedWait::Condition finished;
     std::condition_variable workAvailable;
     std::map<SceFiosHandle, std::shared_ptr<Op>> ops;
     std::map<SceFiosHandle, std::shared_ptr<Op>> inlineCompletions;
@@ -208,7 +209,7 @@ void CompleteOpLocked(std::unique_lock<std::mutex>& lock, const std::shared_ptr<
     op->callbackFinished = true;
     op->done = true;
     if (op->exception && !Global().retainedException) Global().retainedException = op->exception;
-    Global().finished.notify_all();
+    Global().finished.NotifyAll();
 }
 
 void ExecuteOpLocked(std::unique_lock<std::mutex>& lock, const std::shared_ptr<Op>& op) {
@@ -278,7 +279,7 @@ void* APS5_VABI FiosWorkerEntry_nid_no_patch(void*) {
         ExecuteOpLocked(lock, op);
     }
     Global().workerRunning = false;
-    Global().finished.notify_all();
+    Global().finished.NotifyAll();
     return nullptr;
 }
 
@@ -383,7 +384,7 @@ SceFiosOp Submit(const SceFiosOpAttr* attr, OpInfo info, Work work, ExecutionPol
             std::lock_guard lock(Global().mutex);
             Global().inlineCompletions.erase(op->id);
             Global().ops.erase(op->id);
-            Global().finished.notify_all();
+            Global().finished.NotifyAll();
             throw;
         }
     }
@@ -410,7 +411,7 @@ std::int32_t Wait(SceFiosOp op) {
         }
     }
 
-    Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+    Global().finished.Wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
     if (found->exception) std::rethrow_exception(found->exception);
     return found->error;
 }
@@ -431,8 +432,9 @@ std::int32_t WaitUntil(SceFiosOp op, SceFiosTime deadline) {
         }
     }
 
-    if (!Global().finished.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)),
-                                      [&] { return found->callbackFinished && !found->callbackExecuting; })) {
+    const SceFiosTime now = sceFiosTimeGetCurrent();
+    const std::uint64_t wake = deadline > now ? TimedWait::NowNanos() + static_cast<std::uint64_t>(deadline - now) : 0;
+    if (!Global().finished.WaitUntil(lock, wake, [&] { return found->callbackFinished && !found->callbackExecuting; })) {
         return SCE_FIOS_ERROR_TIMEOUT;
     }
     if (found->exception) std::rethrow_exception(found->exception);
@@ -484,7 +486,7 @@ bool SyncWait(SceFiosOp op, Completion& completion) {
         Global().workAvailable.notify_one();
     }
 
-    Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+    Global().finished.Wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
 
     completion.error = found->error;
     completion.result = found->result;
@@ -496,7 +498,7 @@ bool SyncWait(SceFiosOp op, Completion& completion) {
         if (isOwnerConsumption) {
             const std::lock_guard leaseLock(Global().mutex);
             Global().inlineCompletions.erase(op);
-            Global().finished.notify_all();
+            Global().finished.NotifyAll();
         }
     };
 
@@ -542,14 +544,14 @@ bool DeleteOp(SceFiosOp op) {
         }
 
         if (found->deleteFired) {
-            Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+            Global().finished.Wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
             if (found->exception) std::rethrow_exception(found->exception);
             return false;
         }
 
         CancelQueuedLocked(lock, found);
 
-        Global().finished.wait(lock, [&] {
+        Global().finished.Wait(lock, [&] {
             return found->callbackFinished && !found->callbackExecuting;
         });
 
@@ -588,7 +590,7 @@ bool DeleteOp(SceFiosOp op) {
             found->callbackExecuting = false;
             found->callbackFinished = true;
             found->callbackThread = std::thread::id();
-            Global().finished.notify_all();
+            Global().finished.NotifyAll();
         }
         if (found->exception && !Global().retainedException) Global().retainedException = found->exception;
         Global().ops.erase(op);
@@ -793,7 +795,7 @@ void Terminate() {
             NotImplemented_nid_no_patch(__func__);
         }
         if (state.terminating) {
-            state.finished.wait(lock, [&] { return !state.terminating; });
+            state.finished.Wait(lock, [&] { return !state.terminating; });
             return;
         }
         state.terminating = true;
@@ -806,14 +808,14 @@ void Terminate() {
         state.workAvailable.notify_all();
 
         if (state.workerRunning) {
-            state.finished.wait(lock, [&] {
+            state.finished.Wait(lock, [&] {
                 return !state.workerRunning;
             });
             workerToJoin = state.worker;
             state.worker = nullptr;
         }
 
-        state.finished.wait(lock, [&] {
+        state.finished.Wait(lock, [&] {
             if (!state.callbackStackByThread.empty()) return false;
             for (const auto& entry : state.ops) {
                 const auto& op = entry.second;
@@ -850,7 +852,7 @@ void Terminate() {
         state.initialized = false;
         state.retainedException = nullptr;
         state.terminating = false;
-        state.finished.notify_all();
+        state.finished.NotifyAll();
     }
 
     if (retainedException) std::rethrow_exception(retainedException);

@@ -278,7 +278,7 @@ int APS5_VABI pthread_get_specificarray_np_nid_postfix(PthreadKey key, int total
     constexpr int GuestEinval = 22;
     constexpr int GuestEfault = 14;
     constexpr int MaxKeys = 512;
-    if (total <= 0 || key < 1 || (key - 1 + total) > MaxKeys) return GuestEinval;
+    if (total <= 0 || key < 1 || key > MaxKeys || total > MaxKeys - (key - 1)) return GuestEinval;
     if (!array) return GuestEfault;
     for (int i = 0; i < total; ++i) {
         array[i] = scePthreadGetspecific(key + i);
@@ -687,11 +687,6 @@ int APS5_VABI sceKernelExpectedHddFormat(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelFlock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1079,11 +1074,6 @@ int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr(void) {
 }
 
 int APS5_VABI sceKernelGetSystemSwBeta(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

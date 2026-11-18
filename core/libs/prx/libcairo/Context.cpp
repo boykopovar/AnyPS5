@@ -5,7 +5,9 @@
 #include <CairoBackend.h>
 
 #include <bit>
+#include <cerrno>
 #include <cstddef>
+#include <vector>
 
 static_assert(sizeof(CairoPathData) == sizeof(cairo_path_data_t));
 static_assert(offsetof(CairoPathData, header.length) == offsetof(cairo_path_data_t, header.length));
@@ -30,6 +32,51 @@ cairo_t* Backend(CairoContext* context) {
 
 CairoContext* Guest(cairo_t* context) {
     return reinterpret_cast<CairoContext*>(context);
+}
+
+template <typename T>
+T ReadGuest(const T* source, const char* caller) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(caller);
+    return value;
+}
+
+template <typename T>
+void WriteGuest(T* destination, const T& value, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(caller);
+}
+
+void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(caller);
+}
+
+template <typename Fn>
+void WriteExtents(CairoContext* context, double* x1, double* y1, double* x2, double* y2, Fn call, const char* caller) {
+    for (double* bound : {x1, y1, x2, y2})
+        if (bound)
+            RequireWritable(bound, sizeof(*bound), caller);
+    double lx1 = 0;
+    double ly1 = 0;
+    double lx2 = 0;
+    double ly2 = 0;
+    if (context)
+        call(Backend(context), &lx1, &ly1, &lx2, &ly2);
+    if (x1) WriteGuest(x1, lx1, caller);
+    if (y1) WriteGuest(y1, ly1, caller);
+    if (x2) WriteGuest(x2, lx2, caller);
+    if (y2) WriteGuest(y2, ly2, caller);
 }
 
 }
@@ -73,19 +120,20 @@ void APS5_VABI cairo_rotate(CairoContext* context, double radians) {
 }
 
 void APS5_VABI cairo_transform(CairoContext* context, const CairoMatrix* matrix) {
-    const cairo_matrix_t backend = std::bit_cast<cairo_matrix_t>(*matrix);
+    const cairo_matrix_t backend = std::bit_cast<cairo_matrix_t>(ReadGuest(matrix, __func__));
     aps5_cairo_transform(Backend(context), &backend);
 }
 
 void APS5_VABI cairo_set_matrix(CairoContext* context, const CairoMatrix* matrix) {
-    const cairo_matrix_t backend = std::bit_cast<cairo_matrix_t>(*matrix);
+    const cairo_matrix_t backend = std::bit_cast<cairo_matrix_t>(ReadGuest(matrix, __func__));
     aps5_cairo_set_matrix(Backend(context), &backend);
 }
 
 void APS5_VABI cairo_get_matrix(CairoContext* context, CairoMatrix* matrix) {
+    RequireWritable(matrix, sizeof(*matrix), __func__);
     cairo_matrix_t backend;
     aps5_cairo_get_matrix(Backend(context), &backend);
-    *matrix = std::bit_cast<CairoMatrix>(backend);
+    WriteGuest(matrix, std::bit_cast<CairoMatrix>(backend), __func__);
 }
 
 void APS5_VABI cairo_identity_matrix(CairoContext* context) {
@@ -156,13 +204,47 @@ double APS5_VABI cairo_get_miter_limit(CairoContext* context) {
     return aps5_cairo_get_miter_limit(Backend(context));
 }
 
+constexpr int MaxDashCount = 4096;
+
 void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes, int numDashes, double offset) {
-    if (!dashes && numDashes > 0) NotImplemented_nid_no_patch(__func__);
-    aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
+    if (numDashes <= 0) {
+        aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
+        return;
+    }
+    if (!dashes || numDashes > MaxDashCount)
+        NotImplemented_nid_no_patch(__func__);
+    std::vector<double> hostDashes(static_cast<std::size_t>(numDashes));
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(hostDashes.data(), dashes, hostDashes.size() * sizeof(double));
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(__func__);
+    aps5_cairo_set_dash(Backend(context), hostDashes.data(), numDashes, offset);
 }
 
 void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset) {
-    aps5_cairo_get_dash(Backend(context), dashes, offset);
+    const int count = aps5_cairo_get_dash_count(Backend(context));
+    if (dashes && count > MaxDashCount)
+        NotImplemented_nid_no_patch(__func__);
+    std::vector<double> hostDashes(dashes && count > 0 ? static_cast<std::size_t>(count) : 0);
+    if (!hostDashes.empty())
+        RequireWritable(dashes, hostDashes.size() * sizeof(double), __func__);
+    double hostOffset = 0;
+    if (offset) {
+        hostOffset = ReadGuest(offset, __func__);
+        RequireWritable(offset, sizeof(hostOffset), __func__);
+    }
+    aps5_cairo_get_dash(Backend(context), hostDashes.empty() ? nullptr : hostDashes.data(),
+                        offset ? &hostOffset : nullptr);
+    if (!hostDashes.empty()) {
+        const int savedErrno = errno;
+        const bool ok = GuestCopyOut_nid_no_patch(dashes, hostDashes.data(), hostDashes.size() * sizeof(double));
+        errno = savedErrno;
+        if (!ok)
+            NotImplemented_nid_no_patch(__func__);
+    }
+    if (offset)
+        WriteGuest(offset, hostOffset, __func__);
 }
 
 int APS5_VABI cairo_get_dash_count(CairoContext* context) {
@@ -211,7 +293,13 @@ int APS5_VABI cairo_has_current_point(CairoContext* context) {
 }
 
 void APS5_VABI cairo_get_current_point(CairoContext* context, double* x, double* y) {
-    aps5_cairo_get_current_point(Backend(context), x, y);
+    if (x) RequireWritable(x, sizeof(*x), __func__);
+    if (y) RequireWritable(y, sizeof(*y), __func__);
+    double lx = 0;
+    double ly = 0;
+    aps5_cairo_get_current_point(Backend(context), &lx, &ly);
+    if (x) WriteGuest(x, lx, __func__);
+    if (y) WriteGuest(y, ly, __func__);
 }
 
 CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
@@ -219,12 +307,7 @@ CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
 }
 
 void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1, double* x2, double* y2) {
-    if (!context) {
-        for (double* bound : {x1, y1, x2, y2})
-            if (bound) *bound = 0;
-        return;
-    }
-    aps5_cairo_path_extents(Backend(context), x1, y1, x2, y2);
+    WriteExtents(context, x1, y1, x2, y2, aps5_cairo_path_extents, __func__);
 }
 
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {
@@ -264,12 +347,7 @@ void APS5_VABI cairo_fill_preserve(CairoContext* context) {
 }
 
 void APS5_VABI cairo_fill_extents(CairoContext* context, double* x1, double* y1, double* x2, double* y2) {
-    if (!context) {
-        for (double* bound : {x1, y1, x2, y2})
-            if (bound) *bound = 0;
-        return;
-    }
-    aps5_cairo_fill_extents(Backend(context), x1, y1, x2, y2);
+    WriteExtents(context, x1, y1, x2, y2, aps5_cairo_fill_extents, __func__);
 }
 
 void APS5_VABI cairo_stroke(CairoContext* context) {
@@ -281,12 +359,7 @@ void APS5_VABI cairo_stroke_preserve(CairoContext* context) {
 }
 
 void APS5_VABI cairo_stroke_extents(CairoContext* context, double* x1, double* y1, double* x2, double* y2) {
-    if (!context) {
-        for (double* bound : {x1, y1, x2, y2})
-            if (bound) *bound = 0;
-        return;
-    }
-    aps5_cairo_stroke_extents(Backend(context), x1, y1, x2, y2);
+    WriteExtents(context, x1, y1, x2, y2, aps5_cairo_stroke_extents, __func__);
 }
 
 int APS5_VABI cairo_in_stroke(CairoContext* context, double x, double y) {
@@ -299,12 +372,7 @@ void APS5_VABI cairo_clip(CairoContext* context) {
 }
 
 void APS5_VABI cairo_clip_extents(CairoContext* context, double* x1, double* y1, double* x2, double* y2) {
-    if (!context) {
-        for (double* bound : {x1, y1, x2, y2})
-            if (bound) *bound = 0;
-        return;
-    }
-    aps5_cairo_clip_extents(Backend(context), x1, y1, x2, y2);
+    WriteExtents(context, x1, y1, x2, y2, aps5_cairo_clip_extents, __func__);
 }
 
 void APS5_VABI cairo_push_group(CairoContext* context) {

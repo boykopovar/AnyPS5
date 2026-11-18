@@ -85,6 +85,11 @@ if(BUILD_TESTING)
         target_link_libraries(guest_system_load_exec_standard_error_tests PRIVATE libSceSystemService libkernel libc)
         add_test(NAME guest_system_load_exec_standard_error COMMAND guest_system_load_exec_standard_error_tests)
         set_tests_properties(guest_system_load_exec_standard_error PROPERTIES TIMEOUT 20)
+        add_test_executable(guest_system_load_exec_secondary_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLoadExecSecondary.cpp)
+        target_include_directories(guest_system_load_exec_secondary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_system_load_exec_secondary_tests PRIVATE libSceSystemService libkernel libc)
+        add_test(NAME guest_system_load_exec_secondary COMMAND guest_system_load_exec_secondary_tests)
+        set_tests_properties(guest_system_load_exec_secondary PROPERTIES TIMEOUT 20)
     endif()
     if(WIN32)
         set_tests_properties(guest_system_exit guest_lnc_util_load_exec_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_immediate_exit_drain guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit guest_exit_finalizers_before_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
@@ -154,6 +159,10 @@ if(BUILD_TESTING)
                 "17,-,-,pt_BR.UTF-8,-,AUTO,0"
                 "10,-,-,zh_TW.UTF-8,-,Auto,0"
                 "11,-,-,zh_CN.UTF-8,-,auto,0"
+                "10,-,-,zh_cmn_Hant_TW.UTF-8,-,auto,0"
+                "10,-,-,zh_cmn_Hant_TW.UTF-8@latin,-,auto,0"
+                "11,-,-,zh-cmn-Hans-TW,-,auto,0"
+                "10,-,-,en_US.UTF-8,zh-yue:en,auto,0"
                 "20,es_MX.UTF-8,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
                 "2,-,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
                 "3,-,-,en_US.UTF-8,es:fr,auto,0"
@@ -296,6 +305,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_system_service_accessibility_zoom_lock PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_system_service_accessibility_zoom_lock PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_game_process_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceGameProcessAnswers.cpp)
+    target_include_directories(guest_system_service_game_process_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_game_process_answers_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_game_process_answers_tests)
+    add_test(NAME guest_system_service_game_process_answers COMMAND guest_system_service_game_process_answers_tests)
+    set_tests_properties(guest_system_service_game_process_answers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_service_game_process_answers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_notice_screen_skip_flag_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceNoticeScreenSkipFlag.cpp)

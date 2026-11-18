@@ -47,5 +47,40 @@ class OwnBranchTests(unittest.TestCase):
         self.assertCountEqual(scanned, [str(number) for number in prs])
 
 
+class BranchResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.old = os.getcwd()
+        self.directory = tempfile.TemporaryDirectory()
+        os.chdir(self.directory.name)
+        run("init", "-q", "-b", "main")
+        run("commit", "-q", "--allow-empty", "-m", "a")
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.directory.cleanup()
+
+    def test_a_mistyped_branch_is_rejected_before_any_pull_request_head_is_fetched(self):
+        def unreachable(*args, **kwargs):
+            raise AssertionError("a mistyped --branch must not fetch pull request heads")
+
+        with patch.object(pr_overlap, "open_prs", return_value={}), \
+                patch.object(pr_overlap, "base_commit", return_value="a" * 40), \
+                patch.object(pr_overlap, "fetch_heads", side_effect=unreachable), \
+                patch.object(pr_overlap, "upstream", return_value="boykopovar/AnyPS5"):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--branch", "no-such-branch-in-this-repository"])
+
+        self.assertIn("no-such-branch-in-this-repository", str(raised.exception))
+
+    def test_resolves_the_head_commit_of_a_local_branch(self):
+        run("branch", "contrib/topic")
+        self.assertEqual(pr_overlap.resolve_branch("contrib/topic"), run("rev-parse", "HEAD"))
+
+    def test_refuses_a_name_that_matches_no_commit(self):
+        with self.assertRaises(ValueError) as raised:
+            pr_overlap.resolve_branch("contrib/absent")
+        self.assertIn("contrib/absent", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

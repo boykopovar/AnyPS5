@@ -4067,6 +4067,66 @@ void releaseSparse(std::byte* block, std::size_t reserved) {
 #endif
 }
 
+void importPartlyCommittedWindowTests(const Context& context) {
+#ifdef _WIN32
+    constexpr std::size_t piece = 65536;
+#else
+    constexpr std::size_t piece = 4096;
+#endif
+    constexpr std::size_t reserved = 8 * piece;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    auto* block = reserveSparse(reserved, piece);
+    struct Cleanup {
+        std::byte* block;
+        Context importing;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block), 1);
+            SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+            releaseSparse(block, reserved);
+        }
+    } cleanup{block, importing};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, reserved, true, false, true);
+    }
+    std::memset(block, 0x35, piece);
+    SetHostImportRangeWindow(2 * piece);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    Require(AgcDriver::GuestMemory::DescribeCommitted(base, piece).whole && !AgcDriver::GuestMemory::DescribeCommitted(base, 2 * piece).whole, "the import window test has no uncommitted tail");
+    const auto* imported = HostImportFor(importing, base + 16, 32);
+    Require(imported != nullptr && imported->base == base && imported->bytes == piece, "a committed access was refused because its import window includes uncommitted pages");
+    const auto buffer = imported->buffer;
+    Require(HostImportFor(importing, base + piece - 16, 32) == nullptr, "an import crossed from committed bytes into an uncommitted page");
+    const auto* repeated = HostImportFor(importing, base + 32, 32);
+    Require(repeated != nullptr && repeated->buffer == buffer, "a repeated committed access did not retain its narrowed import");
+#ifdef _WIN32
+    Require(VirtualAlloc(block + 4 * piece, piece, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot commit the separate import island");
+#else
+    Require(mprotect(block + 4 * piece, piece, PROT_READ | PROT_WRITE) == 0, "cannot commit the separate import island");
+#endif
+    const auto* island = HostImportFor(importing, base + 4 * piece + 16, 32);
+    Require(island != nullptr && island->base == base + 4 * piece && island->bytes == piece && island->buffer != buffer, "a separate committed island did not get its own import");
+    Require(HostImportFor(importing, base + piece - 16, 3 * piece + 32) == nullptr, "an import joined committed islands across uncommitted pages");
+#ifdef _WIN32
+    Require(VirtualAlloc(block + piece, piece, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot grow the committed import prefix");
+#else
+    Require(mprotect(block + piece, piece, PROT_READ | PROT_WRITE) == 0, "cannot grow the committed import prefix");
+#endif
+    Require(HostImportFor(importing, base + piece - 16, 32) == nullptr, "growing a window replaced a held import without a recorder");
+    {
+        GuestBufferMemory nextBuild(importing);
+        nextBuild.Upload(false);
+        nextBuild.WriteBack();
+    }
+    const auto* grown = HostImportFor(importing, base + piece - 16, 32);
+    Require(grown != nullptr && grown->base == base && grown->bytes == 2 * piece, "a newly committed window did not replace the narrower import");
+}
+
 void sparseHeapTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t reserved = 64u << 20u;
     constexpr std::size_t committed = 65536;
@@ -5422,7 +5482,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         const auto fail = [&](ShaderRecompiler::BdaAbi::FaultReason reason, std::uint32_t word, std::uint32_t value, std::uint32_t otherFaults = 0) {
             ShaderResources resources(context, compiled);
             std::memcpy(access.bytes(access.descriptor(6).buffer).data() + word * sizeof(std::uint32_t), &value, sizeof(value));
-            const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, otherFaults};
+            const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, ShaderRecompiler::BdaAbi::FaultClaimed | (otherFaults != 0 ? ShaderRecompiler::BdaAbi::FaultClaimOtherFaults : 0u), 0, 0};
             std::memcpy(descriptorBytes(access, 5).data(), &report, sizeof(report));
             try {
                 resources.WriteBack();
@@ -5553,6 +5613,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
     importRefusedWholeRangeTests(context);
+    importPartlyCommittedWindowTests(context);
     importPiecesOverAllocationLimitTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
