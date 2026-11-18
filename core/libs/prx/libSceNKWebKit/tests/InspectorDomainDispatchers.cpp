@@ -131,22 +131,22 @@ const DomainExport DomainExports[] = {
 };
 
 const std::uint64_t ExpectedHashes[] = {
-    0x7fa8c85bbd9967dcULL,
-    0xb63d99502a12e8abULL,
-    0x47ce58f9b18fad4eULL,
-    0x4061542e7edea1d2ULL,
-    0xe3735061561823f4ULL,
-    0xab7753d50503ecd8ULL,
-    0x95dcfdc80897aa36ULL,
-    0x73b441677ec0d76eULL,
-    0x0e75f3e2d679de2eULL,
-    0xb91ac7657d276cc2ULL,
-    0x3d31a2ecad7bcff1ULL,
-    0x911756493eba13dcULL,
-    0xa281b4039db4e738ULL,
-    0x67f5cb44418f8ae4ULL,
-    0x56ec7ede76c763aeULL,
-    0xf0b53de5b377d178ULL,
+    0x0320534cd94b8f7aULL,
+    0x5c0b6c6867acc90fULL,
+    0x3c2c44d1d1b16cb4ULL,
+    0x453b7cb0aad5238cULL,
+    0xe8ec8836de598f25ULL,
+    0xa18ee56bf8578f97ULL,
+    0x15a2d9d223c5cf71ULL,
+    0x5f5bdf731d6a2ef9ULL,
+    0x5d111e54757c350fULL,
+    0x62ebac706257b6f2ULL,
+    0x6344174d9dbd0696ULL,
+    0x6bccd1101ea5d108ULL,
+    0x7b710e795a02ae21ULL,
+    0xcef7ccbe1067b62dULL,
+    0x88619680dc22df89ULL,
+    0xbbdf2c2ccfafaaebULL,
 };
 
 namespace DomainDispatchDriver {
@@ -972,7 +972,7 @@ inline void AppendWrongValue(std::u16string& out, char getter) {
 }
 
 inline std::u16string BuildMessage(bool& is8Bit) {
-    static const char16_t* const ids[] = {u"1", u"7", u"123456", u"-3", u"2147483647", u"-2147483648", u"0", u"2.9"};
+    static const char16_t* const ids[] = {u"1", u"7", u"123456", u"-3", u"2147483648", u"4294967297", u"-2147483648", u"2.9"};
     const int domainCount = static_cast<int>(sizeof(Domains) / sizeof(Domains[0]));
     const Domain& domain = Domains[(*rng)(static_cast<std::uint32_t>(domainCount))];
     std::u16string out = u"{\"id\":";
