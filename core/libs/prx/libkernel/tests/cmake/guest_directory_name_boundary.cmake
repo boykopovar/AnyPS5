@@ -1,0 +1,7 @@
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
+    add_test_executable(guest_directory_name_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryNameBoundary.cpp)
+    target_include_directories(guest_directory_name_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_directory_name_boundary_tests PRIVATE libkernel libc)
+    add_test(NAME guest_directory_name_boundary COMMAND guest_directory_name_boundary_tests)
+    set_tests_properties(guest_directory_name_boundary PROPERTIES TIMEOUT 20)
+endif()

@@ -11,8 +11,6 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
 }
@@ -50,7 +48,7 @@ int APS5_VABI scePlayerSelectionDialogOpen(const PlayerSelectionDialogParam* par
   if (localParam.maxPlayers == 1 && player.option0 == 1) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  }
  if (!std::all_of(std::begin(localParam.reserved), std::end(localParam.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+ if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  return 0;
 }
