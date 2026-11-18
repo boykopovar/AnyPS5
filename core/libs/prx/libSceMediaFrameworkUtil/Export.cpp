@@ -9,19 +9,19 @@ extern "C" {
 APS5_DUMMY_FUN
 
 int APS5_VABI sceMediaFwUtilUnregisterNotifySystemVolume() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMediaFwUtilRegisterNotifySystemVolume() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMediaFwUtilPreprocessToKillMediaApp() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMediaFwUtilKillCustomMusicCoreSynchronously() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceMediaFwUtilGetSystemVolume() {
