@@ -269,6 +269,8 @@ The gate compares VUID, synchronization-hazard and bracketed `UNASSIGNED-` valid
 
 ## Write watch tests
 
+On Linux the guest write watch needs the kernel's asynchronous `userfaultfd` write protection (`UFFD_FEATURE_WP_ASYNC`), available from Linux 6.7. On an older kernel the runtime falls back to comparing guest memory, and the tests that need the watch fail by design instead of skipping. WSL 2's default 5.15 kernel is such a host: run `wsl --update` before treating those failures as regressions.
+
 The macOS write watch can be built and tested separately, without submodules or the prx libraries:
 
 ```sh
