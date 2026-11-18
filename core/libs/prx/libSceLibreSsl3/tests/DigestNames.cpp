@@ -163,6 +163,7 @@ std::vector<Available> AvailableDigests() {
         {"EVP_sha256", EVP_sha256_nid_postfix(), MBEDTLS_MD_SHA256},
         {"EVP_sha384", EVP_sha384_nid_postfix(), MBEDTLS_MD_SHA384},
         {"EVP_sha512", EVP_sha512_nid_postfix(), MBEDTLS_MD_SHA512},
+        {"EVP_sha512_256", EVP_sha512_256_nid_postfix(), MBEDTLS_MD_NONE},
     };
 }
 
@@ -174,6 +175,10 @@ const Available* Find(const char* getter) {
 }
 
 void CheckEveryName() {
+    static const unsigned char Sha512_256Expected[32] {
+        0xdd, 0x9d, 0x67, 0xb3, 0x71, 0x51, 0x9c, 0x33, 0x9e, 0xd8, 0xdb, 0xd2, 0x5a, 0xf9, 0x0e, 0x97,
+        0x6a, 0x1e, 0xee, 0xfd, 0x4a, 0xd3, 0xd8, 0x89, 0x00, 0x5e, 0x53, 0x2f, 0xc5, 0xbe, 0xf0, 0x4d,
+    };
     const unsigned char data[] = "The quick brown fox jumps over the lazy dog";
     int available = 0;
     for (const auto& entry : Table) {
@@ -183,15 +188,20 @@ void CheckEveryName() {
             unsigned char output[64];
             std::uint32_t length = 0;
             Require(EVP_Digest_nid_postfix(data, sizeof(data) - 1, output, &length, static_cast<const EvpMd*>(found), nullptr) == 1);
-            const mbedtls_md_info_t* info = mbedtls_md_info_from_type(digest->reference);
-            unsigned char expected[64];
-            Require(mbedtls_md(info, data, sizeof(data) - 1, expected) == 0);
-            Require(length == mbedtls_md_get_size(info));
-            Require(std::memcmp(output, expected, length) == 0);
+            if (digest->reference == MBEDTLS_MD_NONE) {
+                Require(length == sizeof(Sha512_256Expected));
+                Require(std::memcmp(output, Sha512_256Expected, length) == 0);
+            } else {
+                const mbedtls_md_info_t* info = mbedtls_md_info_from_type(digest->reference);
+                unsigned char expected[64];
+                Require(mbedtls_md(info, data, sizeof(data) - 1, expected) == 0);
+                Require(length == mbedtls_md_get_size(info));
+                Require(std::memcmp(output, expected, length) == 0);
+            }
             ++available;
         }
     }
-    Require(available == 43);
+    Require(available == 47);
 }
 
 void CheckUnknownNames() {
@@ -215,6 +225,10 @@ void CheckRepeatable() {
         Require(EVP_get_digestbyname_nid_postfix("SHA256") == EVP_sha256_nid_postfix());
         Require(EVP_get_digestbyname_nid_postfix("ssl3-sha1") == static_cast<const void*>(EVP_sha1_nid_postfix()));
         Require(EVP_get_digestbyname_nid_postfix("ssl2-md5") == EVP_md5_nid_postfix());
+        Require(EVP_get_digestbyname_nid_postfix("SHA512-256") == EVP_sha512_256_nid_postfix());
+        Require(EVP_get_digestbyname_nid_postfix("RSA-SHA512/256") == EVP_sha512_256_nid_postfix());
+        Require(EVP_get_digestbyname_nid_postfix("sha512-256") == EVP_sha512_256_nid_postfix());
+        Require(EVP_get_digestbyname_nid_postfix("sha512-256WithRSAEncryption") == EVP_sha512_256_nid_postfix());
     }
 }
 

@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -670,8 +671,14 @@ int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id) {
 }
 
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
-    if (!ev || ev->filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
-    return static_cast<int>(ev->ident);
+    if (!ev) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    KernelEvent local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, ev, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(std::string(__func__) + ": unreadable event");
+    if (local.filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    return static_cast<int>(local.ident);
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
@@ -688,6 +695,23 @@ bool APS5_VABI sceGnmIsUserPaEnabled() {
 
 bool APS5_VABI sceGnmDriverCaptureInProgress() {
     return false;
+}
+
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
+    if (name == 0 || !stream) return 3;
+    *stream = 1;
+    return 0;
+}
+
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
+    if (!workload) return 3;
+    *workload = stream < 0x10 ? 1 : 0;
+    return stream < 0x10 ? 0 : 1;
+}
+
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmDriverTriggerCapture() {

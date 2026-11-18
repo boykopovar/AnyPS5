@@ -217,6 +217,7 @@ struct Picture {
     Crop crop{};
     bool hevcIdr = false;
     std::uint8_t bitDepthMinus8 = 0;
+    bool avcIdr = false;
     Videodec2Hevc::Metadata hevc;
     Videodec2Avc::Metadata avc;
 };
@@ -380,6 +381,16 @@ bool StartsHevcIdr(const std::vector<std::uint8_t>& unit) {
         if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
         const auto type = (unit[index + 3] >> 1u) & 0x3fu;
         if (type < 32) return type == 19 || type == 20;
+        index += 2;
+    }
+    return false;
+}
+
+bool StartsAvcIdr(const std::vector<std::uint8_t>& unit) {
+    for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
+        if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
+        const auto type = unit[index + 3] & 0x1fu;
+        if (type >= 1 && type <= 5) return type == 5;
         index += 2;
     }
     return false;
@@ -650,6 +661,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     packet->pts = decoder.nextKey;
     auto tagged = picture;
     tagged.hevcIdr = decoder.codec == CodecHevc && StartsHevcIdr(*unit);
+    tagged.avcIdr = decoder.codec == CodecAvc && StartsAvcIdr(*unit);
     if (decoder.codec == CodecHevc) {
         tagged.hevc = Videodec2Hevc::Parse_nid_no_patch(decoder.hevc, *unit);
         tagged.hevc.info.ptsData = picture.pts;
@@ -817,7 +829,7 @@ void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frame
     const auto picture = decoder.pictures.find(frameBuffer);
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
     const auto& stored = picture->second;
-    const PictureHeader localHeader{stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+    const PictureHeader localHeader{stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8, stored.avcIdr};
     if (!CopyOutGuest(header, localHeader)) throw std::runtime_error("Videodec2: invalid argument pointer");
 }
 

@@ -136,12 +136,13 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     const std::wstring own = HostExecutable::Own("sceSystemServiceLoadExec").wstring();
     HostLaunch launch;
     const std::filesystem::path ownPath(own);
+    std::wstring recorded(32768, L'\0');
+    const DWORD recordedLength = GetEnvironmentVariableW(MainExecutableVariableWide, recorded.data(), static_cast<DWORD>(recorded.size()));
+    const std::filesystem::path main = recordedLength > 0 && recordedLength < recorded.size() ? std::filesystem::path(recorded.substr(0, recordedLength)) : ownPath;
     if (std::strcmp(path, MainExecutable) == 0) {
-        std::wstring main(32768, L'\0');
-        const DWORD mainLength = GetEnvironmentVariableW(MainExecutableVariableWide, main.data(), static_cast<DWORD>(main.size()));
-        launch.executable = mainLength > 0 && mainLength < main.size() ? main.substr(0, mainLength) : own;
+        launch.executable = main.wstring();
     } else {
-        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + ownPath.extension().wstring());
+        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + main.extension().wstring());
         RequireExecutableBeside(ownPath.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -177,12 +178,13 @@ struct HostLaunch {
 
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     const auto own = HostExecutable::Own("sceSystemServiceLoadExec");
+    const char* recorded = std::getenv(MainExecutableVariable);
+    const std::filesystem::path main = recorded != nullptr && *recorded != '\0' ? std::filesystem::path(recorded) : own;
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
-        const char* main = std::getenv(MainExecutableVariable);
-        launch.executable = main != nullptr && *main != '\0' ? main : own.string();
+        launch.executable = main.string();
     } else {
-        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + own.extension().string());
+        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + main.extension().string());
         RequireExecutableBeside(own.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -619,9 +621,17 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ static constexpr char Zeros[256] = {};
+ const int savedErrno = errno;
+ bool copied = true;
+ for (std::size_t offset = 0; copied && offset < bufSize; offset += sizeof(Zeros)) {
+  copied = GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset));
+ }
+ if (copied) copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -670,11 +680,13 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     if (!uri) return static_cast<int>(0x80a10003);
-    std::size_t length = 0;
-    while (length < 6016 && uri[length] != 0) ++length;
-    if (length > 6015) return static_cast<int>(0x80a10007);
-    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return OpenWebBrowserUrl(uri);
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(uri, 6016, copied);
+    if (copyError == 63) return static_cast<int>(0x80a10007);
+    if (copyError != 0) return static_cast<int>(0x80a10003);
+    const char* const text = copied.c_str();
+    if (std::strncmp(text, "http:", 5) != 0 && std::strncmp(text, "https:", 6) != 0 && std::strncmp(text, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
+    return OpenWebBrowserUrl(text);
 }
 
 extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
@@ -731,6 +743,12 @@ int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
  return RunningAppId("sceSystemServiceGetAppId", titleId);
 }
 
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId) {
+ if (titleId == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ CopyRunningTitleId("sceSystemServiceGetMainAppTitleId", true, titleId);
+ return SYSTEM_SERVICE_OK;
+}
+
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
  CopyRunningTitleId("sceSystemServiceGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
  return SYSTEM_SERVICE_OK;
@@ -747,7 +765,11 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
+ const bool localLaunched = true;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));
+ errno = savedErrno;
+ if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -768,6 +790,7 @@ int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* ca
 }
 
 int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ if (categoryType != nullptr && appId != SYSTEM_SERVICE_RUNNING_APP_ID) return LNC_UTIL_ERROR_GAME_PROCESS;
  return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 
