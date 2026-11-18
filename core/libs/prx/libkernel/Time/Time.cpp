@@ -115,10 +115,9 @@ static std::uint64_t ClockOrigin() {
     return origin;
 }
 
-static std::uint64_t ScaledMonotonicNanos() {
-    if (TimeScale() == 1.0) return RawMonotonicNanos();
+static std::uint64_t ScaledNanos(std::uint64_t raw) {
+    if (TimeScale() == 1.0) return raw;
     const auto origin = ClockOrigin();
-    const auto raw = RawMonotonicNanos();
     return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
 }
 
@@ -140,14 +139,18 @@ GuestClockPause& ClockPause() {
 
 }
 
-static std::uint64_t GetMonotonicNanos() {
+static std::uint64_t PausedRawMonotonicNanos() {
     auto& pause = ClockPause();
     for (;;) {
         const auto sequence = pause.sequence.load();
         if ((sequence & 1u) != 0) continue;
-        const auto now = pause.paused.load() ? pause.pausedAt.load() : ScaledMonotonicNanos() - pause.pausedNanos.load();
+        const auto now = pause.paused.load() ? pause.pausedAt.load() : RawMonotonicNanos() - pause.pausedNanos.load();
         if (pause.sequence.load() == sequence) return now;
     }
+}
+
+static std::uint64_t GetMonotonicNanos() {
+    return ScaledNanos(PausedRawMonotonicNanos());
 }
 
 extern "C" void KernelPauseGuestClock_nid_no_patch() {
@@ -155,7 +158,7 @@ extern "C" void KernelPauseGuestClock_nid_no_patch() {
     std::lock_guard lock(pause.mutex);
     if (pause.depth++ != 0) return;
     pause.sequence.fetch_add(1);
-    pause.pausedAt.store(ScaledMonotonicNanos() - pause.pausedNanos.load());
+    pause.pausedAt.store(RawMonotonicNanos() - pause.pausedNanos.load());
     pause.paused.store(true);
     pause.sequence.fetch_add(1);
 }
@@ -165,7 +168,7 @@ extern "C" void KernelResumeGuestClock_nid_no_patch() {
     std::lock_guard lock(pause.mutex);
     if (pause.depth == 0 || --pause.depth != 0) return;
     pause.sequence.fetch_add(1);
-    pause.pausedNanos.store(ScaledMonotonicNanos() - pause.pausedAt.load());
+    pause.pausedNanos.store(RawMonotonicNanos() - pause.pausedAt.load());
     pause.paused.store(false);
     pause.sequence.fetch_add(1);
 }
@@ -649,6 +652,12 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
 #endif
+    if (nativeId == CLOCK_MONOTONIC) {
+        const std::uint64_t nanos = PausedRawMonotonicNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
