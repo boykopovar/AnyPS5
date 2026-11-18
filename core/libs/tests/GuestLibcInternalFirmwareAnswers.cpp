@@ -4,12 +4,148 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include <cstring>
 
 static void Require(bool value, const char* message) {
     if (!value) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+static int GentimeCall(const int* time, char code, char* buffer, const char** text) {
+    int length = 0x5a5a5a5a;
+    *text = _Gentime_nid_postfix(time, _Getptimes_nid_postfix(), 0, code, &length, buffer);
+    return length;
+}
+
+static void ExpectGentime(const int* time, char code, const char* expected, bool format = false) {
+    char buffer[16];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    const char* text = nullptr;
+    const int length = GentimeCall(time, code, buffer, &text);
+    const int size = static_cast<int>(std::strlen(expected));
+    Require(length == (format ? -size : size), "_Gentime reported a wrong length");
+    Require(text != nullptr && std::memcmp(text, expected, static_cast<std::size_t>(size)) == 0, "_Gentime gave a wrong text");
+}
+
+static void TestGentime() {
+    const int base[9] = {3, 5, 9, 17, 10, 126, 2, 320, 0};
+    ExpectGentime(base, 'a', "Tue");
+    ExpectGentime(base, 'A', "Tuesday");
+    ExpectGentime(base, 'b', "Nov");
+    ExpectGentime(base, 'B', "November");
+    ExpectGentime(base, 'h', "Nov");
+    ExpectGentime(base, 'p', "AM");
+    ExpectGentime(base, 'd', "17");
+    ExpectGentime(base, 'e', "17");
+    ExpectGentime(base, 'H', "09");
+    ExpectGentime(base, 'I', "09");
+    ExpectGentime(base, 'M', "05");
+    ExpectGentime(base, 'S', "03");
+    ExpectGentime(base, 'm', "11");
+    ExpectGentime(base, 'y', "26");
+    ExpectGentime(base, 'Y', "2026");
+    ExpectGentime(base, 'C', "20");
+    ExpectGentime(base, 'j', "321");
+    ExpectGentime(base, 'u', "2");
+    ExpectGentime(base, 'w', "2");
+    ExpectGentime(base, '%', "%");
+    ExpectGentime(base, 'n', "\n");
+    ExpectGentime(base, 't', "\t");
+    ExpectGentime(base, 'q', "%q");
+    ExpectGentime(base, 'E', "%E");
+    ExpectGentime(base, 'O', "%O");
+    ExpectGentime(base, 'Z', "");
+    ExpectGentime(base, 'c', "%a %b %e %T %Y", true);
+    ExpectGentime(base, 'x', "%m/%d/%y", true);
+    ExpectGentime(base, 'X', "%H:%M:%S", true);
+    ExpectGentime(base, 'r', "%I:%M:%S %p", true);
+    ExpectGentime(base, 'D', "%m/%d/%y", true);
+    ExpectGentime(base, 'F', "%Y-%m-%d", true);
+    ExpectGentime(base, 'R', "%H:%M", true);
+    ExpectGentime(base, 'T', "%H:%M:%S", true);
+
+    char buffer[16];
+    const char* text = nullptr;
+    Require(GentimeCall(base, 'a', buffer, &text) == 3 && text >= _Getptimes_nid_postfix()->days && text < _Getptimes_nid_postfix()->days + std::strlen(_Getptimes_nid_postfix()->days), "_Gentime did not point into the day names");
+    Require(GentimeCall(base, 'd', buffer, &text) == 2 && text == buffer, "_Gentime did not put a number in the buffer");
+
+    const int noon[9] = {0, 0, 12, 17, 10, 126, 2, 320, 0};
+    ExpectGentime(noon, 'p', "PM");
+    ExpectGentime(noon, 'I', "12");
+    const int midnight[9] = {0, 0, 0, 1, 0, 100, 6, 0, 0};
+    ExpectGentime(midnight, 'I', "12");
+    ExpectGentime(midnight, 'V', "52");
+    ExpectGentime(midnight, 'G', "1999");
+    ExpectGentime(midnight, 'g', "99");
+    ExpectGentime(midnight, 'e', " 1");
+    const int leap[9] = {60, 59, 23, 31, 11, 99, 5, 364, 0};
+    ExpectGentime(leap, 'S', "60");
+    const int sunday[9] = {0, 7, 13, 3, 0, 121, 0, 2, 0};
+    ExpectGentime(sunday, 'V', "53");
+    ExpectGentime(sunday, 'G', "2020");
+    ExpectGentime(sunday, 'u', "7");
+    const int leapDay[9] = {45, 30, 12, 29, 1, 124, 4, 59, 0};
+    ExpectGentime(leapDay, 'U', "08");
+    ExpectGentime(leapDay, 'W', "09");
+    ExpectGentime(leapDay, 'V', "09");
+
+    const auto with = [&](int field, int value) {
+        static int time[9];
+        std::memcpy(time, base, sizeof(time));
+        time[field] = value;
+        return static_cast<const int*>(time);
+    };
+    ExpectGentime(with(6, 7), 'a', "");
+    ExpectGentime(with(6, 7), 'A', "");
+    ExpectGentime(with(6, 7), 'u', "7");
+    ExpectGentime(with(6, 8), 'w', "8");
+    ExpectGentime(with(6, 100), 'w', "0");
+    ExpectGentime(with(6, -1), 'a', "Sun");
+    ExpectGentime(with(6, -1), 'A', "Sun");
+    ExpectGentime(with(6, -1), 'u', "0");
+    ExpectGentime(with(4, 12), 'b', "");
+    ExpectGentime(with(4, 12), 'm', "13");
+    ExpectGentime(with(4, 13), 'm', "14");
+    ExpectGentime(with(4, -1), 'B', "Jan");
+    ExpectGentime(with(4, -1), 'm', "00");
+    ExpectGentime(with(2, 24), 'H', "24");
+    ExpectGentime(with(2, 24), 'I', "12");
+    ExpectGentime(with(2, 24), 'p', "PM");
+    ExpectGentime(with(2, 25), 'I', "01");
+    ExpectGentime(with(2, -1), 'H', "00");
+    ExpectGentime(with(2, -1), 'I', "11");
+    ExpectGentime(with(2, -1), 'p', "AM");
+    ExpectGentime(with(3, 0), 'd', "00");
+    ExpectGentime(with(3, 0), 'e', " 0");
+    ExpectGentime(with(3, -1), 'e', " 0");
+    ExpectGentime(with(3, 100), 'd', "00");
+    ExpectGentime(with(3, 32), 'd', "32");
+    ExpectGentime(with(1, -1), 'M', "00");
+    ExpectGentime(with(0, 99), 'S', "99");
+    ExpectGentime(with(5, -1), 'Y', "1899");
+    ExpectGentime(with(5, -1), 'C', "19");
+    ExpectGentime(with(5, -1), 'y', "99");
+    ExpectGentime(with(5, -1900), 'Y', "0000");
+    ExpectGentime(with(5, -2000), 'C', "00");
+    ExpectGentime(with(5, 7999), 'Y', "9899");
+    ExpectGentime(with(5, 8099), 'Y', "9999");
+    ExpectGentime(with(5, 8099), 'C', "99");
+    ExpectGentime(with(7, -1), 'j', "000");
+    ExpectGentime(with(7, 400), 'j', "401");
+
+    std::int64_t utc = 0;
+    KernelTimesec zone{};
+    std::int32_t daylight = 0;
+    Require(sceKernelConvertLocaltimeToUtc(1794906303, 0, &utc, &zone, &daylight) == 0, "the local time could not be converted");
+    const int offset = static_cast<int>(zone.west_sec);
+    char expected[8];
+    std::snprintf(expected, sizeof(expected), "%+03d%02d", offset / 3600, std::abs(offset / 60) % 60);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(GentimeCall(base, 'z', buffer, &text) == 5 && text == buffer && std::memcmp(buffer, expected, 6) == 0, "_Gentime gave a wrong zone offset");
 }
 
 static void TestDaysto() {
@@ -55,6 +191,7 @@ static void TestXpGetw() {
 }
 
 int main() {
+    TestGentime();
     Require(_Isdst_nid_postfix() == -1, "_Isdst did not return -1");
     TestDaysto();
     TestXpGetw();
