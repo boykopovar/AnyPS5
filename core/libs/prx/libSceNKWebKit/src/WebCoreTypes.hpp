@@ -368,6 +368,8 @@ static_assert(sizeof(LayoutRect) == 16);
 static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
 static_assert(sizeof(LayoutViewportConstraint) == 1);
 static_assert(sizeof(RoundedRect) == 48);
+static_assert(offsetof(RoundedRect, m_rect) == 0);
+static_assert(offsetof(RoundedRect, m_radii) == 16);
 static_assert(sizeof(AffineTransform) == 48);
 static_assert(sizeof(OptionalAffineTransform) == 56);
 static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
