@@ -559,6 +559,57 @@ void TestDescriptors() {
     SSL_CTX_free_nid_postfix(ctx);
 }
 
+bool IsLive(const void* pointer) {
+    return live.contains(const_cast<void*>(pointer));
+}
+
+void RequireBios(const LibreSslSsl* ssl, const void* read, const void* write) {
+    Require(SSL_get_rbio_nid_postfix(ssl) == read && SSL_get_wbio_nid_postfix(ssl) == write);
+}
+
+void TestSetBio() {
+    RequireThrows([] { SSL_set_bio_nid_postfix(nullptr, nullptr, nullptr); });
+    LibreSslCtx* ctx = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    LibreSslSsl* ssl = SSL_new_nid_postfix(ctx);
+    LibreSsl::Bio* first = LibreSslNewSocketBio_nid_no_patch(3);
+    LibreSsl::Bio* second = LibreSslNewSocketBio_nid_no_patch(4);
+    LibreSsl::Bio* third = LibreSslNewSocketBio_nid_no_patch(5);
+    LibreSsl::Bio* fourth = LibreSslNewSocketBio_nid_no_patch(6);
+
+    SSL_set_bio_nid_postfix(ssl, first, first);
+    RequireBios(ssl, first, first);
+    Require(SSL_get_fd_nid_postfix(ssl) == 3);
+    SSL_set_bio_nid_postfix(ssl, first, first);
+    RequireBios(ssl, first, first);
+    Require(IsLive(first));
+
+    SSL_set_bio_nid_postfix(ssl, third, second);
+    RequireBios(ssl, third, second);
+    Require(!IsLive(first) && IsLive(second) && IsLive(third));
+
+    SSL_set_bio_nid_postfix(ssl, fourth, second);
+    RequireBios(ssl, fourth, second);
+    Require(!IsLive(third) && IsLive(second) && IsLive(fourth));
+
+    SSL_set_bio_nid_postfix(ssl, fourth, fourth);
+    RequireBios(ssl, fourth, fourth);
+    Require(!IsLive(second) && IsLive(fourth));
+
+    SSL_set_bio_nid_postfix(ssl, nullptr, nullptr);
+    RequireBios(ssl, nullptr, nullptr);
+    Require(!IsLive(fourth) && SSL_get_fd_nid_postfix(ssl) == -1);
+    SSL_set_bio_nid_postfix(ssl, nullptr, nullptr);
+
+    LibreSsl::Bio* write = LibreSslNewSocketBio_nid_no_patch(7);
+    SSL_set_bio_nid_postfix(ssl, nullptr, write);
+    RequireBios(ssl, nullptr, write);
+    Require(SSL_set_fd_nid_postfix(ssl, 8) == 1);
+    Require(!IsLive(write) && SSL_get_fd_nid_postfix(ssl) == 8);
+
+    SSL_free_nid_postfix(ssl);
+    SSL_CTX_free_nid_postfix(ctx);
+}
+
 }
 
 int main() {
@@ -575,6 +626,7 @@ int main() {
     Run(TestInheritedDefaults);
     Run(TestInheritedLists);
     Run(TestDescriptors);
+    Run(TestSetBio);
     Require(live.empty());
     std::puts("libSceLibreSsl SSL lifecycle tests passed");
     return 0;
