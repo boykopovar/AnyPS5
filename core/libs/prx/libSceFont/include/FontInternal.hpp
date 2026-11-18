@@ -106,7 +106,7 @@ FontCtxEntry* AcquireFontCtxEntry(void* ctx, std::uint32_t index, std::uint32_t 
 void ReleaseFontCtxEntryLock(FontCtxEntry* entry, std::uint32_t modeLow, std::uint32_t lockWord);
 FontObj* FindSubFont(FontObj* head, std::uint32_t subFontIndex);
 void* FontContext(const FontLibNative* library, const FontHandleNative* font);
-void ReleaseFontObjectsForHandle(FontHandleNative* font);
+int ReleaseFontObjectsForHandle(FontHandleNative* font);
 
 FontState* TryGetState(FontHandle handle);
 FontState& ResetState(FontHandle handle);

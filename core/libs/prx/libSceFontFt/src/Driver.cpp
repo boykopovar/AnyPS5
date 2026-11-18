@@ -435,30 +435,27 @@ int APS5_VABI LibraryCloseFont(FontObj* obj, std::uint32_t flags) {
     FT_Face face = FaceOf(&localObj);
     FtLibraryContext* ctx = face && face->memory ? static_cast<FtLibraryContext*>(face->memory->user) : nullptr;
     const auto freeFn = ctx && ctx->iface ? ctx->iface->dealloc : nullptr;
-    if (face) {
-        FT_Done_Face(face);
-        localObj.ft_face = nullptr;
-    }
-    if (!freeFn) {
-        CopyOutGuest(obj, localObj);
-        return SCE_FONT_ERROR_FATAL;
-    }
+    if (!freeFn) return SCE_FONT_ERROR_FATAL;
     FontObj* next = localObj.next;
     FontObj* prev = localObj.prev;
+    FontObj prevObj{};
+    FontObj nextObj{};
     if (prev) {
-        FontObj prevObj{};
-        if (CopyInGuest(prevObj, prev)) {
-            prevObj.next = next;
-            CopyOutGuest(prev, prevObj);
+        if (!CopyInGuest(prevObj, prev) || prevObj.next != obj || !GuestWritable_nid_no_patch(&prev->next, sizeof(prev->next))) {
+            return SCE_FONT_ERROR_FATAL;
         }
     }
     if (next) {
-        FontObj nextObj{};
-        if (CopyInGuest(nextObj, next)) {
-            nextObj.prev = prev;
-            CopyOutGuest(next, nextObj);
+        if (!CopyInGuest(nextObj, next) || nextObj.prev != obj || !GuestWritable_nid_no_patch(&next->prev, sizeof(next->prev))) {
+            return SCE_FONT_ERROR_FATAL;
         }
     }
+    if (prev && !CopyOutGuest(&prev->next, next)) return SCE_FONT_ERROR_FATAL;
+    if (next && !CopyOutGuest(&next->prev, prev)) {
+        if (prev) CopyOutGuest(&prev->next, obj);
+        return SCE_FONT_ERROR_FATAL;
+    }
+    FT_Done_Face(face);
     freeFn(ctx->allocCtx, obj);
     return SCE_FONT_OK;
 }

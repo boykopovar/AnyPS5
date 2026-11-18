@@ -468,7 +468,12 @@ int APS5_VABI sceFontCloseFont(FontHandle fontHandle) {
         ReleaseFontLock(font, fontLock);
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    ReleaseFontObjectsForHandle(font);
+    const int closeRc = ReleaseFontObjectsForHandle(font);
+    if (closeRc != SCE_FONT_OK) {
+        ReleaseLibraryLock(library, libraryLock);
+        ReleaseFontLock(font, fontLock);
+        return closeRc;
+    }
     const std::uint16_t flags = font->flags;
     if ((flags & HANDLE_OWNED) != 0) UnlinkFontFromLibrary(library, fontHandle);
     RemoveState(fontHandle);

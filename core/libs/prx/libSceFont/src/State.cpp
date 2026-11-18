@@ -202,34 +202,39 @@ void* Font::FontContext(const FontLibNative* library, const FontHandleNative* fo
     return font->open_info.fontset_flags != 0 ? library->sysfonts_ctx : library->external_fonts_ctx;
 }
 
-void Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
+int Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
     auto* library = static_cast<FontLibNative*>(font->library);
-    if (!library || library->magic != LIBRARY_MAGIC || !library->sys_driver || !library->sys_driver->close) return;
+    if (!library || library->magic != LIBRARY_MAGIC || !library->sys_driver || !library->sys_driver->close) return SCE_FONT_ERROR_FATAL;
     const std::uint32_t fontId = font->open_info.ctx_entry_index;
-    if (static_cast<std::int32_t>(fontId) < 0) return;
+    if (static_cast<std::int32_t>(fontId) < 0) return SCE_FONT_ERROR_FATAL;
     const std::uint32_t modeLow = font->flags & 0x0Fu;
     FontObj* head = nullptr;
     std::uint32_t lockWord = 0;
     auto* entry = AcquireFontCtxEntry(FontContext(library, font), fontId, modeLow, &head, &lockWord);
-    if (!entry) return;
+    if (!entry) return SCE_FONT_ERROR_FATAL;
     FontObj* match = FindSubFont(head, font->open_info.sub_font_index);
     const std::uint32_t openFlag = lockWord & OPEN_BIT;
     const std::uint32_t countBits = lockWord & COUNT_MASK;
     if (openFlag != 0 && countBits != 0 && match) {
         const std::uint32_t refcount = match->refcount;
-        const std::uint32_t decremented = lockWord - 1;
-        lockWord = decremented;
         if (refcount == 1) {
             FontObj* next = match->next;
             FontObj* prev = match->prev;
-            library->sys_driver->close(match, 0);
+            const int rc = library->sys_driver->close(match, 0);
+            if (rc != SCE_FONT_OK) {
+                ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
+                return rc;
+            }
             if (!prev) *EntryObjectSlot(entry, modeLow) = next;
         } else if (refcount != 0) {
             match->refcount = refcount - 1;
         }
+        const std::uint32_t decremented = lockWord - 1;
+        lockWord = decremented;
         if (countBits == 1) lockWord = ~openFlag & decremented;
     }
     ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
+    return SCE_FONT_OK;
 }
 
 Font::FontState* Font::TryGetState(FontHandle handle) {
