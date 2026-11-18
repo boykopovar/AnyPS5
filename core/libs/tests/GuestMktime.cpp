@@ -150,6 +150,22 @@ static void CheckFailure(Converter convert, int hint = -1) {
     Require(errno == expectedError, "Failed conversion changed the underlying mktime error");
 }
 
+static void CheckUnmappedTime() {
+    constexpr std::array<Converter, 3> converters{libc_mktime_nid_postfix, mktime_nid_postfix, timelocal_nid_postfix};
+    auto* const unmapped = reinterpret_cast<GuestTm*>(std::uintptr_t{0x10});
+    for (const auto convert : converters) {
+        errno = 0;
+        Require(convert(unmapped) == -1 && errno == EFAULT, "a conversion of an unmapped struct tm did not fail with EFAULT");
+        errno = 0;
+        Require(convert(nullptr) == -1 && errno == EFAULT, "a conversion of a null struct tm did not fail with EFAULT");
+    }
+    GuestTm valid{};
+    valid.tm_year = 120;
+    valid.tm_mday = 1;
+    valid.tm_isdst = 0;
+    Require(libc_mktime_nid_postfix(&valid) != -1 && valid.tm_yday == 0, "mktime no longer converts a valid struct tm after the failures");
+}
+
 static void CheckEarlyYearNormalization(Converter convert) {
     const struct {
         int year;
@@ -317,6 +333,7 @@ int main() {
     CheckZone("UTC0");
     CheckZone("UTC-2");
     CheckZone("UTC5");
+    CheckUnmappedTime();
     CheckEquivalentFutureCalendars("EST5EDT");
 #ifndef _WIN32
     CheckEquivalentFutureCalendars("America/New_York");
