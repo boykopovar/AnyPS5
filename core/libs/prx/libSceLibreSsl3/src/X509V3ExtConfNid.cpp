@@ -527,15 +527,19 @@ bool ParseAsn1(std::string_view text, void* conf, Asn1Value& result) {
     std::size_t start = 0;
     for (;;) {
         const std::size_t comma = text.find(',', start);
-        std::string_view element = text.substr(start, comma == std::string_view::npos ? comma : comma - start);
-        while (!element.empty() && IsSpace(element.front())) element.remove_prefix(1);
-        while (!element.empty() && IsSpace(element.back())) element.remove_suffix(1);
-        if (element.empty()) return false;
+        const std::size_t end = comma == std::string_view::npos ? text.size() : comma;
+        std::size_t begin = start;
+        std::size_t trimmed = end;
+        while (begin < end && IsSpace(text[begin])) ++begin;
+        while (trimmed > begin && IsSpace(text[trimmed - 1])) --trimmed;
+        if (begin == trimmed) return false;
+        const std::string_view element = text.substr(begin, trimmed - begin);
         const std::size_t colon = element.find(':');
         const std::string_view name = colon == std::string_view::npos ? element : element.substr(0, colon);
         const std::string_view value = colon == std::string_view::npos ? std::string_view() : element.substr(colon + 1);
         SimpleType type;
         if (LookupSimpleType(name, type)) {
+            if (colon == std::string_view::npos && (comma != std::string_view::npos || trimmed != end)) return false;
             result.type = type;
             result.format = format;
             result.text.assign(value);

@@ -147,6 +147,8 @@ void TestMalformed() {
     Require(Conf(83, "ASN1:NULL:x") == nullptr);
     Require(Conf(83, "ASN1:BOOLEAN:maybe") == nullptr);
     Require(Conf(83, "ASN1:FORMAT:HEX,INTEGER:5") == nullptr);
+    Require(Conf(83, "ASN1:NULL,INTEGER:5") == nullptr);
+    Require(Conf(83, "ASN1:NULL ") == nullptr);
     Require(allocations.empty());
 }
 
