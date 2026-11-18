@@ -66,6 +66,14 @@ class AccessTests(unittest.TestCase):
         )
         self.assertEqual(findings(source), [])
 
+    def test_qualified_members_named_like_the_parameter_are_not_reported(self):
+        source = (
+            "int APS5_VABI sceExampleMember(std::uint32_t* devices, Service& service) { return service.devices[0]; }\n"
+            "int APS5_VABI sceExampleNested(std::uint32_t* slots, const Log& log) { return log.slots[1]; }\n"
+            "int APS5_VABI sceExampleBoth(std::uint32_t* devices, Service& service) { devices[1] = service.devices[0]; return 0; }\n"
+        )
+        self.assertEqual(findings(source), [("sceExampleBoth", "devices", ["index"])])
+
     def test_evaluated_guest_copy_pointer_argument_is_reported(self):
         source = (
             "int APS5_VABI sceExampleNested(int** guest) { int out = 0; "
