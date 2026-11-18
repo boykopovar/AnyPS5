@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
@@ -431,14 +432,17 @@ void APS5_VABI WTFInitializeLogChannelStatesFromString(void** channels, std::siz
 }
 
 void APS5_VABI WTFGetBacktrace(void** stack, int* size) {
-    if (!stack || !size || *size <= 0) {
+    int requested = 0;
+    if (!stack || !size || !GuestCopyIn_nid_no_patch(&requested, size, sizeof(requested)) || requested <= 0) {
         return;
     }
+    int captured = 0;
 #ifdef _WIN32
-    *size = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(*size), stack, nullptr));
-#else
-    *size = 0;
+    if (GuestWritable_nid_no_patch(stack, static_cast<std::size_t>(requested) * sizeof(void*))) {
+        captured = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(requested), stack, nullptr));
+    }
 #endif
+    static_cast<void>(GuestCopyOut_nid_no_patch(size, &captured, sizeof(captured)));
 }
 
 void APS5_VABI WTFPrintBacktrace(void** stack, int size) {

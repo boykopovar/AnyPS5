@@ -622,6 +622,13 @@ static void TestJscAndPal() {
     int frames = 0;
     WTFGetBacktrace(stack, &frames);
     Require(frames >= 0);
+    frames = 8;
+    WTFGetBacktrace(stack, &frames);
+    Require(frames >= 0 && frames <= 8);
+    WTFGetBacktrace(stack, reinterpret_cast<int*>(std::uintptr_t{0x10}));
+    frames = 8;
+    WTFGetBacktrace(reinterpret_cast<void**>(std::uintptr_t{0x10}), &frames);
+    Require(frames == 0);
     Require(WTFIsDebuggerAttached() == false);
 }
 
