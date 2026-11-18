@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -249,22 +250,38 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     return value;
 }
 
+void StoreError(int* error, int value) {
+    if (error == nullptr) return;
+    const int saved = errno;
+    const bool written = GuestCopyOut_nid_no_patch(error, &value, sizeof(value));
+    errno = saved;
+    if (!written) throw std::invalid_argument("integer conversion: unwritable error output");
+}
+
+void StoreEnd(char** end, const char* value) {
+    if (end == nullptr) return;
+    const int saved = errno;
+    const bool written = GuestCopyOut_nid_no_patch(end, &value, sizeof(value));
+    errno = saved;
+    if (!written) throw std::invalid_argument("integer conversion: unwritable end output");
+}
+
 bool InvalidBase(const char* text, char** end, int base, int* error) {
     if (base >= 0 && base != 1 && base <= 36) return false;
-    if (end != nullptr) *end = const_cast<char*>(text);
-    if (error != nullptr) *error = InvalidArgument;
+    StoreEnd(end, text);
+    StoreError(error, InvalidArgument);
     return true;
 }
 
 template<typename TInteger>
 TInteger ParsedInteger(const char* text, char** end, int base, int* error, TInteger (APS5_VABI *parse)(const char*, char**, int)) {
-    if (error != nullptr) *error = 0;
+    StoreError(error, 0);
     if (InvalidBase(text, end, base, error)) return 0;
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     guestErrno = 0;
     const TInteger value = parse(text, end, base);
-    if (error != nullptr) *error = guestErrno;
+    StoreError(error, guestErrno);
     if (guestErrno == 0) guestErrno = saved;
     return value;
 }
@@ -459,13 +476,13 @@ std::uint64_t APS5_VABI _Stoulx_nid_postfix(const char* text, char** end, int ba
 }
 
 std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base, int* error) {
-    if (error != nullptr) *error = 0;
+    StoreError(error, 0);
     if (InvalidBase(text, end, base, error)) return 0;
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     guestErrno = 0;
     const long long value = strtoll_nid_postfix(text, end, base);
-    if (error != nullptr) *error = guestErrno;
+    StoreError(error, guestErrno);
     guestErrno = 0;
     static_cast<void>(strtoull_nid_postfix(text, nullptr, base));
     if (guestErrno == 0) guestErrno = saved;
