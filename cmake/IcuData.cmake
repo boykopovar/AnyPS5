@@ -58,7 +58,7 @@ add_custom_command(OUTPUT ${icu_data_dir}/icudt78l_dat.c
     DEPENDS icu_host_tools ${icu_host_outputs} ${icu_data_inputs} ${CMAKE_SOURCE_DIR}/cmake/IcuDataFilter.json
     VERBATIM)
 get_target_property(icu_common_sources icu_common SOURCES)
-list(REMOVE_ITEM icu_common_sources ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp)
+list(REMOVE_ITEM icu_common_sources ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp ${ICU_NORMALIZATION_SOURCE})
 file(STRINGS ${ICU_SOURCE_DIR}/common/sources.txt icu_all_common)
 list(TRANSFORM icu_all_common PREPEND ${ICU_SOURCE_DIR}/common/)
 list(APPEND icu_common_sources ${icu_all_common})
