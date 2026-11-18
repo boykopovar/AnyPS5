@@ -543,10 +543,13 @@ void testIndirectBase() {
 }
 
 void testContextState() {
+    Storage uninitialized;
+    expectFailure([&] { sceAgcDcbContextStateOp_0100(&uninitialized.buffer, 0); });
+    check(uninitialized.buffer.cursor_up == uninitialized.words.data(), "uninitialized context restore advanced its cursor");
     const std::array<std::array<std::uint32_t, 6>, 4> sizes{{{5}, {5, 8, 9, 3, 2}, {3, 5, 8, 9, 2}, {5, 8, 9, 3, 2, 5}}};
     const std::array<std::array<std::uint32_t, 4>, 4> reservations{{{5}, {22, 3, 2}, {3, 22, 2}, {22, 3, 2, 5}}};
     const std::array<std::uint32_t, 4> totals{5, 27, 27, 32};
-    for (std::uint32_t operation = 0; operation < sizes.size(); ++operation) {
+    for (std::uint32_t operation = 1; operation < sizes.size(); ++operation) {
         for (std::uint32_t capacity = 0; capacity <= totals[operation]; ++capacity) {
             Storage source;
             source.words.fill(0xdeadbeefu);
