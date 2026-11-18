@@ -124,6 +124,13 @@ class Module:
         if self.dynamic is None:
             raise ModuleError("no PT_DYNAMIC program header")
 
+    def entry_point(self):
+        address, = self.unpack("<Q", 24)
+        if address and any(flags & PF_X and start <= address < start + size and offset + address - start < len(self.data)
+                           for start, offset, size, flags in self.loads):
+            return address
+        return None
+
     def read_tags(self):
         tags = {}
         offset, size = self.dynamic
@@ -333,6 +340,9 @@ def ghidra_symbols(module, namer):
         if any(flags & PF_X and start <= address < start + size and offset + address - start < len(module.data)
                for start, offset, size, flags in module.loads):
             rows.add((address, True, name, name))
+    entry = module.entry_point()
+    if entry is not None and entry not in exported_functions and not any(address == entry and function for address, function, _, _ in rows):
+        rows.add((entry, True, "elf_entry", "elf_entry"))
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue
@@ -434,10 +444,12 @@ def line_note(line, slots, stubs, namer):
     return note
 
 
-def annotate_listing(listing, slots, exports, stubs, namer):
+def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
+        if head and int(head.group(1), 16) == entry:
+            out.append("; ===== ELF entry point")
         if head and int(head.group(1), 16) in exports:
             out.append("")
             out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
@@ -498,13 +510,19 @@ def annotate(module_path, prefix, namer):
     slots = module.imports()
     exports, thread_local = module.exports()
     listing = []
+    entry = module.entry_point()
     for vaddr, code in module.code_segments():
         listing.append("; ===== segment %#x" % vaddr)
+        if entry is not None and vaddr < entry < vaddr + len(code):
+            split = entry - vaddr
+            listing.extend(disassemble(code[:split], vaddr))
+            code = code[split:]
+            vaddr = entry
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer, entry))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
