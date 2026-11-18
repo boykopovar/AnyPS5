@@ -169,7 +169,7 @@ std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties forma
     return formats;
 }
 
-constexpr std::array<std::uint32_t, 2> kOptionalTextureFormats{51u, 55u};
+constexpr std::array<std::uint32_t, 3> kOptionalTextureFormats{51u, 55u, 137u};
 
 std::uint32_t OptionalSampledBit(std::uint32_t guestFormat) {
     for (std::uint32_t index = 0; index < kOptionalTextureFormats.size(); ++index) {
@@ -183,7 +183,8 @@ std::uint32_t OptionalSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties for
     for (const auto format : kOptionalTextureFormats) {
         VkFormatProperties properties{};
         formatProperties(physical, ResolveTextureFormat(format), &properties);
-        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0) formats |= OptionalSampledBit(format);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if ((properties.optimalTilingFeatures & required) == required) formats |= OptionalSampledBit(format);
     }
     return formats;
 }
