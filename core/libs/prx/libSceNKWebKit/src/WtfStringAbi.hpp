@@ -75,6 +75,8 @@ struct CStringBuffer {
 };
 
 void Release(StringImpl* impl);
+void Destroy(StringImpl* impl);
+void RemoveAtom(StringImpl* impl);
 void Release(CStringBuffer* buffer);
 
 struct String {
