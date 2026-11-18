@@ -26,11 +26,15 @@ jobs:
       - name: Configure for the iOS Simulator
         run: |
           set -euo pipefail
+          # A simulator can only run binaries matching the host CPU, so follow
+          # the runner architecture instead of hard-coding arm64.
+          ARCH=$(uname -m)
+          echo "Host architecture: $ARCH"
           cmake -S experimental/arm64-cpu -B guest-cpu-ios-sim -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=iphonesimulator \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
             -DCMAKE_CROSSCOMPILING_EMULATOR="/usr/bin/xcrun;simctl;spawn;${{ steps.sim.outputs.udid }}"
 
