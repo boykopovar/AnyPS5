@@ -35,14 +35,13 @@ std::array<std::array<std::atomic<PFN_vkVoidFunction>, ThunkSlots>, CommandCount
 std::mutex slotMutex;
 
 struct DeviceEntry {
-    const void* key;
-    PFN_vkVoidFunction real;
+    std::atomic<const void*> key{nullptr};
+    std::atomic<PFN_vkVoidFunction> real{nullptr};
+    DeviceEntry* next = nullptr;
 };
 
-using DeviceEntries = std::vector<DeviceEntry>;
-
-std::array<std::atomic<const DeviceEntries*>, CommandCount> deviceEntries{};
-std::vector<std::unique_ptr<const DeviceEntries>> publishedEntries;
+std::array<std::atomic<DeviceEntry*>, CommandCount> deviceEntries{};
+std::array<std::size_t, CommandCount> deviceEntryStorage{};
 std::atomic<std::size_t> keyedDevices{0};
 
 const void* dispatchKey(const void* handle) noexcept {
@@ -56,17 +55,10 @@ const void* dispatchKey(const void* handle) noexcept {
 }
 
 PFN_vkVoidFunction deviceReal(std::size_t id, const void* key, const char* command) {
-    if (const auto* entries = deviceEntries[id].load(std::memory_order_acquire); entries != nullptr) {
-        for (const auto& entry : *entries) {
-            if (entry.key == key) return entry.real;
-        }
+    for (auto* entry = deviceEntries[id].load(std::memory_order_acquire); entry != nullptr; entry = entry->next) {
+        if (entry->key.load(std::memory_order_acquire) == key) return entry->real.load(std::memory_order_relaxed);
     }
     noDeviceEntry(command);
-}
-
-void publish(std::size_t id, DeviceEntries entries) {
-    const auto& owned = publishedEntries.emplace_back(std::make_unique<const DeviceEntries>(std::move(entries)));
-    deviceEntries[id].store(owned.get(), std::memory_order_release);
 }
 
 template<CommandId Id>
@@ -690,15 +682,23 @@ const std::array<PFN_vkVoidFunction, CommandCount>& keyedThunks() {
 PFN_vkVoidFunction deviceThunk(std::size_t id, std::string_view name, PFN_vkVoidFunction real, VkDevice device) {
     if (device == VK_NULL_HANDLE) throw std::runtime_error("AGC graphics: " + std::string(name) + " has more than " + std::to_string(ThunkSlots) + " distinct driver entry points and no device to key another by");
     const auto key = dispatchKey(device);
-    const auto* current = deviceEntries[id].load(std::memory_order_relaxed);
-    DeviceEntries entries = current != nullptr ? *current : DeviceEntries{};
-    for (const auto& entry : entries) {
-        if (entry.key != key) continue;
-        if (entry.real == real) return keyedThunks()[id];
+    DeviceEntry* free = nullptr;
+    for (auto* entry = deviceEntries[id].load(std::memory_order_relaxed); entry != nullptr; entry = entry->next) {
+        const auto held = entry->key.load(std::memory_order_relaxed);
+        if (held == nullptr && free == nullptr) free = entry;
+        if (held != key) continue;
+        if (entry->real.load(std::memory_order_relaxed) == real) return keyedThunks()[id];
         throw std::runtime_error("AGC graphics: one device gave two different entry points for " + std::string(name));
     }
-    entries.push_back(DeviceEntry{key, real});
-    publish(id, std::move(entries));
+    const bool fresh = free == nullptr;
+    if (fresh) {
+        free = new DeviceEntry;
+        free->next = deviceEntries[id].load(std::memory_order_relaxed);
+        ++deviceEntryStorage[id];
+    }
+    free->real.store(real, std::memory_order_relaxed);
+    free->key.store(key, std::memory_order_release);
+    if (fresh) deviceEntries[id].store(free, std::memory_order_release);
     keyedDevices.fetch_add(1, std::memory_order_relaxed);
     return keyedThunks()[id];
 }
@@ -774,22 +774,24 @@ void ForgetCommandDevice(VkDevice device) {
     const auto key = dispatchKey(device);
     std::lock_guard lock(slotMutex);
     for (std::size_t id = 0; id < CommandCount; ++id) {
-        const auto* current = deviceEntries[id].load(std::memory_order_relaxed);
-        if (current == nullptr) continue;
-        DeviceEntries kept;
-        for (const auto& entry : *current) {
-            if (entry.key != key) kept.push_back(entry);
-        }
-        if (kept.size() != current->size()) {
-            keyedDevices.fetch_sub(current->size() - kept.size(), std::memory_order_relaxed);
-            publish(id, std::move(kept));
+        for (auto* entry = deviceEntries[id].load(std::memory_order_relaxed); entry != nullptr; entry = entry->next) {
+            if (entry->key.load(std::memory_order_relaxed) != key) continue;
+            entry->key.store(nullptr, std::memory_order_release);
+            keyedDevices.fetch_sub(1, std::memory_order_relaxed);
         }
     }
 }
 
 std::size_t CommandDeviceEntries(CommandId id) noexcept {
-    const auto* entries = deviceEntries[indexOf(id)].load(std::memory_order_acquire);
-    return entries != nullptr ? entries->size() : 0;
+    std::lock_guard lock(slotMutex);
+    std::size_t live = 0;
+    for (auto* entry = deviceEntries[indexOf(id)].load(std::memory_order_acquire); entry != nullptr; entry = entry->next) live += entry->key.load(std::memory_order_relaxed) != nullptr ? 1 : 0;
+    return live;
+}
+
+std::size_t CommandDeviceStorage(CommandId id) noexcept {
+    std::lock_guard lock(slotMutex);
+    return deviceEntryStorage[indexOf(id)];
 }
 
 bool CommandStreams(CommandId id) noexcept {

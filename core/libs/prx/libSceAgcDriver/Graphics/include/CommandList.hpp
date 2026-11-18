@@ -103,6 +103,7 @@ const CommandFunctions& StreamedCommands();
 PFN_vkVoidFunction CommandThunk(std::string_view name, PFN_vkVoidFunction real, VkDevice device = VK_NULL_HANDLE);
 void ForgetCommandDevice(VkDevice device);
 std::size_t CommandDeviceEntries(CommandId id) noexcept;
+std::size_t CommandDeviceStorage(CommandId id) noexcept;
 bool IsCommandThunk(std::string_view name, PFN_vkVoidFunction function) noexcept;
 std::size_t CommandThunkSlots(CommandId id) noexcept;
 bool CommandStreams(CommandId id) noexcept;

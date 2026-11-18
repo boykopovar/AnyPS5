@@ -560,6 +560,29 @@ void EntryPointsBeyondTheSlotsAreKeyedByDevice() {
     AgcDriver::Graphics::ForgetCommandDevice(deviceOf(first));
     AgcDriver::Graphics::ForgetCommandDevice(deviceOf(second));
     Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 0, "forgetting every device left entries");
+    const auto peak = AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference);
+    Require(peak == 2, "two live devices kept " + std::to_string(peak) + " entries of storage");
+    constexpr std::size_t Cycles = 200;
+    static const int cycleKeys[Cycles] = {};
+    std::vector<FakeDispatchable> devices;
+    std::vector<FakeDispatchable> buffers;
+    for (std::size_t index = 0; index < Cycles; ++index) {
+        devices.push_back(FakeDispatchable{&cycleKeys[index]});
+        buffers.push_back(FakeDispatchable{&cycleKeys[index]});
+    }
+    for (std::size_t cycle = 0; cycle + 1 < Cycles; cycle += 2) {
+        Require(CommandThunk(Name, entry(8), deviceOf(devices[cycle])) == keyed && CommandThunk(Name, entry(9), deviceOf(devices[cycle + 1])) == keyed, "a device created after others were destroyed was not given the keyed thunk");
+        log.clear();
+        call(commandsOf(buffers[cycle]), VK_STENCIL_FACE_FRONT_BIT, 1);
+        call(commandsOf(buffers[cycle + 1]), VK_STENCIL_FACE_FRONT_BIT, 2);
+        Require(log.size() == 2 && log[0].ends_with(" 8 1") && log[1].ends_with(" 9 2"), "cycle " + std::to_string(cycle) + " routed a command buffer to the wrong device's entry point");
+        if (cycle > 0) Require(Throws<std::logic_error>([&] { call(commandsOf(buffers[cycle - 1]), VK_STENCIL_FACE_FRONT_BIT, 3); }), "a destroyed device's command buffer reached an entry point in cycle " + std::to_string(cycle));
+        Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 2, "cycle " + std::to_string(cycle) + " miscounted the live devices");
+        AgcDriver::Graphics::ForgetCommandDevice(deviceOf(devices[cycle]));
+        AgcDriver::Graphics::ForgetCommandDevice(deviceOf(devices[cycle + 1]));
+        Require(AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference) == peak, "creating and destroying devices grew the entries to " + std::to_string(AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference)) + " after cycle " + std::to_string(cycle));
+    }
+    Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 0, "forgetting every cycled device left entries");
 }
 
 void EveryListedCommandStreams() {

@@ -73,18 +73,25 @@ public:
         static_assert(std::is_trivially_destructible_v<Payload>, "AGC graphics: a streamed command's payload is never destroyed, so it must be trivially destructible; keep owners in batch storage");
         static_assert(std::is_nothrow_copy_constructible_v<Payload>, "AGC graphics: a streamed command's payload must be built without throwing");
         const std::size_t bytes = Aligned(sizeof(Payload)) + (Aligned(sizeof(T) * arrays.size()) + ... + 0);
-        auto* at = reserve(run, bytes);
-        new (at) Payload(payload);
-        at += Aligned(sizeof(Payload));
-        ((at = copyInto(at, arrays)), ...);
-        appended();
+        EmplaceBytes(run, bytes, [&](std::byte* at) noexcept {
+            new (at) Payload(payload);
+            at += Aligned(sizeof(Payload));
+            ((at = copyInto(at, arrays)), ...);
+        });
     }
 
     template<typename Fill>
     void EmplaceBytes(Run run, std::size_t payloadBytes, Fill&& fill) {
         static_assert(std::is_nothrow_invocable_v<Fill, std::byte*>, "AGC graphics: a streamed command's bytes must be written without throwing");
-        fill(reserve(run, Aligned(payloadBytes)));
-        appended();
+        payloadBytes = Aligned(payloadBytes);
+        if (auto* at = reserve(run, payloadBytes); at != nullptr) [[likely]] {
+            fill(at);
+            ops.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        auto scratch = pastCap(payloadBytes);
+        fill(scratch.get());
+        runPastCap(run, scratch.get());
     }
 
     const CommandFunctions& Functions() const noexcept { return functions; }
@@ -129,12 +136,10 @@ private:
         std::size_t used = 0;
     };
     std::byte* reserve(Run run, std::size_t payloadBytes);
-    void appended() {
-        ops.fetch_add(1, std::memory_order_relaxed);
-        if (capped) [[unlikely]] Demote("stream byte cap");
-    }
+    std::unique_ptr<std::byte[]> pastCap(std::size_t payloadBytes);
+    void runPastCap(Run run, const std::byte* payload);
     template<typename T>
-    static std::byte* copyInto(std::byte* at, std::span<const T> array) {
+    static std::byte* copyInto(std::byte* at, std::span<const T> array) noexcept {
         if (!array.empty()) std::memcpy(at, array.data(), sizeof(T) * array.size());
         return at + Aligned(sizeof(T) * array.size());
     }
@@ -146,7 +151,6 @@ private:
     std::vector<std::unique_ptr<Chunk>> chunks;
     std::size_t charged = 0;
     std::size_t cap;
-    bool capped = false;
     std::atomic<std::uint64_t> ops{0};
     std::atomic<std::size_t> bytes{0};
     std::atomic<bool> sealed{false};

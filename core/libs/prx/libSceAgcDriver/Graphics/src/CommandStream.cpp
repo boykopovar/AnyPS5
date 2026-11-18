@@ -51,10 +51,10 @@ std::byte* CommandStream::reserve(Run run, std::size_t payloadBytes) {
         const std::size_t need = RecordHeader + payloadBytes;
         if (chunks.empty() || chunks.back()->capacity - chunks.back()->used < need) {
             const std::size_t capacity = std::max(ChunkBytes, need);
+            if (capacity > cap - std::min(charged, cap)) return nullptr;
             chunks.push_back(std::make_unique<Chunk>(capacity));
             charged += capacity;
             if (budget != nullptr) budget->Charge(capacity);
-            capped = charged > cap;
         }
         auto& chunk = *chunks.back();
         auto* at = chunk.bytes.get() + chunk.used;
@@ -67,6 +67,20 @@ std::byte* CommandStream::reserve(Run run, std::size_t payloadBytes) {
         Poison(std::current_exception());
         throw;
     }
+}
+
+std::unique_ptr<std::byte[]> CommandStream::pastCap(std::size_t payloadBytes) {
+    Demote("stream byte cap");
+    try {
+        return std::unique_ptr<std::byte[]>(new std::byte[std::max<std::size_t>(payloadBytes, RecordAlign)]);
+    } catch (...) {
+        Poison(std::current_exception());
+        throw;
+    }
+}
+
+void CommandStream::runPastCap(Run run, const std::byte* payload) {
+    run(payload, materialized, functions);
 }
 
 void CommandStream::Poison(std::exception_ptr why) noexcept {

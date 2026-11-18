@@ -407,27 +407,47 @@ void StreamByteCapDemotesTheBatch() {
     budget.Open(latch, 1);
     const auto cap = budget.StreamCap();
     Require(cap == 4 * CommandStream::ChunkBytes, "the stream cap is not the outstanding bytes shared by the outstanding batches: " + std::to_string(cap));
-    CountingMaterializer materializer;
-    CommandStream stream(Real(), &budget, &materializer);
     const std::vector<std::uint32_t> array(1000, 5);
-    takeSeen();
-    std::uint32_t appended = 0;
-    while (stream.Materialized() == VK_NULL_HANDLE && appended < 1000) append(stream, appended++, array);
-    Require(stream.Materialized() != VK_NULL_HANDLE, "a stream grew to " + std::to_string(stream.Charged()) + " bytes past its cap of " + std::to_string(cap) + " without demoting");
-    Require(std::string_view(stream.DemotedBy().command) == "stream byte cap" && stream.DemotedBy().chained == VK_STRUCTURE_TYPE_MAX_ENUM, "the cap demotion was not attributed to the cap");
-    Require(stream.Charged() > cap && stream.Charged() <= cap + CommandStream::ChunkBytes, "the stream was charged " + std::to_string(stream.Charged()) + " bytes for a cap of " + std::to_string(cap));
-    Require(materializer.begun == 1, "the cap demotion began " + std::to_string(materializer.begun) + " command buffers");
-    const auto values = takeSeen();
-    Require(values.size() == appended * (array.size() + 1) && values.front() == 0 && values[(appended - 1) * (array.size() + 1)] == appended - 1, "the cap demotion did not replay every record, including the one past the cap");
-    seen().replayThreadCalls.store(0);
-    budget.Retired(stream.Charged());
-    budget.Open(latch, 2);
+    {
+        CountingMaterializer materializer;
+        CommandStream stream(Real(), &budget, &materializer);
+        takeSeen();
+        std::uint32_t appended = 0;
+        while (stream.Materialized() == VK_NULL_HANDLE && appended < 1000) {
+            append(stream, appended++, array);
+            Require(stream.Charged() <= cap, "a stream was charged " + std::to_string(stream.Charged()) + " bytes past its cap of " + std::to_string(cap));
+        }
+        Require(stream.Materialized() != VK_NULL_HANDLE, "a stream at its byte cap did not demote");
+        Require(std::string_view(stream.DemotedBy().command) == "stream byte cap" && stream.DemotedBy().chained == VK_STRUCTURE_TYPE_MAX_ENUM, "the cap demotion was not attributed to the cap");
+        Require(materializer.begun == 1, "the cap demotion began " + std::to_string(materializer.begun) + " command buffers");
+        const auto values = takeSeen();
+        Require(values.size() == appended * (array.size() + 1) && values.front() == 0 && values[(appended - 1) * (array.size() + 1)] == appended - 1, "the cap demotion did not record every command in order, including the one past the cap");
+        budget.Retired(stream.Charged());
+    }
+    for (const std::size_t before : {std::size_t{0}, std::size_t{1}}) {
+        budget.Open(latch, 2);
+        CountingMaterializer materializer;
+        CommandStream stream(Real(), &budget, &materializer);
+        takeSeen();
+        for (std::size_t index = 0; index < before; ++index) append(stream, 7, array);
+        const auto chargedBefore = stream.Charged();
+        std::vector<std::uint32_t> large(cap / sizeof(std::uint32_t));
+        for (std::size_t index = 0; index < large.size(); ++index) large[index] = static_cast<std::uint32_t>(index);
+        append(stream, 9, large);
+        Require(stream.Charged() == chargedBefore && stream.Charged() <= cap, "one command larger than the remaining cap was charged: " + std::to_string(stream.Charged()) + " bytes for a cap of " + std::to_string(cap));
+        Require(stream.Materialized() != VK_NULL_HANDLE && std::string_view(stream.DemotedBy().command) == "stream byte cap", "one command larger than the remaining cap did not demote");
+        const auto values = takeSeen();
+        Require(values.size() == before * (array.size() + 1) + 1 + large.size() && values[before * (array.size() + 1)] == 9 && values.back() == large.back(), "the command past the cap was not recorded after the prefix");
+        budget.Retired(stream.Charged());
+    }
+    budget.Open(latch, 3);
     CommandStream undemotable(Real(), &budget);
     bool refused = false;
     for (std::uint32_t value = 0; value < 1000 && !refused; ++value) refused = Throws<std::logic_error>([&] { append(undemotable, value, array); });
-    Require(refused && undemotable.Poisoned() && undemotable.Charged() <= cap + CommandStream::ChunkBytes, "a stream with no way to demote grew past its cap instead of ending");
+    Require(refused && undemotable.Poisoned() && undemotable.Charged() <= cap, "a stream with no way to demote grew past its cap instead of ending");
     budget.Retired(undemotable.Charged());
     takeSeen();
+    seen().replayThreadCalls.store(0);
 }
 
 VKAPI_ATTR void VKAPI_CALL seeMarker(VkCommandBuffer, const void* marker) {
@@ -484,6 +504,33 @@ void TwoThreadsAppendToTwoStreams() {
     seen().replayThreadCalls.store(0);
     budget.Retired(streams[0]->Charged());
     budget.Retired(streams[1]->Charged());
+}
+
+void TwoThreadsChargeOneBudgetAtOnce() {
+    constexpr std::uint64_t Streams = 20000;
+    WorkBudget budget(WorkBudget::Limits{4, 4, std::size_t{1} << 62});
+    std::array<std::atomic<std::uint64_t>, 2> done{};
+    std::array<std::size_t, 2> charged{};
+    std::array<std::uint64_t, 2> otherAtStart{};
+    std::atomic<int> ready{0};
+    const auto charge = [&](std::size_t which) {
+        const auto other = 1 - which;
+        ready.fetch_add(1);
+        while (ready.load() != 2) std::this_thread::yield();
+        otherAtStart[which] = done[other].load();
+        while (done[which].load() < Streams || done[other].load() < Streams) {
+            CommandStream stream(Real(), &budget);
+            append(stream, static_cast<std::uint32_t>(which));
+            charged[which] += stream.Charged();
+            done[which].fetch_add(1);
+        }
+    };
+    std::thread second(charge, 1);
+    charge(0);
+    second.join();
+    takeSeen();
+    Require(otherAtStart[0] < Streams && otherAtStart[1] < Streams, "one thread finished charging before the other started");
+    Require(budget.OutstandingBytes() == charged[0] + charged[1], "two threads charging one budget at once lost " + std::to_string(charged[0] + charged[1] - budget.OutstandingBytes()) + " bytes");
 }
 
 void RetirementOutlivesTheStream() {
@@ -691,6 +738,7 @@ int main(int argc, char** argv) {
         RetirementOutlivesTheStream();
         StreamByteCapDemotesTheBatch();
         TwoThreadsAppendToTwoStreams();
+        TwoThreadsChargeOneBudgetAtOnce();
         ReplayPoolCreationDoesNotLeak();
         AdmissionOpensDirectInsteadOfWaiting();
         SingleExecutorOwnsItsPoolAndThread();
