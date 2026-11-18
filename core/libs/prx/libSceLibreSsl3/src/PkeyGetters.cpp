@@ -67,12 +67,11 @@
  *    notice, this list of conditions and the following disclaimer.
  *
  * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgment:
  *    "This product includes software developed by the OpenSSL Project
  *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
  *
@@ -106,7 +105,9 @@
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -128,11 +129,17 @@ constexpr int EvpRExpectingADsaKey = 129;
 void* KeyOfType(LibreSsl3EvpPkey* key, std::int32_t first, std::int32_t second, int reason, const char* function) {
     if (!key)
         throw std::invalid_argument(std::string(function) + " requires a key");
-    if (key->type != first && key->type != second) {
+    LibreSsl3EvpPkey guestKey{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&guestKey, key, sizeof(guestKey));
+    errno = savedErrno;
+    if (!ok)
+        throw std::invalid_argument(std::string(function) + " requires a readable key");
+    if (guestKey.type != first && guestKey.type != second) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
         return nullptr;
     }
-    return key->key;
+    return guestKey.key;
 }
 
 } // namespace
