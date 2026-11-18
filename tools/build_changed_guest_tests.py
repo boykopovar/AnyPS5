@@ -116,10 +116,9 @@ def guest_test_targets(source_root, targets, changed_paths=None):
             continue
         if not host_only.links_guest_libc(target):
             continue
-        selected.append(target["name"])
-    selected = sorted(set(selected), key=str.casefold)
+        selected.append(target)
     if changed_paths is None:
-        return selected
+        return sorted({target["name"] for target in selected}, key=str.casefold)
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
         path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
@@ -128,26 +127,11 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     load_test = [LIBRARY_LOAD_TEST] if loads_libraries and any(
         target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
     if broad_change:
-        return sorted(set(selected + load_test), key=str.casefold)
-    changed_source = {
-        relative
-        for target in targets.values()
-        if target.get("name") in selected
-        for item in target.get("sources", []) if not item.get("isGenerated")
-        for relative in [host_only.source_relative_path(source_root, source_root / item["path"])]
-        if relative is not None
-    }
-    matched_sources = changed & changed_source
-    if matched_sources:
-        return [
-            target["name"] for target in targets.values()
-            if target.get("name") in selected
-            and any(
-                host_only.source_relative_path(source_root, source_root / item["path"]) in matched_sources
-                for item in target.get("sources", []) if not item.get("isGenerated")
-            )
-        ] + load_test
-    return load_test
+        return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
+    return [
+        target["name"] for target in selected
+        if changed & host_only.target_reached_sources(target, targets, source_root)
+    ] + load_test
 
 
 def core_lib_test_targets(source_root, targets, changed_paths=None):

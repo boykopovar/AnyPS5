@@ -102,6 +102,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Values.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ErrorStringLoaders.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_asn1_values_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Asn1Values.cpp)
@@ -118,6 +119,7 @@ endif()
 
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Sha512_256.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Ecdsa.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
@@ -486,6 +488,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_sha512_256 PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_sha512_256 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+    add_test_executable(guest_libressl3_ecdsa_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Ecdsa.cpp)
+    target_include_directories(guest_libressl3_ecdsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ecdsa_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_ecdsa_tests)
+    add_test(NAME guest_libressl3_ecdsa COMMAND guest_libressl3_ecdsa_tests)
+    set_tests_properties(guest_libressl3_ecdsa PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ecdsa PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
     if(WIN32)
@@ -919,6 +931,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_error_string_loaders_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ErrorStringLoaders.cpp)
+    target_include_directories(guest_libressl3_error_string_loaders_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_error_string_loaders_tests PRIVATE libSceLibreSsl3 libSceLibreSsl)
+    configure_windows_unwind(guest_libressl3_error_string_loaders_tests)
+    add_test(NAME guest_libressl3_error_string_loaders COMMAND guest_libressl3_error_string_loaders_tests)
+    set_tests_properties(guest_libressl3_error_string_loaders PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_error_string_loaders PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ErrorPrinting.cpp)
 
 if(BUILD_TESTING)
@@ -930,5 +955,20 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_error_printing PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_error_printing PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslCtxCiphersuites.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_ssl_ctx_ciphersuites_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SslCtxCiphersuites.cpp)
+    target_include_directories(guest_libressl3_ssl_ctx_ciphersuites_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ssl_ctx_ciphersuites_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_ssl_ctx_ciphersuites_tests)
+    add_test(NAME guest_libressl3_ssl_ctx_ciphersuites COMMAND guest_libressl3_ssl_ctx_ciphersuites_tests)
+    set_tests_properties(guest_libressl3_ssl_ctx_ciphersuites PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ssl_ctx_ciphersuites PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
