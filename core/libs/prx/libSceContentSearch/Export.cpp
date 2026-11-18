@@ -274,7 +274,7 @@ int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint
     const int savedErrno = errno;
     const int sdkResult = sceKernelGetCompiledSdkVersion(&sdkVersion);
     errno = savedErrno;
-    if (sdkResult != 0) NotImplemented_nid_no_patch(__func__);
+    if (sdkResult != 0) return sdkResult;
     return static_cast<std::uint32_t>(sdkVersion) < DirectServiceErrorSdk ? ErrorLegacyServiceUnavailable : ErrorServiceUnavailable;
 }
 
