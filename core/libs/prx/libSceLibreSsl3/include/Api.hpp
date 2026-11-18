@@ -216,6 +216,16 @@ struct Asn1Type {
 
 static_assert(sizeof(Asn1Type) == 16);
 
+struct LibreSsl3QuicPendingData {
+    std::uint8_t* data;
+    std::uint64_t length;
+    std::uint64_t capacity;
+};
+
+static_assert(sizeof(LibreSsl3QuicPendingData) == 24);
+static_assert(offsetof(LibreSsl3QuicPendingData, length) == 8);
+static_assert(offsetof(LibreSsl3QuicPendingData, capacity) == 16);
+
 extern "C" {
 
 void APS5_VABI ASN1_INTEGER_free_nid_postfix(Asn1String* integer);
@@ -447,7 +457,8 @@ int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context);
 LibreSsl3X509Extension* APS5_VABI X509V3_EXT_conf_nid_nid_postfix(void* conf,
     LibreSsl3X509V3Context* ctx, int ext_nid, const char* value);
 int APS5_VABI X509_sign_nid_postfix();
-int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix();
+int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix(const LibreSsl3Ssl* ssl,
+    const std::uint8_t** params, std::size_t* paramsLength);
 void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio);
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3EvpPkey* key);
 Asn1String* APS5_VABI ASN1_TIME_new_nid_postfix();
@@ -480,7 +491,8 @@ int APS5_VABI BIO_meth_set_destroy_nid_postfix(LibreSsl::BioMethod* method, decl
 int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix(LibreSsl3PkeyContext* context, int operationType, int command,
     int first, void* second);
 int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int64_t* length, int* tag, int* tagClass, std::int64_t maximum);
-int APS5_VABI SSL_provide_quic_data_nid_postfix();
+int APS5_VABI SSL_provide_quic_data_nid_postfix(LibreSsl3Ssl* ssl, int level,
+    const std::uint8_t* data, std::size_t length);
 LibreSsl::BioMethod* APS5_VABI BIO_meth_new_nid_postfix(int type, const char* name);
 LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     LibreSsl3EvpPkey** output, const unsigned char** input, std::int64_t length);
