@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -157,6 +158,29 @@ class NamesLookupTests(unittest.TestCase):
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):
             pr_overlap.main(["--names", "pending", "--branch", "HEAD"])
+
+
+class LibraryStatusScanTests(unittest.TestCase):
+    def test_shared_exports_scan_each_library_once_per_lookup(self):
+        first = "core/libs/prx/libFirst"
+        second = "core/libs/prx/libSecond"
+        exported = {
+            (first, "first-id"): {"first", "first_alias"},
+            (first, "second-id"): {"second"},
+            (second, "third-id"): {"first"},
+        }
+        with patch.object(pr_overlap, "base_exports", return_value=exported), \
+                patch.object(pr_overlap, "library_status", return_value={"first": "implemented", "second": "stub", "first_alias": "implemented"}) as scan:
+            status = pr_overlap.main_status(["first", "first_alias", "second", "absent"], "base-one")
+            self.assertEqual(scan.call_count, 2)
+            self.assertCountEqual(scan.call_args_list, [unittest.mock.call("base-one", first), unittest.mock.call("base-one", second)])
+            self.assertEqual(status["first"], {first: "implemented", second: "implemented"})
+            self.assertEqual(status["second"], {first: "stub"})
+            self.assertEqual(status["absent"], {})
+            scan.reset_mock()
+            scan.return_value = {"first": "stub"}
+            self.assertEqual(pr_overlap.main_status(["first"], "base-two")["first"], {first: "stub", second: "stub"})
+            self.assertEqual(scan.call_count, 2)
 
 
 if __name__ == "__main__":
