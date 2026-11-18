@@ -41,6 +41,16 @@ public:
     double pageZoomFactor = 1.0;
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
+    bool isClosed = false;
+    std::optional<std::u16string> title;
+    Retained<URL> activeURL;
+    Retained<URL> provisionalURL;
+    Retained<URL> committedURL;
+    double estimatedProgress = 0.0;
+    std::optional<std::u16string> applicationNameForUserAgent;
+    std::optional<std::u16string> customUserAgent;
+    std::optional<std::u16string> customTextEncodingName;
+    bool backgroundExtendsBeyondPage = false;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
