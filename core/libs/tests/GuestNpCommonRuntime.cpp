@@ -2107,6 +2107,45 @@ void TestStreamHelpers() {
         "WriteFilledData refuses a callback that reports more bytes than it was given");
 }
 
+void TestValueObjectsUnmapped() {
+    const auto throws = [](auto call) {
+        try {
+            call();
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    const std::uintptr_t unmapped = 0x10;
+    auto* const unmappedTitleId = reinterpret_cast<NpTitleIdObject*>(unmapped);
+    NpTitleIdObject titleId {};
+    _ZN3sce2np9NpTitleIdC1Ev(&titleId);
+    Require(_ZNK3sce2np9NpTitleId7IsEmptyEv(&titleId), "a default title id object is empty");
+    Require(throws([&] { _ZN3sce2np9NpTitleIdC1Ev(unmappedTitleId); }), "constructing an unmapped title id object throws");
+    Require(throws([&] { _ZN3sce2np9NpTitleIdC1ERKS1_(&titleId, unmappedTitleId); }), "copying an unmapped title id object throws");
+    Require(throws([&] { _ZN3sce2np9NpTitleIdaSERKS1_(&titleId, unmappedTitleId); }), "assigning from an unmapped title id object throws");
+    Require(throws([&] { _ZNK3sce2np9NpTitleId7IsEmptyEv(unmappedTitleId); }), "IsEmpty on an unmapped title id object throws");
+    Require(throws([&] { _ZNK3sce2np9NpTitleId6EqualsEPKc(&titleId, reinterpret_cast<const char*>(unmapped)); }), "comparing with an unmapped title id string throws");
+    Require(throws([&] { _ZN3sce2npeqERKNS0_9NpTitleIdES3_(&titleId, unmappedTitleId); }), "== with an unmapped title id object throws");
+    Require(_ZNK3sce2np9NpTitleId7IsEmptyEv(&titleId), "a failed copy leaves the title id object as it was");
+    auto* const unmappedSecret = reinterpret_cast<NpTitleSecretObject*>(unmapped);
+    NpTitleSecretObject secret {};
+    _ZN3sce2np13NpTitleSecretC1Ev(&secret);
+    Require(throws([&] { _ZN3sce2np13NpTitleSecretC1Ev(unmappedSecret); }), "constructing an unmapped title secret object throws");
+    Require(throws([&] { _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(&secret, reinterpret_cast<void*>(unmapped), 128); }), "setting secret data from an unmapped buffer throws");
+    Require(throws([&] { _ZNK3sce2np13NpTitleSecret6EqualsEPvm(&secret, reinterpret_cast<void*>(unmapped), 128); }), "comparing with unmapped secret data throws");
+    Require(throws([&] { _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(&secret, unmappedSecret); }), "== with an unmapped title secret object throws");
+    Require(_ZNK3sce2np13NpTitleSecret7IsEmptyEv(&secret), "a failed copy leaves the title secret object as it was");
+    auto* const unmappedCommId = reinterpret_cast<NpCommIdObject*>(unmapped);
+    NpCommIdObject commId {};
+    _ZN3sce2np8NpCommIdC1Ev(&commId);
+    Require(throws([&] { _ZN3sce2np8NpCommIdC1Ev(unmappedCommId); }), "constructing an unmapped communication id object throws");
+    Require(throws([&] { _ZNK3sce2np8NpCommId7IsEmptyEv(unmappedCommId); }), "IsEmpty on an unmapped communication id object throws");
+    Require(throws([&] { _ZNK3sce2np8NpCommId6EqualsERKS1_(&commId, unmappedCommId); }), "comparing with an unmapped communication id object throws");
+    Require(throws([&] { _ZN3sce2npneERKNS0_8NpCommIdES3_(unmappedCommId, &commId); }), "!= with an unmapped communication id object throws");
+    Require(_ZNK3sce2np8NpCommId7IsEmptyEv(&commId), "a failed copy leaves the communication id object as it was");
+}
+
 void TestRefObjects() {
     NpRefObject object {};
     std::memset(&object, 0x77, sizeof(object));
@@ -2212,6 +2251,7 @@ int main() {
     TestMemoryStreams();
     TestTitleIdObjects();
     TestTitleSecretObjects();
+    TestValueObjectsUnmapped();
     TestStreamHelpers();
     TestRefObjects();
     TestCommIdObjects();
