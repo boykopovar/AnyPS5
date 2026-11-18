@@ -41,9 +41,9 @@ struct BackendDispatcher {
     ProtocolError* protocolErrors;
     unsigned protocolErrorCapacity;
     unsigned protocolErrorCount;
+    std::int64_t currentRequestId;
     bool hasCurrentRequestId;
     std::uint8_t padding1[7];
-    std::int64_t currentRequestId;
 };
 
 struct SupplementalBackendDispatcherVtable {
@@ -78,8 +78,8 @@ static_assert(offsetof(BackendDispatcher, frontendRouter) == 8);
 static_assert(offsetof(BackendDispatcher, dispatchers) == 16);
 static_assert(offsetof(BackendDispatcher, protocolErrors) == 24);
 static_assert(offsetof(BackendDispatcher, protocolErrorCount) == 36);
-static_assert(offsetof(BackendDispatcher, hasCurrentRequestId) == 40);
-static_assert(offsetof(BackendDispatcher, currentRequestId) == 48);
+static_assert(offsetof(BackendDispatcher, currentRequestId) == 40);
+static_assert(offsetof(BackendDispatcher, hasCurrentRequestId) == 48);
 static_assert(std::is_standard_layout_v<SupplementalBackendDispatcher>);
 static_assert(sizeof(SupplementalBackendDispatcher) == 24);
 static_assert(offsetof(SupplementalBackendDispatcher, refCount) == 8);
