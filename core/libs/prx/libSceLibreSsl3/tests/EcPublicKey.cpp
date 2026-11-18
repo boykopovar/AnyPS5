@@ -222,6 +222,11 @@ void RejectsBadEncodings() {
     Rejects(key, xAboveField, 65, P256Uncompressed);
     Rejects(key, compressedOffCurve, 33, P256Uncompressed);
     Rejects(key, P256Uncompressed, 64, P256Uncompressed);
+    for (const std::int64_t length : {std::int64_t{66}, std::int64_t{200}, std::int64_t{4096}}) {
+        std::vector<unsigned char> padded = P256Uncompressed;
+        padded.resize(4096, 0);
+        Rejects(key, padded, length, P256Uncompressed);
+    }
     Rejects(key, P256Uncompressed, 0, P256Uncompressed);
     Rejects(key, P256Uncompressed, -1, P256Uncompressed);
     Rejects(key, std::vector<unsigned char>(5000, 0x04), 4097, P256Uncompressed);

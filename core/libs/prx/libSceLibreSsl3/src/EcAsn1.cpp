@@ -497,7 +497,7 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         PutError(EcLibrary);
         return nullptr;
     }
-    const unsigned char* const next = cursor + length;
+    const unsigned char* const next = cursor + bytes.size();
     if (!GuestPtr<const unsigned char*>(in).CopyOut(next)) APS5_INVALID_ARG_EX;
     if (result->publicKey != nullptr && result->publicKey->curve.nid == result->group->curve.nid) {
         std::swap(result->publicKey->point, decoded->point);
