@@ -3411,7 +3411,6 @@ int APS5_VABI _ZN7WebCore28convertToIntegerEnforceRangeIsEET_RN3JSC14JSGlobalObj
 int APS5_VABI _ZN7WebCore28convertToIntegerEnforceRangeItEET_RN3JSC14JSGlobalObjectENS2_7JSValueE();
 int APS5_VABI _ZN7WebCore28throwArgumentMustBeEnumErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEjPKcS6_S6_S6_();
 int APS5_VABI _ZN7WebCore28throwRequiredMemberTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_S6_();
-int APS5_VABI _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_();
 int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EOS0_();
 int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeD1Ev();
@@ -5277,7 +5276,6 @@ int APS5_VABI _ZNK7WebCore17ResourceErrorBase8lazyInitEv();
 int APS5_VABI _ZNK7WebCore17SMILTimeContainer19animationFrameDelayEv();
 int APS5_VABI _ZNK7WebCore17SubresourceLoader15originalHeadersEv();
 int APS5_VABI _ZNK7WebCore17TiledBackingStore13mapToContentsERKNS_7IntRectE();
-int APS5_VABI _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE();
 int APS5_VABI _ZNK7WebCore18DOMWindowExtension5frameEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement11scrollDelayEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement12scrollAmountEv();
