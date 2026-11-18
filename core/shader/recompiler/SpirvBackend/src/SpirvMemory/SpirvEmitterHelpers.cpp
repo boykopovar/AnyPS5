@@ -225,6 +225,7 @@ void DefineInputs(SpirvEmitterState& state) {
         })) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
+        if (state.splitWaves > 1u) addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
     }
     if (state.splitState) {
         addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");

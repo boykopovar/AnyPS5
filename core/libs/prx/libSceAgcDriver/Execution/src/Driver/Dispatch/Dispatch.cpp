@@ -84,6 +84,14 @@ bool DispatchMissItemsEnabled() {
     return Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::PipelineDispatchMisses);
 }
 
+bool SplitWaveCandidate(const ShaderRecompiler::RecompileRequest& request, std::uint64_t indirectArguments) {
+    if (indirectArguments != 0 || !request.target.spannedWaves || request.context.waveSize != 64u || !request.context.compute.has_value()) return false;
+    const auto& compute = *request.context.compute;
+    if (compute.PartialGroups() || compute.ldsSizeDwords != 0u || compute.scratchDwords != 0u) return false;
+    const auto threads = static_cast<std::uint64_t>(std::max(compute.numThreads[0], 1u)) * std::max(compute.numThreads[1], 1u) * std::max(compute.numThreads[2], 1u);
+    return threads > 64u && threads % 64u == 0u;
+}
+
 void StartStagedBuild(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& staged, std::uint64_t address) {
     static std::mutex mutex;
     static std::set<ShaderRecompiler::PipelineIdentity> started;
@@ -93,16 +101,17 @@ void StartStagedBuild(const std::shared_ptr<VulkanDevice>& device, const std::sh
         std::lock_guard lock(mutex);
         if (!started.insert(identity).second) return;
     }
-    std::fprintf(stderr, "[staged-form] 0x%llx: building the window-select form in the background; its dispatches run the array form until it is built\n", static_cast<unsigned long long>(address));
-    SubmitComputePrebuild([device, staged, address] {
+    const char* form = staged->groupMultiplier > 1u && staged->windowSelects ? "split-wave and window-select" : staged->groupMultiplier > 1u ? "split-wave" : "window-select";
+    std::fprintf(stderr, "[staged-form] 0x%llx: building the %s form in the background; its dispatches run the plain form until it is built\n", static_cast<unsigned long long>(address), form);
+    SubmitComputePrebuild([device, staged, address, form] {
         const auto started = std::chrono::steady_clock::now();
         try {
             device->PrebuildComputePipeline(*staged, address);
             const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-            if (device->ComputePipelineReady(*staged)) std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form was built in %.0f ms; its dispatches switch to it\n", static_cast<unsigned long long>(address), ms);
-            else std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form was not built after %.0f ms; its dispatches keep the array form\n", static_cast<unsigned long long>(address), ms);
+            if (device->ComputePipelineReady(*staged)) std::fprintf(stderr, "[staged-form] 0x%llx: the %s form was built in %.0f ms; its dispatches switch to it\n", static_cast<unsigned long long>(address), form, ms);
+            else std::fprintf(stderr, "[staged-form] 0x%llx: the %s form was not built after %.0f ms; its dispatches keep the plain form\n", static_cast<unsigned long long>(address), form, ms);
         } catch (const std::exception& error) {
-            std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form could not be built (%s); its dispatches keep the array form\n", static_cast<unsigned long long>(address), error.what());
+            std::fprintf(stderr, "[staged-form] 0x%llx: the %s form could not be built (%s); its dispatches keep the plain form\n", static_cast<unsigned long long>(address), form, error.what());
         }
     });
 }
@@ -504,6 +513,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
     if (Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::WindowSelects)) request.target.windowSelects = true;
+    if (Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::SplitWaveGroups) && SplitWaveCandidate(request, indirectArguments)) request.target.splitWaveGroups = true;
     if (const auto rsrc1 = queue.shader.find(0x212); !fromAhead && rsrc1 != queue.shader.end()) {
         const auto vectorGranule = request.context.waveSize == 32u ? 8u : 4u;
         if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule)) {
@@ -557,6 +567,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     for (const auto threads : compute.partialThreads) mix(threads);
     for (const auto word : userData) mix(word);
     if (request.target.windowSelects) mix(0x57534c43u);
+    if (request.target.splitWaveGroups) mix(0x53504c49u);
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
     if (keyHygiene) {
@@ -735,9 +746,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
             timing.Mark("capture_resources");
             compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
-            if (compiledResult->windowSelects && !localDevice->ComputePipelineReady(*compiledResult)) {
+            if ((compiledResult->groupMultiplier > 1u || compiledResult->windowSelects) && !localDevice->ComputePipelineReady(*compiledResult)) {
                 StartStagedBuild(localDevice, compiledResult, address);
                 request.target.windowSelects = false;
+                request.target.splitWaveGroups = false;
                 request.context.memory = memory;
                 invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
                 shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);

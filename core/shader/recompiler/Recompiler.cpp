@@ -870,6 +870,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.spannedAnySubgroup = request.target.spannedAnySubgroup;
     targetOptions.windowSelects = request.target.windowSelects;
+    targetOptions.splitWaveGroups = request.target.splitWaveGroups;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
@@ -959,6 +960,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.hostSubgroupSize = emitted.anySubgroupSize ? 0u : HostSubgroupSize(request);
     result.fullSubgroups = emitted.fullSubgroups;
     result.windowSelects = emitted.windowSelects;
+    result.groupMultiplier = emitted.groupMultiplier;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
     result.dispatchThreadLimit = bindings.layout.dispatchThreadLimit;
@@ -1555,6 +1557,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .hostSubgroupSize = artifact.hostSubgroupSize,
         .fullSubgroups = artifact.fullSubgroups,
         .windowSelects = artifact.windowSelects,
+        .groupMultiplier = artifact.groupMultiplier,
         .functionLdsBuffer = artifact.functionLdsBuffer,
         .meshWindowBuffer = artifact.meshWindowBuffer,
         .dispatchThreadLimit = artifact.dispatchThreadLimit,

@@ -590,6 +590,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.hostSubgroupSize);
     writer.Value(result.fullSubgroups);
     writer.Value(result.windowSelects);
+    writer.Value(result.groupMultiplier);
     writer.Value(result.functionLdsBuffer);
     writer.Value(result.meshWindowBuffer);
     writer.Value(result.dispatchThreadLimit);
@@ -660,6 +661,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.hostSubgroupSize);
     reader.Value(result.fullSubgroups);
     reader.Value(result.windowSelects);
+    reader.Value(result.groupMultiplier);
     reader.Value(result.functionLdsBuffer);
     reader.Value(result.meshWindowBuffer);
     reader.Value(result.dispatchThreadLimit);
