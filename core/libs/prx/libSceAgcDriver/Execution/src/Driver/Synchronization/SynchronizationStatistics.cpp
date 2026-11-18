@@ -44,7 +44,7 @@ void reportSync() {
 
 void countLabelOutcome(int reason) {
     if (reason == 0) ++gpuLabels;
-    else if (reason == 5) ++completionLabels;
+    else if (reason == 5 || reason == 7) ++completionLabels;
     else ++labelFallbacks[std::min(reason, 4)];
 }
 

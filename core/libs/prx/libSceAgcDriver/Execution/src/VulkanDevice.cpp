@@ -707,6 +707,7 @@ struct VulkanDevice::State {
     bool contextReady = false;
     std::unique_ptr<Graphics::TextureDetiler> detiler;
     std::unique_ptr<Graphics::Recorder> recorder;
+    bool hostLabels = false;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
@@ -2735,6 +2736,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->placeholderImages = std::make_unique<Graphics::PlaceholderImages>(graphicsContext());
     }
     state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
+    state->hostLabels = state->driverId == VK_DRIVER_ID_MOLTENVK && state->recorder->HasTimeline() && std::getenv("APS5_MOLTENVK_GPU_LABELS") == nullptr;
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
@@ -3098,6 +3100,10 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
     return state->recorder && (state->recorder->PendingWriteOverlaps(address, bytes) || state->recorder->PendingLabelIn(address, bytes));
 }
 
+bool VulkanDevice::HostLabels() const {
+    return state->hostLabels;
+}
+
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
     static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
     if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label", state->device);
@@ -3160,6 +3166,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     } else if (bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
+    }
+    if (state->hostLabels && bytes.size() <= 8) {
+        recorder.HostLabel(address, bytes, stamp, queue);
+        return 7;
     }
     // A larger store over a listed copied writer's range (as FillBuffer tests it) goes behind the
     // completions too, below; any other one stores on the GPU. Debug aid: APS5_LABEL_GATE_ALL=1

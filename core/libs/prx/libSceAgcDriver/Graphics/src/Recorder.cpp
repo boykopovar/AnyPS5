@@ -1333,8 +1333,28 @@ void TeardownCheckpointMarkers() noexcept {
     state = CheckpointMarkerDevice{};
 }
 
+struct HostLabelStore {
+    std::uint64_t address;
+    std::vector<std::byte> bytes;
+    std::atomic<bool> stored{false};
+
+    bool Store() {
+        if (stored.exchange(true, std::memory_order_acq_rel)) return true;
+        try {
+            GuestMemory::CheckRange(reinterpret_cast<const void*>(address), bytes.size(), 4, true);
+            GuestMemory::StoreOwnBytes(address, bytes);
+        } catch (...) {
+            stored.store(false, std::memory_order_release);
+            return false;
+        }
+        return true;
+    }
+};
+
 struct Recorder::ProgressWatcher {
     std::atomic<std::uint64_t> submitted{0};
+    std::mutex labelMutex;
+    std::deque<std::pair<std::uint64_t, std::shared_ptr<HostLabelStore>>> labels;
     std::atomic<bool> stop{false};
     std::atomic<std::uint32_t> wakes{0};
     std::thread thread;
@@ -1346,6 +1366,7 @@ struct Recorder::ProgressWatcher {
             for (;;) {
                 const auto token = wakes.load(std::memory_order_acquire);
                 if (stop.load(std::memory_order_acquire)) return;
+                storeLabelsThrough(seen);
                 if (submitted.load(std::memory_order_acquire) <= seen) {
                     wakes.wait(token, std::memory_order_acquire);
                     continue;
@@ -1367,6 +1388,28 @@ struct Recorder::ProgressWatcher {
                 KernelWakeSleepers_nid_no_patch();
             }
         });
+    }
+
+    void AddLabel(std::uint64_t serial, std::shared_ptr<HostLabelStore> label) {
+        {
+            std::lock_guard lock(labelMutex);
+            labels.emplace_back(serial, std::move(label));
+        }
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
+    }
+
+    void storeLabelsThrough(std::uint64_t seen) {
+        for (;;) {
+            std::shared_ptr<HostLabelStore> label;
+            {
+                std::lock_guard lock(labelMutex);
+                if (labels.empty() || labels.front().first > seen) return;
+                label = std::move(labels.front().second);
+                labels.pop_front();
+            }
+            static_cast<void>(label->Store());
+        }
     }
 
     void Submitted(std::uint64_t serial) {
@@ -4618,6 +4661,32 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     }
 }
 
+void Recorder::HostLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
+    Require(open != nullptr || !inFlight.empty(), "no batch to append a host label to");
+    Batch& batch = open != nullptr ? *open : *inFlight.back();
+    auto label = std::make_shared<HostLabelStore>();
+    label->address = address;
+    label->bytes.assign(bytes.begin(), bytes.end());
+    const auto storesGuest = [](const std::unique_ptr<Batch>& queued) { return queued->completions.size() > queued->hostLabelCompletions; };
+    const bool early = !storesGuest(open != nullptr ? open : inFlight.back()) && std::none_of(inFlight.begin(), inFlight.end(), storesGuest) && writeBackCompletions.load(std::memory_order_acquire) == 0 && completionStores.load(std::memory_order_acquire) == 0;
+    batch.completions.push_back([label] {
+        if (!label->Store()) GuestMemory::CheckRange(reinterpret_cast<const void*>(label->address), label->bytes.size(), 4, true);
+    });
+    ++batch.hostLabelCompletions;
+    if (early) {
+        if (&batch == open.get() || !progressWatcher) batch.hostLabels.push_back(label);
+        else progressWatcher->AddLabel(batch.serial, label);
+    }
+    ++batch.completionLabelCount;
+    completionLabels.fetch_add(1, std::memory_order_acq_rel);
+    GuestMemory::BreakProofs();
+    noteLabelOn(batch, address, bytes, stamp, queue, true);
+    noteWriteOn(batch, address, bytes.size(), true);
+    if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
+        pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
+    }
+}
+
 bool Recorder::AfterRecordedWork(std::function<void()> action) {
     if (Idle()) return false;
     Batch& batch = open != nullptr ? *open : *inFlight.back();
@@ -4794,6 +4863,8 @@ void Recorder::Submit() {
             progressWatcher = std::make_unique<ProgressWatcher>(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"),
                                                                 context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR"));
         }
+        for (auto& label : batch->hostLabels) progressWatcher->AddLabel(batch->serial, std::move(label));
+        batch->hostLabels.clear();
         progressWatcher->Submitted(batch->serial);
     }
     inFlight.push_back(std::move(batch));

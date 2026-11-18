@@ -244,11 +244,15 @@ private:
     VkResult releaseResult = VK_NOT_READY;
 };
 
-void RunArgumentLabel(Slot& slot) {
+bool RunArgumentLabel(Slot& slot) {
     AgcDriverShutdown_nid_postfix();
     slot.arguments = {3, 1, 1, 0};
     const auto device = OpenVulkanTestDevice();
     Require(device != nullptr, "cannot open the argument-label test device");
+    if (device->HostLabels()) {
+        std::fprintf(stderr, "group counts behind an argument label of an earlier batch: skipped, the device stores labels on the host once their batch completed\n");
+        return false;
+    }
     const auto producer = Recompile(*device, slot, AddressWriterCode, {Low(slot.arguments.data()), High(slot.arguments.data()), Groups, 1, 1});
     const auto consumer = Recompile(*device, slot, CounterCode, {Low(slot.counterDescriptor.data()), High(slot.counterDescriptor.data())});
     const auto preparedProducer = device->PrepareDispatch(producer, {}, 1, reinterpret_cast<std::uintptr_t>(AddressWriterCode.data()));
@@ -274,6 +278,7 @@ void RunArgumentLabel(Slot& slot) {
     std::fprintf(stderr, "pending producer CPU fallback: cpuReason %d\n", outcome.cpuReason);
     gate.Finish();
     slot.done = 1;
+    return true;
 }
 
 void Run(Slot& slot, const Variant& variant) {
@@ -331,7 +336,7 @@ void Run(Slot& slot, const Variant& variant) {
         Submit(Compute, second);
         break;
     case Order::ArgumentLabelInEarlierBatch:
-        RunArgumentLabel(slot);
+        if (!RunArgumentLabel(slot)) return;
         break;
     }
     if (variant.order != Order::ArgumentLabelInEarlierBatch) AgcDriverWaitIdle_nid_postfix();

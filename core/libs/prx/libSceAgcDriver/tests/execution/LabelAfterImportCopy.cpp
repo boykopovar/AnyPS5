@@ -62,7 +62,7 @@ int main() {
                     return VulkanTestSkipped;
                 }
                 const int reason = device->WriteLabelOnGpu(AddressOf(label), std::as_bytes(std::span(&value, 1)), static_cast<std::uint64_t>(round) + 1u, 0);
-                if (reason != 0) {
+                if (reason != (device->HostLabels() ? 7 : 0)) {
                     std::printf("skipped, the label was not recorded on the GPU (reason %d)\n", reason);
                     return VulkanTestSkipped;
                 }

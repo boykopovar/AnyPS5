@@ -145,6 +145,8 @@ private:
 // up to serial S" WITHOUT the mutex (WaitSerial), because the monotonic value cannot be reset or
 // recycled the way the pooled batch fences are, and afterwards run the completions under the mutex
 // (FinishUpTo). Without timeline semaphores callers use the locked Sync as before.
+struct HostLabelStore;
+
 class Recorder {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
@@ -551,6 +553,7 @@ public:
     // completion store would land on memory the game may have reused by then (a stale label value
     // over a fresh command buffer). Debug aid: APS5_LABEL_STORE_ALWAYS=1 stores unconditionally.
     void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu);
+    void HostLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     bool AfterRecordedWork(std::function<void()> action);
     // A CPU store of GPU results into guest memory (GuestBufferMemory::WriteBack): recorded so a
     // completion label store can tell whether its bytes were overwritten. Under GuestMemory::
@@ -747,6 +750,8 @@ private:
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
+        std::vector<std::shared_ptr<HostLabelStore>> hostLabels;
+        std::size_t hostLabelCompletions = 0;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::uint64_t> stampedNotes;

@@ -81,7 +81,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 if (localDevice != nullptr && submission.queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
                 reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
-                if (reason == 0 || reason == 1 || reason == 5) {
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) {
                     noteLabelStore(label->address, bytes, stamp, submission.queue);
                     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 }
@@ -92,7 +92,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 if (localDevice != nullptr) Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before interrupt");
                 ++noOpLabels;
             }
-            if (reason == 0 || reason == 5) {
+            if (reason == 0 || reason == 5 || reason == 7) {
                 const auto queueId = submission.queue;
                 const auto context = *interrupt;
                 interruptDeferred = localDevice->AfterRecordedWork([this, queueId, context] { deliverGuestEopInterrupt(queueId, context); }, submission.queue == 0);
@@ -132,7 +132,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
-                wroteOnGpu = reason == 0 || reason == 5;
+                wroteOnGpu = reason == 0 || reason == 5 || reason == 7;
                 if (reason == 1) {
 
                     GuestMemory::Write(label->address, bytes, 4);
@@ -199,8 +199,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
-                if (reason == 0 || reason == 5) {
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
+                if (reason == 0 || reason == 5 || reason == 7) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
                     wroteOnGpu = true;
@@ -469,7 +469,7 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
         stamp = ++eventSerial;
         reason = localDevice->WriteLabelOnGpu(address, bytes, stamp, queue);
     }
-    if (reason == 0 || reason == 5 || reason == 6) {
+    if (reason == 0 || reason == 5 || reason == 6 || reason == 7) {
         noteLabelStore(address, bytes, stamp, queue, false);
         if (reason == 0) ++storesOnGpu;
         else ++storesBehindCompletions;
@@ -547,7 +547,7 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
         const auto stamp = ++eventSerial;
         if (localDevice != nullptr && queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
         reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(address, bytes, stamp, queue) : 4;
-        if (reason != 0 && reason != 5 && reason != 6) {
+        if (reason != 0 && reason != 5 && reason != 6 && reason != 7) {
             if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(address, bytes, 4);
         }
@@ -562,7 +562,7 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
         const auto context = *interrupt;
         bool deferred = false;
         if (bytes.empty() && localDevice != nullptr && queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("interrupt") != 0) workOpen = true;
-        if (localDevice != nullptr && (reason == 0 || reason == 5 || reason == 6)) {
+        if (localDevice != nullptr && (reason == 0 || reason == 5 || reason == 6 || reason == 7)) {
             deferred = localDevice->AfterRecordedWork([this, queue, context] { deliverGuestEopInterrupt(queue, context); }, queue == 0);
             if (deferred && workOpen) localDevice->SubmitRecorded(queue == 0);
         }

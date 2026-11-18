@@ -699,6 +699,40 @@ std::array<std::uint32_t, 7> dataFill(const void* destination, std::uint32_t val
     return {0xc0055000, 0x40300000, value, 0, static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u), bytes};
 }
 
+void testEndOfPipeInterruptAfterItsLabel() {
+    KernelEqueue eq = 0;
+    check(sceKernelCreateEqueue(&eq, "AGC EOP interrupt label") == 0, "event queue creation failed");
+    auto owner = EqueuePin_nid_postfix(eq);
+    int tag = 0;
+    check(sceAgcDriverAddEqEvent(eq, 0x20, &tag) == 0, "compute event registration failed");
+    constexpr std::uint32_t copyBytes = 32u << 20u;
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, copyBytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, copyBytes + 65536));
+    auto* label = reinterpret_cast<volatile std::uint32_t*>(destination + copyBytes / 4u);
+    submit(0x20, commands(dataFill(source, 0, copyBytes), dataFill(destination, 0, copyBytes + 65536)));
+    AgcDriverWaitIdle_nid_postfix();
+    std::array<KernelEvent, 2> events{};
+    for (std::uint32_t round = 1; round <= 8; ++round) {
+        submit(0x20, commands(dataFill(source, round, copyBytes)));
+        AgcDriverWaitIdle_nid_postfix();
+        *label = 0;
+        submit(0x20, commands(memoryCopy(destination, source, copyBytes), endOfPipeLabel(label, round, 0x21)));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        int delivered = 0;
+        while ((delivered = owner->GetTriggeredEvents(events.data(), 2)) == 0) {
+            check(std::chrono::steady_clock::now() < deadline, "the end-of-pipe interrupt after a copy and its label was never delivered");
+            std::this_thread::yield();
+        }
+        check(delivered == 1 && events[0].udata == &tag && sceAgcDriverGetEqContextId(events.data()) == 0x21, "the end-of-pipe interrupt after a copy was delivered wrong");
+        check(*label == round, "the end-of-pipe interrupt was delivered before the label of its release landed");
+        check(reinterpret_cast<volatile std::uint32_t*>(destination)[copyBytes / 4u - 1u] == round, "the end-of-pipe interrupt was delivered before the copy ahead of its release landed");
+        AgcDriverWaitIdle_nid_postfix();
+    }
+    check(sceAgcDriverDeleteEqEvent(eq, 0x20) == 0, "compute event removal failed");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+}
+
 void testLargeDataFill() {
     alignas(64) static volatile std::uint32_t filled = 0;
     constexpr std::size_t words = 65536;
@@ -760,14 +794,14 @@ void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
     const std::uint64_t awaited = 1ull << (resetWord * 32u);
     submit(0x20, commands(dataFill(block, 0, blockBytes)));
     AgcDriverWaitIdle_nid_postfix();
-    const auto gpuLabelsBefore = AgcDriver::DriverDetail::gpuLabels.load();
+    const auto gpuLabelsBefore = AgcDriver::DriverDetail::gpuLabels.load() + AgcDriver::DriverDetail::completionLabels.load();
     if (wide) submit(0x20, commands(waitEqual(&gate, 1), waitEqual64(label, awaited, ~0ull), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(reset, 0), waitEqual64(label, awaited, ~0ull), writeData(&second, 1)));
     else submit(0x20, commands(waitEqual(&gate, 1), waitEqual(label, 1), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(label, 0), waitEqual(label, 1), writeData(&second, 1)));
     submit(0, commands(writeData(reset, 1)));
     waitFor(reset, 1, "producer label never landed");
     gate = 1;
     waitFor(reset, 0, "the consumer's reset of the label never landed");
-    check(AgcDriver::DriverDetail::gpuLabels.load() > gpuLabelsBefore, "the consumer's reset of the label was not stored on the GPU behind the fill");
+    check(AgcDriver::DriverDetail::gpuLabels.load() + AgcDriver::DriverDetail::completionLabels.load() > gpuLabelsBefore, "the consumer's reset of the label was not stored on the GPU behind the fill");
     std::this_thread::sleep_for(std::chrono::milliseconds(1200));
     check(second == 0, !wide ? "a wait passed on a label value its own queue had already reset, before the reset reached memory, or the wait expired"
                        : resetWord == 0 ? "an 8-byte wait passed on a label whose low dword its own queue had already reset, before the reset reached memory, or the wait expired"
@@ -1365,6 +1399,7 @@ int main(int argc, char** argv) {
         testLargeDataFill();
         testLabelResetByItsQueueBeforeItLanded();
         testWideLabelPartlyResetByItsQueueBeforeItLanded();
+        testEndOfPipeInterruptAfterItsLabel();
         testSmallCopyBehindPendingSource();
         testGpuClockCopyBehindGpuWork();
         testRegisterList();

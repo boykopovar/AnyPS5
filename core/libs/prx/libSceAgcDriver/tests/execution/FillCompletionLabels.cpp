@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -158,6 +159,10 @@ int main(int argc, char** argv) {
         GuestBlock block;
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->HostLabels()) {
+            std::printf("skipped, the device stores labels on the host once their batch completed\n");
+            return VulkanTestSkipped;
+        }
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         const std::array<std::uint32_t, 4> uniform{0x12345678u, 0x12345678u, 0x12345678u, 0x12345678u};
         const std::array<std::uint32_t, 4> pattern{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};

@@ -122,7 +122,8 @@ int main() {
             std::printf("skipped, the device does not import guest memory\n");
             return VulkanTestSkipped;
         }
-        RequireReason(StoreLabel(*device, unregistered.Address() + 8, 0x5a5a0001u, 1), 0, "a label in unregistered host memory");
+        const int recorded = device->HostLabels() ? 7 : 0;
+        RequireReason(StoreLabel(*device, unregistered.Address() + 8, 0x5a5a0001u, 1), recorded, "a label in unregistered host memory");
         Require(unregistered.Words()[2] == 0, "unregistered label: the label landed before its batch was submitted");
 #ifdef _WIN32
         DWORD previous = 0;
@@ -135,7 +136,7 @@ int main() {
         RequireReason(readOnlyReason, 3, "a label in read-only unregistered memory");
 #endif
         RequireMappedLabelsRefused(*device);
-        RequireReason(StoreLabel(*device, labels.Address() + 4, 0x5a5a0004u, 4), 0, "a label in registered GPU memory");
+        RequireReason(StoreLabel(*device, labels.Address() + 4, 0x5a5a0004u, 4), recorded, "a label in registered GPU memory");
         device->SubmitRecorded(true);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (labels.Words()[1] != 0x5a5a0004u) {

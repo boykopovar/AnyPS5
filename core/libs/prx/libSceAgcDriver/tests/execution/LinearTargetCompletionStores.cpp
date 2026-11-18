@@ -225,7 +225,7 @@ std::array<float, 4> Texel(const std::uint8_t* target, std::uint32_t x, std::uin
 void Label(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t value, std::uint64_t submissions, bool watched, const char* what) {
     const auto bytes = std::as_bytes(std::span(&value, 1));
     const auto reason = device.WriteLabelOnGpu(block.Address() + LabelOffset, bytes, value, 0);
-    Require(reason == 0, std::string(what) + ": the label was not recorded on the GPU (outcome " + std::to_string(reason) + ")");
+    Require(reason == (device.HostLabels() ? 7 : 0), std::string(what) + ": the label was not recorded on the GPU (outcome " + std::to_string(reason) + ")");
     Require(StorageTexture::FindPending(block.Address(), TargetBytes) == nullptr, std::string(what) + ": the drawn linear target was still pending after a label the GPU writes");
     const auto* recorder = AgcDriver::Graphics::Recorder::Active();
     Require(!watched || (recorder != nullptr && recorder->Submissions() == submissions), std::string(what) + ": storing the drawn linear target before the label waited for recorded work (" + std::to_string(recorder != nullptr ? recorder->Submissions() - submissions : 0) + " submissions)");

@@ -256,7 +256,7 @@ int main() {
                 static_cast<unsigned long long>(StorageAlignment(*device)), CopiedRecordOffset);
             return VulkanTestSkipped;
         }
-        if (copiedPass != 0 || LabelPass(*device, direct, DirectRecordOffset, labels, 0x3000, 2, 0, 0, "direct writer") != 0) {
+        if (copiedPass != 0 || LabelPass(*device, direct, DirectRecordOffset, labels, 0x3000, 2, 0, device->HostLabels() ? 7 : 0, "direct writer") != 0) {
             std::puts("skipped, the device imports no host memory");
             return VulkanTestSkipped;
         }
