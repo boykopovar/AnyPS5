@@ -109,8 +109,7 @@ bool OverlayTakesSource(std::uint8_t type, std::int32_t flag, const std::string&
     if (type != 2) return true;
     SceFiosStat originalStat{};
     if (Fios::StatPath(original, originalStat) != SCE_FIOS_OK) return true;
-    if (sourceStat.modificationDate == originalStat.modificationDate) NotImplemented_nid_no_patch(__func__);
-    return sourceStat.modificationDate > originalStat.modificationDate;
+    return !originalStat.modificationDate || sourceStat.modificationDate > originalStat.modificationDate;
 }
 
 struct PsarcDescriptor {
