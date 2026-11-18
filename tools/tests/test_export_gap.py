@@ -203,6 +203,23 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
 
+    def test_gap_report_distinguishes_data_definitions_from_declarations(self):
+        names = ["Exported", "Declared", "Private"]
+        nids = [nid_of(name) for name in names]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {
+                "Export.cpp": 'extern "C" { int Exported_nid_postfix = 1; static int Private_nid_postfix; }',
+                "Api.hpp": 'extern "C" int Declared_nid_postfix;',
+            })
+            write_table(tables, MODULE, nids)
+            db = write_db(directory, zip(nids, names))
+            out = Path(directory) / "gaps.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(out.read_text().splitlines()), set(nids[1:]))
+            self.assertIn("defined as data", report)
+
     def test_assembly_postfix_name_counts_as_provided(self):
         name = "sceExampleAsm_nid_postfix"
         source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\n'
