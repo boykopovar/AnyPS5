@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
@@ -456,7 +457,13 @@ static void CheckKeyChanges() {
     EC_GROUP_free_nid_postfix(group);
 }
 
+static void InitializeHeap() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
+}
+
 int main() {
+    InitializeHeap();
     CheckPointEncoding();
     CheckGeneratedKeys();
     CheckKnownSignatures();

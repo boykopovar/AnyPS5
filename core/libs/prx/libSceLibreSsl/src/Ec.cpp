@@ -262,6 +262,7 @@
 #include <utility>
 #include <vector>
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "mbedtls/bignum.h"
@@ -289,18 +290,25 @@ EcPoint::~EcPoint() {
     mbedtls_ecp_point_free(&point);
 }
 
-EcPrivateKey::EcPrivateKey(const NamedCurve& named) : curve(named) {
-    mbedtls_mpi_init(&value);
-}
+struct EcBignum {
+    std::uint64_t* d;
+    int top;
+    int dmax;
+    int neg;
+    int flags;
+};
 
-EcPrivateKey::~EcPrivateKey() {
-    mbedtls_mpi_free(&value);
-}
+static_assert(sizeof(EcBignum) == 24);
+static_assert(offsetof(EcBignum, top) == 8);
+
+struct EcBignumDeleter {
+    void operator()(EcBignum* number) const;
+};
 
 EcKey::~EcKey() {
     delete group;
     delete publicKey;
-    delete privateKey;
+    if (privateKey) EcBignumDeleter()(privateKey);
 }
 
 namespace {
@@ -374,6 +382,70 @@ std::unique_ptr<EcGroup> NewGroup(int nid) {
         if (nid >= first && nid <= last) NotImplemented_nid_no_patch("EC_GROUP_new_by_curve_name: a LibreSSL curve that mbedtls does not provide");
     }
     return nullptr;
+}
+
+constexpr int BignumFlagMalloced = 0x01;
+constexpr int BignumFlagStaticData = 0x02;
+constexpr int BignumMaxWords = INT_MAX / (4 * 64);
+
+void Wipe(void* data, std::size_t size) {
+    auto* bytes = static_cast<volatile unsigned char*>(data);
+    for (std::size_t index = 0; index < size; ++index) bytes[index] = 0;
+}
+
+bool SharesWords(const EcBignum& source, const EcBignum* stored) {
+    if (!stored || source.top == 0) return false;
+    const auto sourceStart = reinterpret_cast<std::uintptr_t>(source.d);
+    const auto storedStart = reinterpret_cast<std::uintptr_t>(stored->d);
+    const std::uintptr_t sourceEnd = sourceStart + static_cast<std::uintptr_t>(source.top) * sizeof(std::uint64_t);
+    const std::uintptr_t storedEnd = storedStart + static_cast<std::uintptr_t>(stored->dmax) * sizeof(std::uint64_t);
+    return sourceStart < storedEnd && storedStart < sourceEnd;
+}
+
+std::unique_ptr<EcBignum, EcBignumDeleter> NewBignum() {
+    std::unique_ptr<EcBignum, EcBignumDeleter> number(static_cast<EcBignum*>(malloc_nid_postfix(sizeof(EcBignum))));
+    if (number) *number = {nullptr, 0, 0, 0, BignumFlagMalloced};
+    return number;
+}
+
+std::unique_ptr<EcBignum, EcBignumDeleter> DuplicateBignum(const EcBignum& source) {
+    std::unique_ptr<EcBignum, EcBignumDeleter> number = NewBignum();
+    if (!number) return nullptr;
+    if (source.top > 0) {
+        const std::size_t words = static_cast<std::size_t>(source.top);
+        number->d = static_cast<std::uint64_t*>(malloc_nid_postfix(words * sizeof(std::uint64_t)));
+        if (!number->d) return nullptr;
+        number->dmax = source.top;
+        std::memcpy(number->d, source.d, words * sizeof(std::uint64_t));
+    }
+    number->top = source.top;
+    number->neg = source.neg;
+    return number;
+}
+
+int RandomRangeWords(const mbedtls_mpi& order) {
+    std::size_t bits = mbedtls_mpi_bitlen(&order);
+    if (mbedtls_mpi_get_bit(&order, bits - 2) == 0 && mbedtls_mpi_get_bit(&order, bits - 3) == 0) ++bits;
+    return static_cast<int>(((bits + 7) / 8 + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
+}
+
+std::size_t OrderWords(const EcGroup& group) {
+    return (mbedtls_mpi_bitlen(&group.group.N) + 63) / 64;
+}
+
+std::string UnusablePrivateKey(const char* function) {
+    return std::string(function) + ": a private key that is zero, negative, at least the group order or has zero high words";
+}
+
+bool ReadBelowOrder(const EcGroup& group, const EcBignum& stored, mbedtls_mpi& out, const char* function) {
+    const bool normalized = stored.top > 0 && !stored.neg && static_cast<std::size_t>(stored.top) <= OrderWords(group) && stored.d[stored.top - 1] != 0;
+    if (!normalized) NotImplemented_nid_no_patch(UnusablePrivateKey(function).c_str());
+    Check(mbedtls_mpi_read_binary_le(&out, reinterpret_cast<const unsigned char*>(stored.d), static_cast<std::size_t>(stored.top) * sizeof(stored.d[0])), function);
+    return mbedtls_mpi_cmp_mpi(&out, &group.group.N) < 0;
+}
+
+void ReadPrivateKey(const EcGroup& group, const EcBignum& stored, mbedtls_mpi& out, const char* function) {
+    if (!ReadBelowOrder(group, stored, out, function)) NotImplemented_nid_no_patch(UnusablePrivateKey(function).c_str());
 }
 
 int DerLengthSize(int length) {
@@ -500,6 +572,17 @@ void ReadScalar(const Bignum& scalar, const mbedtls_mpi& order, mbedtls_mpi& out
     if (scalar.neg && mbedtls_mpi_cmp_int(&out, 0) != 0) Check(mbedtls_mpi_sub_mpi(&out, &order, &out), "EC_POINT_mul");
 }
 
+}
+
+void EcBignumDeleter::operator()(EcBignum* number) const {
+    if (number->d && !(number->flags & BignumFlagStaticData)) {
+        if (number->dmax < 0) throw std::invalid_argument("BN_clear_free: negative word capacity");
+        Wipe(number->d, static_cast<std::size_t>(number->dmax) * sizeof(number->d[0]));
+        free_nid_postfix(number->d);
+    }
+    const bool allocated = number->flags & BignumFlagMalloced;
+    Wipe(number, sizeof(EcBignum));
+    if (allocated) free_nid_postfix(number);
 }
 
 extern "C" {
@@ -641,13 +724,33 @@ int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
     if (group) {
         if (key->publicKey) RequireSameCurve(*group, key->publicKey->curve, "EC_KEY_set_group: a curve other than the one of the key's public key");
-        if (key->privateKey) RequireSameCurve(*group, key->privateKey->curve, "EC_KEY_set_group: a curve other than the one of the key's private key");
     }
     EcGroup* copy = group ? new EcGroup(group->curve) : nullptr;
     if (copy) copy->asn1Flag = group->asn1Flag;
     delete key->group;
     key->group = copy;
     return copy ? 1 : 0;
+}
+
+const void* APS5_VABI EC_KEY_get0_private_key_nid_postfix(const EcKey* key) {
+    if (key == nullptr) APS5_INVALID_ARG_EX;
+    return key->privateKey;
+}
+
+int APS5_VABI EC_KEY_set_private_key_nid_postfix(EcKey* key, const void* privateKey) {
+    if (key == nullptr) APS5_INVALID_ARG_EX;
+    const auto* source = static_cast<const EcBignum*>(privateKey);
+    if (source != nullptr && source == key->privateKey) throw std::invalid_argument("EC_KEY_set_private_key: the key's own private key, which LibreSSL frees before copying");
+    if (source != nullptr && source->top <= BignumMaxWords) {
+        if (source->top < 0) throw std::invalid_argument("EC_KEY_set_private_key: private key word count " + std::to_string(source->top));
+        if (source->top > 0 && !source->d) throw std::invalid_argument("EC_KEY_set_private_key: null private key words");
+        if (SharesWords(*source, key->privateKey)) throw std::invalid_argument("EC_KEY_set_private_key: the words of the key's own private key, which LibreSSL frees before copying");
+    }
+    if (key->privateKey) EcBignumDeleter()(key->privateKey);
+    key->privateKey = nullptr;
+    if (source == nullptr || source->top > BignumMaxWords) return 0;
+    key->privateKey = DuplicateBignum(*source).release();
+    return key->privateKey ? 1 : 0;
 }
 
 const EcPoint* APS5_VABI EC_KEY_get0_public_key_nid_postfix(const EcKey* key) {
@@ -673,9 +776,34 @@ int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point
 int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
     if (key == nullptr || !key->group) return 0;
     EcGroup& group = *key->group;
-    if (!key->privateKey) key->privateKey = new EcPrivateKey(group.curve);
+    Mpi secret;
+    Point publicKey;
+    Check(mbedtls_ecp_gen_keypair(&group.group, &secret.value, &publicKey.value, HostRandom, nullptr), __func__);
+    std::unique_ptr<EcBignum, EcBignumDeleter> created;
+    EcBignum* number = key->privateKey;
+    if (!number) {
+        created = NewBignum();
+        if (!created) return 0;
+        number = created.get();
+    }
+    const int words = RandomRangeWords(group.group.N);
+    if (words > number->dmax) {
+        if (number->flags & BignumFlagStaticData) return 0;
+        auto* expanded = static_cast<std::uint64_t*>(malloc_nid_postfix(static_cast<std::size_t>(words) * sizeof(std::uint64_t)));
+        if (!expanded) return 0;
+        if (number->d) {
+            Wipe(number->d, static_cast<std::size_t>(number->dmax) * sizeof(number->d[0]));
+            free_nid_postfix(number->d);
+        }
+        number->d = expanded;
+        number->dmax = words;
+    }
+    Check(mbedtls_mpi_write_binary_le(&secret.value, reinterpret_cast<unsigned char*>(number->d), static_cast<std::size_t>(words) * sizeof(number->d[0])), __func__);
+    number->top = static_cast<int>((mbedtls_mpi_bitlen(&secret.value) + 63) / 64);
+    number->neg = 0;
     if (!key->publicKey) key->publicKey = new EcPoint(group.curve);
-    Check(mbedtls_ecp_gen_keypair(&group.group, &key->privateKey->value, &key->publicKey->point, HostRandom, nullptr), __func__);
+    Check(mbedtls_ecp_copy(&key->publicKey->point, &publicKey.value), __func__);
+    if (created) key->privateKey = created.release();
     return 1;
 }
 
@@ -685,8 +813,12 @@ int APS5_VABI EC_KEY_check_key_nid_postfix(const EcKey* key) {
     const mbedtls_ecp_point& publicKey = key->publicKey->point;
     if (AtInfinity(publicKey) || mbedtls_ecp_check_pubkey(&group.group, &publicKey) != 0) return 0;
     if (key->privateKey) {
+        const EcBignum& stored = *key->privateKey;
+        if (!stored.neg && (stored.top == 0 || (stored.top > 0 && static_cast<std::size_t>(stored.top) > OrderWords(group)))) return 0;
+        Mpi secret;
+        if (!ReadBelowOrder(group, stored, secret.value, "EC_KEY_check_key")) return 0;
         Point product;
-        Check(mbedtls_ecp_mul(&group.group, &product.value, &key->privateKey->value, &group.group.G, HostRandom, nullptr), __func__);
+        Check(mbedtls_ecp_mul(&group.group, &product.value, &secret.value, &group.group.G, HostRandom, nullptr), __func__);
         if (mbedtls_ecp_point_cmp(&product.value, &publicKey) != 0) return 0;
     }
     return 1;
@@ -706,9 +838,11 @@ int APS5_VABI ECDSA_sign_nid_postfix(int, const unsigned char* digest, int diges
         return 0;
     }
     if (digestLength < 0 || (digest == nullptr && digestLength > 0)) APS5_INVALID_ARG_EX;
+    Mpi secret;
+    ReadPrivateKey(*key->group, *key->privateKey, secret.value, "ECDSA_sign");
     Mpi r;
     Mpi s;
-    Check(mbedtls_ecdsa_sign(&key->group->group, &r.value, &s.value, &key->privateKey->value, digest, static_cast<std::size_t>(digestLength), HostRandom, nullptr), __func__);
+    Check(mbedtls_ecdsa_sign(&key->group->group, &r.value, &s.value, &secret.value, digest, static_cast<std::size_t>(digestLength), HostRandom, nullptr), __func__);
     const std::vector<unsigned char> encoded = EncodeSignature(r.value, s.value);
     if (signature != nullptr) std::memcpy(signature, encoded.data(), encoded.size());
     *signatureLength = static_cast<unsigned int>(encoded.size());
@@ -755,8 +889,10 @@ int APS5_VABI ECDH_compute_key_nid_postfix(void* out, std::size_t outLength, con
     EcGroup& group = *key->group;
     RequireSameCurve(group, publicKey->curve, "ECDH_compute_key: a public key of another curve");
     RequireUsablePublicKey(group, *publicKey, "ECDH_compute_key: a public key off the curve");
+    Mpi privateKey;
+    ReadPrivateKey(group, *key->privateKey, privateKey.value, "ECDH_compute_key");
     Mpi shared;
-    Check(mbedtls_ecdh_compute_shared(&group.group, &shared.value, &publicKey->point, &key->privateKey->value, HostRandom, nullptr), __func__);
+    Check(mbedtls_ecdh_compute_shared(&group.group, &shared.value, &publicKey->point, &privateKey.value, HostRandom, nullptr), __func__);
     const std::size_t size = FieldSize(group);
     if (kdf == nullptr && outLength < size) return -1;
     std::vector<unsigned char> secret(size);

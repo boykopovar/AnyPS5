@@ -41,6 +41,7 @@ constexpr int PointConversionUncompressed = 4;
 constexpr int ErrLibEvp = 6;
 constexpr int ErrLibX509 = 11;
 constexpr int ErrLibAsn1 = 13;
+constexpr int ErrLibEc = 16;
 
 constexpr int ErrRNestedAsn1Error = 58;
 constexpr int Asn1RBadObjectHeader = 102;
@@ -50,6 +51,8 @@ constexpr int Asn1RTooLong = 155;
 constexpr int Asn1RWrongTag = 168;
 constexpr int EvpRUnsupportedPrivateKeyAlgorithm = 118;
 constexpr int EvpRUnsupportedAlgorithm = 156;
+constexpr int EvpRPrivateKeyDecodeError = 145;
+constexpr int EcRDecodeError = 142;
 constexpr int X509RUnsupportedAlgorithm = 111;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -197,8 +200,7 @@ void CompareEcKeys(const EcKey* lhs, const EcKey* rhs, bool checkPrivate) {
     Require(lhs->group->curve.nid == rhs->group->curve.nid);
     Require(EcPublicBytes(lhs) == EcPublicBytes(rhs));
     if (!checkPrivate) return;
-    Require(lhs->privateKey != nullptr && rhs->privateKey != nullptr);
-    Require(mbedtls_mpi_cmp_mpi(&lhs->privateKey->value, &rhs->privateKey->value) == 0);
+    CompareBignums(EC_KEY_get0_private_key_nid_postfix(lhs), EC_KEY_get0_private_key_nid_postfix(rhs));
 }
 
 void ExpectError(int expectedLib, int expectedReason,
@@ -346,6 +348,7 @@ void TestEcPublicAndPrivate(int expectedCurve, const std::vector<unsigned char>&
     unsigned char* encoded = nullptr;
     const int encodedLen = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(roundP8, &encoded);
     Require(encodedLen > 0 && encoded != nullptr);
+    Require(std::vector<unsigned char>(encoded, encoded + encodedLen) == pkcs8Der);
 
     const unsigned char* roundCursor = encoded;
     LibreSsl3Pkcs8PrivKeyInfo* decodedRound = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
@@ -362,6 +365,52 @@ void TestEcPublicAndPrivate(int expectedCurve, const std::vector<unsigned char>&
     EVP_PKEY_free_nid_disambig1_nid_postfix(roundPkey);
     EVP_PKEY_free_nid_disambig1_nid_postfix(pkeyBio);
     EVP_PKEY_free_nid_disambig1_nid_postfix(pkey);
+}
+
+void TestEcPrivateKeyRepresentation() {
+    const std::vector<unsigned char> scalarOne = Hex(
+        "3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420"
+        "0000000000000000000000000000000000000000000000000000000000000001");
+    const unsigned char* cursor = scalarOne.data();
+    auto* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(scalarOne.size()));
+    Require(p8 != nullptr && cursor == scalarOne.data() + scalarOne.size());
+    auto* key = EVP_PKCS82PKEY_nid_postfix(p8);
+    Require(key != nullptr && key->type == EcType);
+    auto* ec = static_cast<EcKey*>(key->key);
+    Require(EC_KEY_check_key_nid_postfix(ec) == 1);
+    auto* one = BN_new_nid_postfix();
+    Require(one != nullptr && BN_set_word_nid_postfix(one, 1) == 1);
+    CompareBignums(EC_KEY_get0_private_key_nid_postfix(ec), one);
+    BN_free_nid_postfix(one);
+    Require(EC_KEY_set_public_key_nid_postfix(ec, nullptr) == 0);
+    auto* encodedInfo = EVP_PKEY2PKCS8_nid_postfix(key);
+    Require(encodedInfo != nullptr);
+    unsigned char* encoded = nullptr;
+    const int size = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(encodedInfo, &encoded);
+    Require(size > 0 && encoded != nullptr);
+    Require(std::vector<unsigned char>(encoded, encoded + size) == scalarOne);
+    free_nid_postfix(encoded);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(encodedInfo);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+
+    Require(p8->privateKey != nullptr && p8->privateKey->length == 39);
+    Require(p8->privateKey->data[5] == 0x04 && p8->privateKey->data[6] == 32);
+    const auto rejectPrivateKey = [&] {
+        const std::size_t outstanding = heapAllocations - heapFrees;
+        ERR_clear_error_nid_postfix();
+        Require(EVP_PKCS82PKEY_nid_postfix(p8) == nullptr);
+        ExpectError(ErrLibEc, EcRDecodeError);
+        ExpectError(ErrLibEc, EcRDecodeError);
+        ExpectError(ErrLibEvp, EvpRPrivateKeyDecodeError);
+        Require(ERR_get_error_nid_postfix() == 0);
+        Require(heapAllocations - heapFrees == outstanding);
+    };
+    std::memset(p8->privateKey->data + 7, 0, 32);
+    rejectPrivateKey();
+    const std::vector<unsigned char> order = Hex("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    std::memcpy(p8->privateKey->data + 7, order.data(), order.size());
+    rejectPrivateKey();
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8);
 }
 
 void TestErrorsAndNulls() {
@@ -738,6 +787,7 @@ int main() {
     TestRsaPrivateRoundTrip();
     TestEcPublicAndPrivate(Secp256r1, P256Pkcs8Der, &P256SpkiDer, &P256Sec1Der);
     TestEcPublicAndPrivate(Secp384r1, P384Pkcs8Der, nullptr, nullptr);
+    TestEcPrivateKeyRepresentation();
     TestErrorsAndNulls();
     TestOutputReplacementAndTruncation();
     TestConsecutiveBioObjects();

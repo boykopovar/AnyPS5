@@ -934,12 +934,32 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
         EC_KEY_free_nid_postfix(ec);
         return nullptr;
     }
-    if (privOctet.content.empty()
-        || mbedtls_mpi_read_binary(&ec->privateKey->value, privOctet.content.data(), privOctet.content.size()) != 0
-        || mbedtls_mpi_cmp_int(&ec->privateKey->value, 0) <= 0
-        || mbedtls_mpi_cmp_mpi(&ec->privateKey->value, &ec->group->group.N) >= 0) {
+    mbedtls_mpi privateValue;
+    mbedtls_mpi_init(&privateValue);
+    const bool validPrivateKey = !privOctet.content.empty()
+        && mbedtls_mpi_read_binary(&privateValue, privOctet.content.data(), privOctet.content.size()) == 0
+        && mbedtls_mpi_cmp_int(&privateValue, 0) > 0
+        && mbedtls_mpi_cmp_mpi(&privateValue, &ec->group->group.N) < 0;
+    mbedtls_mpi_free(&privateValue);
+    if (!validPrivateKey) {
         EC_KEY_free_nid_postfix(ec);
         PutError(ErrLibEc, EcRDecodeError);
+        return nullptr;
+    }
+    if (pubBits.empty() && privOctet.content.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        EC_KEY_free_nid_postfix(ec);
+        PutError(ErrLibEc, EcRDecodeError);
+        return nullptr;
+    }
+    LibreSsl3Bignum* privateKey = DecodeBn(privOctet.content);
+    if (!privateKey) {
+        EC_KEY_free_nid_postfix(ec);
+        return nullptr;
+    }
+    const int setPrivateKey = EC_KEY_set_private_key_nid_postfix(ec, privateKey);
+    BN_clear_free_nid_postfix(privateKey);
+    if (!setPrivateKey) {
+        EC_KEY_free_nid_postfix(ec);
         return nullptr;
     }
     if (!pubBits.empty()) {
@@ -951,19 +971,8 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
             return nullptr;
         }
     } else {
-        if (privOctet.content.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            EC_KEY_free_nid_postfix(ec);
-            PutError(ErrLibEc, EcRDecodeError);
-            return nullptr;
-        }
-        Bignum* privBn = BN_bin2bn_nid_postfix(
-            privOctet.content.data(), static_cast<int>(privOctet.content.size()), nullptr);
-        if (!privBn) {
-            EC_KEY_free_nid_postfix(ec);
-            return nullptr;
-        }
+        const auto* privBn = static_cast<const Bignum*>(EC_KEY_get0_private_key_nid_postfix(ec));
         const int mulOk = EC_POINT_mul_nid_postfix(ec->group, ec->publicKey, privBn, nullptr, nullptr, nullptr);
-        BN_clear_free_nid_postfix(reinterpret_cast<LibreSsl3Bignum*>(privBn));
         if (!mulOk) {
             EC_KEY_free_nid_postfix(ec);
             PutError(ErrLibEc, EcRDecodeError);
@@ -980,12 +989,14 @@ EcKey* DecodeEcPrivateKey(std::span<const unsigned char>& input, int expectedCur
 }
 
 bool EncodeEcPrivateKey(const EcKey* ec, int& curveOut, std::vector<unsigned char>& out) {
-    if (!ec || !ec->group || !ec->privateKey) return false;
+    if (!ec || !ec->group) return false;
     curveOut = ec->group->curve.nid;
     if (curveOut != Secp256r1 && curveOut != Secp384r1) return false;
     const std::size_t orderBytes = (mbedtls_mpi_bitlen(&ec->group->group.N) + 7) / 8;
-    std::vector<unsigned char> privBytes(orderBytes);
-    if (mbedtls_mpi_write_binary(&ec->privateKey->value, privBytes.data(), privBytes.size()) != 0) return false;
+    const auto* privateKey = static_cast<const LibreSsl3Bignum*>(EC_KEY_get0_private_key_nid_postfix(ec));
+    std::vector<unsigned char> privBytes;
+    if (!EncodeBn(privateKey, privBytes) || privBytes.size() > orderBytes) return false;
+    privBytes.insert(privBytes.begin(), orderBytes - privBytes.size(), 0);
 
     std::vector<unsigned char> body;
     Append(body, EncodeSmallInteger(1));

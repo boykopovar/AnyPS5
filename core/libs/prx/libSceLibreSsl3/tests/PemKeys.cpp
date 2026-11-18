@@ -577,8 +577,7 @@ void CompareEc(const EcKey* first, const EcKey* second, int curve, bool privateS
     Require(second->group->curve.nid == curve, location);
     Require(PublicPointBytes(first) == PublicPointBytes(second), location);
     if (!privateScalar) return;
-    Require(first->privateKey != nullptr && second->privateKey != nullptr, location);
-    Require(mbedtls_mpi_cmp_mpi(&first->privateKey->value, &second->privateKey->value) == 0, location);
+    CompareBignums(EC_KEY_get0_private_key_nid_postfix(first), EC_KEY_get0_private_key_nid_postfix(second), location);
 }
 
 void TestRsaPrivateFormats() {
@@ -1063,8 +1062,7 @@ void TestNormalTraditionalCleanQueue() {
     Require(ecKeyStruct->group != nullptr && ecRefStruct->group != nullptr);
     Require(ecKeyStruct->group->curve.nid == Secp256r1);
     Require(ecRefStruct->group->curve.nid == Secp256r1);
-    Require(ecKeyStruct->privateKey != nullptr && ecRefStruct->privateKey != nullptr);
-    Require(mbedtls_mpi_cmp_mpi(&ecKeyStruct->privateKey->value, &ecRefStruct->privateKey->value) == 0);
+    CompareBignums(EC_KEY_get0_private_key_nid_postfix(ecKeyStruct), EC_KEY_get0_private_key_nid_postfix(ecRefStruct));
 
     LibreSsl3EvpPkey* ecSlotNull = nullptr;
     auto* ecBioNull = MemoryBio(ecTradBytes);

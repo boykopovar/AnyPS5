@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -96,6 +97,8 @@ void SignsAndVerifies(EcKey* key) {
 }
 
 void DecodesEachNamedCurve() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
     for (const Curve& curve : Curves) {
         ERR_clear_error_nid_postfix();
         const std::vector<unsigned char> der = Hex(curve.der);

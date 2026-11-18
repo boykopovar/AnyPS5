@@ -1272,15 +1272,13 @@ void DigestSignInitWithoutDigest() {
 EcKey* NewEcKey(const char* privateScalar, int curve) {
     auto* key = EC_KEY_new_by_curve_name_nid_postfix(curve);
     Require(key != nullptr && key->group != nullptr);
-    auto* privateKey = new EcPrivateKey(key->group->curve);
-    Require(mbedtls_mpi_read_string(&privateKey->value, 16, privateScalar) == 0);
     auto* scalar = BN_new_nid_postfix();
     Require(scalar != nullptr && BN_hex2bn_nid_postfix(&scalar, privateScalar) > 0);
     auto* publicKey = EC_POINT_new_nid_postfix(key->group);
     Require(publicKey != nullptr);
     Require(EC_POINT_mul_nid_postfix(key->group, publicKey, scalar, nullptr, nullptr, nullptr) == 1);
+    Require(EC_KEY_set_private_key_nid_postfix(key, scalar) == 1);
     BN_free_nid_postfix(scalar);
-    key->privateKey = privateKey;
     key->publicKey = publicKey;
     return key;
 }
