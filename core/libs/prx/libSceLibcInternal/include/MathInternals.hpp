@@ -15,7 +15,7 @@ float APS5_VABI _FDtento_nid_postfix(float* value, std::int64_t power, int* erro
 int APS5_VABI _FErfc_nid_postfix();
 int APS5_VABI _FHypot_nid_postfix();
 int APS5_VABI _FLogpoly_nid_postfix();
-int APS5_VABI _FPow_nid_postfix();
+float APS5_VABI _FPow_nid_postfix(float x, float y, short* exponent);
 int APS5_VABI _FQuad_nid_postfix();
 int APS5_VABI _FQuadph_nid_postfix();
 int APS5_VABI _FRint_nid_postfix();
@@ -40,7 +40,7 @@ long double APS5_VABI _LDtento_nid_postfix(long double* value, std::int64_t powe
 int APS5_VABI _LErfc_nid_postfix();
 int APS5_VABI _LHypot_nid_postfix();
 int APS5_VABI _LLogpoly_nid_postfix();
-int APS5_VABI _LPow_nid_postfix();
+long double APS5_VABI _LPow_nid_postfix(long double x, long double y, short* exponent);
 int APS5_VABI _LQuad_nid_postfix();
 int APS5_VABI _LQuadph_nid_postfix();
 int APS5_VABI _LRint_nid_postfix();
@@ -61,7 +61,7 @@ long double* APS5_VABI _LXp_sqrtx_nid_postfix(long double* p, int n, long double
 long double* APS5_VABI _LXp_subx_nid_postfix(long double* p, int n, const long double* q, int m);
 int APS5_VABI _Logpoly_nid_postfix();
 int APS5_VABI _Nnl_nid_postfix();
-int APS5_VABI _Pow_nid_postfix();
+double APS5_VABI _Pow_nid_postfix(double x, double y, short* exponent);
 int APS5_VABI _Quad_nid_postfix();
 int APS5_VABI _Quadph_nid_postfix();
 double APS5_VABI _Xp_getw_nid_postfix(const double* p, int n);

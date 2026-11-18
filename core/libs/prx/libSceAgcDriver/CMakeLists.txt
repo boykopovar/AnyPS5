@@ -134,12 +134,17 @@ endforeach()
 
 set(agcMultisampleUploadSpv ${agcTextureDetileGeneratedDir}/MultisampleUpload.spv)
 set(agcMultisampleUploadHeader ${agcTextureDetileGeneratedDir}/MultisampleUpload_spv.h)
+set(agcMultisampleUploadFragSpv ${agcTextureDetileGeneratedDir}/MultisampleUploadFrag.spv)
+set(agcMultisampleUploadFragHeader ${agcTextureDetileGeneratedDir}/MultisampleUploadFrag_spv.h)
 add_custom_command(
-        OUTPUT "${agcMultisampleUploadHeader}"
+        OUTPUT "${agcMultisampleUploadHeader}" "${agcMultisampleUploadFragHeader}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
         COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcMultisampleUploadSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp"
         COMMAND ${CMAKE_COMMAND} -DINPUT=${agcMultisampleUploadSpv} -DOUTPUT=${agcMultisampleUploadHeader}
         -DSYMBOL=MULTISAMPLE_UPLOAD_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -S frag -DCOLOR_ATTACHMENT_UPLOAD=1 -o "${agcMultisampleUploadFragSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcMultisampleUploadFragSpv} -DOUTPUT=${agcMultisampleUploadFragHeader}
+        -DSYMBOL=MULTISAMPLE_UPLOAD_FRAG_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MultisampleUpload.comp" glslang-standalone
         VERBATIM
 )
@@ -492,6 +497,7 @@ set(agcDriverSources
         ${agcTextureDetileShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
+        ${agcMultisampleUploadFragHeader}
         ${agcCmaskClearShaderHeader}
         ${agcPackedMergeShaderHeader}
         ${agcMeshArgumentsShaderHeader}

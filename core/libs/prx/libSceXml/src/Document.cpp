@@ -4,6 +4,7 @@
 #include "prx/libSceXml/src/NodeList.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <memory>
@@ -316,8 +317,14 @@ int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const X
     Live(document);
     Generation& generation = *RefOf(document)->generation;
     const Reader reader(generation.buffers);
-    std::string wanted(name->size, '\0');
-    if (!GuestCopyIn_nid_no_patch(wanted.data(), name->buffer, name->size)) throw std::logic_error("sce::Xml::Dom::Document: getElementsByTagName reading a name where it is not readable faults in 13.42");
+    constexpr std::size_t Chunk = 64 * 1024;
+    std::string wanted;
+    for (std::size_t done = 0; done < name->size;) {
+        const std::size_t step = std::min(Chunk, name->size - done);
+        wanted.resize(done + step);
+        if (!GuestCopyIn_nid_no_patch(wanted.data() + done, name->buffer + done, step)) throw std::logic_error("sce::Xml::Dom::Document: getElementsByTagName reading a name where it is not readable faults in 13.42");
+        done += step;
+    }
     std::vector<XmlNodeId> items;
     std::vector<std::uint64_t> pending;
     const auto pushChildren = [&](std::uint64_t parent) {

@@ -11,6 +11,7 @@ const NKWebKit::WtfAbi::URL& APS5_VABI _ZNK7WebCore19ResourceRequestBase3urlEv(c
 void APS5_VABI _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(NKWebKit::WebCoreAbi::ResourceRequestBase* self, const NKWebKit::WtfAbi::URL* url);
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase6isNullEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase7isEmptyEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 const NKWebKit::WtfAbi::URL& APS5_VABI _ZNK7WebCore19ResourceRequestBase20firstPartyForCookiesEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase23setFirstPartyForCookiesERKN3WTF3URLE(NKWebKit::WebCoreAbi::ResourceRequestBase* self, const NKWebKit::WtfAbi::URL* url);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore19ResourceRequestBase10httpMethodEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
@@ -40,5 +41,6 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9isTopSiteEv(const NKWebKit::Web
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(NKWebKit::WebCoreAbi::ResourceRequestBase* self, bool isTopSite);
 double APS5_VABI _ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv();
 void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(double timeoutInterval);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 
 }
