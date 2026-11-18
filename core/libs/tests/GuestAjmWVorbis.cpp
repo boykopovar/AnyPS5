@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 static_assert(sizeof(WVorbisHeaderPacketParameter) == 0x48);
 
@@ -30,6 +31,14 @@ WVorbisHeaderPacketParameter Valid(std::uint8_t* output, std::size_t outputSize)
 }
 
 int Create(WVorbisHeaderPacketParameter param) { return sceAjmDecWVorbisCreateHeaderPacket(&param); }
+
+std::vector<std::uint8_t> LargeSetup(std::size_t size, std::uint16_t part1) {
+    std::vector<std::uint8_t> setup(size, 0x5A);
+    std::memcpy(setup.data(), Setup.data(), 7);
+    setup[7] = static_cast<std::uint8_t>(part1 & 0xFF);
+    setup[8] = static_cast<std::uint8_t>(part1 >> 8);
+    return setup;
+}
 
 void TestValidation() {
     std::array<std::uint8_t, 128> output {};
@@ -58,12 +67,34 @@ void TestValidation() {
     param = Valid(output.data(), output.size());
     param.setupPacketSize = 8;
     Require(Create(param) == InvalidSetup, "a setup packet below 9 bytes is refused");
+    std::vector<std::uint8_t> longRemainder = LargeSetup(0x10009, 9);
+    std::vector<std::uint8_t> longRemainderOutput(56 + longRemainder.size());
+    param = Valid(longRemainderOutput.data(), longRemainderOutput.size());
+    param.setupPacket = longRemainder.data();
+    param.setupPacketSize = longRemainder.size();
+    Require(Create(param) == InvalidSetup, "a setup remainder that does not fit the 16-bit length field is refused");
+    auto shortSetup = Setup;
+    shortSetup[7] = 13;
+    param = Valid(output.data(), output.size());
+    param.setupPacket = shortSetup.data();
+    Require(Create(param) == InvalidSetup, "a first setup part longer than the packet is refused");
     param = Valid(nullptr, 0);
     Require(Create(param) == InvalidParameter, "a null output is refused before its size");
     param = Valid(output.data(), 9);
     Require(Create(param) == OutputTooSmall, "an output below 10 bytes is refused");
     param = Valid(output.data(), 56 + Setup.size() - 1);
     Require(Create(param) == OutputTooSmall, "an output that cannot hold the setup packet is refused");
+    param = Valid(output.data(), 0);
+    Require(Create(param) == OutputTooSmall, "zero capacity output is refused");
+    param = Valid(output.data(), 55);
+    Require(Create(param) == OutputTooSmall, "output below header size is refused");
+}
+
+void TestInstanceCodecType() {
+    Require(sceAjmInstanceCodecType(0) == 0, "codec type of instance 0 is 0");
+    Require(sceAjmInstanceCodecType(1 << 14) == 1, "codec type of instance (1 << 14) is 1");
+    Require(sceAjmInstanceCodecType((2 << 14) | 0x3FFF) == 2, "codec type preserves upper 18 bits");
+    Require(sceAjmInstanceCodecType(0xFFFFFFFF) == (0xFFFFFFFFu >> 14), "codec type shifts by 14 bits");
 }
 
 void TestPacket() {
@@ -83,10 +114,26 @@ void TestPacket() {
     Require(output[56 + Setup.size()] == 0xEE, "nothing is written past the packet");
 }
 
+void TestLargePacket() {
+    const std::vector<std::uint8_t> setup = LargeSetup(0x10000, 0x8000);
+    std::vector<std::uint8_t> output(56 + setup.size() + 1, 0xEE);
+    auto param = Valid(output.data(), output.size());
+    param.setupPacket = setup.data();
+    param.setupPacketSize = setup.size();
+    Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == 0, "a 65536-byte setup packet whose two parts each fit a 16-bit length is built");
+    Require(param.outputSize == 56 + setup.size(), "the written size covers the table, both headers and the large setup packet");
+    constexpr std::uint8_t Lengths[] {0x00, 0x80, 0x00, 0x80};
+    Require(std::memcmp(output.data() + 6, Lengths, sizeof(Lengths)) == 0, "both setup lengths are 32768");
+    Require(std::memcmp(output.data() + 56, setup.data(), setup.size()) == 0, "the large setup packet follows unchanged");
+    Require(output[56 + setup.size()] == 0xEE, "nothing is written past the large packet");
+}
+
 }
 
 int main() {
     TestValidation();
     TestPacket();
+    TestLargePacket();
+    TestInstanceCodecType();
     std::puts("guest ajm wvorbis header packet: PASS");
 }

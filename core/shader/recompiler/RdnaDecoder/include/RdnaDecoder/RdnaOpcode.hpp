@@ -1089,6 +1089,7 @@ enum class RdnaOpcode : std::uint16_t {
     DsGwsSemaReleaseAll,
     DsGwsBarrier,
     DsOrderedCount,
+    VRsqClampF32,
     DsAddSrc2U64,
     DsAndSrc2B64,
     DsDecSrc2U64,
@@ -1176,6 +1177,7 @@ enum class RdnaOpcode : std::uint16_t {
 [[nodiscard]] bool IsBufferMemoryOpcode(RdnaOpcode opcode);
 [[nodiscard]] bool IsImageOpcode(RdnaOpcode opcode);
 [[nodiscard]] bool IsExportOpcode(RdnaOpcode opcode);
+[[nodiscard]] bool IsSigned64BitIntegerOpcode(RdnaOpcode opcode);
 
 bool IsConditionalBranchOpcode(RdnaOpcode opcode);
 bool IsDirectBranchOpcode(RdnaOpcode opcode);

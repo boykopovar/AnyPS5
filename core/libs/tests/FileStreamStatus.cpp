@@ -1,4 +1,5 @@
 #include "prx/libc/include/FileStream.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <atomic>
 #include <barrier>
 #include <cerrno>
@@ -6,7 +7,7 @@
 #include <thread>
 
 int main() {
-    auto* native = std::tmpfile();
+    auto* native = TemporaryFile::Open();
     if (!native) return 1;
     FileStream stream(native);
     stream.MarkDirectory();

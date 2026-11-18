@@ -1,0 +1,1 @@
+target_link_libraries(agc_driver_gpu_map_on_fiber_tests PRIVATE libSceFiber)

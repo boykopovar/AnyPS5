@@ -8,7 +8,7 @@ namespace EdgeWatch {
 
 class Watch {
 public:
-    static std::shared_ptr<Watch> Open(std::intptr_t hostDescriptor, bool write);
+    static std::shared_ptr<Watch> Open(std::intptr_t hostDescriptor, std::intptr_t guestDescriptor, bool write);
 
     explicit Watch(int descriptor) : m_descriptor(descriptor) {}
     ~Watch();
@@ -19,6 +19,10 @@ public:
     int Descriptor() const { return m_descriptor; }
 
     bool armed = true;
+    std::intptr_t guestDescriptor = -1;
+    bool writeInterest = false;
+    std::int64_t lastUnread = -1;
+    bool sawEof = false;
 
 private:
     int m_descriptor;

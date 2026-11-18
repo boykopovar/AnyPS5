@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <list>
 #include <mutex>
 #include <string>
 
@@ -12,6 +13,12 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
 constexpr int KERNEL_SEMA_OK = 0;
+
+struct KernelSemaWaiter {
+    std::int32_t need;
+    bool released = false;
+    int priority = 0;
+};
 
 struct KernelSemaPrivate {
     KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCount, std::string name, bool isFifo);
@@ -23,9 +30,10 @@ struct KernelSemaPrivate {
     std::int32_t initCount;
     std::int32_t maxCount;
     bool isFifo;
+    bool priorityQueue = false;
     bool deleted = false;
     std::int32_t waiterCount = 0;
-    std::int32_t cancelableCount = 0;
+    std::list<KernelSemaWaiter*> queue;
     std::uint64_t cancelGeneration = 0;
 };
 

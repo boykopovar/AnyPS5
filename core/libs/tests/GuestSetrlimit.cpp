@@ -11,6 +11,7 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_RLIMIT_DATA = 2;
 static constexpr int GUEST_RLIMIT_STACK = 3;
+static constexpr int GUEST_RLIMIT_CORE = 4;
 static constexpr int GUEST_RLIMIT_RSS = 5;
 static constexpr int GUEST_RLIMIT_MEMLOCK = 6;
 static constexpr int GUEST_RLIMIT_NPROC = 7;
@@ -30,6 +31,31 @@ static bool Throws(int resource, const GuestResourceLimit& limit) {
     return false;
 }
 
+static void RequireLimit(int resource, std::int64_t cur, std::int64_t max) {
+    GuestResourceLimit limit{};
+    Require(getrlimit_nid_postfix(resource, &limit) == 0);
+    Require(limit.rlim_cur == cur && limit.rlim_max == max);
+}
+
+static void RequireSoftLimitRoundTrip(int resource, std::int64_t lowered) {
+    const GuestResourceLimit lowerSoft{lowered, GUEST_RLIM_INFINITY};
+    Require(setrlimit_nid_postfix(resource, &lowerSoft) == 0);
+    RequireLimit(resource, lowered, GUEST_RLIM_INFINITY);
+    const GuestResourceLimit infinity{GUEST_RLIM_INFINITY, GUEST_RLIM_INFINITY};
+    Require(setrlimit_nid_postfix(resource, &infinity) == 0);
+    RequireLimit(resource, GUEST_RLIM_INFINITY, GUEST_RLIM_INFINITY);
+}
+
+static void RequireHardRaiseKeepsLimit(int resource, std::int64_t raisedMax) {
+    GuestResourceLimit before{};
+    Require(getrlimit_nid_postfix(resource, &before) == 0);
+    Require(before.rlim_max < raisedMax);
+    const GuestResourceLimit raised{before.rlim_cur, raisedMax};
+    *__error_nid_postfix() = 13;
+    Require(setrlimit_nid_postfix(resource, &raised) == 0 && *__error_nid_postfix() == 13);
+    RequireLimit(resource, before.rlim_cur, before.rlim_max);
+}
+
 static void RequireError(int resource, const GuestResourceLimit* limit, int error) {
     *__error_nid_postfix() = 0;
     Require(setrlimit_nid_postfix(resource, limit) == -1);
@@ -40,6 +66,9 @@ int main() {
     const GuestResourceLimit infinity{GUEST_RLIM_INFINITY, GUEST_RLIM_INFINITY};
     RequireError(-1, nullptr, GUEST_EFAULT);
     RequireError(GUEST_RLIM_NLIMITS, nullptr, GUEST_EFAULT);
+    const auto* unmapped = reinterpret_cast<const GuestResourceLimit*>(std::uintptr_t{0x10});
+    RequireError(GUEST_RLIMIT_STACK, unmapped, GUEST_EFAULT);
+    RequireError(GUEST_RLIM_NLIMITS, unmapped, GUEST_EFAULT);
     RequireError(-1, &infinity, GUEST_EINVAL);
     RequireError(GUEST_RLIM_NLIMITS, &infinity, GUEST_EINVAL);
 
@@ -86,5 +115,12 @@ int main() {
         Require(Throws(GUEST_RLIMIT_DATA, negative));
 
     Require(Throws(GUEST_RLIMIT_NOFILE, infinity));
+
+    RequireSoftLimitRoundTrip(GUEST_RLIMIT_CORE, 0);
+    RequireSoftLimitRoundTrip(GUEST_RLIMIT_CORE, 4096);
+    RequireHardRaiseKeepsLimit(GUEST_RLIMIT_STACK, 0x200001);
+    RequireHardRaiseKeepsLimit(GUEST_RLIMIT_STACK, GUEST_RLIM_INFINITY);
+    if (current.rlim_max != GUEST_RLIM_INFINITY)
+        RequireHardRaiseKeepsLimit(GUEST_RLIMIT_DATA, current.rlim_max + 1);
     return 0;
 }

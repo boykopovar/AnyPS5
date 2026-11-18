@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -32,9 +33,9 @@ using AgcDriver::Graphics::ColorTileMode;
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Width = 48;
+constexpr std::uint32_t Width = 99;
 constexpr std::uint32_t Height = 16;
-constexpr std::uint32_t Slices = 4;
+constexpr std::uint32_t Slices = 34;
 constexpr std::uint32_t FirstSlice = 1;
 constexpr std::uint32_t Layers = Slices - FirstSlice;
 constexpr std::uint32_t BandWidth = Width / Layers;
@@ -67,12 +68,24 @@ alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
     0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 7> UintPixelCode{
+    0x7e0802ff, 0x00ff00ff, 0x7e0a02ff, 0x00ff00ff, 0xf8001c0f, 0x00000504, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 6> LayerFieldPixelCode{
     0x2c020090, 0x7e020d01, 0x100202f0, 0xf800180f, 0x01010101, 0xbf810000,
 };
 
-constexpr std::array<std::uint8_t, Layers> WhiteBands{255, 255, 255};
-constexpr std::array<std::uint8_t, Layers> LayerFieldBands{0, 128, 255};
+constexpr auto WhiteBands = [] {
+    std::array<std::uint8_t, Layers> bands{};
+    bands.fill(255);
+    return bands;
+}();
+constexpr auto LayerFieldBands = [] {
+    std::array<std::uint8_t, Layers> bands{};
+    for (std::uint32_t i = 0; i < Layers; ++i) bands[i] = static_cast<std::uint8_t>(std::min(i * 128u, 255u));
+    return bands;
+}();
 
 struct Vertex {
     std::array<float, 4> position;
@@ -89,10 +102,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-void BuildBands() {
-    for (std::uint32_t layer = 0; layer < Layers; ++layer) {
-        const float left = -1.0f + 2.0f * static_cast<float>(layer) / Layers;
-        const float right = -1.0f + 2.0f * static_cast<float>(layer + 1u) / Layers;
+void BuildBands(std::uint32_t layers = Layers) {
+    Require(layers != 0 && 6u * layers <= Vertices.size(), "too many layers for the vertex allocation");
+    for (std::uint32_t layer = 0; layer < layers; ++layer) {
+        const float left = -1.0f + 2.0f * static_cast<float>(layer) / layers;
+        const float right = -1.0f + 2.0f * static_cast<float>(layer + 1u) / layers;
         const std::array<std::array<float, 2>, 6> corners{{{left, -1.0f}, {right, -1.0f}, {left, 1.0f}, {right, -1.0f}, {right, 1.0f}, {left, 1.0f}}};
         for (std::uint32_t k = 0; k < corners.size(); ++k) Vertices[6u * layer + k] = {{corners[k][0], corners[k][1], 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f}, layer};
     }
@@ -150,12 +164,12 @@ bool DeclaresLayer(std::span<const std::uint32_t> words) {
     return false;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField) {
+void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices, bool executeMesh = true) {
     const auto target = device.Target();
-    const auto vertexBuffer = BufferDescriptor(Vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(Vertices.size()));
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Vertices.size()), 0, 1, 0, false};
+    const auto vertexBuffer = BufferDescriptor(vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(vertices.size()));
+    const AgcDriver::Pm4::DrawParameters draw{0, 6u * color.layers, 0, 1, 0, false};
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
-    vertexInfo.paClVsOutCntl = LayerExport;
+    vertexInfo.paClVsOutCntl = color.layers > 1u ? LayerExport : 0u;
     std::vector<std::uint32_t> userData(mesh ? 12u : 4u, 0u);
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), userData.begin() + (mesh ? 8 : 0));
     const std::span<const std::uint32_t> code = mesh ? std::span<const std::uint32_t>(GeometryCode) : std::span<const std::uint32_t>(VertexCode);
@@ -169,11 +183,22 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     };
     if (mesh) geometry.graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, Subgroup, std::nullopt, {draw.indexAddress, draw.indexCount, draw.indexSize, draw.instanceCount}};
     geometry.useCache = false;
-    const auto geometryResult = ShaderRecompiler::Recompile(geometry);
+    auto geometryResult = ShaderRecompiler::Recompile(geometry);
+    if (mesh) {
+        for (const auto required : {ShaderRecompiler::PipelineSpecialization::MeshLayerBase, ShaderRecompiler::PipelineSpecialization::MeshLayerCount}) {
+            bool found = false;
+            for (std::size_t at = 5; at < geometryResult.spirv.size();) {
+                const auto length = geometryResult.spirv[at] >> 16u;
+                if ((geometryResult.spirv[at] & 0xffffu) == 71u && length == 4u && geometryResult.spirv[at + 2u] == 1u && geometryResult.spirv[at + 3u] == required) found = true;
+                at += length;
+            }
+            Require(found, "mesh layer specialization was frozen: " + std::to_string(required));
+        }
+    }
     const auto geometryPush = static_cast<std::uint32_t>(geometryResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
-    pixel.targetOutputMode[0] = 9;
+    pixel.targetOutputMode[0] = color.uintExport ? 7u : 9u;
     pixel.targetExportMapping.fill(0xe4u);
     if (layerField) {
         pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
@@ -201,13 +226,13 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.color = color;
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.renderExtent = {Width, Height};
-    state.renderLayers = Layers;
-    state.layerExports = LayerExport;
+    state.renderExtent = color.extent;
+    state.renderLayers = color.layers;
+    state.layerExports = color.layers > 1u ? LayerExport : 0u;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(color.extent.height), static_cast<float>(color.extent.width), -static_cast<float>(color.extent.height), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, color.extent};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
@@ -215,13 +240,18 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.blendConstants = {};
     if (mesh) {
         Require(DeclaresLayer(geometryResult.spirv), "the mesh program declares no Layer output");
-        VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
-        subgroup.subgroupSize = target.subgroupSize;
-        subgroup.supportedStages = VK_SHADER_STAGE_ALL;
-        subgroup.supportedOperations = 0xffu;
-        subgroup.quadOperationsInAllStages = VK_TRUE;
-        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
-        return;
+        if (!executeMesh) return;
+    }
+    if (mesh) {
+        const auto replaySafe = geometryResult.layerReplaySafe;
+        geometryResult.layerReplaySafe = false;
+        auto empty = draw;
+        empty.indexCount = 0u;
+        device.Draw(state, empty, shaders);
+        empty = draw;
+        empty.instanceCount = 0u;
+        device.Draw(state, empty, shaders);
+        geometryResult.layerReplaySafe = replaySafe;
     }
     device.Draw(state, draw, shaders);
     device.WaitIdle();
@@ -266,6 +296,92 @@ void Check(const std::byte* volume, const AgcDriver::Graphics::ColorTarget& colo
     }
 }
 
+void MipTargets(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    struct Selection {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t depth;
+        std::uint32_t levels;
+        std::uint32_t level;
+        std::uint32_t firstSlice;
+        std::uint32_t layers;
+        ColorTileMode tileMode;
+        bool uintExport;
+        std::uint32_t pipeBankXor = 0;
+    };
+    constexpr Selection selections[] = {
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::Linear, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::Standard4KB, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::RenderTarget, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 0, 1, 3, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 1, 1, 3, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 2, 0, 2, ColorTileMode::RenderTarget, false},
+        {96, 32, 1, 3, 1, 0, 1, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 0, 1, 3, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 1, 1, 3, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 2, 0, 2, ColorTileMode::S4KBX, false},
+        {96, 32, 1, 3, 1, 0, 1, ColorTileMode::S4KBX, false},
+        {128, 128, 8, 2, 0, 0, 8, ColorTileMode::S4KBX, true},
+        {128, 128, 8, 2, 1, 0, 4, ColorTileMode::S4KBX, true, 0x500},
+    };
+    for (const auto& selection : selections) {
+        const auto [width, height, depth, levels, level, firstSlice, layers, mode, uintExport, pipeBankXor] = selection;
+        GuestTextureResource surface{};
+        surface.width = width;
+        surface.height = height;
+        surface.depthOrLastArray = depth - 1u;
+        surface.mipCount = levels;
+        surface.tileMode = ColorTextureTileMode(mode);
+        surface.dimension = TextureDimension::k3D;
+        surface.format = FindGuestColorTargetFormat(uintExport ? VK_FORMAT_R8G8B8A8_UINT : VK_FORMAT_R8G8B8A8_UNORM, 4u).value();
+        const auto geometry = DescribeSurface(surface);
+        const bool linear = mode == ColorTileMode::Linear;
+        const auto thin = linear ? std::array<std::uint32_t, 3>{} : ThinBlockLayout(surface.tileMode, 4u);
+        const auto block = geometry.thick ? ThickBlockExtent(surface.tileMode, 4u) : std::array<std::uint32_t, 3>{thin[1], thin[2], 1u};
+        const auto* equation = linear ? nullptr : FindTextureSwizzleEquation((geometry.thick ? 0x100u : 0u) | static_cast<std::uint32_t>(mode), 4u);
+        Require(linear || equation != nullptr, "missing volume mip swizzle equation");
+        const GuestVolume volume((geometry.guestBytes + sizeof(Vertices) + 65535u) & ~std::size_t{65535u});
+        const auto address = reinterpret_cast<std::uintptr_t>(volume.Data()) | pipeBankXor;
+        AgcDriver::QueueState queue;
+        auto& registers = queue.context;
+        registers = {
+            {0x318, static_cast<std::uint32_t>(address >> 8u)}, {0x390, static_cast<std::uint32_t>(address >> 40u)},
+            {0x31b, (level << 26u) | ((firstSlice + layers - 1u) << 13u) | firstSlice}, {0x31c, uintExport ? 0x70428u : 0x28028u}, {0x31d, 0u},
+            {0x3b0, ((levels - 1u) << 28u) | ((width - 1u) << 14u) | (height - 1u)},
+            {0x3b8, (uintExport ? 0x0ea00000u : 0x0a000000u) | (static_cast<std::uint32_t>(mode) << 14u) | (depth - 1u)}
+        };
+        auto color = DecodeColorBuffer(registers, 0u);
+        color.uintExport = uintExport;
+        Require(SurfaceForTarget(color).dimension == TextureDimension::k3D, "a depth-one volume mip was treated as a 2D image");
+        BuildBands(layers);
+        auto* adjacentVertices = reinterpret_cast<Vertex*>(volume.Data() + geometry.guestBytes);
+        std::memcpy(adjacentVertices, Vertices.data(), sizeof(Vertices));
+        Run(device, color, false, uintExport ? std::span<const std::uint32_t>(UintPixelCode) : std::span<const std::uint32_t>(PixelCode), false, {adjacentVertices, Vertices.size()});
+        Require(std::memcmp(adjacentVertices, Vertices.data(), sizeof(Vertices)) == 0, "a volume mip draw changed the adjacent vertex buffer");
+        for (std::uint32_t mipLevel = 0u; mipLevel < levels; ++mipLevel) {
+            const auto& mip = geometry.mips.at(mipLevel);
+            for (std::uint32_t slice = 0u; geometry.HasLayer(mipLevel, slice) && slice < depth; ++slice) {
+                const auto* base = volume.Data() + geometry.GuestLayerOffset(slice) + mip.tiledOffset;
+                for (std::uint32_t y = 0u; y < mip.height; ++y) {
+                    for (std::uint32_t x = 0u; x < mip.width; ++x) {
+                        const auto bandWidth = color.extent.width / layers;
+                        const bool drawn = mipLevel == level && slice >= firstSlice && slice < firstSlice + layers && x / bandWidth == slice - firstSlice;
+                        auto offset = linear ? static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u : BlockOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), slice);
+                        if (!linear && !mip.tail) offset += (static_cast<std::uint64_t>(y / block[1]) * mip.blocksPerRow + x / block[0]) * thin[0];
+                        offset ^= pipeBankXor;
+                        for (std::uint32_t channel = 0u; channel < 4u; ++channel) {
+                            Require(std::to_integer<std::uint8_t>(base[offset + channel]) == (drawn ? 255u : Kept), "a volume mip draw lost its selected slice or changed another mip/slice");
+                        }
+                    }
+                }
+            }
+        }
+        std::printf("Volume mip target %ux%ux%u levels=%u mip=%u first=%u layers=%u mode=%u uint=%u XOR=%x preserves other mips and slices\n", width, height, depth, levels, level, firstSlice, layers, static_cast<std::uint32_t>(mode), uintExport ? 1u : 0u, pipeBankXor);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -282,7 +398,9 @@ int main(int argc, char** argv) {
 #endif
         }
         const bool vertexOnly = argc == 2 && std::strcmp(argv[1], "--vertex-only") == 0;
-        Require(argc == 1 || vertexOnly, "usage: layered volume draw [--vertex-only]");
+        const bool mips = argc == 2 && std::strcmp(argv[1], "--mips") == 0;
+        const bool meshExecution = argc == 2 && std::strcmp(argv[1], "--mesh-execution") == 0;
+        Require(argc == 1 || vertexOnly || mips || meshExecution, "usage: layered volume draw [--vertex-only|--mips|--mesh-execution]");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
@@ -290,6 +408,15 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device has no VK_EXT_shader_viewport_index_layer");
             return VulkanTestSkipped;
         }
+        if (mips) {
+            MipTargets(*device);
+            return 0;
+        }
+        if (meshExecution && (!target.mesh.has_value() || (target.subgroupSize != 32u && target.subgroupSize != 64u))) {
+            std::puts("skipped, mesh execution requires a supported 32- or 64-lane host subgroup layout");
+            return VulkanTestSkipped;
+        }
+        std::printf("graphics pipeline libraries: %s\n", device->GraphicsPipelineLibraries() ? "enabled" : "disabled");
         BuildBands();
         const GuestVolume volume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
         const auto color = VolumeTarget(volume.Data());
@@ -336,8 +463,18 @@ int main(int argc, char** argv) {
         Run(*device, thickColor, false, PixelCode, false);
         Check(thickVolume.Data(), thickColor, "thick SW_4KB_S_X vertex draw and writeback", WhiteBands);
         if (vertexOnly) std::puts("layered volume vertex draw tests passed");
-        else if (target.mesh.has_value()) Run(*device, color, true, PixelCode, false);
-        else std::puts("mesh case skipped, the device has no VK_EXT_mesh_shader");
+        else if (meshExecution) {
+            const GuestVolume meshVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
+            const auto meshColor = VolumeTarget(meshVolume.Data());
+            Run(*device, meshColor, true, PixelCode, false);
+            Check(meshVolume.Data(), meshColor, "mesh draw", WhiteBands);
+            const GuestVolume meshFieldVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
+            const auto meshFieldColor = VolumeTarget(meshFieldVolume.Data());
+            Run(*device, meshFieldColor, true, LayerFieldPixelCode, true);
+            Check(meshFieldVolume.Data(), meshFieldColor, "mesh fragment layer input", LayerFieldBands);
+        }
+        else if (target.mesh.has_value()) Run(*device, color, true, PixelCode, false, Vertices, false);
+        else std::puts("mesh compilation skipped, the device has no VK_EXT_mesh_shader");
         std::puts("layered volume draw tests passed");
         return 0;
     } catch (const std::exception& error) {

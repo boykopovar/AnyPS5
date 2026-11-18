@@ -309,6 +309,8 @@ int Sha512Final(unsigned char* digest, Sha512Context& c) {
     if (!digest) return 0;
     if (c.mdLength != Sha384Length && c.mdLength != Sha512Length) return 0;
     for (std::size_t i = 0; i < c.mdLength / 8; ++i) StoreBig64(digest + 8 * i, c.h[i]);
+    c.num = 0;
+    std::memset(buffer, 0, blockSize);
     return 1;
 }
 
@@ -472,8 +474,10 @@ int APS5_VABI SHA384_Init_nid_postfix(Sha512Context* context) {
         0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4,
     };
     auto& c = RequireContext(context, __func__);
-    std::memset(&c, 0, sizeof(c));
     std::memcpy(c.h, initial, sizeof(initial));
+    c.Nl = 0;
+    c.Nh = 0;
+    c.num = 0;
     c.mdLength = Sha384Length;
     return 1;
 }
@@ -484,8 +488,10 @@ int APS5_VABI SHA512_Init_nid_postfix(Sha512Context* context) {
         0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
     };
     auto& c = RequireContext(context, __func__);
-    std::memset(&c, 0, sizeof(c));
     std::memcpy(c.h, initial, sizeof(initial));
+    c.Nl = 0;
+    c.Nh = 0;
+    c.num = 0;
     c.mdLength = Sha512Length;
     return 1;
 }

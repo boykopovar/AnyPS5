@@ -1,6 +1,7 @@
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -119,7 +120,11 @@ static std::string CaptureStderr(const std::filesystem::path& path, TRun run) {
 #else
     const int saved = dup(2);
 #endif
-    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+#ifdef _WIN32
+    std::FILE* file = _wfopen(path.c_str(), L"wb");
+#else
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+#endif
     Require(saved >= 0 && file != nullptr);
 #ifdef _WIN32
     Require(_dup2(_fileno(file), 2) == 0);
@@ -220,6 +225,47 @@ static bool Cleared(const GlyphImage& image, int rc) {
     return image.rc == rc && std::memcmp(&image.metrics, &noMetrics, sizeof(noMetrics)) == 0 && std::memcmp(&image.result, &noResult, sizeof(noResult)) == 0;
 }
 
+static void CheckFrameDpi(FontHandle font, FontRenderer renderer) {
+    Require(sceFontSetResolutionDpi(font, 96, 144) == SCE_FONT_OK);
+    Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontSetupRenderScalePoint(font, 12.0f, 10.0f) == SCE_FONT_OK);
+    const auto render = [&](FontStyleFrame* frame, bool positioned = false) {
+        return RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+            if (frame) Require(sceFontRenderSurfaceSetStyleFrame(surface, frame) == SCE_FONT_OK);
+            if (positioned) return sceFontRenderCharGlyphImage(font, 'A', surface, 10.0f, 20.0f, metrics, result);
+            return sceFontRenderCharGlyphImageHorizontal(font, 'A', surface, 10.0f, 100.0f, metrics, result);
+        });
+    };
+    FontStyleFrame matching{};
+    Require(sceFontStyleFrameInit(&matching) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetResolutionDpi(&matching, 96, 144) == SCE_FONT_OK);
+    Require(SameImage(render(nullptr), render(&matching)));
+    Require(SameImage(render(nullptr, true), render(&matching, true)));
+    for (const auto& [horizontal, vertical] : {std::pair{96u, 144u}, std::pair{144u, 96u}, std::pair{192u, 288u}, std::pair{72u, 72u}}) {
+        FontStyleFrame frame{};
+        Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
+        Require(sceFontStyleFrameSetResolutionDpi(&frame, horizontal, vertical) == SCE_FONT_OK);
+        const auto inherited = render(&frame);
+        const auto inheritedPositioned = render(&frame, true);
+        Require(sceFontStyleFrameSetScalePoint(&frame, 12.0f, 10.0f) == SCE_FONT_OK);
+        Require(SameImage(inherited, render(&frame)));
+        const auto explicitPositioned = render(&frame, true);
+        if (!SameImage(inheritedPositioned, explicitPositioned)) {
+            std::fprintf(stderr, "DPI %u/%u positioned rectangles: inherited %u,%u %u,%u explicit %u,%u %u,%u\n",
+                horizontal, vertical, inheritedPositioned.result.UpdateRect.x, inheritedPositioned.result.UpdateRect.y,
+                inheritedPositioned.result.UpdateRect.w, inheritedPositioned.result.UpdateRect.h,
+                explicitPositioned.result.UpdateRect.x, explicitPositioned.result.UpdateRect.y,
+                explicitPositioned.result.UpdateRect.w, explicitPositioned.result.UpdateRect.h);
+        }
+        Require(SameImage(inheritedPositioned, explicitPositioned));
+    }
+    Require(sceFontSetupRenderScalePixel(font, 16.0f, 20.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetResolutionDpi(&matching, 192, 288) == SCE_FONT_OK);
+    Require(SameImage(render(nullptr), render(&matching)));
+    Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
+    Require(sceFontSetResolutionDpi(font, 72, 72) == SCE_FONT_OK);
+}
+
 static void CheckGlyphImages(FontHandle font, FontRenderer renderer) {
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
     Require(sceFontSetScalePixel(font, 40.0f, 40.0f) == SCE_FONT_OK);
@@ -290,6 +336,24 @@ static void CheckGlyphImages(FontHandle font, FontRenderer renderer) {
     Require(sceFontDeleteGlyph(nullptr, &glyph) == SCE_FONT_OK && glyph == nullptr);
 }
 
+struct ParsedText {
+    const char* text;
+    std::size_t at;
+    FontHandle font;
+};
+
+static std::int32_t APS5_VABI ParseText(FontTextSource* source, void** order, FontTextParseResult* result) {
+    auto* parsed = static_cast<ParsedText*>(source->textObject);
+    *order = const_cast<char*>(parsed->text + parsed->at);
+    if (parsed->text[parsed->at] == 0) {
+        result->Terminate.terminateCode = 0;
+        return 0;
+    }
+    result->FontCode.font = parsed->font;
+    result->FontCode.code = static_cast<unsigned char>(parsed->text[parsed->at++]);
+    return 1;
+}
+
 int main() {
     constexpr std::uint32_t EuropeanLight = 0x180700C3u;
     constexpr std::uint32_t EuropeanBold = 0x180700C7u;
@@ -349,8 +413,43 @@ int main() {
     Require(metrics.width == 50.0f && metrics.height == 70.0f && metrics.Horizontal.bearingX == 10.0f && metrics.Horizontal.bearingY == 70.0f);
     Require(metrics.Vertical.bearingX == -25.0f && metrics.Vertical.bearingY == 15.0f && metrics.Vertical.advance == 100.0f);
     Require(sceFontGetCharGlyphMetrics(font, 'B', &metrics) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    Require(sceFontGetCharGlyphMetrics(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetCharGlyphMetrics(font, 'A', reinterpret_cast<FontGlyphMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontGetRenderCharGlyphMetrics(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderCharGlyphMetrics(font, 'A', reinterpret_cast<FontGlyphMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontHorizontalLayout layout{};
     Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f && layout.lineAdvance >= layout.baselineOffset);
+    Require(sceFontGetHorizontalLayout(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetHorizontalLayout(font, reinterpret_cast<FontHorizontalLayout*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+
+    ParsedText parsed{"AA", 0, font};
+    FontTextSource source{};
+    Require(sceFontTextSourceInit(&source, parsed.text, 2, ParseText, &parsed) == SCE_FONT_OK);
+    FontString string = nullptr;
+    Require(sceFontCreateString(&memory, &source, nullptr, &string) == SCE_FONT_OK && string != nullptr);
+    std::uint32_t characterCount = 0;
+    FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &characterCount);
+    Require(characters != nullptr && characterCount == 2);
+    FontWriting writing{};
+    Require(sceFontWritingInit(&writing, string, characters) == SCE_FONT_OK);
+    const FontWritingStep* step = sceFontWritingRefersRenderStep(&writing);
+    Require(step != nullptr);
+    const FontWritingStep first = *step;
+    step = sceFontWritingRefersRenderStep(&writing);
+    Require(step != nullptr);
+    const FontWritingStep second = *step;
+    Require(first.x == 0.0f && first.y == 0.0f && first.advanceX == 70.0f && first.advanceY == 0.0f);
+    Require(second.x == 70.0f && second.y == 0.0f && second.advanceX == 70.0f && second.advanceY == 0.0f);
+    Require(first.GlyphMetrics.width == 50.0f && first.GlyphMetrics.height == 70.0f);
+    Require(second.GlyphMetrics.width == 50.0f && second.GlyphMetrics.height == 70.0f);
+    Require(second.GlyphMetrics.Vertical.advance == 100.0f);
+    Require(sceFontDestroyString(&string) == SCE_FONT_OK);
 
     FontHandle again = nullptr;
     Require(sceFontOpenFontSet(library, EuropeanBold, 2, nullptr, &again) == SCE_FONT_OK && again != font);
@@ -425,6 +524,7 @@ int main() {
     Require(sceFontGetKerning(mixed, 'A', 0x4E00, &kerning) == SCE_FONT_OK && kerning.offsetX == 0.0f);
     FontRenderer renderer = nullptr;
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK);
+    CheckFrameDpi(memoryFont, renderer);
     CheckGlyphImages(memoryFont, renderer);
     Require(sceFontBindRenderer(mixed, renderer) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePixel(mixed, 100.0f, 100.0f) == SCE_FONT_OK);
@@ -452,7 +552,10 @@ int main() {
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 128, 128);
 
-    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK);
+    Require(measured.Horizontal.advance == 60.0f);
+    Require(std::any_of(untouched.begin(), untouched.begin() + 128, [](std::uint8_t value) { return value != 0; }));
+    Require(std::all_of(untouched.begin() + 128, untouched.end(), [](std::uint8_t value) { return value == 0; }));
     sceFontRenderSurfaceInit(&measuring, nullptr, 0, 1, 0, 31);
 
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);

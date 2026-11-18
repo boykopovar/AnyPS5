@@ -8,15 +8,26 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
-CPP = (".cpp", ".cc", ".cxx", ".c")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import base_ref
+
+CPP =(".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
         "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
                  "-C", "-CC", "-dM", "-dD", "-dI")
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "--autocomplete", "-###", "-fdriver-only",
+                  "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
+                  "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
+                  "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
+                  "-print-sysroot-headers-suffix", "-print-cxx-stdlib", "-print-cxx-stdlib-include-dirs",
+                  "-print-diagnostic-categories", "-print-diagnostic-options", "-print-effective-triple", "-print-enabled-extensions",
+                  "-print-library-module-manifest-path", "-print-multi-flags-experimental", "-print-resource-dir",
+                  "-print-rocm-search-dirs", "-print-runtime-dir", "-print-supported-cpus", "-print-supported-extensions", "-print-target-triple", "-print-targets")
 WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
               "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
               "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
@@ -30,6 +41,10 @@ MAX_RESPONSE_FILE_DEPTH = 20
 def capture(command, cwd=None, encoding="utf-8"):
     return subprocess.run(command, capture_output=True, text=True, encoding=encoding,
                           errors="replace", cwd=cwd)
+
+
+def real(path):
+    return Path(os.path.realpath(path))
 
 
 def ninja_encoding(ninja):
@@ -49,7 +64,11 @@ def repository():
     result = capture(["git", "rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "not a git checkout")
-    return Path(result.stdout.strip())
+    root = Path(result.stdout.strip())
+    if os.name == "nt" and not root.is_dir():
+        relative = capture(["git", "rev-parse", "--show-cdup"]).stdout.strip()
+        root = (Path.cwd() / relative).resolve()
+    return root
 
 
 def validate_arguments(arguments):
@@ -58,7 +77,10 @@ def validate_arguments(arguments):
 
 
 def compilation_database(text, source, skip_empty_commands=False):
-    database = json.loads(text)
+    try:
+        database = json.loads(text)
+    except RecursionError as error:
+        raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
         raise ValueError(f"{source}: expected an array of command objects")
     commands = []
@@ -102,13 +124,13 @@ def entries(build):
 
 
 def entry_key(entry, root):
-    directory = Path(entry["directory"]).resolve()
+    directory = real(entry["directory"])
     source = Path(entry["file"])
     if not source.is_absolute():
         source = directory / source
-    source = source.resolve()
+    source = real(source)
     try:
-        return source.relative_to(Path(root).resolve()).as_posix()
+        return source.relative_to(real(root)).as_posix()
     except ValueError:
         return source.as_posix()
 
@@ -191,20 +213,90 @@ def response_arguments(text):
     return arguments
 
 
-def expand_response_files(arguments, directory, seen=frozenset()):
+def windows_response_text(data):
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data[3:].decode("utf-8")
+    return data.decode("utf-8")
+
+
+def windows_response_arguments(text):
+    if "\0" in text:
+        raise ValueError("unsupported response-file control character")
+    arguments = []
+    token = []
+    state = "init"
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\":
+            end = index
+            while end < len(text) and text[end] == "\\":
+                end += 1
+            if text[end:end + 1] == '"':
+                token.append("\\" * ((end - index) // 2))
+                if (end - index) % 2:
+                    token.append('"')
+                    end += 1
+            else:
+                token.append(text[index:end])
+            if state == "init":
+                state = "unquoted"
+            index = end
+            continue
+        if state == "quoted":
+            if character == '"' and text[index + 1:index + 2] == '"':
+                token.append('"')
+                index += 1
+            elif character == '"':
+                state = "unquoted"
+            else:
+                token.append(character)
+        elif character in " \t\r\n":
+            if state == "unquoted":
+                arguments.append("".join(token))
+                token = []
+                state = "init"
+        elif character == '"':
+            state = "quoted"
+        else:
+            token.append(character)
+            state = "unquoted"
+        index += 1
+    if state != "init":
+        arguments.append("".join(token))
+    return arguments
+
+
+def response_quoting(arguments):
+    quoting = "posix"
+    for argument in arguments:
+        if argument.startswith("--rsp-quoting="):
+            quoting = argument.partition("=")[2]
+            if quoting not in ("posix", "windows"):
+                raise ValueError(f"unsupported response-file quoting {argument}")
+    return quoting
+
+
+def expand_response_files(arguments, directory, seen=frozenset(), windows=False):
     expanded = []
     for argument in arguments:
         if argument.startswith("@") and len(argument) > 1:
             response = Path(argument[1:])
             if not response.is_absolute():
                 response = directory / response
-            resolved = response.resolve()
+            resolved = real(response)
             if resolved in seen:
                 raise ValueError(f"response file cycle at {resolved}")
             if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
                 raise ValueError(f"response file nesting exceeds {MAX_RESPONSE_FILE_DEPTH} levels at {resolved}")
-            nested = response_arguments(response.read_bytes().decode("utf-8"))
-            expanded.extend(expand_response_files(nested, directory, seen | {resolved}))
+            data = response.read_bytes()
+            if windows:
+                nested = windows_response_arguments(windows_response_text(data))
+            else:
+                nested = response_arguments(data.decode("utf-8"))
+            expanded.extend(expand_response_files(nested, directory, seen | {resolved}, windows))
         else:
             expanded.append(argument)
     return expanded
@@ -236,14 +328,45 @@ def preprocessor_arguments(argument):
     return "-Wp," + ",".join(kept) if kept else None
 
 
+def launcher_prefix(arguments):
+    if len(arguments) < 3 or PureWindowsPath(arguments[0]).stem.lower() != "cmake" or arguments[1:3] != ["-E", "env"]:
+        return []
+    index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            index += 1
+            break
+        if argument == "--modify":
+            if index + 1 == len(arguments):
+                raise ValueError("missing operand for cmake -E env --modify")
+            index += 2
+            continue
+        if argument.startswith("--unset="):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            raise ValueError(f"unsupported cmake -E env option {argument}")
+        if "=" not in argument:
+            break
+        index += 1
+    if index == len(arguments):
+        raise ValueError("cmake -E env launcher has no command")
+    return arguments[:index]
+
+
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
+    if prefix := launcher_prefix(arguments):
+        return [*prefix, *syntax_arguments(arguments[len(prefix):], directory, source)]
+    windows = False
     if any(argument.startswith("@") for argument in arguments[1:]):
         compiler = Path(arguments[0]).stem.lower()
-        if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
-            raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
-    arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
-    wanted = source.resolve()
+        if compiler in ("cl", "clang-cl") or "--driver-mode=cl" in arguments:
+            raise ValueError("cl-mode compiler response files are unsupported; provide expanded arguments")
+        windows = response_quoting(arguments[1:]) == "windows"
+    arguments = [arguments[0], *expand_response_files(arguments[1:], directory, windows=windows)]
+    wanted = real(source)
     trimmed = [arguments[0]]
     index = 1
     positional = False
@@ -277,15 +400,20 @@ def syntax_arguments(arguments, directory, source):
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue
+        query, _, value = argument.partition("=")
+        if query.startswith("--print-"):
+            query = query[1:]
+        if not positional and (query in DRIVER_QUERIES or (query in ("-mcpu", "-mtune") and value == "help")):
+            raise ValueError(f"compiler option {argument} bypasses compilation")
         if positional or not argument.startswith("-"):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
-            if candidate.resolve() == wanted:
+            if real(candidate) == wanted:
                 index += 1
                 continue
             if positional:
-                trimmed.append(str(candidate.resolve()))
+                trimmed.append(str(real(candidate)))
                 index += 1
                 continue
         elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
@@ -318,15 +446,24 @@ def check_source(task):
     return 1, int(failed), "".join(diagnostics)
 
 
+def resolve_source(file, root):
+    try:
+        file.stat()
+    except FileNotFoundError:
+        pass
+    source = real(file)
+    try:
+        name = source.relative_to(real(root)).as_posix()
+    except ValueError:
+        name = source.as_posix()
+    return source, name
+
+
 def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        source = file.resolve()
-        try:
-            name = source.relative_to(root.resolve()).as_posix()
-        except ValueError:
-            name = source.as_posix()
+        source, name = resolve_source(file, root)
         tasks.append((source, name, build, commands.get(name)))
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
@@ -355,16 +492,31 @@ def main(argv=None):
                         help="a configured Ninja build directory of this checkout (default: build)")
     parser.add_argument("--jobs", type=positive_integer, default=1, metavar="N",
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
-    parser.add_argument("--base", default="origin/main",
-                        help="branch the change is against (default: origin/main)")
+    parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
+    parser.add_argument("--dry-run", action="store_true", help="print planned syntax commands as JSON without executing a compiler")
     args = parser.parse_args(argv)
     try:
         root = repository()
-        files = [Path(path) for path in args.paths] or [root / path for path in changed(root, args.base)]
-        if not files:
-            print(f"no changed translation unit against {args.base}")
-            return 0
+        if args.paths:
+            files = [Path(path) for path in args.paths]
+        else:
+            base = base_ref.resolve(root, args.base)
+            files = [root / path for path in changed(root, base)]
+            if not files:
+                print(json.dumps({"translation_units": []}) if args.dry_run else f"no changed translation unit against {base}")
+                return 0
+        if args.dry_run:
+            commands = index(args.build, root)
+            plan = []
+            for file in files:
+                source, name = resolve_source(file, root)
+                configurations = commands.get(name, [])
+                plan.append({"source": str(source), "commands": [
+                    {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
+                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations]})
+            print(json.dumps({"translation_units": plan}, indent=2))
+            return 0 if any(entry["commands"] for entry in plan) else 1
         checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))

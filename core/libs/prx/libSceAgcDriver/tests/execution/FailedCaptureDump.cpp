@@ -88,7 +88,7 @@ void Run() {
     const std::string first = std::string(prefix) + ".req";
     const std::string failed = std::string(prefix) + "_failed.req";
     Valid = BufferDescriptor(0x00014204u);
-    Unsupported = BufferDescriptor(0xa1b00facu);
+    Unsupported = BufferDescriptor(0x61b00facu);
     Output.fill(Untouched);
     const auto valid = Pointer(Valid.data());
     Dispatch(valid);
@@ -101,7 +101,7 @@ void Run() {
     } catch (const std::exception& error) {
         message = error.what();
     }
-    Require(message.find("unsupported type") != std::string::npos, "the dispatch through a type 2 descriptor failed for another reason: " + message);
+    Require(message.find("unsupported type") != std::string::npos, "the dispatch through a type 1 descriptor failed for another reason: " + message);
     Require(message.find("(" + failed + ")") != std::string::npos, "the failure does not name the failing dispatch's request: " + message);
     const auto firstText = Read(first);
     const auto failedText = Read(failed);

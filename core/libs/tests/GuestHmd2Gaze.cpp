@@ -11,6 +11,7 @@
 namespace {
 
 constexpr std::int32_t InvalidHandle = static_cast<std::int32_t>(0x8a720003);
+constexpr std::int32_t Error0004 = static_cast<std::int32_t>(0x8a720004);
 constexpr std::int32_t ParameterNull = static_cast<std::int32_t>(0x8a720008);
 constexpr std::int32_t ParameterInvalid = static_cast<std::int32_t>(0x8a720009);
 
@@ -85,12 +86,30 @@ void CheckFoveatedResult() {
     Require(Read<std::uint32_t>(result, 0x14) == 0x5a5a5a5a, "foveated +0x14 untouched");
 }
 
+void CheckGazeStatus() {
+    alignas(std::int32_t) unsigned char deviceStatus[sizeof(std::int32_t)];
+    alignas(Hmd2::GazeUserCalibrationStatus) unsigned char calibrationStatus[sizeof(Hmd2::GazeUserCalibrationStatus)];
+    std::memset(deviceStatus, 0, sizeof(deviceStatus));
+    std::memset(calibrationStatus, 0, sizeof(calibrationStatus));
+
+    Require(sceHmd2GazeGetDeviceStatus(nullptr) == ParameterNull, "device status null");
+    Require(sceHmd2GazeGetDeviceStatus(reinterpret_cast<std::int32_t*>(deviceStatus)) == Error0004, "device status uninitialized");
+    for (std::size_t offset = 0; offset < sizeof(deviceStatus); ++offset)
+        Require(Read<unsigned char>(deviceStatus, offset) == 0, "device status untouched");
+
+    Require(sceHmd2GazeGetUserCalibrationStatus(nullptr) == ParameterNull, "calibration status null");
+    Require(sceHmd2GazeGetUserCalibrationStatus(reinterpret_cast<Hmd2::GazeUserCalibrationStatus*>(calibrationStatus)) == Error0004, "calibration status uninitialized");
+    for (std::size_t offset = 0; offset < sizeof(calibrationStatus); ++offset)
+        Require(Read<unsigned char>(calibrationStatus, offset) == 0, "calibration status untouched");
+}
+
 }
 
 int main() {
     Require(sceHmd2Initialize(nullptr) != 0, "initialize reports no headset");
     CheckGazeResult();
     CheckFoveatedResult();
+    CheckGazeStatus();
     std::puts("guest Hmd2 gaze results without a headset: PASS");
     return 0;
 }

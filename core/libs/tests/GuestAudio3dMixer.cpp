@@ -14,6 +14,10 @@ static void Require(bool value, const char* message) {
 int main() {
     std::int16_t pcm[4] = {16384, -16384, 8192, -8192};
     Audio3dInternal::Source s{pcm, 2, 2, false, 1.0f, 0.0f};
+    Require(Audio3dInternal::ReadSample(s, 0, 0) == 0.5f, "read sample frame 0 channel 0");
+    Require(Audio3dInternal::ReadSample(s, 0, 1) == -0.5f, "read sample frame 0 channel 1");
+    Require(Audio3dInternal::ReadSample(s, 1, 0) == 0.25f, "read sample frame 1 channel 0");
+    Require(Audio3dInternal::ReadSample(s, 1, 1) == -0.25f, "read sample frame 1 channel 1");
     std::vector<std::int16_t> out;
     Audio3dInternal::MixFrame(&s, 1, 2, out);
     Require(out.size() == 4, "frame is granularity*2 samples");
@@ -26,8 +30,20 @@ int main() {
     Audio3dInternal::MixFrame(&hard_right, 1, 1, panned_out);
     Require(panned_out.size() == 2 && panned_out[0] == 0 && panned_out[1] == 19999, "hard right keeps only the right channel");
 
+    Audio3dInternal::Source half_left{panned, 1, 2, false, 1.0f, -0.5f};
+    std::vector<std::int16_t> half_left_out;
+    Audio3dInternal::MixFrame(&half_left, 1, 1, half_left_out);
+    Require(half_left_out.size() == 2 && half_left_out[0] == 10000 && half_left_out[1] == 10000, "half left pan balances 1:2 source channels");
+
+    Audio3dInternal::Source half_right_pan{panned, 1, 2, false, 1.0f, 0.5f};
+    std::vector<std::int16_t> half_right_pan_out;
+    Audio3dInternal::MixFrame(&half_right_pan, 1, 1, half_right_pan_out);
+    Require(half_right_pan_out.size() == 2 && half_right_pan_out[0] == 5000 && half_right_pan_out[1] == 19999, "half right pan attenuates left channel");
+
     float floats[2] = {0.5f, -0.5f};
     Audio3dInternal::Source float_source{floats, 1, 2, true, 1.0f, 0.0f};
+    Require(Audio3dInternal::ReadSample(float_source, 0, 0) == 0.5f, "read float sample frame 0 channel 0");
+    Require(Audio3dInternal::ReadSample(float_source, 0, 1) == -0.5f, "read float sample frame 0 channel 1");
     std::vector<std::int16_t> float_out;
     Audio3dInternal::MixFrame(&float_source, 1, 1, float_out);
     Require(float_out.size() == 2 && float_out[0] == 16384 && float_out[1] == -16384, "float samples are converted");
@@ -134,6 +150,26 @@ int main() {
     Audio3dInternal::MixFrame(&half_gain, 1, 1, half_gain_out);
     Require(half_gain_out.size() == 2 && half_gain_out[0] == 5000 && half_gain_out[1] == 10000,
             "half gain scales stereo samples by half");
+
+    Audio3dInternal::Source s_zero{pcm, 1, 2, false, 1.0f, 0.0f};
+    std::vector<std::int16_t> zero_out;
+    Audio3dInternal::MixFrame(&s_zero, 0, 0, zero_out);
+    Require(zero_out.empty(), "zero frame returns empty output");
+    Audio3dInternal::MixFrame(&s_zero, 1, 0, zero_out);
+    Require(zero_out.empty(), "zero frame with source returns empty output");
+
+    Audio3dInternal::Source neg_out_of_range{panned, 1, 2, false, 1.0f, -2.0f};
+    std::vector<std::int16_t> neg_out_of_range_out;
+    Audio3dInternal::MixFrame(&neg_out_of_range, 1, 1, neg_out_of_range_out);
+    Require(neg_out_of_range_out.size() == 2 && neg_out_of_range_out[0] == 10000 && neg_out_of_range_out[1] == 0,
+            "negative out of range pan clamps");
+
+    std::int16_t surround7[7] = {1000, 2000, 3000, 0, 4000, 5000, 6000};
+    Audio3dInternal::Source surround7_source{surround7, 1, 7, false, 1.0f, 0.0f};
+    std::vector<std::int16_t> surround7_out;
+    Audio3dInternal::MixFrame(&surround7_source, 1, 1, surround7_out);
+    Require(surround7_out.size() == 2 && surround7_out[0] == 10192 && surround7_out[1] == 7657,
+            "7 channel downmix folds center and surround channels");
 
     return 0;
 }

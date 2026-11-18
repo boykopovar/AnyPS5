@@ -1,8 +1,10 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -25,6 +27,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -180,6 +190,43 @@ void TestAdvanceRetainsRewrittenBuffer() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::copy(second.begin(), second.end(), buffer.begin());
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
+void TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        buffer = second;
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::fill(buffer.begin(), buffer.end(), 0.5f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
 void TestAdvanceRetainsVolume() {
     const auto buffer = Grain(0.02f);
     auto reduced = buffer;
@@ -297,20 +344,55 @@ void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
     RequirePlayed(played, {&voice});
 }
 
+void TestSetAttributesRejectsUnreadablePointers() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0);
+    params.num_grains = grain;
+    params.queue_depth = 1;
+    AudioOut2ContextHandle context = 0;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
+    AudioOut2PortParam portParams{};
+    portParams.port_type = portTypeMain;
+    portParams.data_format = formatStereoFloat;
+    portParams.sampling_freq = frequency;
+    AudioOut2PortHandle port = 0;
+    Require(sceAudioOut2PortCreate(context, &portParams, &port) == 0);
+
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, reinterpret_cast<const AudioOut2Attribute*>(std::uintptr_t{0x10}), 1) == errorInvalidArgument);
+    Require(errno == 71);
+    const AudioOut2Attribute badData{attributeData, 0, reinterpret_cast<const void*>(std::uintptr_t{0x10}), sizeof(void*)};
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, &badData, 1) == errorInvalidArgument);
+    Require(errno == 71);
+    const AudioOut2Attribute badVolume{1, 0, reinterpret_cast<const void*>(std::uintptr_t{0x10}), channels * sizeof(float)};
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, &badVolume, 1) == errorInvalidArgument);
+    Require(errno == 71);
+
+    Require(sceAudioOut2PortDestroy(port) == 0);
+    Require(sceAudioOut2ContextDestroy(context) == 0);
+}
+
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
+    TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared();
     TestAdvanceBurstRetainsEveryGrain();
     TestPushingThreadWaitsForAdvance();
     TestBuffersSetBeforeOnePushPlayInOrder();
     TestBurstThenGapKeepsEveryBuffer();
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
+    TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet();
     TestRenderingSizedByLevelStaysWithinQueueDepth();
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);
+    TestSetAttributesRejectsUnreadablePointers();
     return 0;
 }

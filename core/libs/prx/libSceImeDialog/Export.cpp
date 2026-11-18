@@ -1,6 +1,7 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -8,10 +9,25 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
 namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
 
 constexpr int StatusNone = 0;
 constexpr int StatusRunning = 1;
@@ -43,6 +59,7 @@ struct Dialog {
     std::u16string text;
     std::size_t caret = 0;
     ImeDialog::PadKeyboardState keyboard;
+    ImeComposition composition;
 };
 
 std::mutex g_mutex;
@@ -63,6 +80,7 @@ std::size_t UnitsAfter(const Dialog& dialog) {
 
 void ReleaseInput() {
     ImeSetHostTextSink_nid_no_patch(nullptr);
+    ImeSetHostPreeditSink_nid_no_patch(nullptr);
     ImeSetHostPadSink_nid_no_patch(nullptr);
     ImeSetKeyboardViewProvider_nid_no_patch(nullptr);
 }
@@ -70,6 +88,7 @@ void ReleaseInput() {
 void Finish(std::uint32_t endStatus) {
     g_dialog.endStatus = endStatus;
     g_dialog.status = StatusFinished;
+    g_dialog.composition.Clear();
     ReleaseInput();
 }
 
@@ -111,13 +130,20 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
         case ImeHostInputKind::End:
             dialog.caret = dialog.text.size();
             return;
-        case ImeHostInputKind::Enter:
-            std::copy(dialog.text.begin(), dialog.text.end(), dialog.buffer);
-            dialog.buffer[dialog.text.size()] = u'\0';
-            Finish(EndStatusOk);
+        case ImeHostInputKind::Enter: {
+            std::u16string output = dialog.text;
+            output.push_back(u'\0');
+            const bool written = CopyOutPreservingErrno(dialog.buffer, output.data(), output.size() * sizeof(char16_t));
+            Finish(written ? EndStatusOk : EndStatusAborted);
             return;
+        }
         case ImeHostInputKind::Escape:
             Finish(EndStatusUserCanceled);
+            return;
+        case ImeHostInputKind::Paste:
+            Insert(dialog, units, length);
+            return;
+        case ImeHostInputKind::Preedit:
             return;
     }
 }
@@ -125,7 +151,14 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
 void Receive(ImeHostInputKind kind, const char16_t* units, std::size_t length) {
     std::lock_guard lock(g_mutex);
     if (g_dialog.status != StatusRunning) return;
+    if (ImeRouteWhileComposing(g_dialog.composition, kind) == ImeCompositionRoute::Swallow) return;
     Apply(g_dialog, kind, units, length);
+}
+
+void ReceivePreedit(const char16_t* units, std::size_t length, std::int32_t start, std::int32_t selected) {
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status != StatusRunning) return;
+    g_dialog.composition.Set(std::u16string(units, length), start, selected);
 }
 
 void ReceivePad(const ImeHostPad& pad) {
@@ -183,6 +216,9 @@ bool ProvideView(ImeKeyboardView& view) {
     if (dialog.status != StatusRunning) return false;
     view.text = dialog.text;
     view.caret = dialog.caret;
+    view.preedit = dialog.composition.text;
+    view.preeditCursor = dialog.composition.cursor;
+    view.preeditSelection = dialog.composition.selection;
     view.rows = ImeDialog::PadKeyboardRows(dialog.keyboard);
     view.columns = ImeDialog::PadKeyboardColumns();
     view.keys.clear();
@@ -212,23 +248,52 @@ extern "C" {
 
 int APS5_VABI sceImeDialogAbort(void) {
     std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
     if (g_dialog.status != StatusRunning) return ErrorNotOpened;
     Finish(EndStatusAborted);
     return 0;
 }
 
 int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
-    if (form == nullptr) return ErrorNotOpened;
-    *form = PositionAndForm{};
-    form->width = 1920;
-    form->height = 1080;
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotOpened;
+    if (form == nullptr) return ErrorInvalidAddress;
+    PositionAndForm localForm{};
+    localForm.width = 1920;
+    localForm.height = 1080;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidAddress;
     return 0;
 }
 
 int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
     (void)param;
-    if (width != nullptr) *width = 1920;
-    if (height != nullptr) *height = 1080;
+    constexpr uint32_t defaultWidth = 1920;
+    constexpr uint32_t defaultHeight = 1080;
+    if (width == nullptr || height == nullptr) return ErrorInvalidAddress;
+    uint32_t savedWidth{};
+    uint32_t heightProbe{};
+    const int savedErrno = errno;
+    const bool readWidth = GuestCopyIn_nid_no_patch(&savedWidth, width, sizeof(savedWidth));
+    const bool readHeight = readWidth && GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe));
+    (void)heightProbe;
+    if (!readHeight) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    const bool wroteWidth = GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth));
+    if (!wroteWidth) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    if (!GuestCopyOut_nid_no_patch(height, &defaultHeight, sizeof(defaultHeight))) {
+        GuestCopyOut_nid_no_patch(width, &savedWidth, sizeof(savedWidth));
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -238,10 +303,14 @@ int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param* param, const Extende
 }
 
 int APS5_VABI sceImeDialogGetResult(Result* result) {
-    std::lock_guard lock(g_mutex);
-    if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
-    *result = Result{};
-    result->endstatus = g_dialog.endStatus;
+    Result res{};
+    {
+        std::lock_guard lock(g_mutex);
+        if (result != nullptr && g_dialog.status == StatusNone) return ErrorNotInUse;
+        if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
+        res.endstatus = g_dialog.endStatus;
+    }
+    if (!CopyOutPreservingErrno(result, &res, sizeof(res))) return ErrorNotOpened;
     return 0;
 }
 
@@ -254,18 +323,28 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     std::lock_guard lock(g_mutex);
     if (g_dialog.status != StatusNone) return ErrorBusy;
     if (param == nullptr) return ErrorInvalidAddress;
-    if (param->max_text_length == 0 || param->max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
-    if (param->input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    Param localParam{};
+    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
+    ExtendedParam localExtended{};
+    if (extended != nullptr && !CopyInPreservingErrno(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
+    if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
+    if (localParam.input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    std::u16string initialText;
+    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
+        char16_t unit = u'\0';
+        if (!CopyInPreservingErrno(&unit, localParam.input_text_buffer + i, sizeof(unit))) return ErrorInvalidInputTextBuffer;
+        if (unit == u'\0') break;
+        initialText.push_back(unit);
+    }
     g_dialog = Dialog{};
-    g_dialog.buffer = param->input_text_buffer;
-    g_dialog.maxLength = param->max_text_length;
-    std::size_t length = 0;
-    while (length < param->max_text_length && param->input_text_buffer[length] != u'\0') ++length;
-    g_dialog.text.assign(param->input_text_buffer, length);
-    g_dialog.caret = length;
-    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
+    g_dialog.buffer = localParam.input_text_buffer;
+    g_dialog.maxLength = localParam.max_text_length;
+    g_dialog.text = initialText;
+    g_dialog.caret = initialText.size();
+    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended != nullptr ? &localExtended : nullptr));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
+    ImeSetHostPreeditSink_nid_no_patch(&ReceivePreedit);
     ImeSetHostPadSink_nid_no_patch(&ReceivePad);
     ImeSetKeyboardViewProvider_nid_no_patch(&ProvideView);
     return 0;
@@ -273,7 +352,7 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
 
 int APS5_VABI sceImeDialogTerm(void) {
     std::lock_guard lock(g_mutex);
-    if (g_dialog.status == StatusNone) return ErrorNotOpened;
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
     ReleaseInput();
     g_dialog = Dialog{};
     return 0;

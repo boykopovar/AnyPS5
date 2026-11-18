@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import Check, cpp_text, named_constants, over_aligned
+from check_conventions import Check, cpp_text, integer_literal, named_constants, over_aligned
 
 SOURCE = "core/libs/prx/libSceExample/tests/Example.cpp"
 
@@ -127,6 +127,11 @@ class AlignmentRuleTests(unittest.TestCase):
                 os.chdir(original)
             return check.findings
 
+    def test_abi_alias_expansion_does_not_hide_excessive_alignment(self):
+        source = "#define A APS5_VABI\n" + "\n".join(f"int A Decl{i}();" for i in range(8))
+        source += "\nconstexpr int BufferSize = 16384;\nalignas(BufferSize) unsigned char storage[1];\n"
+        self.assertEqual(self.findings(source), [("alignment", SOURCE, 12, "alignas(BufferSize)")])
+
     def test_only_added_code_is_reported(self):
         self.assertEqual(self.findings("alignas(256) char small[16];\n"
                                        "const char* text = \"alignas(65536)\";\n"
@@ -147,6 +152,15 @@ class AlignmentRuleTests(unittest.TestCase):
                                        "    alignas(Alignment) static char data[4];\n"
                                        "}\n"),
                          [("alignment", SOURCE, 6, "alignas(Alignment)")])
+
+    def test_integer_literal_bases_and_digit_separators(self):
+        self.assertEqual(integer_literal("16384"), 16384)
+        self.assertEqual(integer_literal("0x4000"), 16384)
+        self.assertEqual(integer_literal("0X4'000"), 16384)
+        self.assertEqual(integer_literal("0b1000"), 8)
+        self.assertEqual(integer_literal("010"), 8)
+        self.assertEqual(integer_literal("0"), 0)
+        self.assertEqual(integer_literal("1'000"), 1000)
 
 
 if __name__ == "__main__":

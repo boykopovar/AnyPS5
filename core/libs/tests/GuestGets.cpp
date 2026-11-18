@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -38,7 +39,7 @@ class Input {
 
 public:
     explicit Input(std::FILE* handle) : stream(handle) { __stdinp_nid_postfix = &stream; }
-    Input(const void* bytes, std::size_t size) : stream(std::tmpfile()) {
+    Input(const void* bytes, std::size_t size) : stream(TemporaryFile::Open()) {
         Require(std::fwrite(bytes, 1, size, stream.GetHandle()) == size, "seed input");
         std::rewind(stream.GetHandle());
         __stdinp_nid_postfix = &stream;

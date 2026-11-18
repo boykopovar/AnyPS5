@@ -2,6 +2,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -132,6 +134,109 @@ static void TestGetCloser() {
     UI_destroy_method_nid_postfix(method);
 }
 
+static std::uint64_t UiError(std::uint64_t reason) {
+    return std::uint64_t{40} << 24 | std::uint64_t{0xfff} << 12 | reason;
+}
+
+static void TestSetResult() {
+    ERR_clear_error_nid_postfix();
+    char buffer[8] {};
+    LibreSslUi ui {};
+    LibreSslUiString prompt {};
+    prompt.type = 1;
+    prompt.resultBuffer = buffer;
+    prompt.data.stringData.resultMinimum = 2;
+    prompt.data.stringData.resultMaximum = 5;
+    ui.flags = 0x0101;
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "abc") == 0);
+    Require(!std::strcmp(buffer, "abc") && ui.flags == 0x0100 && ERR_peek_error_nid_postfix() == 0);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "abcde") == 0 && !std::strcmp(buffer, "abcde") && ERR_peek_error_nid_postfix() == 0);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "ab") == 0 && !std::strcmp(buffer, "ab") && buffer[3] == 'd');
+
+    std::memcpy(buffer, "kept", 5);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "a") == -1);
+    Require(ui.flags == 0x0101 && !std::strcmp(buffer, "kept"));
+    Require(ERR_get_error_nid_postfix() == UiError(101) && ERR_get_error_nid_postfix() == 0);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "abcdef") == -1);
+    Require(ui.flags == 0x0101 && !std::strcmp(buffer, "kept"));
+    Require(ERR_get_error_nid_postfix() == UiError(100) && ERR_get_error_nid_postfix() == 0);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, "") == -1 && ui.flags == 0x0101);
+    Require(ERR_get_error_nid_postfix() == UiError(101));
+
+    Require(UI_set_result_nid_postfix(&ui, nullptr, "abc") == -1);
+    Require(ui.flags == 0x0100 && ERR_peek_error_nid_postfix() == 0);
+
+    LibreSslUiString verify = prompt;
+    verify.type = 2;
+    Require(UI_set_result_nid_postfix(&ui, &verify, "wxyz") == 0 && !std::strcmp(buffer, "wxyz"));
+    ui.flags = 0x0001;
+    Require(UI_set_result_nid_postfix(&ui, &verify, "uvwxyz") == -1 && ui.flags == 0x0001);
+    Require(ERR_get_error_nid_postfix() == UiError(100));
+
+    LibreSslUiString unbuffered = prompt;
+    unbuffered.resultBuffer = nullptr;
+    ui.flags = 0x0001;
+    Require(UI_set_result_nid_postfix(&ui, &unbuffered, "abc") == -1 && ui.flags == 0);
+    Require(ERR_get_error_nid_postfix() == UiError(105) && ERR_get_error_nid_postfix() == 0);
+
+    LibreSslUiString boolean {};
+    boolean.type = 3;
+    boolean.resultBuffer = buffer;
+    boolean.data.booleanData.okCharacters = "yY";
+    boolean.data.booleanData.cancelCharacters = "nN";
+    Require(UI_set_result_nid_postfix(&ui, &boolean, "xN") == 0 && buffer[0] == 'n');
+    Require(UI_set_result_nid_postfix(&ui, &boolean, "Yes") == 0 && buffer[0] == 'y');
+    Require(UI_set_result_nid_postfix(&ui, &boolean, "xz") == 0 && buffer[0] == '\0');
+    std::memcpy(buffer, "kept", 5);
+    Require(UI_set_result_nid_postfix(&ui, &boolean, "") == 0 && buffer[0] == '\0' && !std::strcmp(buffer + 1, "ept"));
+    boolean.resultBuffer = nullptr;
+    Require(UI_set_result_nid_postfix(&ui, &boolean, "y") == -1 && ERR_get_error_nid_postfix() == UiError(105));
+
+    std::memcpy(buffer, "kept", 5);
+    LibreSslUiString info = prompt;
+    info.type = 4;
+    ui.flags = 0x0001;
+    Require(UI_set_result_nid_postfix(&ui, &info, "a") == 0 && ui.flags == 0 && !std::strcmp(buffer, "kept"));
+    Require(ERR_peek_error_nid_postfix() == 0);
+
+    errno = 71;
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    ui.flags = 0x0101;
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &prompt, unreadable); });
+    Require(errno == 71 && ui.flags == 0x0101 && !std::strcmp(buffer, "kept"));
+    LibreSslUiString unwritable = prompt;
+    unwritable.resultBuffer = reinterpret_cast<char*>(0x10);
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "abc"); });
+    unwritable.type = 3;
+    unwritable.data.booleanData.okCharacters = "yY";
+    unwritable.data.booleanData.cancelCharacters = "nN";
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "y"); });
+    Require(errno == 71 && ERR_peek_error_nid_postfix() == 0);
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4094, "wxyz", 5);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, pages + 4094) == 0 && !std::strcmp(buffer, "wxyz"));
+    boolean.resultBuffer = buffer;
+    std::memcpy(pages + 4094, "xxN", 4);
+    Require(UI_set_result_nid_postfix(&ui, &boolean, pages + 4094) == 0 && buffer[0] == 'n');
+}
+
+static void TestGuestMethods() {
+    errno = 71;
+    auto* const unmapped = reinterpret_cast<LibreSslUiMethod*>(0x10);
+    Require(UI_method_set_opener_nid_postfix(unmapped, Open) == -1 && UI_method_get_opener_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_writer_nid_postfix(unmapped, Write) == -1 && UI_method_get_writer_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_reader_nid_postfix(unmapped, Read) == -1 && UI_method_get_reader_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_closer_nid_postfix(unmapped, Close) == -1 && UI_method_get_closer_nid_postfix(unmapped) == nullptr);
+    RequireThrows([&] { UI_destroy_method_nid_postfix(unmapped); });
+    RequireThrows([] { UI_create_method_nid_postfix(reinterpret_cast<char*>(0x10)); });
+    Require(errno == 71);
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4093, "prompt", 7);
+    LibreSslUiMethod* method = UI_create_method_nid_postfix(pages + 4093);
+    Require(method != nullptr && method->name != pages + 4093 && !std::strcmp(method->name, "prompt"));
+    UI_destroy_method_nid_postfix(method);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
@@ -144,5 +249,7 @@ int main() {
     TestGetReader();
     TestSetCloser();
     TestGetCloser();
+    TestSetResult();
+    TestGuestMethods();
     std::puts("libSceLibreSsl UI method tests passed");
 }

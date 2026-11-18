@@ -1,4 +1,4 @@
-import {actions, defaults, groups, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -7,7 +7,11 @@ import {createDropdown} from './dropdown.js';
 
 const byId = id => document.getElementById(id);
 let entries = [];
-let savedConfiguration = '[]';
+let settings = [];
+let controllerRemaps = [];
+const configurationText = () => serialize(entries, settings, controllerRemaps);
+const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
+let savedConfiguration = snapshot();
 let captureTarget;
 let captureButton;
 let selectedGroup = groups[0].name;
@@ -111,7 +115,7 @@ function element(tag, text, className) {
 }
 
 function isDirty() {
-    return JSON.stringify(entries) !== savedConfiguration;
+    return snapshot() !== savedConfiguration;
 }
 
 async function confirmReplacement() {
@@ -124,8 +128,13 @@ async function confirmReplacement() {
     });
 }
 
-function valueChoices(type) {
+function valueChoices(type, value = '') {
+    if (type === 'PAD') return value ? [value] : [];
     return type === 'KEY' ? exportableKeys : type === 'MOUSE' ? mouseValues : type === 'WHEEL' ? wheelValues : [];
+}
+
+function typeChoices(entry) {
+    return typesForAction(entry.action).filter(type => type !== 'PAD' || entry.type === 'PAD');
 }
 
 function dropdownText() {
@@ -181,8 +190,8 @@ function renderCategories() {
 function renderBinding(entry, position) {
     const row = element('div', undefined, 'binding');
     const label = t('bindingLabel', {action: entry.action, number: position + 1});
-    const type = selectControl(t('typeLabel', {binding: label}), typesForAction(entry.action), entry.type);
-    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type), entry.value);
+    const type = selectControl(t('typeLabel', {binding: label}), typeChoices(entry), entry.type);
+    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type, entry.value), entry.value);
     type.element.dir = 'ltr';
     value.element.dir = 'ltr';
     const capture = button(t('capture'), t('captureLabel', {binding: label}), () => {
@@ -196,8 +205,9 @@ function renderBinding(entry, position) {
     const remove = button(t('remove'), t('removeLabel', {binding: label}), () => {
         entries = entries.filter(binding => binding !== entry);
         render();
-        const remaining = document.querySelector(`[data-action="${entry.action}"] .dropdown-trigger`);
-        (remaining || document.querySelector(`[data-action="${entry.action}"] .add-binding`)).focus();
+        const action = document.querySelector(`[data-action="${entry.action}"]`);
+        const remaining = action.querySelector('.dropdown-trigger') || action.querySelector('.add-binding');
+        (action.hidden ? byId('search') : remaining).focus();
     });
     type.select.addEventListener('change', () => {
         entry.type = type.select.value;
@@ -253,12 +263,14 @@ function render() {
         }
         container.append(section);
     }
-    filterActions();
     updateOutput();
 }
 
 function filterActions() {
-    const search = byId('search').value.trim().toLowerCase();
+    const searchField = byId('search');
+    const search = searchField.value.trim().toLowerCase();
+    const focusedAction = document.activeElement?.closest('.action');
+    const inputActions = actionsForInput(search, entries);
     if (activeView === 'controls') byId('group-title').textContent = search ? t('search') : groupLabel(selectedGroup);
     for (const category of byId('categories').children) {
         category.setAttribute('aria-pressed', String(!search && category.dataset.group === selectedGroup));
@@ -267,7 +279,8 @@ function filterActions() {
     for (const section of document.querySelectorAll('.group')) {
         let matches = 0;
         for (const action of section.querySelectorAll('.action')) {
-            action.hidden = search ? !`${section.dataset.group} ${groupLabel(section.dataset.group)} ${action.dataset.action}`.toLowerCase().includes(search) : section.dataset.group !== selectedGroup;
+            const label = `${section.dataset.group} ${groupLabel(section.dataset.group)} ${action.dataset.action}`.toLowerCase();
+            action.hidden = search ? !label.includes(search) && !inputActions.has(action.dataset.action) : section.dataset.group !== selectedGroup;
             if (!action.hidden) matches++;
         }
         section.hidden = matches === 0;
@@ -280,14 +293,20 @@ function filterActions() {
         byId('mappings').append(empty);
     }
     empty.hidden = visible !== 0;
+    if (focusedAction?.hidden) searchField.focus({preventScroll: true});
 }
 
 function updateOutput() {
     const result = validate(entries);
     const valid = result.errors.length === 0;
-    byId('preview').value = valid ? serialize(entries) : '';
+    byId('preview').value = valid ? configurationText() : '';
     byId('count').textContent = `${new Set(result.bindings.map(binding => binding.action)).size} / ${actions.length}`;
-    byId('download').disabled = !valid;
+    const titleId = byId('profile-title-id');
+    const filename = inputFilename(titleId.value);
+    titleId.setAttribute('aria-invalid', String(filename === undefined));
+    byId('profile-title-id-error').hidden = filename !== undefined;
+    byId('preview-name').textContent = filename ?? t('configuration');
+    byId('download').disabled = !valid || filename === undefined;
     byId('copy').disabled = !valid;
     const report = byId('validation');
     report.replaceChildren();
@@ -303,6 +322,7 @@ function updateOutput() {
         const invalid = result.errors.some(error => entries[error.index] === renderedEntries[index]);
         for (const control of row.querySelectorAll('.dropdown-trigger')) control.setAttribute('aria-invalid', String(invalid));
     });
+    filterActions();
 }
 
 function cancelCapture(message) {
@@ -343,12 +363,16 @@ window.addEventListener('keydown', event => {
 }, true);
 
 byId('search').addEventListener('input', filterActions);
+byId('profile-title-id').addEventListener('input', updateOutput);
 byId('reset').addEventListener('click', async () => {
     if (!await confirmReplacement()) return;
     entries = [];
-    savedConfiguration = '[]';
+    settings = [];
+    controllerRemaps = [];
+    savedConfiguration = snapshot();
     importReport = undefined;
     byId('import-report').hidden = true;
+    byId('profile-title-id').value = '';
     render();
     setStatus('resetDone');
 });
@@ -370,30 +394,37 @@ byId('file').addEventListener('change', async event => {
         }
         if (!await confirmReplacement()) return;
         entries = result.entries;
-        savedConfiguration = JSON.stringify(entries);
+        settings = result.settings;
+        controllerRemaps = result.controllerRemaps;
+        savedConfiguration = snapshot();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
-        setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : error.message});
+        setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
 byId('download').addEventListener('click', () => {
-    const content = serialize(entries);
+    const content = configurationText();
     const url = URL.createObjectURL(new Blob([content], {type: 'text/plain;charset=utf-8'}));
     const link = element('a');
+    const filename = inputFilename(byId('profile-title-id').value);
+    if (filename === undefined) {
+        URL.revokeObjectURL(url);
+        return;
+    }
     link.href = url;
-    link.download = 'anyps5-input.ini';
+    link.download = filename;
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    savedConfiguration = JSON.stringify(entries);
+    savedConfiguration = snapshot();
     setStatus('downloaded');
 });
 byId('copy').addEventListener('click', async () => {
     try {
-        const content = serialize(entries);
-        const copiedConfiguration = JSON.stringify(entries);
+        const content = configurationText();
+        const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
         savedConfiguration = copiedConfiguration;
         setStatus('copied');

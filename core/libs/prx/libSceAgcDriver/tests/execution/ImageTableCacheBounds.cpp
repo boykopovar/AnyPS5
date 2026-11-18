@@ -17,8 +17,13 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#else
-#include <sys/mman.h>
+#endif
+#ifdef __linux__
+#include <dirent.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -31,7 +36,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <thread>
@@ -79,21 +86,15 @@ constexpr std::array<std::uint32_t, 20> TablePixelCode{0xf4080100u, 0xfa000000u,
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        if (block != nullptr) {
+#ifdef _WIN32
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
 #else
-        constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped != MAP_FAILED) {
-            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
-            if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
-            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, 0x04, BlockBytes);
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
-        }
 #endif
+        }
         Require(block != nullptr, "image table cache bounds: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
@@ -124,6 +125,93 @@ std::vector<std::uint32_t> Pm4(std::uint32_t opcode, std::initializer_list<std::
     return words;
 }
 
+std::atomic<unsigned> dispatchesSubmitted{0};
+std::atomic<unsigned> dispatchesIdle{0};
+
+#ifdef __linux__
+void PrintThreadStack(int) {
+    void* frames[48];
+    const int count = backtrace(frames, 48);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+}
+
+std::string FirstLine(const std::string& path) {
+    std::ifstream file(path);
+    std::string line;
+    std::getline(file, line);
+    return line;
+}
+#endif
+
+void PrintStalledThreads() {
+#ifdef __linux__
+    void* preload[1];
+    backtrace(preload, 1);
+    struct sigaction action {};
+    action.sa_handler = PrintThreadStack;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGUSR2, &action, nullptr);
+    const auto self = static_cast<int>(syscall(SYS_gettid));
+    DIR* tasks = opendir("/proc/self/task");
+    if (!tasks) return;
+    while (const dirent* entry = readdir(tasks)) {
+        const int thread = std::atoi(entry->d_name);
+        if (thread <= 0) continue;
+        const auto base = std::string("/proc/self/task/") + entry->d_name;
+        const auto stat = FirstLine(base + "/stat");
+        const auto state = stat.rfind(") ") == std::string::npos ? std::string("?") : stat.substr(stat.rfind(") ") + 2, 1);
+        std::fprintf(stderr, "thread %d %s state=%s syscall=%s\n", thread, FirstLine(base + "/comm").c_str(), state.c_str(), FirstLine(base + "/syscall").c_str());
+        if (thread == self) continue;
+        syscall(SYS_tgkill, getpid(), thread, SIGUSR2);
+        usleep(50000);
+    }
+    closedir(tasks);
+#endif
+}
+
+struct StallWatchdog {
+    std::atomic<bool> finished{false};
+    std::atomic<bool> reporterExited{false};
+    std::thread reporter;
+    std::thread hardStop;
+
+    StallWatchdog(int seconds, int graceSeconds) {
+        const auto start = std::chrono::steady_clock::now();
+        reporter = std::thread([this, seconds, start] {
+            const auto deadline = start + std::chrono::seconds(seconds);
+            while (!finished.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) {
+                    std::fprintf(stderr, "image table vouched lookups: no result after %d s, %u dispatches submitted and %u idle\n", seconds, dispatchesSubmitted.load(), dispatchesIdle.load());
+                    PrintStalledThreads();
+                    std::fflush(stderr);
+                    std::_Exit(1);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            reporterExited.store(true, std::memory_order_release);
+        });
+        hardStop = std::thread([this, seconds, graceSeconds, start] {
+#ifdef __linux__
+            sigset_t blocked;
+            sigemptyset(&blocked);
+            sigaddset(&blocked, SIGUSR2);
+            pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
+#endif
+            const auto deadline = start + std::chrono::seconds(seconds + graceSeconds);
+            while (!reporterExited.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) std::_Exit(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    ~StallWatchdog() {
+        finished.store(true, std::memory_order_release);
+        reporter.join();
+        hardStop.join();
+    }
+};
+
 void Dispatch(const GuestBlock& block, std::size_t slot, std::size_t kernelOffset = 0, std::vector<std::uint32_t> words = {}) {
     const auto kernel = block.At(kernelOffset);
     const auto srt = block.At(SrtOffset + slot * SrtBytes);
@@ -131,8 +219,10 @@ void Dispatch(const GuestBlock& block, std::size_t slot, std::size_t kernelOffse
         words.insert(words.end(), packet.begin(), packet.end());
     }
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    ++dispatchesSubmitted;
     Require(sceAgcDriverSubmitDcb(&dcb) == 0, "image table cache bounds: the dispatch submission failed");
     AgcDriverWaitIdle_nid_postfix();
+    ++dispatchesIdle;
 }
 
 void Prepare(const GuestBlock& block) {
@@ -473,6 +563,8 @@ bool ImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& context)
 }
 
 int main(int argc, char** argv) {
+    std::unique_ptr<StallWatchdog> watchdog;
+    if (argc == 2 && std::string(argv[1]) == "--vouched-lookups") watchdog = std::make_unique<StallWatchdog>(30, 15);
     SetBudgets();
     try {
         {

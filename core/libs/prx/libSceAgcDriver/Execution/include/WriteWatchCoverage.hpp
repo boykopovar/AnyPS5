@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_WRITEWATCHCOVERAGE_HPP
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -12,12 +13,16 @@ namespace AgcDriver::GuestMemory {
 
 class WriteWatchCoverage {
 public:
-    void Initialize(std::uint64_t address, std::size_t bytes) {
+    void Initialize(std::uint64_t address, std::size_t bytes, bool summarize = true) {
         base = address;
         size = bytes;
         excluded.assign(bytes / BlockBytes + (bytes % BlockBytes != 0), 0);
         excludedGenerations.clear();
+        summary.clear();
+        if (summarize) summary.assign((excluded.size() + BlocksPerWord - 1) / BlocksPerWord, 0);
     }
+
+    bool Summarized() const { return !summary.empty(); }
 
     bool Covers(std::uint64_t address, std::size_t bytes) const {
         if (bytes == 0 || bytes > size || address < base || address - base > size - bytes) return false;
@@ -27,6 +32,7 @@ public:
         const auto lastPage = (address - base + bytes - 1) % BlockBytes / PageBytes;
         if (first == last) return (excluded[first] & pageMask(firstPage, lastPage + 1)) == 0;
         if ((excluded[first] & pageMask(firstPage, PagesPerBlock)) != 0 || (excluded[last] & pageMask(0, lastPage + 1)) != 0) return false;
+        if (!summary.empty()) return noneExcluded(first + 1, last);
         return std::none_of(excluded.begin() + first + 1, excluded.begin() + last, [](auto mask) { return mask != 0; });
     }
 
@@ -42,14 +48,19 @@ public:
         std::size_t first = 0;
         std::size_t last = 0;
         if (!excludedBlocks(address, bytes, first, last)) return false;
+        const auto offset = std::max(address, base) - base;
+        const auto firstPage = offset / PageBytes;
+        const auto endPage = (std::min<std::uint64_t>(address + bytes - base, size) + PageBytes - 1) / PageBytes;
         bool changed = false;
         for (auto block = first; block <= last; ++block) {
-            const auto pages = (std::min<std::uint64_t>(BlockBytes, size - block * BlockBytes) + PageBytes - 1) / PageBytes;
-            const auto mask = pageMask(0, pages);
-            changed = changed || excluded[block] != mask;
-            auto& stamp = excludedGenerations[block];
-            stamp = std::max(stamp, std::max<std::uint64_t>(generation, 1));
-            excluded[block] = mask;
+            const auto from = block == first ? firstPage % PagesPerBlock : 0;
+            const auto to = block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock;
+            const auto mask = pageMask(from, to);
+            changed = changed || (excluded[block] & mask) != mask;
+            auto& stamps = excludedGenerations[block];
+            for (auto page = from; page < to; ++page) stamps[page] = std::max(stamps[page], std::max<std::uint64_t>(generation, 1));
+            excluded[block] |= mask;
+            updateSummary(block);
         }
         return changed;
     }
@@ -72,12 +83,18 @@ public:
         const auto last = (endPage - 1) / PagesPerBlock;
         bool changed = false;
         for (auto block = first; block <= last; ++block) {
-            const auto mask = pageMask(block == first ? firstPage % PagesPerBlock : 0, block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock);
-            if ((excluded[block] & mask) != 0 && excludedGenerations.at(block) < generation) {
+            const auto from = block == first ? firstPage % PagesPerBlock : 0;
+            const auto to = block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock;
+            if ((excluded[block] & pageMask(from, to)) == 0) continue;
+            const auto& stamps = excludedGenerations.at(block);
+            for (auto page = from; page < to; ++page) {
+                const auto bit = static_cast<std::uint16_t>(1u << page);
+                if ((excluded[block] & bit) == 0 || stamps[page] >= generation) continue;
+                excluded[block] &= static_cast<std::uint16_t>(~bit);
                 changed = true;
-                excluded[block] &= static_cast<std::uint16_t>(~mask);
-                if (excluded[block] == 0) excludedGenerations.erase(block);
             }
+            if (excluded[block] == 0) excludedGenerations.erase(block);
+            updateSummary(block);
         }
         return changed;
     }
@@ -85,6 +102,22 @@ public:
 private:
     static std::uint16_t pageMask(std::size_t first, std::size_t end) {
         return static_cast<std::uint16_t>(((1u << end) - 1u) & ~((1u << first) - 1u));
+    }
+    void updateSummary(std::size_t block) {
+        if (summary.empty()) return;
+        const auto bit = std::uint64_t{1} << (block % BlocksPerWord);
+        if (excluded[block] != 0) summary[block / BlocksPerWord] |= bit;
+        else summary[block / BlocksPerWord] &= ~bit;
+    }
+    bool noneExcluded(std::size_t from, std::size_t to) const {
+        if (from >= to) return true;
+        const auto firstWord = from / BlocksPerWord;
+        const auto lastWord = (to - 1) / BlocksPerWord;
+        const auto lowMask = ~std::uint64_t{0} << (from % BlocksPerWord);
+        const auto highMask = ~std::uint64_t{0} >> (BlocksPerWord - 1 - (to - 1) % BlocksPerWord);
+        if (firstWord == lastWord) return (summary[firstWord] & lowMask & highMask) == 0;
+        if ((summary[firstWord] & lowMask) != 0 || (summary[lastWord] & highMask) != 0) return false;
+        return std::none_of(summary.begin() + firstWord + 1, summary.begin() + lastWord, [](auto word) { return word != 0; });
     }
     bool excludedBlocks(std::uint64_t address, std::size_t bytes, std::size_t& first, std::size_t& last) const {
         if (bytes == 0 || size == 0) return false;
@@ -103,10 +136,12 @@ private:
     static constexpr std::size_t BlockBytes = 65536;
     static constexpr std::size_t PageBytes = 4096;
     static constexpr std::size_t PagesPerBlock = BlockBytes / PageBytes;
+    static constexpr std::size_t BlocksPerWord = 64;
     std::uint64_t base = 0;
     std::size_t size = 0;
     std::vector<std::uint16_t> excluded;
-    std::unordered_map<std::uint64_t, std::uint64_t> excludedGenerations;
+    std::vector<std::uint64_t> summary;
+    std::unordered_map<std::uint64_t, std::array<std::uint64_t, PagesPerBlock>> excludedGenerations;
 };
 
 }

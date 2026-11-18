@@ -54,6 +54,7 @@ ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
 }
 
 TileMipLayout ComputeColorTargetMipLayout(ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t surfaceWidth, std::uint32_t surfaceHeight, std::uint32_t mipCount, std::uint32_t mipLevel) {
+    require(!ColorTileModeIsGcn(mode), "AGC graphics: PS4 color target mips are laid out by ComputeGcnMipLayout");
     auto mips = ComputeElementMipLayout(ColorTextureTileMode(mode), bytesPerElement, surfaceWidth, surfaceHeight, mipCount);
     require(mipLevel < mips.size(), "AGC graphics: color target mip is outside its surface");
     auto mip = mips[mipLevel];
@@ -117,12 +118,17 @@ const SwizzleTables& standardTables(std::uint32_t bytesPerElement, std::uint32_t
 ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t pipeBankXor) : width(width), height(height), pitch(width), mode(mode), bytes(0), elementBytes(bytesPerElement), pipeBankXor(pipeBankXor) {
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid color surface extent");
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
-    require(pipeBankXor == 0 || (ColorTileModeIsXor(mode) && pipeBankXor < ColorTileModeBlockBytes(mode) && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of XOR swizzle blocks");
+    require(pipeBankXor == 0 || (ColorTileModeIsGcn(mode) && !ColorTileModeIsLinear(mode)) || (ColorTileModeIsXor(mode) && pipeBankXor < ColorTileModeBlockBytes(mode) && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of XOR swizzle blocks");
     require(mode != ColorTileMode::D64KBX || (pipeBankXor & ~0xcf00u) == 0, "AGC graphics: unsupported display color pipe/bank XOR column bits");
     std::uint32_t paddedHeight = height;
     switch (mode) {
         case ColorTileMode::Linear: {
             const auto pitchAlignment = 256u / bytesPerElement;
+            pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
+            break;
+        }
+        case ColorTileMode::GcnLinear: {
+            const auto pitchAlignment = std::max(8u, 64u / bytesPerElement);
             pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
             break;
         }
@@ -156,16 +162,36 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             yOffsets = tables.y.data();
             break;
         }
+        case ColorTileMode::GcnThin1D:
+        case ColorTileMode::GcnDisplay1D:
+        case ColorTileMode::GcnDisplay2D:
+        case ColorTileMode::GcnThin2D: {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytesPerElement);
+            require((pipeBankXor & ~(geometry.bankMask << geometry.bankShift)) == 0, "AGC graphics: a PS4 color bank XOR applies only to the bank bits of a 2D-tiled mode");
+            blockWidth = geometry.blockWidth;
+            blockHeight = geometry.blockHeight;
+            pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
+            paddedHeight = (height + blockHeight - 1u) / blockHeight * blockHeight;
+            gcn = true;
+            gcnEquation = geometry.equation;
+            break;
+        }
         default: throw std::runtime_error("AGC graphics: unsupported color tile mode");
     }
+    blockBytes = gcn ? static_cast<std::size_t>(blockWidth) * blockHeight * bytesPerElement : ColorTileModeBlockBytes(mode);
     const auto size = static_cast<std::uint64_t>(pitch) * paddedHeight * bytesPerElement;
     require(size <= std::numeric_limits<std::size_t>::max(), "AGC graphics: color surface size overflow");
     bytes = static_cast<std::size_t>(size);
 }
 
 std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
-    if (mode == ColorTileMode::Linear) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
+    if (ColorTileModeIsLinear(mode)) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
     const auto block = static_cast<std::size_t>(y / blockHeight) * (pitch / blockWidth) + x / blockWidth;
+    if (gcn) {
+        std::uint32_t inBlock = 0;
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= parity((x & gcnEquation[bit] & 0xfffu) ^ ((y << 12u) & gcnEquation[bit] & 0xfff000u)) << bit;
+        return block * blockBytes + (inBlock ^ pipeBankXor);
+    }
     auto inBlock = xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight];
     if (equation != nullptr) {
         const auto highX = (x & ~(blockWidth - 1u)) & 0xfffu;

@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(image_sample_gather_tests ${LIBS_INCLUDE_DIR}/tests/ImageSampleGather.cpp)
+    target_link_libraries(image_sample_gather_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(image_sample_gather_tests)
+    add_test(NAME image_sample_gather COMMAND image_sample_gather_tests)
+    if(WIN32)
+        set_tests_properties(image_sample_gather PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

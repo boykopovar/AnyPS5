@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 #define CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -32,11 +33,15 @@ constexpr std::int32_t EventWarningId = 0x20;
 
 constexpr std::uint32_t StreamTypeVideo = 1;
 constexpr std::uint32_t StreamTypeAudio = 0;
+constexpr std::uint32_t Ps4StreamTypeVideo = 0;
+constexpr std::uint32_t Ps4StreamTypeAudio = 1;
+constexpr std::uint32_t Ps5StreamTypeVideo = 1;
 constexpr std::uint32_t Ps5StreamTypeAudio = 2;
 constexpr std::uint32_t StreamTypeTimedText = 2;
 
 constexpr std::uint32_t SourceTypeUnknown = 0;
 constexpr std::uint32_t SourceTypeFileMp4 = 1;
+constexpr std::uint32_t SourceTypeWebm = 2;
 constexpr std::uint32_t SourceTypeHls = 8;
 
 constexpr std::uint32_t SyncModeDefault = 0;
@@ -47,7 +52,8 @@ constexpr std::int32_t NormalSpeed = 100;
 class ISourceEvents {
 public:
     virtual ~ISourceEvents() = default;
-    virtual void OnWarning(std::int32_t code) = 0;
+    virtual std::uint64_t OnWarning(std::int32_t code) = 0;
+    virtual bool WarningDelivered(std::uint64_t ticket) = 0;
     virtual void OnError() = 0;
 };
 
@@ -98,16 +104,21 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 
 std::uint32_t DetectSourceType(std::string_view path);
 
+extern "C" {
+
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
+std::int32_t GetAvPlayerTrickSpeedForTest_nid_no_patch(AvPlayerInternal* h);
 void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
 bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
 bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
 int QueuedAvPlayerAudioForTest_nid_no_patch(AvPlayerInternal* h);
 bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, std::uint64_t* timestamp);
 
+}
+
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
-    Player(const AvPlayerInitData& init, std::uint32_t bufferCount, bool ps5Layout = false);
+    Player(const AvPlayerInitData& init, std::uint32_t bufferCount);
     ~Player() override;
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
@@ -134,6 +145,7 @@ public:
     bool GetAudioData(AvPlayerFrameInfo& info);
     bool IsActive();
     std::uint64_t CurrentTime();
+    std::int32_t TrickSpeedForTest();
     void SetClockTimeForTest(double milliseconds);
     void SetHoldAudioEofForTest(bool hold);
     bool AudioEofHeldForTest();
@@ -149,9 +161,11 @@ private:
         std::int32_t warning;
         bool autoStart;
         bool error;
+        std::uint64_t ticket = 0;
     };
 
-    void OnWarning(std::int32_t code) override;
+    std::uint64_t OnWarning(std::int32_t code) override;
+    bool WarningDelivered(std::uint64_t ticket) override;
     void OnError() override;
     void queue(const Event& event);
     void controllerLoop(const bool& closed);
@@ -161,12 +175,13 @@ private:
     bool readyLocked() const;
     int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
+    std::uint32_t guestStreamType(std::uint32_t type) const;
 
     AvPlayerFileReplacement file{};
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
-    bool ps5Layout = false;
+    bool ps4Process = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 
@@ -176,12 +191,15 @@ private:
     State previous = State::Initial;
     bool looping = false;
     std::int32_t speed = NormalSpeed;
+    std::uint32_t activeSourceType = SourceTypeUnknown;
     std::uint32_t syncMode = SyncModeDefault;
     std::uint32_t demuxVideoBytes = 0;
 
     std::mutex eventMutex;
     TimedWait::Condition eventCondition;
     std::deque<Event> events;
+    std::uint64_t queuedWarnings = 0;
+    std::atomic<std::uint64_t> deliveredWarnings = 0;
     bool quit = false;
     std::shared_ptr<bool> controllerClosed = std::make_shared<bool>(false);
     std::thread controller;

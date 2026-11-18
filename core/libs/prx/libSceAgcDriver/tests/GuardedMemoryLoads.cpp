@@ -4,7 +4,9 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "PipelineSpecialization.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +20,9 @@
 
 namespace {
 
+constexpr std::uint32_t PoolDwords = 514u;
+constexpr std::uint32_t PoolHeader = 2u;
+
 using namespace ShaderRecompiler;
 
 void require(bool condition, const std::string& message) {
@@ -30,12 +35,15 @@ struct LoadCase {
     IrType type;
     std::uint32_t bits = 32;
     std::uint32_t components = 1;
+    IrShaderStage stage = IrShaderStage::Compute;
+    bool coherent = true;
+    bool written = false;
 };
 
 std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true) {
     IrProgram program;
     program.SetWaveSize(32);
-    program.Resources().stage = IrShaderStage::Compute;
+    program.Resources().stage = test.stage;
     program.Resources().srtPlanComplete = true;
     program.Resources().resourceTrackingComplete = true;
     program.Metadata().shaderInfoComplete = true;
@@ -70,8 +78,9 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
         auto& handle = emit(IrOpcode::GetScratchResource, IrType::AddressResource, {});
         emit(test.opcode, test.type, {&handle, &address, &zero, &enabled});
     } else if (test.kind == ResourceKind::Buffer) {
-        program.Resources().memoryInfo.front().coherent = true;
+        program.Resources().memoryInfo.front().coherent = test.coherent;
         program.Info().buffers.emplace_back().read = true;
+        program.Info().buffers.front().written = test.written;
         program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Buffers, {0}});
         program.Metadata().bindings.pushDataStartDword = 0;
         program.Metadata().bindings.memoryOffsetCount = 1;
@@ -92,7 +101,9 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
     compute.hostSubgroupSize = 32;
     compute.waveSize = 32;
     ShaderStageInputInfo inputs;
-    inputs.compute = &compute;
+    ShaderPixelInputInfo pixel;
+    if (test.stage == IrShaderStage::Pixel) inputs.pixel = &pixel;
+    else inputs.compute = &compute;
     CompiledBindingLayout bindings;
     bindings.layout = program.Metadata().bindings;
     SpirvTargetOptions target{};
@@ -138,6 +149,15 @@ public:
         std::vector<std::uint32_t> reads;
         std::uint32_t previous = 0;
         std::uint32_t current = 0;
+        const bool pooled = std::ranges::any_of(names, [](const auto& entry) { return entry.second == "scratch_pool"; });
+        if (pooled) {
+            std::size_t scan = cursor;
+            for (; scan < words.size() && (words[scan] & 0xffff) != spv::OpControlBarrier; scan += words[scan] >> 16) {
+                if ((words[scan] & 0xffff) == spv::OpLabel) current = words[scan + 1];
+            }
+            require(scan < words.size(), "scratch pool slot acquisition has no workgroup barrier");
+            cursor = scan + (words[scan] >> 16);
+        }
         for (std::size_t steps = 0; steps < 4096; ++steps) {
             const auto instruction = std::span(words).subspan(cursor, words[cursor] >> 16);
             const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffff);
@@ -149,12 +169,13 @@ public:
                 }
                 require(found, "SPIR-V phi has no incoming edge for the executed path");
             }
-            if (opcode == spv::OpLoad && isGuestPointer(instruction[3])) {
+            if ((opcode == spv::OpLoad || opcode == spv::OpAtomicLoad) && isGuestPointer(instruction[3])) {
                 const auto pointer = definition(instruction[3]);
                 require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
                 reads.push_back(value(pointer.back()));
                 if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
-                if (rootName(instruction[3]).starts_with("buffers")) require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
+                if (rootName(instruction[3]) == "scratch_pool") require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
+                if (rootName(instruction[3]).starts_with("buffers")) require(opcode == spv::OpAtomicLoad ? instruction.size() == 6 : instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
                 const auto destination = opcode == spv::OpBranch ? instruction[1] : instruction[value(instruction[1]) ? 2 : 3];
@@ -193,7 +214,7 @@ private:
 
     bool isGuestPointer(std::uint32_t id) const {
         const auto name = rootName(id);
-        return name == "lds_dwords" || name == "gds" || name == "scratch_dwords" || name.starts_with("buffers");
+        return name == "lds_dwords" || name == "gds" || name == "scratch_dwords" || name == "scratch_pool" || name.starts_with("buffers");
     }
 
     std::uint32_t value(std::uint32_t id) const {
@@ -208,6 +229,7 @@ private:
             const auto spec = specializations.at(id);
             if (spec == PipelineSpecialization::BufferBase) return 0;
             if (spec == PipelineSpecialization::BufferBase + 1) return 0x30001000;
+            if (spec == PipelineSpecialization::BufferBase + 2) return 0;
             if (spec == PipelineSpecialization::BufferBase + 3) return misalignment;
             if (spec == PipelineSpecialization::PushDataOffset) return 0;
             throw std::runtime_error("unexpected specialization in access fixture");
@@ -240,10 +262,12 @@ private:
         case spv::OpLogicalNot: return !argument(3);
         case spv::OpArrayLength:
             require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
-            return 16;
+            return rootName(instruction[3]) == "scratch_pool" ? PoolDwords : 16;
+        case spv::OpUDiv: return argument(3) / argument(4);
+        case spv::OpAtomicIDecrement: return 0;
         case spv::OpLoad:
             require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
-            require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
+            require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]) == "scratch_pool_slot" || rootName(instruction[3]) == "gl_LocalInvocationIndex" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
             return 0;
         default: throw std::runtime_error("unsupported opcode in access condition: " + std::to_string(opcode));
         }
@@ -386,12 +410,77 @@ int main() {
         const auto plain = emitLoad(test, true, 8, 64, false, true);
         require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
     });
+    run("read-only pixel robust buffer result", [] {
+        const auto selections = [](const std::vector<std::uint32_t>& module) {
+            unsigned count = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) count += (module[offset] & 0xffffu) == spv::OpSelect;
+            return count;
+        };
+        LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32, 32, 1, IrShaderStage::Pixel, false};
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                const auto readOnly = selections(emitLoad(test, true, 8, 64, robust, exact));
+                test.written = true;
+                const auto writing = selections(emitLoad(test, true, 8, 64, robust, exact));
+                require(writing == readOnly + (robust && !exact ? 1u : 0u), "only read-only robust pixel loads may omit the result selection");
+                test.written = false;
+                test.coherent = true;
+                require(selections(emitLoad(test, true, 8, 64, robust, exact)) == readOnly, "coherent loads must retain the upstream volatile result folding");
+                test.coherent = false;
+            }
+        }
+    });
+    run("storage writers keep guarded results", [] {
+        IrProgram program;
+        program.Resources().stage = IrShaderStage::Pixel;
+        require(AnalyzeProgramRequirements(program).readOnlyStorage, "read-only pixel program lost its storage proof");
+        program.Resources().stage = IrShaderStage::Compute;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "compute entry bookkeeping must keep result guards");
+        program.Resources().stage = IrShaderStage::Pixel;
+        program.Info().usesFaultBuffer = true;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "fault-buffer writes must keep result guards");
+        program.Info().usesFaultBuffer = false;
+        program.Info().runtimeImageModes.emplace_back().emplace_back().targetMerge = true;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "runtime target merge writes must keep result guards");
+        program.Info().runtimeImageModes.clear();
+        auto& block = program.CreateBlock();
+        program.BlockOrder().push_back(&block);
+        program.Resources().memoryInfo.emplace_back().kind = ResourceKind::Lds;
+        auto& address = program.CreateValue(IrOpcode::Void, IrType::U32);
+        address.SetImmediateU32(0u);
+        auto& active = program.CreateValue(IrOpcode::Void, IrType::Bool);
+        active.SetImmediateBool(true);
+        auto& load = program.CreateValue(IrOpcode::LoadSharedU32, IrType::U32);
+        load.AddArgument(&address);
+        load.AddArgument(&active);
+        block.AppendInstruction(&load);
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "read-only LDS may allocate storage and must keep result guards");
+    });
+    run("volatile robust buffer omits repeated zero selection", [] {
+        const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
+        const auto selections = [](const std::vector<std::uint32_t>& module) {
+            unsigned count = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                count += (module[offset] & 0xffffu) == spv::OpSelect;
+            }
+            return count;
+        };
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                auto plainTest = test;
+                plainTest.coherent = false;
+                const auto plain = emitLoad(plainTest, true, 8, 64, robust, exact);
+                const auto coherent = emitLoad(test, true, 8, 64, robust, exact);
+                require(selections(plain) == selections(coherent) + (robust && !exact ? 1u : 0u), "only volatile guarded robust loads may omit the repeated zero selection");
+            }
+        }
+    });
     run("private scratch selection", [] {
         const LoadCase test{ResourceKind::Scratch, IrOpcode::LoadAddressU32, IrType::U32};
         for (const bool robust : {false, true}) {
-            expectReads(test, robust, false, 8, {0});
-            expectReads(test, robust, true, 64, {0});
-            expectReads(test, robust, true, 8, {2});
+            expectReads(test, robust, false, 8, {PoolHeader});
+            expectReads(test, robust, true, 64, {PoolHeader});
+            expectReads(test, robust, true, 8, {PoolHeader + 2u});
         }
     });
     if (failures != 0) {

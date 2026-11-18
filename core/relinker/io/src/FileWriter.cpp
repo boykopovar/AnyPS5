@@ -57,9 +57,14 @@ bool writeAll(const int descriptor, const char* data, std::size_t size) {
     return true;
 }
 
-bool replaceFile(const std::filesystem::path& target, const std::string& path, const char* data, const std::size_t size) {
+bool replaceFile(std::filesystem::path target, const std::string& path, const char* data, const std::size_t size) {
     std::error_code error;
-    const auto previous = std::filesystem::symlink_status(target, error);
+    auto previous = std::filesystem::symlink_status(target, error);
+    if (std::filesystem::is_symlink(previous)) {
+        target = std::filesystem::canonical(target, error);
+        if (error) return false;
+        previous = std::filesystem::symlink_status(target, error);
+    }
     const bool regular = std::filesystem::is_regular_file(previous);
     if (!regular && previous.type() != std::filesystem::file_type::not_found)
         return false;
@@ -67,11 +72,11 @@ bool replaceFile(const std::filesystem::path& target, const std::string& path, c
     std::filesystem::path temporary;
     const int descriptor = createTemporary(target, mode, temporary);
     if (descriptor < 0)
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     if (regular && fchmod(descriptor, mode) != 0) {
         close(descriptor);
         std::filesystem::remove(temporary, error);
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     }
     const bool written = writeAll(descriptor, data, size);
     if (close(descriptor) != 0 || !written) {
@@ -82,7 +87,7 @@ bool replaceFile(const std::filesystem::path& target, const std::string& path, c
     if (!error)
         return true;
     std::filesystem::remove(temporary, error);
-    return false;
+    throw Domain::RelinkerException("Cannot replace output file: " + path);
 }
 #endif
 

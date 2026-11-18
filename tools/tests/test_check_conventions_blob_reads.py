@@ -24,7 +24,7 @@ EXPECTED = [
 def repository(root, fillers, exports=0):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
-                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
                        cwd=root, capture_output=True, check=True)
 
     def write(path, data):
@@ -33,6 +33,7 @@ def repository(root, fillers, exports=0):
         target.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
 
     git("init", "-q")
+    git("config", "core.safecrlf", "false")
     write("docs/dev/TechnicalDebt.md", "# Project technical debt\n")
     for index in range(fillers):
         write(f"docs/dev/debt/libSceFiller{index}.md", f"# libSceFiller{index} technical debt\n")

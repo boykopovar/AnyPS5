@@ -68,6 +68,7 @@ struct KernelEqueueEvent {
     uint64_t deadlineNs = 0;
     uint64_t intervalNs = 0;
     std::int64_t lowWater = 0;
+    bool lowWaterAlwaysMet = false;
     KernelEvent event;
     KernelFilter filter;
     std::deque<KernelEvent> pendingEvents;
@@ -75,14 +76,18 @@ struct KernelEqueueEvent {
 
 class KernelEqueuePrivate {
 public:
+    static constexpr std::size_t kMaxPendingEvents = 64;
+
     explicit KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait = false);
     ~KernelEqueuePrivate();
 
     KernelEqueuePrivate(const KernelEqueuePrivate&) = delete;
     KernelEqueuePrivate& operator=(const KernelEqueuePrivate&) = delete;
 
+    KernelEqueue Handle() const { return m_handle; }
     const std::string& GetName() const { return m_name; }
     void SetName(std::string name) { m_name = std::move(name); }
+    std::uint64_t DroppedPendingEvents() const { return m_droppedPendingEvents; }
 
     int AddEvent(const KernelEqueueEvent& event);
     int TriggerEvent(uintptr_t ident, int16_t filter, void* triggerData);
@@ -92,6 +97,11 @@ public:
     int GetTriggeredEvents(KernelEvent* ev, int num);
     bool HasTriggeredEvents();
     std::size_t CountTriggeredEvents();
+    struct TriggeredSnapshot {
+        std::size_t count = 0;
+        std::uint64_t activations = 0;
+    };
+    TriggeredSnapshot SnapshotTriggered();
     std::vector<std::shared_ptr<KernelEqueuePrivate>> WatchedQueues();
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
@@ -107,6 +117,7 @@ private:
     int CollectTriggered(KernelEvent* ev, int num);
     int CollectOncePerWait(KernelEvent* ev, int num);
     bool PollEvents();
+    void NoteDroppedPendingEvents(std::size_t dropped, const KernelEqueueEvent& ev);
     void MeasureFiles(std::unique_lock<std::mutex>& lock);
     void WakePollers();
     void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
@@ -124,6 +135,8 @@ private:
     KernelEqueue m_handle;
     bool m_reportOncePerWait;
     bool m_closed = false;
+    std::uint64_t m_activations = 0;
+    std::uint64_t m_droppedPendingEvents = 0;
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
@@ -131,7 +144,12 @@ void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
+void KqueueSignalSent(int guest);
 extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
+int ReserveKqueueDescriptor();
+void RegisterKqueueDescriptor(int descriptor, KernelEqueueRef queue);
+KernelEqueueRef FindKqueueDescriptor(int descriptor);
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
 void RequireVnodeNotes(uint32_t fflags);

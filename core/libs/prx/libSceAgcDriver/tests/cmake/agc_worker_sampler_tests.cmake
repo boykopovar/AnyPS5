@@ -1,0 +1,13 @@
+if(BUILD_TESTING)
+    if(WIN32)
+        add_test_executable(agc_worker_sampler_tests tests/WorkerSampler.cpp Execution/src/WorkerSampler.cpp)
+        target_include_directories(agc_worker_sampler_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(agc_worker_sampler_tests PRIVATE libc)
+        configure_windows_unwind(agc_worker_sampler_tests)
+        foreach(mode default selected unselected process)
+            add_test(NAME agc_worker_sampler_${mode} COMMAND agc_worker_sampler_tests ${mode})
+            set_tests_properties(agc_worker_sampler_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endforeach()
+    endif()
+endif()

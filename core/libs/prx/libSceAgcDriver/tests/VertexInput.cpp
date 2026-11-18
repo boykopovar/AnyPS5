@@ -58,6 +58,131 @@ template<class TAction> void fails(TAction&& fn) {
     Require(failed, "invalid vertex input was accepted");
 }
 
+std::vector<VertexAttribute> randomInput(std::mt19937& random) {
+    std::vector<VertexAttribute> input;
+    const auto size = random() % 9;
+    for (unsigned n = 0; n < size; ++n) {
+        auto a = attribute(n);
+        a.components = 1 + random() % 4;
+        a.fetchIndex = random() % 2;
+        a.resource.fields[0] += (random() % 4096) * 16;
+        a.resource.fields[1] = (random() % 33) * 16u << 16u;
+        a.resource.fields[2] = random();
+        const std::array formats{13u, 22u, 36u, 50u, 56u, 64u, 71u, 74u, 77u};
+        a.resource.fields[3] = formats[random() % formats.size()] << 12u;
+        input.push_back(a);
+    }
+    return input;
+}
+
+void rememberedFormats(const Context& ctx) {
+    VertexBufferFormats formats;
+    auto remembered = ctx;
+    remembered.vertexFormats = &formats;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        std::mt19937 random(4099);
+        for (unsigned i = 0; i < 2000; ++i) {
+            const auto input = randomInput(random);
+            const auto expected = BuildVertexInputLayout(ctx, input);
+            const auto count = queries.load();
+            same(BuildVertexInputLayout(remembered, input), expected);
+            Require(pass == 0 || queries == count, "a remembered vertex format was queried again");
+        }
+    }
+    auto unsupported = attribute();
+    unsupported.components = 1;
+    unsupported.resource.fields[3] = 5u << 12u;
+    fails([&] { BuildVertexInputLayout(ctx, std::span(&unsupported, 1)); });
+    fails([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
+    const auto count = queries.load();
+    fails([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
+    Require(queries == count, "a remembered unsupported vertex format was queried again");
+    auto duplicate = std::array{attribute(3), attribute(3)};
+    fails([&] { BuildVertexInputLayout(remembered, duplicate); });
+}
+
+std::array<bool, VK_FORMAT_ASTC_12x12_SRGB_BLOCK + 1> lacking{};
+
+std::string outcome(const Context& ctx, const VertexAttribute& input) {
+    try {
+        const auto layout = BuildVertexInputLayout(ctx, std::span(&input, 1));
+        const auto host = layout.attributes[0].format;
+        return std::string(host == DecodeVertexFormat(input).format ? "narrow " : "widened ") + std::to_string(host) + " " + std::to_string(layout.bindings[0].stride);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+}
+
+std::vector<VertexAttribute> everyFormat() {
+    std::vector<VertexAttribute> inputs;
+    for (std::uint32_t code = 0; code < 128u; ++code) {
+        for (std::uint32_t components = 1; components <= 4u; ++components) {
+            for (std::uint32_t formatComponents = 0; formatComponents <= 4u; ++formatComponents) {
+                auto input = attribute();
+                input.components = components;
+                input.formatComponents = formatComponents;
+                input.resource.fields[3] = code << 12u;
+                inputs.push_back(input);
+            }
+        }
+    }
+    for (std::uint32_t components = 1; components <= 4u; ++components) {
+        auto input = attribute();
+        input.components = components;
+        input.resource.fields = {};
+        inputs.push_back(input);
+    }
+    return inputs;
+}
+
+void rememberedFormatSets() {
+    auto ctx = context();
+    ctx.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+        ++queries;
+        *properties = {};
+        const auto index = static_cast<std::size_t>(format);
+        if (index >= lacking.size() || !lacking[index]) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+    };
+    const auto inputs = everyFormat();
+    std::mt19937 random(8191);
+    std::vector<std::string> expected;
+    unsigned widened = 0;
+    unsigned refused = 0;
+    for (unsigned device = 0; device < 9; ++device) {
+        for (auto& format : lacking) format = random() % 8 < (device < 8 ? device : 4u);
+        expected.clear();
+        for (const auto& input : inputs) {
+            expected.push_back(outcome(ctx, input));
+            widened += expected.back().starts_with("widened");
+            refused += expected.back().find("device does not support vertex format") != std::string::npos;
+        }
+        VertexBufferFormats formats;
+        auto remembered = ctx;
+        remembered.vertexFormats = &formats;
+        if (device < 8) {
+            for (unsigned pass = 0; pass < 2; ++pass) {
+                const auto count = queries.load();
+                for (std::size_t i = 0; i < inputs.size(); ++i) Require(outcome(remembered, inputs[i]) == expected[i], "a remembered vertex format answered unlike the device");
+                Require(pass == 0 || queries == count, "a remembered vertex format was queried again");
+            }
+            continue;
+        }
+        std::atomic<unsigned> mismatches{0};
+        std::barrier ready(8);
+        std::vector<std::thread> threads;
+        for (unsigned t = 0; t < 8; ++t) threads.emplace_back([&, t] {
+            ready.arrive_and_wait();
+            for (std::size_t n = 0; n < inputs.size(); ++n) {
+                const auto i = (n + t * 331u) % inputs.size();
+                if (outcome(remembered, inputs[i]) != expected[i]) ++mismatches;
+            }
+        });
+        for (auto& thread : threads) thread.join();
+        Require(mismatches == 0, "concurrent layout builds disagreed with the device's vertex formats");
+    }
+    Require(widened != 0 && refused != 0, "the device format sets left vertex format widening or refusal untested");
+}
+
 void descriptorDiagnostics(const Context& ctx) {
     auto input = attribute(7);
     input.resource.fields = {0x89abcde0u, 0x0010abcdu, 0x12345678u, 0x0104dfacu};
@@ -88,6 +213,8 @@ void descriptorDiagnostics(const Context& ctx) {
 void run() {
     auto ctx = context();
     descriptorDiagnostics(ctx);
+    rememberedFormats(ctx);
+    rememberedFormatSets();
     VertexInputCache cache(ctx, 2);
     std::array attributes{attribute(0), attribute(1)};
     auto first = get(cache, ctx, 1, attributes);
@@ -137,19 +264,7 @@ void run() {
     VertexInputCache generated(ctx, 16);
     std::mt19937 random(719);
     for (unsigned i = 0; i < 10000; ++i) {
-        std::vector<VertexAttribute> input;
-        const auto size = random() % 9;
-        for (unsigned n = 0; n < size; ++n) {
-            auto a = attribute(n);
-            a.components = 1 + random() % 4;
-            a.fetchIndex = random() % 2;
-            a.resource.fields[0] += (random() % 4096) * 16;
-            a.resource.fields[1] = (random() % 33) * 16u << 16u;
-            a.resource.fields[2] = random();
-            const std::array formats{13u, 22u, 36u, 50u, 56u, 64u, 71u, 74u, 77u};
-            a.resource.fields[3] = formats[random() % formats.size()] << 12u;
-            input.push_back(a);
-        }
+        auto input = randomInput(random);
         const auto expected = BuildVertexInputLayout(ctx, input);
         same(*get(generated, ctx, 1 + i, input), expected);
         for (auto& a : input) a.resource.fields[0] += 256;

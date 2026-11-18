@@ -4,7 +4,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -15,6 +18,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +37,9 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 128;
+constexpr std::uint32_t Format16Unorm = 7;
 constexpr std::uint32_t Format8888Unorm = 56;
+constexpr std::uint32_t Format565Unorm = 133;
 constexpr std::uint32_t TileRenderTarget64KB = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = 65536;
@@ -67,9 +73,11 @@ public:
 #endif
         Require(block != nullptr, "DCC key pre-sync: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
     }
 
     ~GuestBlock() {
+        if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
         VirtualFree(block, 0, MEM_RELEASE);
@@ -87,17 +95,17 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys) {
+std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys, std::uint32_t format, bool dccAlphaOnMsb = false) {
     const auto address = AddressOf(texels);
     const auto meta = AddressOf(keys) >> 8u;
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((Side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
         0xfacu | (TileRenderTarget64KB << 20u) | (Type2D << 28u),
         0u,
         0u,
-        (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),
+        (1u << 20u) | (1u << 21u) | (dccAlphaOnMsb ? (1u << 22u) : 0u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),
         static_cast<std::uint32_t>(meta >> 8u),
     };
 }
@@ -129,14 +137,14 @@ struct Scenario {
     std::vector<std::uint32_t> sampleData;
 };
 
-Scenario Prepare(std::uint8_t* block, std::uint8_t* outputBlock) {
+Scenario Prepare(std::uint8_t* block, std::uint8_t* outputBlock, std::uint32_t format = Format8888Unorm, bool dccAlphaOnMsb = false) {
     Scenario scenario{block, block + KeysOffset, block + SourceKeysOffset, reinterpret_cast<std::uint32_t*>(outputBlock), std::vector<std::uint32_t>(16, 0u), std::vector<std::uint32_t>(24, 0u)};
     const auto source = BufferDescriptor(scenario.source, KeyBytes);
     const auto destination = BufferDescriptor(scenario.keys, KeyBytes);
     std::copy(source.begin(), source.end(), scenario.copyData.begin());
     std::copy(destination.begin(), destination.end(), scenario.copyData.begin() + 4);
     const auto results = BufferDescriptor(scenario.output, Threads * 16u);
-    const auto texture = TextureDescriptor(scenario.texels, scenario.keys);
+    const auto texture = TextureDescriptor(scenario.texels, scenario.keys, format, dccAlphaOnMsb);
     std::copy(results.begin(), results.end(), scenario.sampleData.begin());
     std::copy(texture.begin(), texture.end(), scenario.sampleData.begin() + 4);
     std::copy(PointSampler.begin(), PointSampler.end(), scenario.sampleData.begin() + 12);
@@ -234,6 +242,54 @@ void RunKnownKeys(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     RequireSampledClear(scenario, "a dispatch behind a pending fill of the keys");
 }
 
+void RunMixedWordKeys(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
+    Reset(scenario);
+    const std::array<std::uint32_t, 4> pattern{0x00ff00ffu, 0x00ff00ffu, 0x00ff00ffu, 0x00ff00ffu};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(device.FillBuffer(AddressOf(scenario.keys), KeyBytes, pattern), "the word fill of the keys was not recorded");
+        Require(AgcDriver::Graphics::DccKeyWritersPending(AddressOf(scenario.keys), KeyBytes), "a recorded word fill of the keys is not seen as a pending key writer");
+        Require(!AgcDriver::Graphics::DccKeyWriterNeedsSync(AddressOf(scenario.keys), KeyBytes), "the keys of a recorded fill of a word with different bytes need a synchronization");
+    }
+    const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
+    const auto waits = AgcDriver::Graphics::KeyWaitCounts();
+    const auto before = AgcDriver::VulkanDevice::PresyncCounts();
+    auto prepared = device.PrepareDispatch(sample, {}, Threads, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()));
+    const auto after = AgcDriver::VulkanDevice::PresyncCounts();
+    Require(after.keyChecks > before.keyChecks, "stage A did not list the DCC keys of the sampled texture for the pre-sync");
+    Require(after.presyncs == before.presyncs, "stage A waited for a word fill whose keys the locked lookup derives from the pending stores");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.Dispatch(sample, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()), std::move(prepared));
+        device.WaitIdle();
+    }
+    Require(AgcDriver::Graphics::KeyWaitCounts().synced == waits.synced, "the dispatch synchronized with the GPU although the pending word fill gives the keys");
+    for (std::uint32_t index = 0; index < Threads * 4u; ++index) {
+        float value = 0.0f;
+        std::memcpy(&value, &scenario.output[index], sizeof(value));
+        char message[256];
+        std::snprintf(message, sizeof(message), "a dispatch behind a pending fill of mixed keys: component %u of thread %u is %g, expected the stored texel 0x55 (%g)", index % 4u, index / 4u, value, 85.0 / 255.0);
+        Require(std::fabs(value - 85.0f / 255.0f) < 1.0f / 512.0f, message);
+    }
+}
+
+void RunWordFillKeyBytes(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
+    Reset(scenario);
+    constexpr std::uint32_t word = 0x33221100u;
+    const std::array<std::uint32_t, 4> pattern{word, word, word, word};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(device.FillBuffer(AddressOf(scenario.keys), KeyBytes, pattern), "the word fill of the keys was not recorded");
+    for (std::uint64_t offset = 0; offset < 8u; ++offset) {
+        const auto key = AgcDriver::Graphics::CurrentUniformMetadataByte(AddressOf(scenario.keys) + offset, 1);
+        const auto expected = static_cast<std::uint8_t>(word >> (8u * (offset % 4u)));
+        char message[160];
+        std::snprintf(message, sizeof(message), "key byte %llu behind a pending fill of the word 0x%08x is %d, expected 0x%02x", static_cast<unsigned long long>(offset), word, key.has_value() ? static_cast<int>(*key) : -1, expected);
+        Require(key == expected, message);
+    }
+    Require(!AgcDriver::Graphics::CurrentUniformMetadataByte(AddressOf(scenario.keys) + 1, 2).has_value(), "two key bytes of different values behind a pending word fill read as one key");
+    device.WaitIdle();
+}
+
 void RunOneKeyReadPerLookup(AgcDriver::VulkanDevice& device, const Scenario& scenario, const char* what) {
     Reset(scenario);
     const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
@@ -252,6 +308,7 @@ void RunOneKeyReadPerLookup(AgcDriver::VulkanDevice& device, const Scenario& sce
 
 void RunNoWriter(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
+    const auto proofs = AgcDriver::Graphics::SampledLookupKeyProofs();
     const auto before = AgcDriver::VulkanDevice::PresyncCounts();
     Require(!AgcDriver::Graphics::DccKeyWritersPending(AddressOf(scenario.keys), KeyBytes), "the idle device still reports a pending key writer");
     auto prepared = device.PrepareDispatch(sample, {}, Threads, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()));
@@ -261,6 +318,50 @@ void RunNoWriter(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     device.Dispatch(sample, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()), std::move(prepared));
     device.WaitIdle();
+    if (!AgcDriver::GuestMemory::Watched(AddressOf(scenario.keys), KeyBytes)) {
+        std::puts("skipped, the sampled keys are outside the write watch: a proof cannot survive the lookup");
+        return;
+    }
+    Require(AgcDriver::Graphics::SampledLookupKeyProofs() > proofs, "a repeated lookup with nothing written rescanned its sampled DCC keys");
+}
+
+void RunView(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
+    const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
+    auto prepared = device.PrepareDispatch(sample, {}, Threads, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()));
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    device.Dispatch(sample, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()), std::move(prepared));
+    device.WaitIdle();
+}
+
+std::uint64_t GuestBytes(const Scenario& scenario) {
+    const std::span<const std::uint32_t> texture(scenario.sampleData.data() + 4, 8);
+    return AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(texture)).guestBytes;
+}
+
+void RunTwoFormatViews(AgcDriver::VulkanDevice& device, const Scenario& clear, const Scenario& stored) {
+    if (!AgcDriver::GuestMemory::Watched(AddressOf(clear.keys), KeyBytes)) {
+        std::puts("skipped, the two-format keys are outside the write watch: a format-keyed proof cannot be observed");
+        return;
+    }
+    Require(AddressOf(clear.texels) == AddressOf(stored.texels) && AddressOf(clear.keys) == AddressOf(stored.keys), "the two sampled views do not share one DCC range");
+    Require(GuestBytes(clear) == GuestBytes(stored), "the two sampled views do not cover the same surface bytes");
+    std::array<std::byte, 2> probe{};
+    Require(AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format16Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R16_UNORM cannot encode the clear used by the two-format test");
+    Require(!AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format565Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R5G6B5 unexpectedly encodes the clear used by the two-format test");
+
+    Reset(clear);
+    std::memset(clear.keys, 0x40, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::KeyProofCounts();
+    RunView(device, clear);
+    const auto primed = AgcDriver::Graphics::KeyProofCounts();
+    Require(primed.scanned > before.scanned && primed.unstable == before.unstable, "the first format did not leave a stable key proof");
+    std::fill(stored.output, stored.output + Threads * 4u, 0u);
+    RunView(device, stored);
+    const auto scanned = AgcDriver::Graphics::KeyProofCounts();
+    Require(scanned.proved == primed.proved && scanned.scanned > primed.scanned, "a second view of one DCC range reused the first format's key proof");
+    const bool any = std::any_of(stored.output, stored.output + Threads * 4u, [](std::uint32_t value) { return value != 0u; });
+    Require(any, "a second view of one DCC range with another format did not read its stored texels");
 }
 
 }
@@ -295,6 +396,14 @@ int main() {
         RunOneKeyReadPerLookup(*device, reads, "a dispatch's first lookup");
         RunOneKeyReadPerLookup(*device, reads, "a dispatch's repeated lookup");
         RunKnownKeys(*device, fills);
+        GuestBlock twoFormats;
+        GuestBlock clearOutput;
+        GuestBlock storedOutput;
+        const auto clearView = Prepare(twoFormats.Data(), clearOutput.Data(), Format16Unorm);
+        const auto storedView = Prepare(twoFormats.Data(), storedOutput.Data(), Format565Unorm);
+        RunTwoFormatViews(*device, clearView, storedView);
+        RunMixedWordKeys(*device, fills);
+        RunWordFillKeyBytes(*device, fills);
         std::puts("DCC key pre-sync tests passed");
         return 0;
     } catch (const std::exception& error) {

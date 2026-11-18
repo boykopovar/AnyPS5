@@ -11,17 +11,15 @@
 
 using LogSinkFn = int (*)(std::FILE* stream, const char* text, std::size_t length);
 
+extern "C" void* LibcLogSinkAddress_nid_no_patch();
+extern "C" long long LibcLogTimestampMicros_nid_no_patch();
+
 inline std::atomic<LogSinkFn>& LogSink() {
-    static std::atomic<LogSinkFn> sink{nullptr};
-    return sink;
+    return *static_cast<std::atomic<LogSinkFn>*>(LibcLogSinkAddress_nid_no_patch());
 }
 
 inline long long LogTimestampMicros() {
-    static const bool timestamps = std::getenv("APS5_LOG_TIMESTAMPS") != nullptr;
-    if (!timestamps) return -1;
-    using Clock = std::chrono::steady_clock;
-    static const auto started = Clock::now();
-    return static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count());
+    return LibcLogTimestampMicros_nid_no_patch();
 }
 
 inline int FormatLogTimestamp(char* out, std::size_t capacity, long long micros) {
