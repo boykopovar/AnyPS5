@@ -270,6 +270,7 @@ int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwr
 int APS5_VABI unsetenv_nid_postfix(const char* name);
 int APS5_VABI putenv_nid_postfix(char* text);
 char* APS5_VABI strerror_nid_postfix(int error);
+const char* APS5_VABI StrerrorText_nid_no_patch(int error);
 int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
 void APS5_VABI perror_nid_postfix(const char* prefix);
 FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode);
@@ -685,6 +686,10 @@ void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_ctorEPS1_RKS1__nid_postfix
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(GuestLocale::Implementation* self);
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source);
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id);
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp8_MakelocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo* info, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp9_MakexlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo* info, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp9_MakewlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo* info, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_MakeushlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo* info, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale);
 GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale7classicEv_nid_postfix();
 GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale5emptyEv_nid_postfix(GuestLocaleFacade* result);
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpEb_nid_postfix(bool transparent);
@@ -1355,12 +1360,15 @@ int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pth
 int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_PadC2EPKc_nid_postfix(GuestPad* pad, const char* name);
+void APS5_VABI PadConstructWithName_nid_no_patch(GuestPad* pad, const char* name);
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** thread);
+void APS5_VABI PadLaunchWithName_nid_no_patch(GuestPad* pad, const char* name, void** thread);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** attrSlot, void** thread);
+void APS5_VABI PadLaunchWithNameAttr_nid_no_patch(GuestPad* pad, const char* name, void** attrSlot, void** thread);
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
 int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
 void* APS5_VABI _Thrd_id_nid_postfix(void);
