@@ -7,8 +7,21 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
+#endif
 
 namespace {
 
@@ -26,6 +39,23 @@ void RequireInvalidArgument(TAction action, std::source_location location = std:
         return;
     }
     Require(false, location);
+}
+
+template <typename TAction>
+void RequireInvalidArgumentPreservingErrno(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    RequireInvalidArgument(action, location);
+    Require(errno == 71, location);
+}
+
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
 }
 
 const char Name[] = "test method";
@@ -87,6 +117,109 @@ int APS5_VABI Create(LibreSsl::Bio* bio) {
 int APS5_VABI Destroy(LibreSsl::Bio*) {
     ++destroyed;
     return 1;
+}
+
+void TestAsn1ValuesBounds() {
+    {
+        constexpr std::size_t largeLength = 1100000;
+        std::vector<char> largeText(largeLength + 1, 'a');
+        for (std::size_t index = 0; index < largeLength; ++index)
+            largeText[index] = static_cast<char>('a' + (index % 26));
+        largeText[largeLength] = '\0';
+        Asn1String large{0, 4, nullptr, 0};
+        errno = 71;
+        Require(ASN1_STRING_set_nid_postfix(&large, largeText.data(), -1) == 1);
+        Require(errno == 71 && large.length == static_cast<int>(largeLength) && large.data != nullptr);
+        Require(std::memcmp(large.data, largeText.data(), largeLength) == 0 && large.data[largeLength] == 0);
+        free_nid_postfix(large.data);
+        Require(liveBlocks == 0);
+    }
+    {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        const std::size_t page = info.dwPageSize;
+        auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(pages != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(pages != MAP_FAILED);
+        Require(mprotect(pages + page, page, PROT_NONE) == 0);
+#endif
+        constexpr std::size_t tailLength = 13;
+        auto* tail = reinterpret_cast<char*>(pages + page - (tailLength + 1));
+        std::memset(tail, 'z', tailLength);
+        tail[tailLength] = '\0';
+        Asn1String pageEnd{0, 4, nullptr, 0};
+        errno = 71;
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, tail, -1) == 1);
+        Require(errno == 71 && pageEnd.length == static_cast<int>(tailLength) && pageEnd.data != nullptr);
+        Require(std::memcmp(pageEnd.data, tail, tailLength) == 0 && pageEnd.data[tailLength] == 0);
+        free_nid_postfix(pageEnd.data);
+
+        pageEnd = {0, 4, nullptr, 0};
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, "kept", 4) == 1);
+        auto* const keptData = pageEnd.data;
+        tail[tailLength] = 'z';
+        errno = 71;
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, tail, -1) == 0);
+        Require(errno == 71 && pageEnd.data == keptData && pageEnd.length == 4);
+        errno = 71;
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, reinterpret_cast<const void*>(std::uintptr_t{0x10}), -1) == 0);
+        Require(errno == 71 && pageEnd.data == keptData && pageEnd.length == 4);
+        free_nid_postfix(pageEnd.data);
+        Require(liveBlocks == 0);
+#ifdef _WIN32
+        VirtualFree(pages, 0, MEM_RELEASE);
+#else
+        munmap(pages, page * 2);
+#endif
+    }
+    {
+        auto* const unmapped = reinterpret_cast<Asn1String*>(std::uintptr_t{0x10});
+        auto* const unmappedData = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_STRING_set_nid_postfix(unmapped, "abc", 3); });
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_INTEGER_set_nid_postfix(unmapped, 42); });
+        Asn1String badString{4, 4, unmappedData, 0};
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_STRING_set_nid_postfix(&badString, "abc", 3); });
+        Require(badString.data == unmappedData && badString.length == 4);
+        Asn1String badInteger{4, 2, unmappedData, 0};
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_INTEGER_set_nid_postfix(&badInteger, 42); });
+        Require(badInteger.data == unmappedData && badInteger.length == 4);
+        Require(liveBlocks == 0);
+    }
+    {
+        auto* const unmappedData = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        const long rssBefore = PeakKilobytes();
+        Asn1String hugeCmpA{0x7fffffff, 4, unmappedData, 0};
+        Asn1String hugeCmpB{0x7fffffff, 4, unmappedData, 0};
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_OCTET_STRING_cmp_nid_postfix(&hugeCmpA, &hugeCmpB); });
+        auto* hugeInt = static_cast<Asn1String*>(malloc_nid_postfix(sizeof(Asn1String)));
+        Require(hugeInt != nullptr);
+        *hugeInt = {0x7fffffff, 2, unmappedData, 0};
+        RequireInvalidArgumentPreservingErrno([&] { ASN1_INTEGER_free_nid_postfix(hugeInt); });
+        Require(hugeInt->data == unmappedData && hugeInt->length == 0x7fffffff);
+        free_nid_postfix(hugeInt);
+        const long rssAfter = PeakKilobytes();
+        Require(rssAfter - rssBefore < 64 * 1024);
+
+        constexpr int multiChunkLength = 9000;
+        std::vector<unsigned char> firstBytes(multiChunkLength, 0x3C);
+        std::vector<unsigned char> secondBytes(multiChunkLength, 0x3C);
+        Asn1String multiA{multiChunkLength, 4, firstBytes.data(), 0};
+        Asn1String multiB{multiChunkLength, 4, secondBytes.data(), 0};
+        errno = 71;
+        Require(ASN1_OCTET_STRING_cmp_nid_postfix(&multiA, &multiB) == 0 && errno == 71);
+        secondBytes[5000] = 0x5E;
+        errno = 71;
+        Require(ASN1_OCTET_STRING_cmp_nid_postfix(&multiA, &multiB) < 0 && errno == 71);
+        errno = 71;
+        Require(ASN1_OCTET_STRING_cmp_nid_postfix(&multiB, &multiA) > 0 && errno == 71);
+        Require(liveBlocks == 0);
+    }
 }
 
 }
@@ -163,4 +296,5 @@ int main() {
         RequireInvalidArgument([&] { BIO_meth_set_destroy_nid_postfix(unmapped, &Destroy); });
         Require(errno == 71 && liveBlocks == 0);
     }
+    TestAsn1ValuesBounds();
 }
