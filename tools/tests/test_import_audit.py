@@ -3830,6 +3830,11 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(import_audit.origin_name("$ORIGIN/lib/libfoo.prx"), "libfoo.prx")
         self.assertEqual(import_audit.origin_name("${ORIGIN}/a/../libbar.sprx"), "libbar.sprx")
 
+    def test_hashed_nid_hashes_symbols_and_passes_unencodable_ones_through(self):
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), "1jfXLRVzisc")
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), nid_names.compute_nid("sceKernelUsleep"))
+        self.assertEqual(import_audit.hashed_nid("\udcff"), "\udcff")
+
     def test_origin_name_leaves_other_names_unchanged(self):
         self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
         self.assertIsNone(import_audit.origin_name(None))

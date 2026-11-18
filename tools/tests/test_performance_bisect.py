@@ -505,7 +505,10 @@ class BuildSymlinkSafetyTests(unittest.TestCase):
             external.mkdir()
             marker = external / "keep.txt"
             marker.write_text("outside data", encoding="utf-8")
-            (repo / "build").symlink_to(external, target_is_directory=True)
+            try:
+                (repo / "build").symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symlinks unavailable: {error}")
             with self.assertRaisesRegex(ValueError, "resolves outside the worktree"):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")

@@ -81,10 +81,14 @@ class TitleRunIdentityTests(unittest.TestCase):
         def stat(path, *arguments, **keywords):
             return original_stat(mapped(path), *arguments, **keywords)
 
+        def path_stat(path, *arguments, **keywords):
+            return original_stat(mapped(path), *arguments, **keywords)
+
         def open_directory(path, *arguments, **keywords):
             return original_open(mapped(path), *arguments, **keywords)
 
-        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(os, "open", side_effect=open_directory):
+        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(Path, "stat", path_stat), \
+                mock.patch.object(os, "open", side_effect=open_directory):
             yield
 
     @contextlib.contextmanager
