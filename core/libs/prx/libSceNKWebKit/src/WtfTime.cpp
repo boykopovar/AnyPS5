@@ -1,8 +1,35 @@
+// Derived from Source/WTF/wtf/TimingScope.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2017 Apple Inc.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libc/include/Api.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -10,7 +37,9 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
-#include <thread>
+#include <mutex>
+#include <stdexcept>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -210,9 +239,51 @@ static const char* parseES5TimePortion(const char* currentPosition, long& hours,
 
 }  // namespace WTF
 
+namespace {
+
+struct TimingCallData {
+    double totalDuration{0.0};
+    unsigned callCount{0};
+    double maxDuration{0.0};
+};
+
+class TimingTotals {
+public:
+    TimingCallData Add(const char* name, double duration) {
+        std::lock_guard lock(m_lock);
+        auto& result = m_totals[name];
+        ++result.callCount;
+        result.maxDuration = std::max(result.maxDuration, duration);
+        result.totalDuration += duration;
+        return result;
+    }
+
+private:
+    std::mutex m_lock;
+    std::unordered_map<const char*, TimingCallData> m_totals;
+};
+
+TimingTotals& Totals() {
+    static TimingTotals* totals = new TimingTotals();
+    return *totals;
+}
+
+}  // namespace
+
 extern "C" {
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv() {
     return WTF::MonotonicTime{WTF::currentMonotonicTimeSeconds()};
+}
+
+void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self) {
+    if (!self) throw std::invalid_argument("TimingScope::scopeDidEnd: null scope");
+    if (!self->m_name) throw std::invalid_argument("TimingScope::scopeDidEnd: null name");
+    if (!self->m_logIterationInterval) throw std::invalid_argument("TimingScope::scopeDidEnd: zero log iteration interval");
+    const double duration = _ZN3WTF13MonotonicTime3nowEv().m_value - self->m_startTime.m_value;
+    const auto data = Totals().Add(self->m_name, duration);
+    if (!(data.callCount % self->m_logIterationInterval))
+        WTFLogAlways("%s: %u calls, mean duration: %.6fms, total duration: %.6fms, max duration %.6fms", self->m_name, data.callCount,
+            data.totalDuration / data.callCount * 1000.0, data.totalDuration * 1000.0, data.maxDuration * 1000.0);
 }
 
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv() {
@@ -301,7 +372,7 @@ void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWit
     WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
     double diff = time.m_value - now.m_value;
     if (diff > 0.0) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(diff));
+        _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds{diff});
     }
 }
 
@@ -323,27 +394,6 @@ WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::S
 
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other) {
     return WTF::WallTime{self->m_value + other.m_value};
-}
-
-WTF::Seconds APS5_VABI _ZN3WTF7CPUTime16forCurrentThreadEv() {
-#ifdef _WIN32
-    FILETIME creationTime, exitTime, kernelTime, userTime;
-    if (GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime, &userTime)) {
-        ULARGE_INTEGER k, u;
-        k.LowPart = kernelTime.dwLowDateTime;
-        k.HighPart = kernelTime.dwHighDateTime;
-        u.LowPart = userTime.dwLowDateTime;
-        u.HighPart = userTime.dwHighDateTime;
-        double totalSec = static_cast<double>(k.QuadPart + u.QuadPart) * 1e-7;
-        return WTF::Seconds{totalSec};
-    }
-#elif defined(CLOCK_THREAD_CPUTIME_ID)
-    struct timespec ts;
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
-        return WTF::Seconds{static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9};
-    }
-#endif
-    return WTF::Seconds{0.0};
 }
 
 double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUTime* self, const WTF::CPUTime& reference) {

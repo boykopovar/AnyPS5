@@ -277,6 +277,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         throw std::runtime_error(std::string(error.what()) + describe());
     }
     std::uint32_t samples = 1;
+    if (dimension == TextureDimension::k2DMsaa && baseLevel == 0 && lastLevel == 0 && maxMip == 0) dimension = TextureDimension::k2D;
     if (dimension == TextureDimension::k2DMsaa) {
         Require(baseLevel == 0 && lastLevel >= 1u && lastLevel <= 4u && maxMip == lastLevel, "guest multisampled texture descriptor does not hold the same sample count of 2 to 16 in its last level and its last mip, which is not implemented" + describe());
         samples = 1u << lastLevel;

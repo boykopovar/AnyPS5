@@ -681,6 +681,23 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                     check_compile.check(self.root, self.build, [source])
                 compiler.assert_not_called()
 
+    def test_index_groups_entries_by_checkout_relative_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "checkout"
+            build = Path(directory) / "build"
+            (root / "src").mkdir(parents=True)
+            build.mkdir()
+            database = [
+                {"directory": str(root), "file": "src/a.cpp", "command": "cc -c src/a.cpp"},
+                {"directory": str(root / "src"), "file": "a.cpp", "command": "cc -DX -c a.cpp"},
+                {"directory": str(root), "file": "src/b.cpp", "command": "cc -c src/b.cpp"},
+            ]
+            (build / "compile_commands.json").write_text(json.dumps(database), encoding="utf-8")
+            commands = check_compile.index(build, root)
+            self.assertEqual(sorted(commands), ["src/a.cpp", "src/b.cpp"])
+            self.assertEqual(commands["src/a.cpp"], database[:2])
+            self.assertEqual(commands["src/b.cpp"], database[2:])
+
 
 class CheckCompileOutputTests(CheckCompileFixture):
     def test_dependency_options_do_not_make_syntax_checks_fail_or_rewrite_outputs(self):

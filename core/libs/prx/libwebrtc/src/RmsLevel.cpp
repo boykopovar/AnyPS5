@@ -41,8 +41,10 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -55,11 +57,20 @@ constexpr int MinLevelDb = 127;
 constexpr int InaudibleButNotMuted = 126;
 constexpr float MaxSquaredLevel = 32768 * 32768;
 constexpr float MinLevel = 1.995262314968883e-13f;
+constexpr std::size_t ChunkSamples = 4096;
 
-WebRtcRmsLevel& Require(WebRtcRmsLevel* level, const char* function) {
-    if (!level)
+WebRtcRmsLevel ReadWritable(WebRtcRmsLevel* level, const char* function) {
+    if (!level || !GuestWritable_nid_no_patch(level, sizeof(*level)))
         throw std::invalid_argument(std::string(function) + " requires a level");
-    return *level;
+    WebRtcRmsLevel host{};
+    if (!GuestPtr<WebRtcRmsLevel>(level).CopyIn(host))
+        throw std::invalid_argument(std::string(function) + " requires a level");
+    return host;
+}
+
+void WriteLevel(WebRtcRmsLevel* level, const WebRtcRmsLevel& host, const char* function) {
+    if (!GuestPtr<WebRtcRmsLevel>(level).CopyOut(host))
+        throw std::invalid_argument(std::string(function) + " requires a level");
 }
 
 int ComputeRms(float meanSquare) {
@@ -90,33 +101,48 @@ void CheckBlockSize(WebRtcRmsLevel& level, std::size_t blockSize) {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc8RmsLevelC1Ev_nid_postfix(WebRtcRmsLevel* level) {
-    Reset(Require(level, "RmsLevel::RmsLevel"));
+    auto host = ReadWritable(level, "RmsLevel::RmsLevel");
+    Reset(host);
+    WriteLevel(level, host, "RmsLevel::RmsLevel");
 }
 
 void APS5_VABI _ZN6webrtc8RmsLevelD1Ev_nid_postfix(WebRtcRmsLevel* level) {
-    Require(level, "RmsLevel::~RmsLevel");
+    WebRtcRmsLevel host{};
+    if (!GuestPtr<const WebRtcRmsLevel>(level).CopyIn(host))
+        throw std::invalid_argument("RmsLevel::~RmsLevel requires a level");
 }
 
 void APS5_VABI _ZN6webrtc8RmsLevel7AnalyzeEN3rtc9ArrayViewIKsLln4711EEE_nid_postfix(WebRtcRmsLevel* level, const std::int16_t* data, std::size_t size) {
-    auto& rms = Require(level, "RmsLevel::Analyze");
+    auto rms = ReadWritable(level, "RmsLevel::Analyze");
     if (size == 0)
         return;
-    CheckBlockSize(rms, size);
+    if (!data)
+        throw std::invalid_argument("RmsLevel::Analyze requires samples");
+    std::array<std::int16_t, ChunkSamples> chunk{};
     float sumSquare = 0.f;
-    for (std::size_t index = 0; index < size; ++index)
-        sumSquare = sumSquare + data[index] * data[index];
+    for (std::size_t offset = 0; offset < size;) {
+        const std::size_t batch = std::min(ChunkSamples, size - offset);
+        if (!GuestBytes(data + offset).CopyIn(chunk.data(), batch * sizeof(std::int16_t)))
+            throw std::invalid_argument("RmsLevel::Analyze requires readable samples");
+        for (std::size_t index = 0; index < batch; ++index)
+            sumSquare = sumSquare + chunk[index] * chunk[index];
+        offset += batch;
+    }
+    CheckBlockSize(rms, size);
     rms.sumSquare += sumSquare;
     rms.sampleCount += size;
     rms.maxSumSquare = std::max(rms.maxSumSquare, sumSquare);
+    WriteLevel(level, rms, "RmsLevel::Analyze");
 }
 
 int APS5_VABI _ZN6webrtc8RmsLevel7AverageEv_nid_postfix(WebRtcRmsLevel* level) {
-    auto& rms = Require(level, "RmsLevel::Average");
+    auto rms = ReadWritable(level, "RmsLevel::Average");
     const bool haveSamples = rms.sampleCount != 0;
     int result = haveSamples ? ComputeRms(rms.sumSquare / rms.sampleCount) : MinLevelDb;
     if (haveSamples && result == MinLevelDb && rms.sumSquare != 0.0f)
         result = InaudibleButNotMuted;
     Reset(rms);
+    WriteLevel(level, rms, "RmsLevel::Average");
     return result;
 }
 
