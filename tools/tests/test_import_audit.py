@@ -3958,6 +3958,51 @@ class LocateAndNamesTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
 
+class SceDynamicSymbolsTests(unittest.TestCase):
+    STRINGS = 0x61000035
+    STRING_SIZE = 0x61000037
+    SYMBOLS = 0x61000039
+    SYMBOL_ENTRY = 0x6100003b
+
+    def block(self):
+        symbols = struct.pack("<IBBHQQ", 1, 0x12, 0, 1, 0, 0)
+        strings = b"\0fn\0"
+        data = bytes(16) + symbols + strings
+        segment = (import_audit.SCE_DYNLIBDATA, 0, 16, 0, 0, len(symbols) + len(strings), 0, 0)
+        dynamic = {self.STRINGS: len(symbols), self.STRING_SIZE: len(strings), self.SYMBOLS: 0,
+                   self.SYMBOL_ENTRY: 24, import_audit.SCE_SYMTABSZ: len(symbols)}
+        return data, segment, dynamic
+
+    def test_reads_symbols_from_the_sce_data_segment(self):
+        data, segment, dynamic = self.block()
+        result = import_audit.sce_dynamic_symbols("m.elf", data, [segment], dynamic, [])
+        self.assertEqual(result, ({}, {"fn"}, set()))
+
+    def test_standard_and_sce_tables_together_are_refused(self):
+        data, segment, dynamic = self.block()
+        dynamic[5] = 0
+        with self.assertRaisesRegex(import_audit.AuditError, "both standard and SCE"):
+            import_audit.sce_dynamic_symbols("m.elf", data, [segment], dynamic, [])
+
+    def test_exactly_one_sce_data_segment_is_required(self):
+        data, segment, dynamic = self.block()
+        for segments, found in (([], 0), ([segment, segment], 2)):
+            with self.subTest(found=found), self.assertRaisesRegex(import_audit.AuditError, f"found {found}"):
+                import_audit.sce_dynamic_symbols("m.elf", data, segments, dynamic, [])
+
+    def test_incomplete_or_misshapen_tables_are_refused(self):
+        data, segment, dynamic = self.block()
+        for change in ({self.STRINGS: None}, {self.SYMBOL_ENTRY: 16}, {import_audit.SCE_SYMTABSZ: 25}, {self.STRING_SIZE: 0}):
+            changed = {key: value for key, value in {**dynamic, **change}.items() if value is not None}
+            with self.subTest(change=change), self.assertRaisesRegex(import_audit.AuditError, "incomplete SCE dynamic"):
+                import_audit.sce_dynamic_symbols("m.elf", data, [segment], changed, [])
+
+    def test_tables_outside_the_segment_are_refused(self):
+        data, segment, dynamic = self.block()
+        dynamic[self.STRINGS] = 1000
+        with self.assertRaisesRegex(import_audit.AuditError, "lies outside the SCE dynamic library data segment"):
+            import_audit.sce_dynamic_symbols("m.elf", data, [segment], dynamic, [])
+
 
 if __name__ == "__main__":
     unittest.main()
