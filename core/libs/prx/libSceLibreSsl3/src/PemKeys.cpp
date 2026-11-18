@@ -784,8 +784,18 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
         if (p8inf != nullptr) {
             ret = EVP_PKCS82PKEY_nid_postfix(p8inf);
             if (key != nullptr) {
-                EVP_PKEY_free_nid_disambig1_nid_postfix(*key);
-                *key = ret;
+                LibreSsl3EvpPkey* previous = nullptr;
+                if (!GuestCopyIn_nid_no_patch(&previous, key, sizeof(previous))) {
+                    EVP_PKEY_free_nid_disambig1_nid_postfix(ret);
+                    PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
+                    throw std::invalid_argument("PEM_read_bio_PrivateKey: unreadable key");
+                }
+                EVP_PKEY_free_nid_disambig1_nid_postfix(previous);
+                if (!GuestCopyOut_nid_no_patch(key, &ret, sizeof(ret))) {
+                    EVP_PKEY_free_nid_disambig1_nid_postfix(ret);
+                    PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
+                    throw std::invalid_argument("PEM_read_bio_PrivateKey: unwritable key");
+                }
             }
             PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
         }
