@@ -97,14 +97,12 @@ std::vector<unsigned char> SignBytes(const std::vector<unsigned char>& tbs, Libr
     return signature;
 }
 
-bool PrepareParameter(LibreSsl3X509Algor* algor, bool nullParameter) {
-    if (!nullParameter || algor->parameter) return true;
+LibreSsl3Asn1Type* NewNullParameter() {
     auto* const allocated = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
-    if (!allocated) return false;
+    if (!allocated) return nullptr;
     allocated->type = NullType;
     allocated->value = nullptr;
-    CopyOut(&algor->parameter, allocated, "X509_sign");
-    return true;
+    return allocated;
 }
 
 bool ApplyAlgorithm(LibreSsl3X509Algor* algor, const void* object, bool nullParameter) {
@@ -139,26 +137,45 @@ bool ApplyAlgorithm(LibreSsl3X509Algor* algor, const void* object, bool nullPara
 
 bool StoreSignature(const LibreSsl3X509& certificate, LibreSsl3Certificate* guestCertificate,
     const std::vector<unsigned char>& signature) {
+    auto* const data = static_cast<unsigned char*>(malloc_nid_postfix(signature.size()));
+    if (!data) return false;
+    std::memcpy(data, signature.data(), signature.size());
     LibreSsl3Asn1String bits {};
     void* target = certificate.signature;
     if (target) {
-        bits = CopyIn<LibreSsl3Asn1String>(target, "X509_sign");
+        try {
+            bits = CopyIn<LibreSsl3Asn1String>(target, "X509_sign");
+        } catch (...) {
+            free_nid_postfix(data);
+            throw;
+        }
     } else {
         auto* allocated = static_cast<LibreSsl3Asn1String*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1String)));
-        if (!allocated) return false;
-        CopyOut(reinterpret_cast<unsigned char*>(guestCertificate) + offsetof(LibreSsl3X509, signature),
-            static_cast<void*>(allocated), "X509_sign");
+        if (!allocated) {
+            free_nid_postfix(data);
+            return false;
+        }
+        try {
+            CopyOut(reinterpret_cast<unsigned char*>(guestCertificate) + offsetof(LibreSsl3X509, signature),
+                static_cast<void*>(allocated), "X509_sign");
+        } catch (...) {
+            free_nid_postfix(allocated);
+            free_nid_postfix(data);
+            throw;
+        }
         target = allocated;
     }
-    auto* data = static_cast<unsigned char*>(malloc_nid_postfix(signature.size()));
-    if (!data) return false;
-    std::memcpy(data, signature.data(), signature.size());
     void* const previous = bits.data;
     bits.data = data;
     bits.length = static_cast<int>(signature.size());
     bits.type = SignatureStringType;
     bits.flags = (bits.flags & ~BitsLeftMask) | BitsLeftFlag;
-    CopyOut(target, bits, "X509_sign");
+    try {
+        CopyOut(target, bits, "X509_sign");
+    } catch (...) {
+        free_nid_postfix(data);
+        throw;
+    }
     if (previous) free_nid_postfix(previous);
     return true;
 }
@@ -192,10 +209,32 @@ extern "C" int APS5_VABI X509_sign_nid_postfix(LibreSsl3Certificate* certificate
     const bool nullParameter = keyType == RsaKeyType;
     auto* const outer = const_cast<LibreSsl3X509Algor*>(fields.sigAlg);
     auto* const innerAlgor = static_cast<LibreSsl3X509Algor*>(info.signature);
-    if (!PrepareParameter(outer, nullParameter) || !PrepareParameter(innerAlgor, nullParameter)) return 0;
 
-    const auto tbs = CertificateInfoEncoding(encoding);
-    const auto signature = SignBytes(tbs, key, digestMethod);
+    LibreSsl3Asn1Type* outerParameter = nullptr;
+    LibreSsl3Asn1Type* innerParameter = nullptr;
+    if (nullParameter && !outer->parameter) {
+        outerParameter = NewNullParameter();
+        if (!outerParameter) return 0;
+    }
+    if (nullParameter && !innerAlgor->parameter) {
+        innerParameter = NewNullParameter();
+        if (!innerParameter) {
+            free_nid_postfix(outerParameter);
+            return 0;
+        }
+    }
+
+    std::vector<unsigned char> signature;
+    try {
+        const auto tbs = CertificateInfoEncoding(encoding);
+        signature = SignBytes(tbs, key, digestMethod);
+    } catch (...) {
+        free_nid_postfix(outerParameter);
+        free_nid_postfix(innerParameter);
+        throw;
+    }
+    if (outerParameter) CopyOut(&outer->parameter, outerParameter, "X509_sign");
+    if (innerParameter) CopyOut(&innerAlgor->parameter, innerParameter, "X509_sign");
     if (!ApplyAlgorithm(outer, object, nullParameter) || !ApplyAlgorithm(innerAlgor, object, nullParameter)) return 0;
     if (!StoreSignature(view, certificate, signature)) return 0;
     return static_cast<int>(signature.size());
