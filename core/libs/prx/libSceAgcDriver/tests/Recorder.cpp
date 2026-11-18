@@ -3768,11 +3768,15 @@ bool multisampleUseCollectTests(const Device& device) {
             if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
         });
         if (ordered && CollectEpoch() == 0) {
+            std::uint64_t zeroEpochWalks = 0;
             for (int use = 0; use != 2; ++use) {
                 multisampleUseWalks.store(0, std::memory_order_relaxed);
                 MultisampleTargetView(context, target);
-                Require(multisampleUseWalks.load(std::memory_order_relaxed) != 0, "a GPU use without a collect epoch reused an observation");
+                const auto walked = multisampleUseWalks.load(std::memory_order_relaxed);
+                Require(walked != 0, "a GPU use without a collect epoch reused an observation");
+                zeroEpochWalks += walked;
             }
+            std::cout << "multisample-use samples=" << samples << " zero-epoch walks=" << zeroEpochWalks << '\n';
         }
         BumpCollectEpoch();
         multisampleUseWalks.store(0, std::memory_order_relaxed);
@@ -3798,11 +3802,11 @@ bool multisampleUseCollectTests(const Device& device) {
     };
     std::vector<std::uint32_t> sampleCounts{4};
     if (base.storageImageMultisample && (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_8_BIT) != 0) sampleCounts.push_back(8);
-    for (const auto samples : sampleCounts) run(false, samples);
     std::exception_ptr failure;
     auto& committer = AgcDriver::DriverDetail::DrawPipeline::Queue0();
     committer.Enqueue(AgcDriver::DriverDetail::DrawPipeline::CommitKind::Draw, [&] {
         try {
+            Require(CollectEpoch() == 0, "the draw-committer fixture did not start at collect epoch zero");
             for (const auto samples : sampleCounts) run(true, samples);
         } catch (...) {
             failure = std::current_exception();
@@ -3811,6 +3815,7 @@ bool multisampleUseCollectTests(const Device& device) {
     committer.Drain(AgcDriver::DriverDetail::DrawPipeline::DrainReason::Submission);
     committer.Stop();
     if (failure) std::rethrow_exception(failure);
+    for (const auto samples : sampleCounts) run(false, samples);
     return true;
 }
 
