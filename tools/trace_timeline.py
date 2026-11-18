@@ -87,6 +87,9 @@ def positive_integer(value):
 
 
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", type=Path, help="aps5-trace-*.json.gz or .json")
     parser.add_argument("-o", "--output", type=Path, help="HTML file to write (default: the trace name with .html)")
@@ -97,9 +100,9 @@ def main(arguments=None):
     parser.add_argument("--width", type=positive_integer, default=1000, help="width of the time axis in pixels (default 1000)")
     options = parser.parse_args(arguments)
     trace = trace_digest.load_trace(options.trace)
+    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     if options.thread:
         trace.select_threads(options.thread)
-    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     start_us = options.from_ms * 1000.0
     end_us = end_of_trace if options.to_ms is None else options.to_ms * 1000.0
     if end_us < start_us:

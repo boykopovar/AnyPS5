@@ -506,6 +506,9 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     characters[1].clusterIndex = 0;
 
     Require(sceFontCharactersRefersTextCodes(characters, nullptr, nullptr) == nullptr);
+    errno = 71;
+    Require(sceFontCharactersRefersTextCodes(characters, nullptr, reinterpret_cast<FontTextCodes*>(0x10)) == nullptr);
+    Require(errno == 71);
     Require(sceFontTextCodesStepNext(nullptr) == nullptr && sceFontTextCodesStepBack(nullptr) == nullptr);
     bool threw = false;
     try {
