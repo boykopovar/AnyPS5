@@ -1,7 +1,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -431,14 +435,28 @@ void APS5_VABI WTFInitializeLogChannelStatesFromString(void** channels, std::siz
 }
 
 void APS5_VABI WTFGetBacktrace(void** stack, int* size) {
-    if (!stack || !size || *size <= 0) {
+    if (!stack || !size) {
         return;
     }
+    const int savedErrno = errno;
+    int requested = 0;
+    bool copied = GuestCopyIn_nid_no_patch(&requested, size, sizeof(requested));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTFGetBacktrace: unreadable size");
+    if (requested <= 0) {
+        return;
+    }
+    int captured = 0;
 #ifdef _WIN32
-    *size = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(*size), stack, nullptr));
-#else
-    *size = 0;
+    std::vector<void*> frames(std::min<std::size_t>(static_cast<std::size_t>(requested), std::numeric_limits<USHORT>::max()));
+    captured = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(frames.size()), frames.data(), nullptr));
+    copied = GuestCopyOut_nid_no_patch(stack, frames.data(), static_cast<std::size_t>(captured) * sizeof(void*));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTFGetBacktrace: unwritable stack");
 #endif
+    copied = GuestCopyOut_nid_no_patch(size, &captured, sizeof(captured));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTFGetBacktrace: unwritable size");
 }
 
 void APS5_VABI WTFPrintBacktrace(void** stack, int size) {

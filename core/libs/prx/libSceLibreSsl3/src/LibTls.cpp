@@ -260,13 +260,16 @@ void APS5_VABI tls_config_insecure_noverifyname_nid_postfix(TlsConfig* config) {
     if (config) Storage(config)->verifyName = 0;
 }
 
-}
-
 bool TlsTransportGetConfig_nid_no_patch(TlsContext* context, TlsTransportConfig* config) {
     if (!context || !config) return false;
     const auto* state = Storage(context);
     config->ca = state->config->ca;
     config->caLength = state->config->caLength;
+    config->cert = state->config->cert;
+    config->certLength = state->config->certLength;
+    config->key = state->config->key;
+    config->keyLength = state->config->keyLength;
+    config->ciphers = state->config->ciphers;
     config->protocols = state->config->protocols;
     config->client = state->role == Role::Client;
     config->verifyName = state->config->verifyName != 0;
@@ -279,4 +282,6 @@ void TlsTransportSetError_nid_no_patch(TlsContext* context, const char* error) {
 
 void TlsTransportClearError_nid_no_patch(TlsContext* context) {
     if (context) Storage(context)->error.clear();
+}
+
 }
