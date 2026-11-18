@@ -650,6 +650,26 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             performance_compare.validate(dict(SUMMARY, graphics_track={"bad": -1}))
 
+class GraphicsMetricsTests(unittest.TestCase):
+    def test_missing_track_gives_none_for_every_label(self):
+        metrics = performance_compare.graphics_metrics({"presents": 4})
+        self.assertEqual(set(metrics), set(performance_compare.GRAPHICS_LABELS))
+        self.assertTrue(all(value is None for value in metrics.values()))
+
+    def test_counters_are_per_present_rates(self):
+        track = {"Graphics.RenderPass": 4, "Graphics.RenderPass.Continued": 2, "Graphics.Barrier.A": 2, "Graphics.Barrier.B": 4,
+                 "Graphics.BarrierMerged.A": 6, "Graphics.Copy": 1, "Graphics.Copy.bytes": 4 * 1024 * 1024}
+        metrics = performance_compare.graphics_metrics({"presents": 2, "graphics_track": track})
+        self.assertEqual(metrics, {"render_passes": 2, "continued_draws": 1, "barriers": 3, "merged_barriers": 3, "copies": 0.5, "copy_mib": 2})
+
+    def test_absent_counters_count_as_zero(self):
+        metrics = performance_compare.graphics_metrics({"presents": 1, "graphics_track": {}})
+        self.assertEqual(set(metrics.values()), {0})
+
+    def test_unrepresentable_rate_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "outside the finite numeric range"):
+            performance_compare.graphics_metrics({"presents": 1, "graphics_track": {"Graphics.Copy": 10 ** 400}})
+
 
 if __name__ == "__main__":
     unittest.main()
