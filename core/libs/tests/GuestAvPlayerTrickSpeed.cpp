@@ -17,11 +17,7 @@ int main() {
         WriteMovie();
         WriteWebmMovie();
         std::filesystem::copy_file(MoviePath, "app0/avplayer.unknown", std::filesystem::copy_options::overwrite_existing);
-        Check(AvPlayer::DetectSourceType(WebmPath) == AvPlayer::SourceTypeWebm,
-              "WebM URI was not classified as source type 2");
-        Check(AvPlayer::DetectSourceType("app0/avplayer.m3d") == AvPlayer::SourceTypeUnknown,
-              "unsupported M3D extension was classified as MP4");
-
+        std::filesystem::copy_file(MoviePath, "app0/avplayer.m3d", std::filesystem::copy_options::overwrite_existing);
         auto init = InitData(nullptr);
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "AVPlayer initialization failed");
@@ -62,6 +58,15 @@ int main() {
 
         init = InitData(nullptr);
         player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "M3D player initialization failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.m3d") == 0,
+              "M3D media source could not be opened");
+        Check(sceAvPlayerSetTrickSpeed(player, 400) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED,
+              "trick speed was accepted for the unsupported M3D extension");
+        Check(sceAvPlayerClose(player) == 0, "M3D player close failed");
+
+        init = InitData(nullptr);
+        player = sceAvPlayerInit(&init);
         Check(player != nullptr, "WebM player initialization failed");
         Check(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0,
               "WebM source initialization failed");
@@ -73,4 +78,4 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-}
+}
