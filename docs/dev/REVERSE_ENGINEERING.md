@@ -109,7 +109,9 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    Save the ASCII output without a BOM. Load the same relinked ELF at its ELF virtual addresses and run
    [ImportSymbolsScript.py](https://github.com/NationalSecurityAgency/ghidra/blob/ac245cfdbd035c14180bb7a470e39348511b4ba2/Ghidra/Extensions/Jython/ghidra_scripts/ImportSymbolsScript.py)
    from Ghidra's Jython extension with this map. Function exports inside executable file-backed segments get `f`;
-   aliases at the same address get `l`, keeping one function name. Import slots are `imp_` labels and other exports are labels too. TLS exports and
+   aliases at the same address get `l`, keeping one function name. Unnamed `DT_INIT` and `DT_FINI` functions inside
+   executable file-backed segments get `elf_init` and `elf_fini`; an existing function export keeps its name.
+   Import slots are `imp_` labels and other exports are labels too. TLS exports and
    unallocated common symbols are omitted because their values are not addresses. Names use ASCII letters, digits and
    underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
    to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.

@@ -129,6 +129,7 @@ int main() {
     Require(errno == 71);
 
     auto* const spanningParam = region.memory + region.pageSize - 0x10;
+    spanningParam[0] = 0x20;
     out.fill(kFill);
     errno = 71;
     Require(sceVrHandQueryMemory(spanningParam, out.data()) == kErrInvalidArg && Untouched(out));
