@@ -146,6 +146,10 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     result.addressModeU = toVkAddressMode(clampX);
     result.addressModeV = toVkAddressMode(clampY);
     result.addressModeW = toVkAddressMode(clampZ);
+    if (!aniso && xyMagFilter == 0u && xyMinFilter == 0u) {
+        if (clampX == 4u) result.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (clampY == 4u) result.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    }
     result.anisotropyEnable = aniso;
     result.maxAnisotropy = anisoRatio;
     result.minLod = minLod;
