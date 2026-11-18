@@ -104,7 +104,8 @@ def _json_bytes(value):
 def _pin(root, value, kind):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
         raise ValueError(f"evidence requires a pinned {kind} object ID")
-    result = review_raw_git(root, "rev-parse", "--verify", f"{value}^{{{kind}}}").decode("ascii").strip()
+    revision = f"{value}^0" if kind == "commit" else f"{value}:"
+    result = review_raw_git(root, "rev-parse", "--verify", revision).decode("ascii").strip()
     if kind == "commit" and result != value:
         raise ValueError("evidence commit does not match its pin")
     return result
