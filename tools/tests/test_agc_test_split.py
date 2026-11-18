@@ -281,6 +281,16 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
 
+class LoopListTests(unittest.TestCase):
+    def test_items_are_the_words_between_items_and_the_closing_paren(self):
+        self.assertEqual(agc_test_split.loop_list("foreach(item ITEMS a b c)"), ["a", "b", "c"])
+
+    def test_nested_parentheses_stay_in_their_word(self):
+        self.assertEqual(agc_test_split.loop_list("foreach(x ITEMS a(1) b)"), ["a(1)", "b"])
+
+    def test_no_items_gives_an_empty_list(self):
+        self.assertEqual(agc_test_split.loop_list("foreach(x ITEMS)"), [])
+
 
 if __name__ == "__main__":
     unittest.main()
