@@ -277,6 +277,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceIcu PRIVATE DataMemory.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_data_memory_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DataMemory.cpp)
+    target_include_directories(guest_icu_data_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_data_memory_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_data_memory_tests)
+    add_test(NAME guest_icu_data_memory COMMAND guest_icu_data_memory_tests)
+    set_tests_properties(guest_icu_data_memory PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_data_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_icu_compare_iter_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CompareIter.cpp)
     target_include_directories(guest_icu_compare_iter_tests PRIVATE ${LIBS_INCLUDE_DIR})
