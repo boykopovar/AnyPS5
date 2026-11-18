@@ -272,7 +272,9 @@ void RunSignExtendedUnsignedConversions(AgcDriver::VulkanDevice& device, std::ui
         }
     }
     words.insert(words.end(), {
-        0x7e100504u,
+        0x7e0c0280u,
+        0xe0302000u, 0x80000706u, 0xbf8c3f70u,
+        0x7e100507u,
         0xbe891908u,
         0x7e0a0c09u,
         0xe0702000u | (index * 4u), 0x80010502u,
@@ -313,7 +315,7 @@ void RunSignExtendedUnsignedConversions(AgcDriver::VulkanDevice& device, std::ui
                     " sext " + std::to_string(sign) + " is " + Hex(actual) + ", expected " + Hex(expected));
             }
         }
-        const auto firstLaneWord = SextInput[(lane / waveSize) * waveSize];
+        const auto firstLaneWord = SextInput[0];
         const auto expectedI8 = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(firstLaneWord, 0u, true)));
         const auto actualI8 = SextOutput[lane * SextResults + 12u];
         Require(actualI8 == expectedI8, "scalar s_sext_i32_i8 u32-to-f32: lane " + std::to_string(lane) +
