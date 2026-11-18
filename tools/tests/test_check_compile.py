@@ -1333,6 +1333,25 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
+class EntryKeyTests(unittest.TestCase):
+    def test_relative_file_is_resolved_against_the_entry_directory(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(entry, root), "src/a.cpp")
+
+    def test_absolute_file_inside_root_is_root_relative(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root), "file": str(root / "core" / "b.cpp")}
+            self.assertEqual(check_compile.entry_key(entry, root), "core/b.cpp")
+
+    def test_file_outside_root_keeps_its_absolute_path(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            outside = Path(other) / "c.cpp"
+            entry = {"directory": name, "file": str(outside)}
+            self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
+
 
 if __name__ == "__main__":
     unittest.main()
