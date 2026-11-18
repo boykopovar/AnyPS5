@@ -41,13 +41,15 @@ jobs:
       - name: Build
         run: cmake --build guest-cpu-ios-sim
 
-      - name: Sign the test binaries
+      - name: Sign the test bundles
         run: |
           set -euo pipefail
-          for binary in guest-cpu-ios-sim/anyps5_guest_*; do
-            if [ -f "$binary" ] && file "$binary" | grep -q 'Mach-O'; then
-              codesign --force --sign - "$binary"
-            fi
+          # iOS executables are emitted as .app bundles; sign each one so the
+          # simulator accepts the ad-hoc build.
+          shopt -s nullglob
+          for app in guest-cpu-ios-sim/*.app; do
+            echo "Signing $app"
+            codesign --force --sign - "$app"
           done
 
       - name: Run the tests on the simulator
