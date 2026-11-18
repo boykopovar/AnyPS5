@@ -2372,8 +2372,17 @@ void MarkProofThread() {
     proofThread = true;
 }
 
-std::uint64_t CollectWritesForGpuUse(std::uint64_t address, std::size_t bytes) {
-    return proofThread ? CollectWrites(address, bytes) : CollectWritesUncached(address, bytes);
+void CollectWritesForGpuUse(const UnchangedQuery& range, GpuUseObservation& observation) {
+    const auto epoch = CollectEpoch();
+    const auto unwatched = UnwatchSerial();
+    const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (proofThread && epoch != 0 && observation.address == range.address && observation.bytes == range.bytes && observation.generation == range.generation && observation.epoch == epoch && observation.unwatched == unwatched && observation.mapping == mapping) return;
+    const auto collected = CollectWritesUncached(range.address, range.bytes);
+    if (!proofThread || epoch == 0 || collected == 0) {
+        observation = {};
+        return;
+    }
+    observation = {range.address, range.bytes, range.generation, epoch, unwatched, mapping};
 }
 
 std::uint64_t CollectEpoch() {
