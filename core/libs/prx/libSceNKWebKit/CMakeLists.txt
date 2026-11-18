@@ -73,7 +73,7 @@ if(BUILD_TESTING)
 
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfAtomString.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfAtomString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfSymbolRegistry.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfSymbolImpl.cpp)
     target_include_directories(nkwebkit_wtftext_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(nkwebkit_wtftext_allocation_tests PRIVATE libc)
     configure_windows_unwind(nkwebkit_wtftext_allocation_tests)
