@@ -40,7 +40,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
-#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -373,7 +372,7 @@ void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWit
     WTF::TimeWithDynamicClockType now = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(time.m_type);
     double diff = time.m_value - now.m_value;
     if (diff > 0.0) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(diff));
+        _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds{diff});
     }
 }
 

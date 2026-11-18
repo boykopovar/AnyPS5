@@ -507,6 +507,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
+        if (oldValue == nullptr) {
+            constexpr std::size_t EstimatedExtraProcesses = 5;
+            return CopyOut(nullptr, (EstimatedExtraProcesses + 1) * sizeof(GuestKinfoProc), nullptr, oldLength);
+        }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
