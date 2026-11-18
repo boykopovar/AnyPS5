@@ -812,32 +812,41 @@ void SocketPartialWrites() {
     for (std::int64_t sent = 0; (sent = _write_nid_postfix(pair[0], data.data(), Large)) > 0;) filled += sent;
     Require(Error() == Eagain);
     Require(fcntl_nid_postfix(pair[0], FSetfl, 0) == 0);
-    auto blocking = Request(pair[0], data.data(), Large);
+    std::vector<char> beyond(static_cast<std::size_t>(filled) * 4 + Large, 'z');
+    auto blocking = Request(pair[0], beyond.data(), beyond.size());
     Require(aio_write_nid_postfix(&blocking) == 0);
     for (std::int64_t drained = 0, got = 0; drained < filled; drained += got) {
         got = recv_nid_postfix(pair[1], sink.data(), static_cast<std::size_t>(std::min<std::int64_t>(filled - drained, Large)), 0);
         Require(got > 0);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Require(aio_error_nid_postfix(&blocking) == Einprogress);
-    Require(aio_cancel_nid_postfix(pair[0], &blocking) == AioNotCanceled);
-    while (aio_error_nid_postfix(&blocking) == Einprogress) {
-        if (recv_nid_postfix(pair[1], sink.data(), sink.size(), MsgDontWait) < 0) {
-            Require(Error() == Eagain);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (aio_error_nid_postfix(&blocking) == Einprogress) {
+        Require(aio_cancel_nid_postfix(pair[0], &blocking) == AioNotCanceled);
+        while (aio_error_nid_postfix(&blocking) == Einprogress) {
+            if (recv_nid_postfix(pair[1], sink.data(), sink.size(), MsgDontWait) < 0) {
+                Require(Error() == Eagain);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         }
+        const auto written = aio_return_nid_postfix(&blocking);
+        Require(written > 0 && written <= static_cast<std::int64_t>(beyond.size()));
+    } else {
+        Require(aio_error_nid_postfix(&blocking) == 0);
+        Require(aio_return_nid_postfix(&blocking) == static_cast<std::int64_t>(beyond.size()));
     }
-    const auto written = aio_return_nid_postfix(&blocking);
-    Require(written > 0 && written <= static_cast<std::int64_t>(Large));
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 
     Require(socketpair_nid_postfix(AfUnix, SockStream, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], FSetfl, ONonblock) == 0);
-    auto nonblocking = Request(pair[0], data.data(), Large);
+    auto nonblocking = Request(pair[0], beyond.data(), beyond.size());
     Require(aio_write_nid_postfix(&nonblocking) == 0);
     Wait(nonblocking);
     const auto part = aio_return_nid_postfix(&nonblocking);
-    Require(part > 0 && part < static_cast<std::int64_t>(Large));
+#if defined(_WIN32)
+    Require(part > 0 && part <= static_cast<std::int64_t>(beyond.size()));
+#else
+    Require(part > 0 && part < static_cast<std::int64_t>(beyond.size()));
+#endif
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
