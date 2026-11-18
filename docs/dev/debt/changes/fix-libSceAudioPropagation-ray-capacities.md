@@ -1,0 +1,5 @@
+# libSceAudioPropagation
+
+## change lacks acoustic propagation
+
+- [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and report the source's six-ray capacity, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. The system and source ray getters report the module's ray capacities (6 for a source, 0x40 for a system, from the PS5 13.40 libSceAudioPropagation.sprx) but fill no ray directions; ray results and audio paths otherwise accept empty lists and throw. `sceAudioPropagationSourceCalculateAudioPaths` requires the reported six rays and still goes through `NotImplemented_nid_no_patch`, as propagation is not implemented. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.
