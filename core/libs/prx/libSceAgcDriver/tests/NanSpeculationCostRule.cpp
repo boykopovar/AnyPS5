@@ -60,21 +60,34 @@ Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code) {
 }
 
 int main() {
+    const char* rule = std::getenv("COST_RULE_CASE");
+    const bool configuration = rule != nullptr && (std::strcmp(rule, "defaults") == 0 || std::strcmp(rule, "override") == 0);
 #ifdef _WIN32
     _putenv_s("APS5_NAN_SPECULATION", "1");
-    _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
+    if (!configuration) _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
 #else
     setenv("APS5_NAN_SPECULATION", "1", 1);
-    setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
+    if (!configuration) setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
 #endif
     try {
         constexpr std::uint32_t AddF32 = 0x06020300u;
-        const char* rule = std::getenv("COST_RULE_CASE");
         const auto fail = [](const char* message) {
             std::fprintf(stderr, "nan speculation cost rule: %s\n", message);
             return 1;
         };
         if (rule == nullptr) return fail("COST_RULE_CASE is not set");
+        if (configuration) {
+            const auto& config = NanSpeculation();
+            const bool defaults = std::strcmp(rule, "defaults") == 0;
+            constexpr std::size_t compute = 0, vertex = 1, pixel = 2, fetch = 4;
+            if (config.stageMask != (defaults ? 0x7u : 0x2u)) return fail("APS5_NAN_SPECULATION_STAGES does not select the stages");
+            if (config.minimumFastOps != (defaults ? 32u : 0u)) return fail("APS5_NAN_SPECULATION_MIN_OPS does not select the minimum fast-op count");
+            if (config.stageMinimum[compute] != 32u || config.stageMinimum[fetch] != 32u || config.stageMinimum[vertex] != 8u) return fail("the per-stage region minimums are not compute 32, vertex 8, others 32");
+            if (config.stageMinimum[pixel] != (defaults ? 8u : 16u)) return fail("APS5_NAN_SPECULATION_MIN does not override a named stage");
+            if (config.minimumVectorInstructions != 8u || config.maximumVectorInstructions != 256u || config.minimumDensityPercent != 0u) return fail("the region bounds or density minimum differ from the defaults");
+            std::puts("nan speculation configuration tests passed");
+            return 0;
+        }
         const auto one = Translated(ShaderStageKind::Compute, {AddF32});
         const auto four = Translated(ShaderStageKind::Compute, {AddF32, AddF32, AddF32, AddF32});
         if (std::strcmp(rule, "ops") == 0) {
