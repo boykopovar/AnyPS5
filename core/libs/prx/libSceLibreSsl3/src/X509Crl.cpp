@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -839,18 +840,40 @@ extern "C" {
 
 LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
     LibreSsl3X509Crl** output, const unsigned char** input, std::int64_t length) {
-    if (!input || !*input || length < 0) {
+    const unsigned char* data = nullptr;
+    const int savedErrno = errno;
+    const bool readInput = input && GuestCopyIn_nid_no_patch(&data, input, sizeof(data));
+    errno = savedErrno;
+    if (!readInput || !data || length < 0) {
         PutError(BadObjectHeader);
         return nullptr;
     }
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    std::span<const unsigned char> remaining(data, static_cast<std::size_t>(length));
     LibreSsl3X509Crl* crl = DecodeCrl(remaining);
     if (!crl) return nullptr;
+    const unsigned char* next = data + (static_cast<std::size_t>(length) - remaining.size());
+    LibreSsl3X509Crl* previous = nullptr;
     if (output) {
-        X509_CRL_free_nid_postfix(*output);
-        *output = crl;
+        const int outputErrno = errno;
+        const bool readOutput = GuestCopyIn_nid_no_patch(&previous, output, sizeof(previous));
+        errno = outputErrno;
+        if (!readOutput) {
+            FreeCrl(crl);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
+        X509_CRL_free_nid_postfix(previous);
+        const int writeErrno = errno;
+        const bool wroteOutput = GuestCopyOut_nid_no_patch(output, &crl, sizeof(crl));
+        errno = writeErrno;
+        if (!wroteOutput) {
+            FreeCrl(crl);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
     }
-    *input += static_cast<std::size_t>(length) - remaining.size();
+    const int inputErrno = errno;
+    const bool wroteInput = GuestCopyOut_nid_no_patch(input, &next, sizeof(next));
+    errno = inputErrno;
+    if (!wroteInput) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return crl;
 }
 
