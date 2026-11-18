@@ -127,8 +127,9 @@ int main() {
     Require(readOnly->type == 7 && readOnly->prio == 7);
     Require(LookupError(RTP_LOOKUP, 1, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 999999, &self) == GUEST_ESRCH);
-    Require(SetFailure(0, self) == "rtprio_thread: a real-time priority change not implemented");
-    Require(SetFailure(scePthreadGetthreadid(), self) == "rtprio_thread: a real-time priority change not implemented");
+    const GuestRtPrio inRange{RTP_PRIO_FIFO, 512};
+    Require(SetFailure(0, inRange) == "rtprio_thread: a real-time priority change not implemented");
+    Require(SetFailure(scePthreadGetthreadid(), inRange) == "rtprio_thread: a real-time priority change not implemented");
     for (const std::uint16_t type : {RTP_PRIO_REALTIME, RTP_PRIO_FIFO}) {
         for (const std::uint16_t prio : {256, 767}) {
             Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority change not implemented");
