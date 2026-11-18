@@ -103,11 +103,86 @@ static void CheckErrorStrings() {
                 "unrecognized codes must return the native fallback without changing errno");
     }
 }
+
+static void CheckAudioOutOutputsBounds() {
+    errno = 53;
+    Require(sceAudio3dAudioOutOutputs(reinterpret_cast<AudioOutOutputParam*>(UINTPTR_MAX - 7), 2) == static_cast<int>(0x80EA0004),
+            "wrapping output param array must fail with invalid parameter");
+    Require(errno == 53, "wrapping output param array preserves errno");
+
+    errno = 54;
+    Require(sceAudio3dAudioOutOutputs(
+                reinterpret_cast<AudioOutOutputParam*>(UINTPTR_MAX - sizeof(AudioOutOutputParam) + 1), 1)
+            == static_cast<int>(0x80EA0004),
+            "single-entry wrapping output param array must fail with invalid parameter");
+    Require(errno == 54, "single-entry wrapping output param array preserves errno");
+
+    alignas(AudioOutOutputParam) std::array<unsigned char, sizeof(AudioOutOutputParam) + 1> bytes{};
+    auto* unalignedParam = reinterpret_cast<AudioOutOutputParam*>(bytes.data() + 1);
+    std::int16_t sample = 0;
+    AudioOutOutputParam entry{};
+    entry.handle = -1;
+    entry.ptr = &sample;
+    std::memcpy(bytes.data() + 1, &entry, sizeof(entry));
+    errno = 55;
+    Require(sceAudio3dAudioOutOutputs(unalignedParam, 1) == static_cast<int>(0x80EA0002),
+            "misaligned non-null output param reaches invalid port error");
+    Require(errno == 55, "misaligned non-null output param preserves errno");
+
+    entry.ptr = nullptr;
+    std::memcpy(bytes.data() + 1, &entry, sizeof(entry));
+    errno = 56;
+    Require(sceAudio3dAudioOutOutputs(unalignedParam, 1) == static_cast<int>(0x80EA0004),
+            "misaligned null output param reports invalid parameter");
+    Require(errno == 56, "misaligned null output param preserves errno");
+}
+
+static void CheckBedWriteBounds() {
+    Require(sceAudio3dInitialize(0) == 0, "initialize for bed bounds check succeeds");
+    Audio3dOpenParameters parameters{};
+    sceAudio3dGetDefaultOpenParameters(&parameters);
+    parameters.granularity = 0x40000000;
+    std::uint32_t portId = 0xFFFFFFFFu;
+    Require(sceAudio3dPortOpen(0xFF, &parameters, &portId) == 0 && portId == 0,
+            "open large-granularity port succeeds");
+
+    errno = 61;
+    Require(sceAudio3dBedWrite2(portId, 8, 1, reinterpret_cast<const void*>(std::uintptr_t{0x1000}), 0x40000000, 0, false)
+            == static_cast<int>(0x80EA0004),
+            "unmapped 32 GiB bed write must fail with invalid parameter");
+    Require(errno == 61, "unmapped 32 GiB bed write preserves errno");
+
+    errno = 62;
+    Require(sceAudio3dBedWrite2(portId, 8, 1, reinterpret_cast<const void*>(UINTPTR_MAX - 3), 0x40000000, 0, false)
+            == static_cast<int>(0x80EA0004),
+            "wrapping 32 GiB bed write must fail with invalid parameter");
+    Require(errno == 62, "wrapping 32 GiB bed write preserves errno");
+
+    errno = 63;
+    Require(sceAudio3dBedWrite2(portId, 2, 0, reinterpret_cast<const void*>(UINTPTR_MAX - 3), 1, 0, false)
+            == static_cast<int>(0x80EA0004),
+            "wrapping 4-byte bed write must fail with invalid parameter");
+    Require(errno == 63, "wrapping 4-byte bed write preserves errno");
+
+    Require(sceAudio3dPortClose(portId) == 0, "close large-granularity port succeeds");
+
+    parameters.granularity = 256;
+    portId = 0xFFFFFFFFu;
+    Require(sceAudio3dPortOpen(0xFF, &parameters, &portId) == 0 && portId == 0,
+            "reopen 256-granularity port succeeds");
+    std::array<std::int16_t, 256 * 2> pcm{};
+    Require(sceAudio3dBedWrite(portId, 2, 0, pcm.data(), 256) == 0,
+            "valid stereo S16 bed write succeeds");
+    Require(sceAudio3dPortClose(portId) == 0, "close 256-granularity port succeeds");
+    Require(sceAudio3dTerminate() == 0, "terminate after bed bounds check succeeds");
+}
+
 int main() {
     CheckErrorStrings();
     CheckInvalidDestination();
     CheckShortBuffer();
     CheckExtendedBuffer();
+    CheckAudioOutOutputsBounds();
     Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "terminate before initialize reports not ready");
     Require(sceAudio3dInitialize(1) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
     Require(sceAudio3dInitialize(42) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
@@ -123,4 +198,5 @@ int main() {
     Require(sceAudio3dInitialize(0) == 0, "re-initialize after terminate succeeds");
     Require(sceAudio3dTerminate() == 0, "second terminate succeeds");
     Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "terminate after second terminate reports not ready");
+    CheckBedWriteBounds();
 }
