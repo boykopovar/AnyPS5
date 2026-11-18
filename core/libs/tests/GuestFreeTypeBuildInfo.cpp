@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -87,6 +88,15 @@ static void CheckUnreadableLibrary() {
     Require(values == before);
     Require(RefusesAsNotImplemented("FT_Get_TrueType_Engine_Type_nid_postfix", [&] {
         FT_Get_TrueType_Engine_Type_nid_postfix(unreadable);
+    }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(RefusesAsNotImplemented("FT_Library_Version_nid_postfix", [&] {
+        FT_Library_Version_nid_postfix(misaligned, &values[0], &values[1], &values[2]);
+    }));
+    Require(values == before);
+    Require(RefusesAsNotImplemented("FT_Get_TrueType_Engine_Type_nid_postfix", [&] {
+        FT_Get_TrueType_Engine_Type_nid_postfix(misaligned);
     }));
 }
 
