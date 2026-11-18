@@ -30,6 +30,7 @@ struct SpirvTargetOptions {
     bool spannedWaves = false;
     bool spannedAnySubgroup = false;
     bool windowSelects = false;
+    bool splitWaveGroups = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
     bool float32FlushToZero = false;
@@ -57,6 +58,7 @@ struct SpirvTargetOptions {
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool windowSelects = false;
+    std::uint32_t groupMultiplier = 1;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
     std::uint32_t scratchPoolSlotDwords = 0;

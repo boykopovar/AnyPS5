@@ -214,8 +214,9 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
     }
     if (StageOf(state) == IrShaderStage::Compute && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::WorkgroupOffsetBase + component, 0u);
-        const auto value = EmitInputComponentU32(state, kind, component);
+        auto value = EmitInputComponentU32(state, kind, component);
         if (kind == StageInputKind::WorkgroupId) {
+            if (state.splitWaves > 1u && component == 0u) value = EmitBinaryU32(state, spv::OpUDiv, value, ConstantU32(state, state.splitWaves));
             return EmitBinaryU32(state, spv::OpIAdd, value, offset);
         }
         const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));

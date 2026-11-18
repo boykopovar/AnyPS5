@@ -105,6 +105,7 @@ struct SpirvEmitterState {
     bool splitSubgroup = false;
     bool spannedWave = false;
     bool spannedAnySubgroup = false;
+    std::uint32_t splitWaves = 1;
     std::uint32_t spannedExchangeVariable = 0;
     std::uint32_t spannedBallotVariable = 0;
     std::uint32_t spannedBallotParityVariable = 0;

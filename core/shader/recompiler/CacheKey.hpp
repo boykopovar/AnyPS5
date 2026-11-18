@@ -375,6 +375,7 @@ private:
         append(key, value.spannedWaves);
         append(key, value.spannedAnySubgroup);
         append(key, value.windowSelects);
+        append(key, value.splitWaveGroups);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
