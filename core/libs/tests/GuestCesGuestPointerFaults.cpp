@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifdef __linux__
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__linux__)
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -223,7 +225,21 @@ int main() {
     Require(unreadableSource(sceCesEucJpToUcs2(eucJp, unreadable, 2, &size, &unit)));
     Require(unreadableSource(sceCesEucJpToUtf8(eucJp, unreadable, 2, &size, utf8, 4, nullptr)));
     Require(unreadableSource(sceCesUtf8ToSbc(unreadable, 1, nullptr, cp1252, &byte)));
-#ifdef __linux__
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const auto page = static_cast<std::size_t>(system.dwPageSize);
+    auto* pages = static_cast<uint8_t*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD previous = 0;
+    Require(pages != nullptr && VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+    uint8_t* const last = pages + page - 1;
+    *last = 'A';
+    Require(sceCesSJisToUcs2(sjis, last, 4, &size, &unit) == 0 && unit == 'A' && size == 1);
+    *last = 0x82;
+    errno = savedErrno;
+    Require(unreadableSource(sceCesSJisToUcs2(sjis, last, 2, &size, &unit)));
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#elif defined(__linux__)
     const long page = sysconf(_SC_PAGESIZE);
     auto* pages = static_cast<uint8_t*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     Require(pages != MAP_FAILED && mprotect(pages + page, page, PROT_NONE) == 0);
