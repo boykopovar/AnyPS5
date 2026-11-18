@@ -1140,8 +1140,8 @@ void MutateDccDuringCopy() {
 void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "color unwatch test requires the guest write watch");
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
-        const auto samples = mode == 7u ? 8u : 4u;
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+        const auto samples = mode >= 7u ? 8u : 4u;
         Block source(layout.Bytes() * samples);
         Block metadata(BlockBytes);
         Block resolved(layout.Bytes());
@@ -1160,7 +1160,7 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             target.cmaskAddress = cmask->Address();
             target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
             target.cmaskFastClear = true;
-            if (mode == 7u) {
+            if (mode >= 7u) {
                 fmask = std::make_unique<Block>(2u * BlockBytes);
                 std::memset(fmask->data, 0x11, fmask->bytes);
                 target.fmaskAddress = fmask->Address();
@@ -1181,7 +1181,7 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             dccCopyMutation = source.data;
             AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(&MutateDccDuringCopy);
         }
-        if (mode == 7u) {
+        if (mode >= 7u) {
             AgcDriver::GuestMemory::Unwatch(fmask->Address(), 4096u);
         } else if (mode == 6u) {
             AgcDriver::GuestMemory::Unwatch(cmask->Address(), 4096u);
