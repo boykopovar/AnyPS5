@@ -4,15 +4,15 @@
 extern "C" {
 
 int APS5_VABI sceRnpsBundleInit() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRnpsBundleInitEx() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRnpsBundleTerm() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRnpsBundleVerifyAndDecrypt() {
