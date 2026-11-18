@@ -6013,6 +6013,7 @@ struct MockVulkan {
     std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineLayout> libraryLayouts;
     std::vector<VkFormat> shaderLibraryDepthFormats;
     std::vector<bool> fragmentLibraryMultisample;
+    std::vector<bool> preRasterizationBiasEnableDynamic;
     std::uint32_t pipelineCreateCount = 0;
     std::vector<std::array<std::uint32_t, 3>> pipelineSpecializations;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
@@ -6286,6 +6287,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateGraphicsPipelines(VkDevice, VkPipelineC
         mock.shaderLibraryDepthFormats.push_back(format);
     }
     if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) mock.fragmentLibraryMultisample.push_back(infos[0].pMultisampleState != nullptr);
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT && infos[0].pDynamicState != nullptr) mock.preRasterizationBiasEnableDynamic.push_back(std::ranges::count(std::span(infos[0].pDynamicState->pDynamicStates, infos[0].pDynamicState->dynamicStateCount), VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE) == 1);
     *pipelines = makeHandle<VkPipeline>();
     ++mock.live;
     return VK_SUCCESS;
@@ -9873,6 +9875,43 @@ void pipelineLibraryNarrowKeyTests() {
             Require(mock.fragmentLibraryMultisample.size() == built[2] && std::ranges::all_of(mock.fragmentLibraryMultisample, [&](bool given) { return given == multisample; }), multisample ? "a fragment shader library that shades per sample lost its multisample state" : "a fragment shader library that does not shade per sample was given the multisample state");
             ClearPipelineLibraries(context.device);
             Require(mock.live == 0, "narrow library key tests leaked Vulkan objects");
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
+}
+
+void pipelineLibraryDynamicDepthBiasTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool wide : {false, true}) {
+        for (const bool dynamic : {false, true}) {
+            mock = MockVulkan{};
+            RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
+            auto context = mockContext();
+            context.graphicsPipelineLibrary = true;
+            context.dynamicDepthBiasEnable = dynamic;
+            context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.spirv = makeModule({});
+            fragment.spirv = makeModule({.fragment = true});
+            vertex.variantId = 311;
+            fragment.variantId = 312;
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+            const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+            State flat{};
+            flat.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            flat.depthTest = true;
+            flat.depthCompare = VK_COMPARE_OP_LESS;
+            auto biased = flat;
+            biased.depthBias = true;
+            biased.depthBiasConstant = 4.0f;
+            biased.depthBiasSlope = 1.0f;
+            for (const auto* state : {&flat, &biased, &flat, &biased}) Require(Pipeline::Prebuild(context, *state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+            const auto built = PipelineLibraryCountersOf(context.device).built;
+            const bool shared = !wide && dynamic;
+            Require(built[1] == (shared ? 1u : 2u), shared ? "a depth bias enable split the pre-rasterization library although the device sets it per draw" : "a pre-rasterization library that bakes the depth bias enable was shared across it");
+            Require(mock.preRasterizationBiasEnableDynamic.size() == built[1] && std::ranges::all_of(mock.preRasterizationBiasEnableDynamic, [&](bool given) { return given == shared; }), shared ? "a narrow pre-rasterization library baked the depth bias enable" : "a pre-rasterization library made the depth bias enable dynamic without narrow keys and the device feature");
+            ClearPipelineLibraries(context.device);
+            Require(mock.live == 0, "dynamic depth bias library tests leaked Vulkan objects");
         }
     }
     RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
@@ -14660,7 +14699,10 @@ void commandStateTests() {
     const std::array<VkDynamicState, 1> colorWriteMask{VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT};
     const auto maskSlot = CommandState::DynamicSlots(colorWriteMask);
     Require(maskSlot == CommandState::Mask(Slot::ColorWriteMask), "the color write mask dynamic state mapped to another slot");
-    Require((library | maskSlot) == (1u << CommandState::SlotCount) - 1u && (library & maskSlot) == 0, "the pipeline library's dynamic states and the color write mask do not cover every tracked slot");
+    const std::array<VkDynamicState, 1> depthBiasEnable{VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE};
+    const auto biasEnableSlot = CommandState::DynamicSlots(depthBiasEnable);
+    Require(biasEnableSlot == CommandState::Mask(Slot::DepthBiasEnable), "the depth bias enable dynamic state mapped to another slot");
+    Require((library | maskSlot | biasEnableSlot) == (1u << CommandState::SlotCount) - 1u && (library & (maskSlot | biasEnableSlot)) == 0, "the pipeline library's dynamic states, the color write mask and the depth bias enable do not cover every tracked slot");
     Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
     const std::array<VkDynamicState, 2> unmodelled{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH};
     bool rejected = false;
@@ -14688,6 +14730,21 @@ void commandStateTests() {
         tracker.SetCullMode(context, 1u);
         tracker.SetCullMode(context, 1u);
         expectStateLog({stateLine("cull", 1u)}, "a cull mode after invalidation");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        for (const auto enable : {1u, 1u, 0u, 0u}) tracker.SetDepthBiasEnable(context, enable);
+        tracker.BindPipeline(context, pipelineB, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        Require(tracker.Known(Slot::DepthBiasEnable), "binding another pipeline with a dynamic depth bias enable forgot it");
+        tracker.BindPipeline(context, pipelineC, library);
+        Require(!tracker.Known(Slot::DepthBiasEnable), "binding a pipeline with a static depth bias enable kept it known");
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("biasenable", 1u), stateLine("biasenable", 0u), stateLine("bind", 0u, pipelineB), stateLine("bind", 0u, pipelineC), stateLine("bind", 0u, pipelineA), stateLine("biasenable", 0u)}, "depth bias enables across binds of pipelines that make it dynamic or static");
     }
 
     {
@@ -15105,6 +15162,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-narrow-keys") {
             pipelineLibraryNarrowKeyTests();
+            pipelineLibraryDynamicDepthBiasTests();
             std::cout << "shader pipeline libraries are keyed only by the state their subset reads\n";
             return 0;
         }
@@ -15447,6 +15505,7 @@ int main(int argc, char** argv) {
         retainedPixelStageTests();
         pipelineLibrarySetTests();
         pipelineLibraryNarrowKeyTests();
+        pipelineLibraryDynamicDepthBiasTests();
         pipelineLibraryClearWaitsForBuildTests();
         tessellationPipelineLibraryCacheTests();
         framebufferOwnerTests();

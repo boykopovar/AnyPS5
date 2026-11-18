@@ -91,7 +91,7 @@ void DrawMultisampled(AgcDriver::VulkanDevice& device, const Shaders& compiled) 
     device.WaitIdle();
 }
 
-void Arm(AgcDriver::VulkanDevice& device, const Shaders& compiled, std::span<const Target> targets, bool multisampled, bool wide, bool libraries) {
+void Arm(AgcDriver::VulkanDevice& device, const Shaders& compiled, std::span<const Target> targets, bool multisampled, bool wide, bool libraries, bool dynamicBias) {
     RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
     const auto vkDevice = AgcDriver::VulkanDeviceTestAccess::ContextOf(device).device;
     const auto before = Built(vkDevice);
@@ -99,6 +99,10 @@ void Arm(AgcDriver::VulkanDevice& device, const Shaders& compiled, std::span<con
     for (const auto& target : targets) {
         const auto written = DepthFastClearHarness::Draw(device, compiled, target.surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .maxDepth = 0.5f});
         Require(written == Covered, arm + ", " + std::string(target.name) + ": a draw that writes depth 0.25 covered " + std::to_string(written) + " of " + std::to_string(Covered) + " pixels");
+        for (const bool biased : {false, true, false}) {
+            const auto equal = DepthFastClearHarness::Draw(device, compiled, target.surface, {.depthCompare = VK_COMPARE_OP_EQUAL, .maxDepth = 0.5f, .depthBias = biased, .depthBiasConstant = biased ? 64.0f : 0.0f});
+            Require(equal == (biased ? 0u : Covered), arm + ", " + std::string(target.name) + ": " + std::to_string(equal) + " pixels of a draw " + (biased ? "with" : "without") + " depth bias passed an equal test against the depth it wrote");
+        }
         const auto behind = DepthFastClearHarness::Draw(device, compiled, target.surface, {.depthCompare = VK_COMPARE_OP_LESS});
         Require(behind == 0, arm + ", " + std::string(target.name) + ": " + std::to_string(behind) + " pixels at depth 0.5 passed a less-than test against depth 0.25");
         const auto front = DepthFastClearHarness::Draw(device, compiled, target.surface, {.depthCompare = VK_COMPARE_OP_GREATER});
@@ -111,8 +115,8 @@ void Arm(AgcDriver::VulkanDevice& device, const Shaders& compiled, std::span<con
     const auto fragment = after[2] - before[2];
     const auto formats = static_cast<std::uint64_t>(targets.size());
     const auto expectedFragment = wide ? formats + (multisampled ? 1u : 0u) : 1u;
-    const auto expectedPreRasterization = wide ? formats : 1u;
-    Require(preRasterization == expectedPreRasterization && fragment == expectedFragment, arm + ": built " + std::to_string(preRasterization) + " pre-rasterization and " + std::to_string(fragment) + " fragment shader libraries for " + std::to_string(formats) + " depth formats" + (multisampled ? " and a 4-sample draw" : "") + ", expected " + std::to_string(expectedPreRasterization) + " and " + std::to_string(expectedFragment));
+    const auto expectedPreRasterization = wide ? formats * 2u : (dynamicBias ? 1u : 2u);
+    Require(preRasterization == expectedPreRasterization && fragment == expectedFragment, arm + ": built " + std::to_string(preRasterization) + " pre-rasterization and " + std::to_string(fragment) + " fragment shader libraries for " + std::to_string(formats) + " depth formats with and without depth bias" + (multisampled ? " and a 4-sample draw" : "") + ", expected " + std::to_string(expectedPreRasterization) + " and " + std::to_string(expectedFragment));
 }
 
 }
@@ -126,10 +130,10 @@ int main() {
         const bool multisampled = (context.limits.framebufferColorSampleCounts & Samples) != 0 && (context.limits.framebufferDepthSampleCounts & Samples) != 0;
         const auto compiled = DepthFastClearHarness::Compile(*device);
         const auto targets = Targets();
-        Arm(*device, compiled, targets, multisampled, false, libraries);
-        Arm(*device, compiled, targets, multisampled, true, libraries);
+        Arm(*device, compiled, targets, multisampled, false, libraries, context.dynamicDepthBiasEnable);
+        Arm(*device, compiled, targets, multisampled, true, libraries, context.dynamicDepthBiasEnable);
         RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
-        std::printf("library key tests passed (%s%s)\n", libraries ? "pipeline libraries" : "whole pipelines", multisampled ? ", with a 4-sample draw" : "");
+        std::printf("library key tests passed (%s%s%s)\n", libraries ? "pipeline libraries" : "whole pipelines", libraries && context.dynamicDepthBiasEnable ? ", depth bias enable set per draw" : "", multisampled ? ", with a 4-sample draw" : "");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

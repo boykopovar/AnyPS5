@@ -1,8 +1,10 @@
 if(BUILD_TESTING)
     add_test(NAME agc_driver_library_keys_narrow_whole_pipelines COMMAND agc_driver_library_keys_narrow_tests)
     set_tests_properties(agc_driver_library_keys_narrow_whole_pipelines PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GPL=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_library_keys_narrow_static_depth_bias_enable COMMAND agc_driver_library_keys_narrow_tests)
+    set_tests_properties(agc_driver_library_keys_narrow_static_depth_bias_enable PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_DYNAMIC_DEPTH_BIAS_ENABLE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_library_keys_narrow_whole_pipelines PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_library_keys_narrow_whole_pipelines agc_driver_library_keys_narrow_static_depth_bias_enable PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

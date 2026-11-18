@@ -626,6 +626,7 @@ struct VulkanDevice::State {
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
+    bool dynamicDepthBiasEnable = false;
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
@@ -2099,6 +2100,15 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     dynamicState3Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
     dynamicState3Features.extendedDynamicState3ColorWriteMask = VK_TRUE;
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT dynamicState2Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
+    if (state->graphicsPipelineLibrary && hasExtension(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &dynamicState2Features};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->dynamicDepthBiasEnable = dynamicState2Features.extendedDynamicState2 == VK_TRUE && std::getenv("APS5_NO_DYNAMIC_DEPTH_BIAS_ENABLE") == nullptr;
+        if (state->dynamicDepthBiasEnable) deviceExtensions.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
+    }
+    dynamicState2Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
+    dynamicState2Features.extendedDynamicState2 = VK_TRUE;
     renderingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, nullptr, VK_TRUE};
     libraryFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, &dynamicStateFeatures, VK_TRUE};
     dynamicStateFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &renderingFeatures, VK_TRUE};
@@ -2339,6 +2349,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->dynamicColorWriteMask) {
         dynamicState3Features.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &dynamicState3Features;
+    }
+    if (state->dynamicDepthBiasEnable) {
+        dynamicState2Features.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &dynamicState2Features;
     }
     if (state->maintenance8) {
         maintenance8Features.pNext = const_cast<void*>(deviceInfo.pNext);
@@ -4897,6 +4911,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.graphicsPipelineLibrary = state->graphicsPipelineLibrary;
     context.pipelineLinkTimeOptimization = state->pipelineLinkTimeOptimization;
     context.dynamicColorWriteMask = state->dynamicColorWriteMask;
+    context.dynamicDepthBiasEnable = state->dynamicDepthBiasEnable;
     context.drawInputsInPlace = state->drawInputsInPlace;
     context.drawInputsInPlaceBelow = state->drawInputsInPlaceBelow;
     context.discreteGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;

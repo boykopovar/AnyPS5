@@ -97,6 +97,7 @@ private:
     bool depthBias = false;
     bool libraries = false;
     bool narrowLibraryKeys = false;
+    bool dynamicDepthBiasEnable = false;
     std::uint32_t dynamicSlots = 0;
     std::shared_ptr<OptimizedPipeline> optimized;
     bool dynamicRendering = false;
