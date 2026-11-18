@@ -367,7 +367,10 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
                 const auto mask = ConstantU32(state, 0xffffu);
                 packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lowBits, mask), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), highBits, mask), ConstantU32(state, 16u)));
             } else {
-                const auto rounded = EmitPackFloat2x16Rtz(state, low, high);
+                const auto pair = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), pair, low, high);
+                const auto towardZero = access.image.table == NoTable && !state.registrationModules ? Binary(state, spv::OpINotEqual, TypeBool(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::D16TowardZeroBase + mem.resource, 0u), ConstantU32(state, 0u)) : ConstantBool(state, false);
+                const auto rounded = Select(state, TypeU32(state), towardZero, EmitPackFloat2x16Rtz(state, low, high), EmitPackHalf2x16(state, pair));
                 const auto keepNan = [&](std::uint32_t value, std::uint32_t half) {
                     const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), value);
                     const auto mantissa = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, ConstantU32(state, 13u)), ConstantU32(state, 0x3ffu));
