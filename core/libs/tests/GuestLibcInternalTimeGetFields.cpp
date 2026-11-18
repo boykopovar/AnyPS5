@@ -14,6 +14,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -63,8 +68,14 @@ int APS5_VABI OverflowWide(GuestLocale::Streambuf* self, int character) {
 const GuestLocale::StreambufVtable g_narrowOutVtable{{}, OverflowNarrow};
 const GuestLocale::StreambufVtable g_wideOutVtable{{}, OverflowWide};
 
+#ifdef _WIN32
+HMODULE g_library = nullptr;
+#else
+void* g_library = nullptr;
+#endif
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
-void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
+void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
 void* APS5_VABI HeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -78,6 +89,17 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "libc internal time_get_fields: %s\n", message);
     std::exit(1);
+}
+
+template<typename TFunction>
+TFunction ResolveExport(const char* symbol) {
+#ifdef _WIN32
+    auto* address = reinterpret_cast<void*>(GetProcAddress(g_library, symbol));
+#else
+    void* address = dlsym(g_library, symbol);
+#endif
+    Require(address != nullptr, "missing exported symbol");
+    return reinterpret_cast<TFunction>(address);
 }
 
 template<typename TCall>
@@ -589,12 +611,11 @@ void CheckGroup4GetAndGetFmt() {
         GuestTm tm{};
         std::int32_t state = 0;
         const std::u16string fmt = u"%H";
-        Require(Throws([&] {
-            _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE__nid_postfix(
-                &realFacet.base, sb.Begin(), EndIter(), &ios, &state, &tm,
-                reinterpret_cast<const std::uint16_t*>(fmt.data()),
-                reinterpret_cast<const std::uint16_t*>(fmt.data() + fmt.size()));
-        }), "C1-constructed wide time_get throws NotImplemented when hitting unimplemented do_get slot");
+        _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE__nid_postfix(
+            &realFacet.base, sb.Begin(), EndIter(), &ios, &state, &tm,
+            reinterpret_cast<const std::uint16_t*>(fmt.data()),
+            reinterpret_cast<const std::uint16_t*>(fmt.data() + fmt.size()));
+        Require(state == 0 && tm.tm_hour == 12 && sb.RemainingFirst() == ':', "C1-constructed wide time_get dispatches %H through g_wideTimeGetVtable::get");
     }
 
     DispatchFacet dispatch{{&g_mockWideTimeGetVtable.facet, 1, 0}, {}, false};
@@ -688,12 +709,367 @@ void CheckGroup4GetAndGetFmt() {
     Require(NotImplementedCalls_nid_no_patch() > before, "Group 4 error paths reported");
 }
 
+struct NarrowFacetVtable {
+    GuestLocale::TimeGetVtable timeGet;
+};
+
+struct CustomDateFacet {
+    GuestLocale::Facet base;
+    std::int32_t order;
+    bool narrow;
+};
+
+std::int32_t APS5_VABI CustomDateOrder(const GuestLocale::Facet* self) {
+    return reinterpret_cast<const CustomDateFacet*>(self)->order;
+}
+
+GuestLocale::InputIterator APS5_VABI CustomGetMonth(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
+    if (reinterpret_cast<const CustomDateFacet*>(self)->narrow) {
+        return _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+    }
+    return _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+}
+
+GuestLocale::InputIterator APS5_VABI CustomGetYear(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
+    if (reinterpret_cast<const CustomDateFacet*>(self)->narrow) {
+        return _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+    }
+    return _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+}
+
+GuestLocale::InputIterator APS5_VABI CustomGetWeekday(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
+    if (reinterpret_cast<const CustomDateFacet*>(self)->narrow) {
+        return _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+    }
+    return _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(self, first, last, stream, state, time);
+}
+
+GuestLocale::InputIterator APS5_VABI CustomDoGet(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char modifier) {
+    if (reinterpret_cast<const CustomDateFacet*>(self)->narrow) {
+        return _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(self, first, last, stream, state, time, specifier, modifier);
+    }
+    return _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(self, first, last, stream, state, time, specifier, modifier);
+}
+
+const GuestLocale::TimeGetVtable g_customDateVtable{
+    {nullptr, nullptr, nullptr, nullptr},
+    CustomDateOrder,
+    nullptr,
+    nullptr,
+    CustomGetWeekday,
+    CustomGetMonth,
+    CustomGetYear,
+    CustomDoGet,
+};
+
+template<typename TChar>
+std::basic_string<TChar> FromAscii(const char* text) {
+    std::basic_string<TChar> out;
+    for (const char* p = text; *p != '\0'; ++p) out.push_back(static_cast<TChar>(static_cast<unsigned char>(*p)));
+    return out;
+}
+
+template<typename TChar, typename TGetDate, typename TGetWeekday, typename TDoGet, typename TGetFmt>
+void CheckRemainingTyped(GuestLocale::Facet* facet, bool narrow, TGetDate getDate, TGetWeekday getWeekday, TDoGet doGet, TGetFmt getFmt) {
+    GuestLocale::Implementation* classic = _ZSt21_sceLibcClassicLocale_nid_postfix;
+    GuestLocale::IosBase ios{};
+    ios.locale = &classic;
+    InputStreambuf<TChar> sb{};
+
+    for (const bool buffered : {true, false}) {
+        {
+            sb.Setup(FromAscii<TChar>("thu."), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getWeekday(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 0 && tm.tm_wday == 4 && sb.RemainingFirst() == '.', "do_get_weekday parses case-insensitive short name");
+        }
+        {
+            sb.Setup(FromAscii<TChar>("Wednesday"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getWeekday(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 0 && tm.tm_wday == 3, "do_get_weekday parses full name");
+        }
+        {
+            sb.Setup(FromAscii<TChar>("S"), buffered);
+            GuestTm tm{};
+            tm.tm_wday = 6;
+            std::int32_t state = 0;
+            getWeekday(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 2 && tm.tm_wday == 6, "do_get_weekday rejects ambiguous prefix without touching eofbit");
+        }
+        {
+            sb.Setup(FromAscii<TChar>(""), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getWeekday(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 2, "do_get_weekday rejects empty input");
+        }
+
+        {
+            sb.Setup(FromAscii<TChar>("11/17/2026!"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getDate(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 0 && tm.tm_mon == 10 && tm.tm_mday == 17 && tm.tm_year == 126 && sb.RemainingFirst() == '!', "do_get_date parses numeric mdy");
+        }
+        {
+            sb.Setup(FromAscii<TChar>("Nov 7, 26"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getDate(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_mon == 10 && tm.tm_mday == 7 && tm.tm_year == 126, "do_get_date parses leading month name and comma separator to EOF");
+        }
+
+        {
+            CustomDateFacet custom{{&g_customDateVtable.facet, 1, 0}, 1, narrow};
+            sb.Setup(FromAscii<TChar>("17 / 11 : 2026"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_mday == 17 && tm.tm_mon == 10 && tm.tm_year == 126, "do_get_date supports dmy");
+
+            custom.order = 3;
+            sb.Setup(FromAscii<TChar>("2026, Nov 17"), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_year == 126 && tm.tm_mon == 10 && tm.tm_mday == 17, "do_get_date supports ymd with middle month name");
+
+            custom.order = 4;
+            sb.Setup(FromAscii<TChar>("2026/17/Nov"), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_year == 126 && tm.tm_mday == 17 && tm.tm_mon == 10, "do_get_date supports ydm with trailing month name");
+
+            sb.Setup(FromAscii<TChar>("2026/Nov 17"), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_year == 126 && tm.tm_mon == 10 && tm.tm_mday == 17, "do_get_date switches ydm with middle month name to ymd");
+
+            custom.order = 0;
+            sb.Setup(FromAscii<TChar>("02/28/2025"), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 1 && tm.tm_mon == 1 && tm.tm_mday == 28 && tm.tm_year == 125, "do_get_date treats no_order as mdy");
+        }
+
+        {
+            CustomDateFacet custom{{&g_customDateVtable.facet, 1, 0}, 2, narrow};
+            sb.Setup(FromAscii<TChar>("Nov/Dec/2026"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require((state & 2) != 0, "do_get_date rejects duplicate month name in mdy");
+
+            sb.Setup(FromAscii<TChar>("11/17"), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 3, "do_get_date fails with eofbit on missing third component");
+
+            sb.Setup(FromAscii<TChar>(""), buffered);
+            tm = {};
+            state = 0;
+            getDate(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 3, "do_get_date fails empty input");
+        }
+
+        {
+            CustomDateFacet custom{{&g_customDateVtable.facet, 1, 0}, 2, narrow};
+            sb.Setup(FromAscii<TChar>("Wed Nov 17 09:10:60 2026"), buffered);
+            GuestTm tm{};
+            std::int32_t state = 2;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, 'c', '\0');
+            Require(state == 1 && tm.tm_wday == 3 && tm.tm_mon == 10 && tm.tm_mday == 17 && tm.tm_hour == 9 && tm.tm_min == 10 && tm.tm_sec == 60 && tm.tm_year == 126, "do_get %c parses full timestamp and resets prior state");
+
+            sb.Setup(FromAscii<TChar>("12:30:45 pm"), buffered);
+            tm = {};
+            state = 0;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, 'r', '\0');
+            Require(state == 1 && tm.tm_hour == 12 && tm.tm_min == 30 && tm.tm_sec == 45, "do_get %r maps 12 PM to 12");
+
+            sb.Setup(FromAscii<TChar>("12:30:45 AM"), buffered);
+            tm = {};
+            state = 0;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, 'r', '\0');
+            Require(state == 1 && tm.tm_hour == 0 && tm.tm_min == 30 && tm.tm_sec == 45, "do_get %r maps 12 AM to 0");
+
+            sb.Setup(FromAscii<TChar>("20 68 69 2026 365 42 5"), buffered);
+            tm = {};
+            state = 0;
+            getFmt(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, "%C %y %U %Y %j %W %w");
+            Require(state == 1 && tm.tm_year == 126 && tm.tm_yday == 42 && tm.tm_wday == 5, "_Getfmt dispatches %C %y %U %Y %j %W %w");
+
+            sb.Setup(FromAscii<TChar>("12/31/68"), buffered);
+            tm = {};
+            state = 0;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, 'D', '\0');
+            Require(state == 1 && tm.tm_mon == 11 && tm.tm_mday == 31 && tm.tm_year == 168, "do_get %D parses %m/%d/%y");
+
+            sb.Setup(FromAscii<TChar>("%"), buffered);
+            tm = {};
+            state = 0;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, '%', '\0');
+            Require(state == 1, "do_get %% consumes percent literal");
+
+            sb.Setup(FromAscii<TChar>("x"), buffered);
+            tm = {};
+            state = 0;
+            doGet(&custom.base, sb.Begin(), EndIter(), &ios, &state, &tm, 'Z', '\0');
+            Require(state == 2 && sb.RemainingFirst() == 'x', "do_get unknown specifier sets failbit");
+        }
+    }
+}
+
+void CheckGroup5RemainingTimeGet(bool hasLibrary) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    GuestLocale::Implementation* classic = _ZSt21_sceLibcClassicLocale_nid_postfix;
+    GuestLocale::IosBase ios{};
+    ios.locale = &classic;
+
+    GuestLocale::CtypeFacet charCtype{{nullptr, 1, 0}, _Getpctype_nid_postfix(), nullptr, nullptr, 0, 0};
+    GuestLocale::Facet charFacet{};
+    {
+        InputStreambuf<char> sb{};
+        sb.Setup("  42x", true);
+        int val = -1;
+        GuestLocale::InputIterator first = sb.Begin();
+        GuestLocale::InputIterator last = EndIter();
+        const std::int32_t st = _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix(
+            &charFacet, &first, &last, 0, 9999, &val, &charCtype.base);
+        Require(st == 0 && val == 42 && sb.RemainingFirst() == 'x', "char _Getint skips spaces and parses bounded integer");
+    }
+
+    {
+        CustomDateFacet custom{{&g_customDateVtable.facet, 1, 0}, 2, true};
+        CheckRemainingTyped<char>(
+            &custom.base, true,
+            &_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
+            &_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
+            &_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix,
+            &_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix);
+    }
+
+    {
+        WideTimeGetStorage wideFacet{};
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix(&wideFacet.base, "C", 0);
+        const auto* vt = reinterpret_cast<const GuestLocale::TimeGetVtable*>(wideFacet.base.vtable);
+        Require(vt->getDate != nullptr && vt->getWeekday != nullptr && vt->get != nullptr, "wide vtable remaining slots non-null");
+#ifdef _WIN32
+        if (HMODULE loadedLib = GetModuleHandleA("libSceLibcInternal.prx"); loadedLib != nullptr) {
+            Require(reinterpret_cast<void*>(vt->getDate) == reinterpret_cast<void*>(GetProcAddress(loadedLib, "_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix")), "wide vtable getDate wired");
+            Require(reinterpret_cast<void*>(vt->getWeekday) == reinterpret_cast<void*>(GetProcAddress(loadedLib, "_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix")), "wide vtable getWeekday wired");
+            Require(reinterpret_cast<void*>(vt->get) == reinterpret_cast<void*>(GetProcAddress(loadedLib, "_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix")), "wide vtable get wired");
+        }
+#else
+        Require(vt->getDate == &_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix, "wide vtable getDate wired");
+        Require(vt->getWeekday == &_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix, "wide vtable getWeekday wired");
+        Require(vt->get == &_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix, "wide vtable get wired");
+#endif
+        CheckRemainingTyped<char16_t>(
+            &wideFacet.base, false, vt->getDate, vt->getWeekday, vt->get,
+            &_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix);
+    }
+
+    if (hasLibrary) {
+        using GetintCharFn = std::int32_t (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator*, GuestLocale::InputIterator*, int, int, int*, const GuestLocale::Facet*);
+        using DateFn = GuestLocale::InputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*);
+        using DoGetFn = GuestLocale::InputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*, char, char);
+        using GetFmtFn = GuestLocale::InputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*, const char*);
+
+        const auto nidCharDate = ResolveExport<DateFn>("_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix");
+        const auto nidCharWday = ResolveExport<DateFn>("_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix");
+        const auto nidCharDoGet = ResolveExport<DoGetFn>("_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix");
+        const auto nidCharGetFmt = ResolveExport<GetFmtFn>("_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix");
+        const auto nidCharGetInt = ResolveExport<GetintCharFn>("_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix");
+        const auto nidWideDate = ResolveExport<DateFn>("_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix");
+        const auto nidWideWday = ResolveExport<DateFn>("_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix");
+        const auto nidWideDoGet = ResolveExport<DoGetFn>("_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix");
+
+        CustomDateFacet narrowFacet{{&g_customDateVtable.facet, 1, 0}, 2, true};
+        GuestTm tm{};
+        std::int32_t state = 0;
+        InputStreambuf<char> cSb{};
+        cSb.Setup("75", true);
+        GuestLocale::InputIterator cFirst = cSb.Begin();
+        GuestLocale::InputIterator cLast = EndIter();
+        int iv = 0;
+        Require(nidCharGetInt(&narrowFacet.base, &cFirst, &cLast, 0, 99, &iv, &charCtype.base) == 1 && iv == 75, "NID 8raXTYQ11cg");
+        cSb.Setup("05/12/2026", true);
+        state = 0;
+        nidCharDate(&narrowFacet.base, cSb.Begin(), EndIter(), &ios, &state, &tm);
+        Require(state == 1 && tm.tm_mon == 4 && tm.tm_mday == 12 && tm.tm_year == 126, "NID T85u2sPrKOo");
+        cSb.Setup("Friday", true);
+        state = 0;
+        nidCharWday(&narrowFacet.base, cSb.Begin(), EndIter(), &ios, &state, &tm);
+        Require(state == 0 && tm.tm_wday == 5, "NID xzYpD5d24aA");
+        cSb.Setup("20:15", true);
+        state = 0;
+        nidCharGetFmt(&narrowFacet.base, cSb.Begin(), EndIter(), &ios, &state, &tm, "%R");
+        Require(state == 1 && tm.tm_hour == 20 && tm.tm_min == 15, "NID E7UermPZVcw");
+        cSb.Setup("23", true);
+        state = 0;
+        nidCharDoGet(&narrowFacet.base, cSb.Begin(), EndIter(), &ios, &state, &tm, 'H', '\0');
+        Require(state == 1 && tm.tm_hour == 23, "NID Vw03kdKZUN0");
+
+        WideTimeGetStorage wideFacet{};
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix(&wideFacet.base, "C", 0);
+        InputStreambuf<char16_t> wSb{};
+        wSb.Setup(u"08/09/2024", true);
+        tm = {};
+        state = 0;
+        nidWideDate(&wideFacet.base, wSb.Begin(), EndIter(), &ios, &state, &tm);
+        Require(state == 1 && tm.tm_mon == 7 && tm.tm_mday == 9 && tm.tm_year == 124, "NID SYCwZXKZQ08");
+        wSb.Setup(u"Mon", true);
+        state = 0;
+        nidWideWday(&wideFacet.base, wSb.Begin(), EndIter(), &ios, &state, &tm);
+        Require(state == 0 && tm.tm_wday == 1, "NID hGlkh5YpcKw");
+        wSb.Setup(u"59", true);
+        state = 0;
+        nidWideDoGet(&wideFacet.base, wSb.Begin(), EndIter(), &ios, &state, &tm, 'S', '\0');
+        Require(state == 1 && tm.tm_sec == 59, "NID 0MzJAexrlr4");
+    }
+
+    GuestTm tm{};
+    std::int32_t state = 0;
+    int intVal = 0;
+    GuestLocale::InputIterator dummyFirst = EndIter();
+    GuestLocale::InputIterator dummyLast = EndIter();
+    Require(Throws([&] { _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix(nullptr, &dummyFirst, &dummyLast, 0, 99, &intVal, &charCtype.base); }), "char _Getint null self throws");
+    Require(Throws([&] { _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(nullptr, EndIter(), EndIter(), &ios, &state, &tm); }), "char do_get_date null self throws");
+    Require(Throws([&] { _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(&charFacet, EndIter(), EndIter(), &ios, nullptr, &tm); }), "char do_get_weekday null state throws");
+    Require(Throws([&] { _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(&charFacet, EndIter(), EndIter(), &ios, &state, nullptr, 'H', '\0'); }), "char do_get null tm throws");
+    Require(Throws([&] { _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(&charFacet, EndIter(), EndIter(), &ios, &state, &tm, nullptr); }), "char _Getfmt null fmt throws");
+    Require(Throws([&] { _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(nullptr, EndIter(), EndIter(), &ios, &state, &tm); }), "wide do_get_date null self throws");
+    Require(Throws([&] { _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(&charFacet, EndIter(), EndIter(), &ios, nullptr, &tm); }), "wide do_get_weekday null state throws");
+    Require(Throws([&] { _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(&charFacet, EndIter(), EndIter(), &ios, &state, nullptr, 'H', '\0'); }), "wide do_get null tm throws");
+    Require(NotImplementedCalls_nid_no_patch() > before, "Group 5 error paths reported");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
+    bool hasLibrary = false;
+    if (argc >= 2) {
+#ifdef _WIN32
+        g_library = LoadLibraryA(argv[1]);
+#else
+        g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+#endif
+        Require(g_library != nullptr, "load libSceLibcInternal");
+        hasLibrary = true;
+    }
     std::array<void*, 10> api{
         reinterpret_cast<void*>(&HeapAllocate),
-        reinterpret_cast<void*>(&HeapFree),
+        reinterpret_cast<void*>(&TestHeapFree),
         reinterpret_cast<void*>(&HeapCalloc),
         reinterpret_cast<void*>(&HeapReallocate),
         reinterpret_cast<void*>(&HeapAlign),
@@ -705,5 +1081,6 @@ int main() {
     CheckGroup2GetInt();
     CheckGroup3Fields();
     CheckGroup4GetAndGetFmt();
+    CheckGroup5RemainingTimeGet(hasLibrary);
     return 0;
 }
