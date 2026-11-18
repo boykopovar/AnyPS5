@@ -8,7 +8,9 @@ import {createDropdown} from './dropdown.js';
 const byId = id => document.getElementById(id);
 let entries = [];
 let settings = [];
-const snapshot = () => JSON.stringify([entries, settings]);
+let controllerRemaps = [];
+const configurationText = () => serialize(entries, settings, controllerRemaps);
+const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
 let savedConfiguration = snapshot();
 let captureTarget;
 let captureButton;
@@ -297,7 +299,7 @@ function filterActions() {
 function updateOutput() {
     const result = validate(entries);
     const valid = result.errors.length === 0;
-    byId('preview').value = valid ? serialize(entries, settings) : '';
+    byId('preview').value = valid ? configurationText() : '';
     byId('count').textContent = `${new Set(result.bindings.map(binding => binding.action)).size} / ${actions.length}`;
     byId('download').disabled = !valid;
     byId('copy').disabled = !valid;
@@ -360,6 +362,7 @@ byId('reset').addEventListener('click', async () => {
     if (!await confirmReplacement()) return;
     entries = [];
     settings = [];
+    controllerRemaps = [];
     savedConfiguration = snapshot();
     importReport = undefined;
     byId('import-report').hidden = true;
@@ -385,6 +388,7 @@ byId('file').addEventListener('change', async event => {
         if (!await confirmReplacement()) return;
         entries = result.entries;
         settings = result.settings;
+        controllerRemaps = result.controllerRemaps;
         savedConfiguration = snapshot();
         render();
         setStatus('imported', {name: file.name});
@@ -393,7 +397,7 @@ byId('file').addEventListener('change', async event => {
     }
 });
 byId('download').addEventListener('click', () => {
-    const content = serialize(entries, settings);
+    const content = configurationText();
     const url = URL.createObjectURL(new Blob([content], {type: 'text/plain;charset=utf-8'}));
     const link = element('a');
     link.href = url;
@@ -407,7 +411,7 @@ byId('download').addEventListener('click', () => {
 });
 byId('copy').addEventListener('click', async () => {
     try {
-        const content = serialize(entries, settings);
+        const content = configurationText();
         const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
         savedConfiguration = copiedConfiguration;

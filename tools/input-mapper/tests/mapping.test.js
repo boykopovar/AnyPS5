@@ -87,6 +87,44 @@ test('settings-only files import without bindings', () => {
     assert.equal(serialize(imported.entries, imported.settings), 'MouseCurve = 1.3\nMouseDecayMs = 33\n');
 });
 
+test('controller remaps survive editing and exporting an imported INI', () => {
+    const source = '\uFEFFSDLButton: A = circle\r\nCross = KEY:Return\r\nsdlbutton : b = cross\r\nSDLButton:back = none ; disabled\r\nMouseStickTarget = Left\r\n';
+    const imported = parseIni(source);
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.controllerRemaps, [
+        {button: 'a', destination: 'Circle'}, {button: 'b', destination: 'Cross'}, {button: 'back', destination: 'None'}
+    ]);
+    const edited = [binding('Square', 'KEY', 'J'), ...imported.entries];
+    const exported = serialize(edited, imported.settings, imported.controllerRemaps);
+    assert.equal(exported, 'Cross = KEY:Return\nSquare = KEY:J\nMouseStickTarget = Left\nSDLButton:a = Circle\nSDLButton:b = Cross\nSDLButton:back = None\n');
+    assert.deepEqual(parseIni(exported).controllerRemaps, imported.controllerRemaps);
+});
+
+test('controller-only files keep guide, paddles, touchpad and shared destinations', () => {
+    const source = 'SDLButton:guide = TouchPad\nSDLButton:paddle4 = R2\nSDLButton:touchpad = TouchPad\n';
+    const imported = parseIni(source);
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, []);
+    assert.equal(serialize(imported.entries, imported.settings, imported.controllerRemaps), source);
+});
+
+test('unknown, malformed and duplicate controller remaps report their line', () => {
+    const source = 'SDLButton:a = Cross\nSDLButton:A = Circle\nSDLButton:leftx = Cross\nSDLButton:b = Cross+Circle\nSDLButton:x = ToggleFullscreen\nSDLButton:y =\nSDLButton: = None\n';
+    const imported = parseIni(source);
+    assert.deepEqual(imported.errors, [
+        {line: 2, message: 'SDLButton:a is set more than once.'},
+        {line: 3, message: "Unknown SDL controller button 'leftx'."},
+        {line: 4, message: 'SDLButton:b: expected a PlayStation button or None.'},
+        {line: 5, message: 'SDLButton:x: expected a PlayStation button or None.'},
+        {line: 6, message: 'SDLButton:y: expected a PlayStation button or None.'},
+        {line: 7, message: "Unknown SDL controller button ''."}
+    ]);
+    assert.deepEqual(imported.controllerRemaps, [{button: 'a', destination: 'Cross'}]);
+    assert.throws(() => serialize([], [], [{button: 'leftx', destination: 'Cross'}]), /Unknown SDL controller button/);
+    assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross+Circle'}]), /expected a PlayStation button or None/);
+    assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross'}, {button: 'A', destination: 'None'}]), /set more than once/);
+});
+
 test('setting names canonicalize like the native parser', () => {
     const imported = parseIni('leftstickdeadzone = 8\nMOUSESENSITIVITY = 1e0\n');
     assert.deepEqual(imported.errors, []);
@@ -139,7 +177,7 @@ test('out-of-range and malformed setting values report their line', () => {
 test('setting values that underflow to zero are refused like the native parser', () => {
     for (const value of ['1e-400', '-1e-400', '0.5E-400', '.1e-999', '10e-401']) {
         const message = 'MouseSmoothingMs must be a number from 0 to 500.';
-        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`), {entries: [], settings: [], errors: [{line: 1, message}], warnings: []}, value);
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`), {entries: [], settings: [], controllerRemaps: [], errors: [{line: 1, message}], warnings: []}, value);
         assert.deepEqual(validateSettings([{name: 'MouseSmoothingMs', value}]), {errors: [{index: 0, message}], settings: []}, value);
         assert.throws(() => serialize([], [{name: 'MouseSmoothingMs', value}]), {message}, value);
     }

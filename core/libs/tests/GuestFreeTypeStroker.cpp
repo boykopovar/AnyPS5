@@ -4,6 +4,7 @@
 
 #include FT_STROKER_H
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -31,6 +32,17 @@ static bool Throws(TCall call) {
         call();
     } catch (const std::runtime_error&) {
         return true;
+    }
+    return false;
+}
+
+template <typename TCall>
+static bool RefusesUnreadable(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
     }
     return false;
 }
@@ -196,6 +208,8 @@ static void TestNew(GuestLibrary& library, FT_Library native) {
     GuestLibrary empty;
     Require(FT_Stroker_New_nid_postfix(&empty, &guest) == FT_Stroker_New(nullptr, &expected));
     Require(guest == sentinel && expected == sentinel);
+    Require(RefusesUnreadable([&] { FT_Stroker_New_nid_postfix(reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10}), &guest); }));
+    Require(guest == sentinel);
     guest = nullptr;
     expected = nullptr;
     Require(FT_Stroker_New_nid_postfix(&library, nullptr) == FT_Stroker_New(native, nullptr));

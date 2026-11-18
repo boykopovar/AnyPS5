@@ -370,6 +370,7 @@ int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
+    if (ssl_flags & 0xffffdf40u) return ERROR_INVALID_VALUE;
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
@@ -377,6 +378,7 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
+    if (ssl_flags & 0xffffde40u) return ERROR_INVALID_VALUE;
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;

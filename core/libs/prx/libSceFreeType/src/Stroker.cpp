@@ -6,6 +6,7 @@
 
 #include FT_STROKER_H
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -18,6 +19,16 @@ using namespace FreeType;
 namespace {
 
 constexpr bool SharedPoints = sizeof(FT_Pos) == sizeof(std::int64_t);
+
+FT_Library ReadGuestLibrary(GuestLibrary* library, const char* function) {
+    if (!library) return nullptr;
+    FT_Library host = nullptr;
+    const int saved = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
+    errno = saved;
+    if (!read) throw std::invalid_argument(std::string(function) + ": unreadable library handle");
+    return host;
+}
 
 static_assert(!SharedPoints || (sizeof(FT_Vector) == sizeof(GuestVector) && offsetof(FT_Vector, x) == offsetof(GuestVector, x) &&
                                 offsetof(FT_Vector, y) == offsetof(GuestVector, y)));
@@ -121,7 +132,7 @@ extern "C" {
 int APS5_VABI FT_Stroker_New_nid_postfix(GuestLibrary* library, void** stroker) {
     GuestArena::HostWrite strokerWrite(stroker, stroker ? sizeof(*stroker) : 0);
     if (stroker && (!strokerWrite.Open() || !GuestWritable_nid_no_patch(stroker, sizeof(*stroker)))) return FT_Err_Invalid_Argument;
-    FT_Library host = library ? library->host : nullptr;
+    const FT_Library host = ReadGuestLibrary(library, __func__);
     FT_Stroker native = nullptr;
     const FT_Error error = FT_Stroker_New(host, stroker ? &native : nullptr);
     if (stroker && host) {
