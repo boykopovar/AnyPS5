@@ -1579,6 +1579,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     }
     result.shaderDataUserWords = std::move(bindings.shaderDataUserWords);
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
+    result.storeTables = snapshot.storeTables;
     if (!tables.map.empty()) {
         result.imageTablePoison.reserve(tables.poison.size());
         for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
@@ -1862,6 +1863,7 @@ void applyMemoPatch(RecompileResult& result, const MemoPatch& patch, const Resou
     }
     if (patch.flattenedSrt != MemoPatch::NoBinding) result.bindings.at(patch.flattenedSrt).guestDescriptor = snapshot.flattenedSrt;
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
+    result.storeTables = snapshot.storeTables;
 }
 
 const char* patchedResultDifference(const RecompileResult& patched, const RecompileResult& full) {
@@ -1869,6 +1871,7 @@ const char* patchedResultDifference(const RecompileResult& patched, const Recomp
     if (patched.pushConstants != full.pushConstants) return "push constants";
     if (patched.specializationId != full.specializationId || patched.spirv.ContentHash() != full.spirv.ContentHash()) return "module";
     if (patched.poisonedSrtReads != full.poisonedSrtReads) return "poisoned SRT reads";
+    if (patched.storeTables != full.storeTables) return "store tables";
     if (patched.shaderDataUserWords != full.shaderDataUserWords) return "shader data user words";
     if (patched.specialization.size() != full.specialization.size()) return "specialization";
     for (std::size_t index = 0; index < patched.specialization.size(); ++index) {
@@ -1911,7 +1914,7 @@ std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
 
 std::uint64_t resultBytes(const RecompileResult& result) {
     const auto bytes = [](const auto& values) { return vectorBytes(values); };
-    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges) + bytes(result.storeTables.tables);
     for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
     for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
     return total;
@@ -2139,6 +2142,26 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     for (const auto& [base, size] : tables.ranges) {
         mix(base);
         mix(size);
+    }
+    mix(static_cast<std::uint64_t>(snapshot.storeTables.fallback));
+    mix(snapshot.storeTables.shader);
+    mix(snapshot.storeTables.tables.size());
+    for (const auto& table : snapshot.storeTables.tables) {
+        mix(table.base);
+        mix(table.size);
+        mix(table.keys);
+        mix(table.offset);
+        mix(table.stride);
+        mix(table.maxIndex);
+        mix(table.maxOffset);
+        mix(table.maxSoffset);
+        mix(table.pc);
+        for (const auto word : table.descriptor) mix(word);
+        mix(table.keyList.size());
+        for (const auto key : table.keyList) mix(key);
+        mix(table.address ? 1u : 0u);
+        mix(table.direct ? 1u : 0u);
+        mix(table.scalar ? 1u : 0u);
     }
     for (const auto threads : partialThreads(request)) mix(threads);
     mix(request.layout.pushConstantOffsetBytes);

@@ -8,6 +8,7 @@
 #include "IntermediateRepresentation/IrMetadata/ResourceInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
+#include "StoreWindow.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -157,6 +158,25 @@ struct ImageTableSnapshot {
     bool operator==(const ImageTableSnapshot& other) const = default;
 };
 
+struct StoreTable {
+    std::uint32_t source = 0;
+    std::uint32_t boundSource = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t maxKey = StoreTableUnbounded;
+    std::uint32_t maxIndex = StoreTableUnbounded;
+    std::uint32_t maxOffset = StoreTableUnbounded;
+    std::uint32_t maxSoffset = StoreTableUnbounded;
+    std::uint32_t pc = 0;
+    std::vector<std::uint32_t> keyList;
+    bool address = false;
+    bool bounded = false;
+    bool direct = false;
+    bool scalar = false;
+
+    bool operator==(const StoreTable& other) const = default;
+};
+
 struct ResourceSnapshot {
     std::vector<DescriptorValue> buffers;
     std::vector<DescriptorValue> images;
@@ -167,6 +187,7 @@ struct ResourceSnapshot {
     std::vector<SrtReadPoison> srtPoison;
     std::uint32_t nullRootReads = 0;
     ImageTableSnapshot tables;
+    StoreTablesSnapshot storeTables;
     std::vector<RegisteredImageView> registeredImages;
     std::uint64_t imageAllocationGeneration = 0;
 };
@@ -276,11 +297,13 @@ struct IrResourcePlan {
     // One byte per srtReads slot, 1 when the CPU walk never consumes the slot's value (see
     // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.
     std::vector<std::uint8_t> pureFlatSlots;
+    std::vector<StoreTable> storeTables;
     bool denseValueIds = false;
     CompactResourcePlan compact;
     bool requiresSpecializationMemory = false;
     bool srtPlanComplete = false;
     bool resourceTrackingComplete = false;
+    bool storesBounded = false;
     ShaderInfo info;
     UniformFillPlan uniformFill;
     std::shared_ptr<SrtTapeSlot> tapeSlot = std::make_shared<SrtTapeSlot>();

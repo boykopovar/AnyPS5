@@ -231,6 +231,8 @@ public:
             const IrValue* inst = value->Resolve();
             return std::ranges::find(m_tablePlanningReads, inst) != m_tablePlanningReads.end();
         });
+        m_program.Resources().storesBounded = !m_unboundedStore && !m_storeTables.empty();
+        m_program.Resources().storeTables = std::move(m_storeTables);
         m_program.Resources().descriptorSources = std::move(m_sources);
         m_program.Resources().info = std::move(m_info);
         m_program.Resources().resourceTrackingComplete = true;
@@ -2252,12 +2254,216 @@ private:
             AddMemoryPatch(memoryIndex, resource, 0u, false);
             memory.gpuDescriptor = false;
             m_info.usesFaultBuffer = m_info.usesFaultBuffer || access == BufferAccess::Atomic;
+            if (access == BufferAccess::Atomic) {
+                StoreTable table = StoreBounds(inst, memory);
+                table.source = source;
+                table.direct = true;
+                table.maxKey = 0u;
+                AddStoreTable(table);
+            }
             return true;
         }
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
         m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
+        if (access == BufferAccess::Write || access == BufferAccess::Atomic) {
+            auto table = MatchStoreTable(inst, memory);
+            if (table.has_value()) AddStoreTable(*table);
+            else m_unboundedStore = true;
+        }
         return true;
+    }
+
+    StoreTable StoreBounds(const IrValue& inst, const MemoryInfo& memory) const {
+        const auto add = [](std::uint32_t left, std::uint32_t right) {
+            return left > StoreTableUnbounded - right ? StoreTableUnbounded : left + right;
+        };
+        StoreTable table;
+        table.pc = inst.Flags<MemoryFlags>().pc;
+        table.maxIndex = memory.kind == ResourceKind::Buffer && inst.ArgumentCount() > 1u ? possibleU32UpperBound(inst.Argument(1)) : 0u;
+        table.maxOffset = inst.ArgumentCount() > 2u ? add(possibleU32UpperBound(inst.Argument(2)), byteExtent(memory)) : byteExtent(memory);
+        table.maxSoffset = inst.ArgumentCount() > 3u ? possibleU32UpperBound(inst.Argument(3)) : 0u;
+        table.scalar = memory.kind == ResourceKind::ScalarBuffer;
+        return table;
+    }
+
+    void AddStoreTable(const StoreTable& table) {
+        const auto same = std::ranges::find_if(m_storeTables, [&](const StoreTable& existing) {
+            return existing.source == table.source && existing.boundSource == table.boundSource && existing.offset == table.offset && existing.stride == table.stride && existing.maxKey == table.maxKey && existing.keyList == table.keyList && existing.address == table.address && existing.bounded == table.bounded && existing.direct == table.direct && existing.scalar == table.scalar;
+        });
+        if (same == m_storeTables.end()) {
+            m_storeTables.push_back(table);
+            return;
+        }
+        same->maxIndex = std::max(same->maxIndex, table.maxIndex);
+        same->maxOffset = std::max(same->maxOffset, table.maxOffset);
+        same->maxSoffset = std::max(same->maxSoffset, table.maxSoffset);
+        same->pc = std::min(same->pc, table.pc);
+    }
+
+    static bool SameValue(const IrResourcePlan& plan, const IrValue* left, const IrValue* right) {
+        left = left->Resolve();
+        right = right->Resolve();
+        return left == right || EquivalentValue(plan, left, right);
+    }
+
+    bool KeyBelow(const IrValue* condition, bool holds, const IrValue* key, IrValue*& bound) const {
+        condition = condition->Resolve();
+        while (condition->Opcode() == IrOpcode::LogicalNot && condition->ArgumentCount() == 1u) {
+            holds = !holds;
+            condition = condition->Argument(0)->Resolve();
+        }
+        if (condition->ArgumentCount() != 2u) return false;
+        IrValue* left = condition->Argument(0)->Resolve();
+        IrValue* right = condition->Argument(1)->Resolve();
+        const auto& plan = m_program.Resources();
+        const auto op = condition->Opcode();
+        if (holds && op == IrOpcode::ULessThan32 && SameValue(plan, left, key)) bound = right;
+        else if (holds && op == IrOpcode::UGreaterThan32 && SameValue(plan, right, key)) bound = left;
+        else if (!holds && op == IrOpcode::UGreaterThanEqual32 && SameValue(plan, left, key)) bound = right;
+        else if (!holds && op == IrOpcode::ULessThanEqual32 && SameValue(plan, right, key)) bound = left;
+        else return false;
+        return true;
+    }
+
+    bool GuardedKeyBound(const IrValue& inst, const IrValue* key, IrValue*& bound) const {
+        const auto& order = m_program.BlockOrder();
+        const auto& info = m_program.Metadata().blockInfo;
+        const IrBlock* block = inst.Parent();
+        if (block == nullptr || order.size() != info.size()) return false;
+        std::unordered_map<std::uint32_t, const IrBlock*> byId;
+        for (std::size_t index = 0; index < order.size(); ++index) byId.emplace(info[index].id, order[index]);
+        for (std::size_t index = 0; index < order.size(); ++index) {
+            const auto& terminator = info[index].terminator;
+            const bool scalar = terminator.condition == BranchCondition::SccZero || terminator.condition == BranchCondition::SccNonZero || terminator.condition == BranchCondition::ScalarInstruction;
+            if (terminator.kind != TerminatorKind::ConditionalBranch || !scalar || info[index].condition == nullptr || terminator.trueBlock == terminator.falseBlock) continue;
+            for (const auto& [target, holds] : {std::pair{terminator.trueBlock, true}, std::pair{terminator.falseBlock, false}}) {
+                const auto found = byId.find(target);
+                if (found == byId.end() || found->second->Predecessors().size() != 1u || found->second->Predecessors().front() != order[index]) continue;
+                if (!BlockDominates(found->second, block)) continue;
+                if (KeyBelow(info[index].condition, holds, key, bound)) return true;
+            }
+        }
+        return false;
+    }
+
+    bool LaneActiveAt(const IrValue* mask, const IrValue* condition) const {
+        return Detail::ActiveMaskImplies(m_program.Resources(), mask, condition) || SameValue(m_program.Resources(), mask, condition);
+    }
+
+    std::uint32_t LaneUpperBound(const IrValue* value, const IrValue* mask, std::unordered_set<const IrValue*>& visiting, std::uint32_t depth) const {
+        value = value->Resolve();
+        if (depth == 0u || !visiting.insert(value).second) return StoreTableUnbounded;
+        std::uint32_t bound = StoreTableUnbounded;
+        if (Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && LaneActiveAt(mask, value->Argument(0))) {
+            bound = LaneUpperBound(value->Argument(1), mask, visiting, depth - 1u);
+        } else if (value->IsPhi() && value->ArgumentCount() != 0u) {
+            bound = 0u;
+            for (std::size_t index = 0; index < value->ArgumentCount() && bound != StoreTableUnbounded; ++index) bound = std::max(bound, LaneUpperBound(value->Argument(index), mask, visiting, depth - 1u));
+        } else {
+            bound = possibleU32UpperBound(value);
+        }
+        visiting.erase(value);
+        return bound;
+    }
+
+    bool LaneValues(const IrValue* value, const IrValue* mask, std::vector<std::uint32_t>& values, std::unordered_set<const IrValue*>& visiting, std::uint32_t depth) const {
+        value = value->Resolve();
+        if (value->HasImmediate()) {
+            if (value->Type() != IrType::U32) return false;
+            if (std::ranges::find(values, value->ImmediateU32()) == values.end()) values.push_back(value->ImmediateU32());
+            return values.size() <= StoreTableMaxListedKeys;
+        }
+        if (depth == 0u || !visiting.insert(value).second) return false;
+        bool known = false;
+        if (Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u) {
+            known = mask != nullptr && LaneActiveAt(mask, value->Argument(0)) ? LaneValues(value->Argument(1), mask, values, visiting, depth - 1u) : LaneValues(value->Argument(1), mask, values, visiting, depth - 1u) && LaneValues(value->Argument(2), mask, values, visiting, depth - 1u);
+        } else if (value->IsPhi() && value->ArgumentCount() != 0u) {
+            known = true;
+            for (std::size_t index = 0; index < value->ArgumentCount() && known; ++index) known = LaneValues(value->Argument(index), mask, values, visiting, depth - 1u);
+        } else if (mask == nullptr && value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
+            known = LaneValues(value->Argument(0), value->Argument(1)->Resolve(), values, visiting, depth - 1u);
+        }
+        visiting.erase(value);
+        return known;
+    }
+
+    std::uint32_t FirstLaneUpperBound(const IrValue* key) const {
+        key = key->Resolve();
+        if (key->Opcode() != IrOpcode::ReadFirstLane || key->ArgumentCount() != 2u) return StoreTableUnbounded;
+        std::unordered_set<const IrValue*> visiting;
+        return LaneUpperBound(key->Argument(0), key->Argument(1)->Resolve(), visiting, 8u);
+    }
+
+    std::optional<StoreTable> MatchStoreTable(const IrValue& inst, const MemoryInfo& storeMemory) {
+        const IrValue* handle = inst.Argument(0)->Resolve();
+        if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return std::nullopt;
+        IrValue* heapHandle = nullptr;
+        IrValue* base = nullptr;
+        IrValue* offsetValue = nullptr;
+        std::uint32_t first = 0;
+        bool address = false;
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle->Argument(dword));
+            if (read == nullptr) return std::nullopt;
+            std::uint32_t memoryIndex = 0;
+            const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
+            const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
+            if (memory == nullptr) return std::nullopt;
+            std::uint32_t readAddend = 0;
+            IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
+            const auto position = static_cast<std::uint64_t>(memory->offset) + readAddend;
+            IrValue* currentHandle = read->Argument(0)->Resolve();
+            if (dword == 0u) {
+                if (position > 0x7fffffffu) return std::nullopt;
+                heapHandle = currentHandle;
+                base = readBase;
+                offsetValue = readBase;
+                first = static_cast<std::uint32_t>(position);
+                address = addressRead;
+                continue;
+            }
+            if (addressRead != address || position != static_cast<std::uint64_t>(first) + dword * sizeof(std::uint32_t)) return std::nullopt;
+            if (!SameValue(m_program.Resources(), base, readBase) || !SameValue(m_program.Resources(), heapHandle, currentHandle)) return std::nullopt;
+        }
+        IrValue* key = nullptr;
+        std::uint32_t stride = 0;
+        std::uint32_t addend = 0;
+        if (!MatchAffineOffset(offsetValue, key, stride, addend) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return std::nullopt;
+        DescriptorSource heapSource;
+        std::uint32_t heapIndex = 0;
+        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) return std::nullopt;
+        StoreTable table = StoreBounds(inst, storeMemory);
+        table.source = heapIndex;
+        table.address = address;
+        table.offset = first + addend;
+        table.stride = stride;
+        table.maxKey = std::min(possibleU32UpperBound(key), FirstLaneUpperBound(key));
+        std::vector<std::uint32_t> values;
+        std::unordered_set<const IrValue*> visiting;
+        if (LaneValues(key, nullptr, values, visiting, 12u) && !values.empty()) {
+            std::ranges::sort(values);
+            table.maxKey = values.back();
+            table.keyList = std::move(values);
+        }
+        IrValue* bound = nullptr;
+        if (GuardedKeyBound(inst, key, bound)) {
+            std::uint32_t immediate = 0;
+            if (immediateU32(bound, immediate)) {
+                table.maxKey = std::min(table.maxKey, immediate == 0u ? 0u : immediate - 1u);
+            } else {
+                DescriptorSource limit;
+                limit.dwordCount = 1u;
+                limit.dwords[0] = bound;
+                std::uint32_t badDword = 0;
+                if (ValidateSource(limit, badDword)) {
+                    table.bounded = true;
+                    table.boundSource = InternSource(limit);
+                }
+            }
+        }
+        if (address && table.maxKey == StoreTableUnbounded && !table.bounded) return std::nullopt;
+        return table;
     }
 
     void ValidateAddressHandle(IrValue* value) const {
@@ -2520,6 +2726,7 @@ private:
             }
             m_info.usesDma = true;
             m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
+            m_unboundedStore = m_unboundedStore || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
             return;
         }
 
@@ -2616,6 +2823,8 @@ private:
     std::vector<EdgeSelectorEntry> m_edgeSelectors;
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
     bool m_foldedWeb = false;
+    std::vector<StoreTable> m_storeTables;
+    bool m_unboundedStore = false;
 };
 
 }

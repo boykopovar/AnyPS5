@@ -6166,6 +6166,82 @@ void verifyScalarAddressRule() {
     }
 }
 
+void verifyStoreTables() {
+    using namespace ShaderRecompiler;
+    static std::array<std::uint32_t, 4> output{};
+    static std::array<std::array<std::uint32_t, 4>, 4> holder{};
+    static std::array<std::uint32_t, 160> root{};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    const auto request = [&](const std::vector<std::uint32_t>& code) { return TableRequest(code, userData); };
+    const auto onlyTable = [](const IrResourcePlan& plan, const char* name) -> const StoreTable& {
+        require(plan.storesBounded && plan.storeTables.size() == 1u, (std::string(name) + ": the store was not bounded by one table").c_str());
+        return plan.storeTables[0];
+    };
+
+    root.fill(0u);
+    for (std::uint32_t key = 0; key < 32u; ++key) std::copy(outputV.begin(), outputV.end(), root.begin() + 12 + key * 4);
+    const std::vector<std::uint32_t> fieldCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
+    const auto fieldPlan = GetResourcePlan(request(fieldCode));
+    const auto& field = onlyTable(*fieldPlan, "store table bit field");
+    require(field.address && !field.direct && !field.bounded && field.offset == 48u && field.stride == 16u && field.maxKey == 31u && field.maxIndex == 0u, "store table bit field: the table is wrong");
+    require(fieldPlan->descriptorSources.at(field.source).dwordCount == 2u, "store table bit field: the table base is not a 64-bit pointer");
+    const auto fieldCompiled = CompileTable(request(fieldCode));
+    const auto& fieldStores = fieldCompiled.result->storeTables;
+    require(fieldStores.fallback == StoreTableFallback::None && fieldStores.tables.size() == 1u && fieldStores.tables[0].base == address && fieldStores.tables[0].keys == 32u, "store table bit field: the dispatch did not read 32 records from the table");
+
+    const std::vector<std::uint32_t> selectCode{0x7d880090u, 0x7e040283u, 0x02020481u, 0x7e080501u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
+    const auto selectPlan = GetResourcePlan(request(selectCode));
+    const auto& selected = onlyTable(*selectPlan, "store table selected key");
+    require(selected.address && selected.offset == 48u && selected.stride == 16u && selected.maxKey == 3u && selected.keyList == std::vector<std::uint32_t>{1u, 3u}, "store table selected key: the key list is not the two selected immediates");
+    const auto selectCompiled = CompileTable(request(selectCode));
+    const auto& selectStores = selectCompiled.result->storeTables;
+    require(selectStores.fallback == StoreTableFallback::None && selectStores.tables.size() == 1u && selectStores.tables[0].keyList == std::vector<std::uint32_t>{1u, 3u} && selectStores.tables[0].keys == 4u, "store table selected key: the dispatch did not keep the key list");
+
+    root.fill(0u);
+    root[0] = 3u;
+    for (std::uint32_t key = 0; key < 3u; ++key) std::copy(outputV.begin(), outputV.end(), root.begin() + 4 + key * 4);
+    const std::vector<std::uint32_t> countedCode{0xbe830380u, 0xf4000180u, 0xfa000000u, 0xbf8cc07fu, 0xbf0a0603u, 0xbf840008u, 0x98859003u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0x81038103u, 0xbf82fff3u, 0xbf810000u};
+    const auto countedPlan = GetResourcePlan(request(countedCode));
+    const auto& counted = onlyTable(*countedPlan, "store table counted loop");
+    require(counted.address && counted.bounded && counted.offset == 16u && counted.stride == 16u && counted.maxKey == StoreTableUnbounded, "store table counted loop: the loop bound was not taken from the table");
+    require(countedPlan->descriptorSources.at(counted.boundSource).dwordCount == 1u, "store table counted loop: the bound is not one dword");
+    const auto countedCompiled = CompileTable(request(countedCode));
+    const auto& countedStores = countedCompiled.result->storeTables;
+    require(countedStores.fallback == StoreTableFallback::None && countedStores.tables.size() == 1u && countedStores.tables[0].keys == 3u, "store table counted loop: the dispatch did not take the count from the table");
+
+    root.fill(0u);
+    const auto holderV = TableV(holder.data(), 0u, static_cast<std::uint32_t>(sizeof(holder)));
+    std::copy(holderV.begin(), holderV.end(), root.begin());
+    for (auto& entry : holder) std::copy(outputV.begin(), outputV.end(), entry.begin());
+    const std::vector<std::uint32_t> holderCode{0xf4080100u, 0xfa000000u, 0x7e180500u, 0xbf8cc07fu, 0x8f0d840cu, 0xf4280202u, 0x1a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
+    const auto holderPlan = GetResourcePlan(request(holderCode));
+    const auto& held = onlyTable(*holderPlan, "store table holder buffer");
+    require(!held.address && !held.direct && !held.bounded && held.offset == 0u && held.stride == 16u && held.maxKey == StoreTableUnbounded, "store table holder buffer: the table is wrong");
+    const auto holderCompiled = CompileTable(request(holderCode));
+    const auto& holderStores = holderCompiled.result->storeTables;
+    require(holderStores.fallback == StoreTableFallback::None && holderStores.tables.size() == 1u && holderStores.tables[0].size == sizeof(holder) && holderStores.tables[0].keys == 4u, "store table holder buffer: the holder size did not bound the records");
+
+    root.fill(0u);
+    std::copy(outputV.begin(), outputV.end(), root.begin());
+    const std::vector<std::uint32_t> atomicCode{0xf4080100u, 0xfa000000u, 0xbf8cc07fu, 0xe0c80000u, 0x80010000u, 0xbf810000u};
+    const auto atomicPlan = GetResourcePlan(request(atomicCode));
+    const auto& atomic = onlyTable(*atomicPlan, "store table planned atomic");
+    require(atomic.direct && atomic.maxKey == 0u, "store table planned atomic: the atomic was not a direct window");
+    const auto atomicCompiled = CompileTable(request(atomicCode));
+    const auto& atomicStores = atomicCompiled.result->storeTables;
+    require(atomicStores.fallback == StoreTableFallback::None && atomicStores.tables.size() == 1u && atomicStores.tables[0].direct && std::ranges::equal(atomicStores.tables[0].descriptor, outputV), "store table planned atomic: the dispatch did not keep the atomic's V#");
+
+    root.fill(0u);
+    const std::vector<std::uint32_t> laneCode{0x7e080500u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
+    const auto lanePlan = GetResourcePlan(request(laneCode));
+    require(!lanePlan->storesBounded && lanePlan->storeTables.empty(), "store table lane key: a pointer table keyed by an unbounded lane value was bounded");
+    const auto laneCompiled = CompileTable(request(laneCode));
+    require(laneCompiled.result->storeTables.fallback == StoreTableFallback::Unmatched && laneCompiled.result->storeTables.tables.empty(), "store table lane key: the dispatch did not fall back to the whole reach");
+    std::cout << "store tables: bit field 32 records, selected key records 1 and 3, counted loop 3 records, holder 4 records, planned atomic direct, unbounded lane key falls back\n";
+}
+
 void verifyPointerTableUnwrittenReuse() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Palette = 0x40;
@@ -13320,6 +13396,10 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--store-tables") {
+            verifyStoreTables();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--registered-view-churn") {

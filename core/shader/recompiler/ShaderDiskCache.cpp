@@ -88,9 +88,9 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 288, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(ShaderInvocation) == 256, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 592, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 920, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -109,7 +109,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
-static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrResourcePlan) == 752, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
@@ -150,7 +150,7 @@ static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: upda
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
-static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<IrResourcePlan>() == 27, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
@@ -691,6 +691,24 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
+    writer.Value(invocation.storeTables.fallback);
+    writer.Value(invocation.storeTables.shader);
+    writer.List(invocation.storeTables.tables, [](Writer& out, const StoreTableSnapshot& table) {
+        out.Value(table.base);
+        out.Value(table.size);
+        out.Value(table.keys);
+        out.Value(table.offset);
+        out.Value(table.stride);
+        out.Value(table.maxIndex);
+        out.Value(table.maxOffset);
+        out.Value(table.maxSoffset);
+        out.Value(table.pc);
+        for (const auto word : table.descriptor) out.Value(word);
+        out.Values(std::span<const std::uint32_t>(table.keyList));
+        out.Value(table.address);
+        out.Value(table.direct);
+        out.Value(table.scalar);
+    });
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -732,6 +750,25 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
+    reader.Value(invocation.storeTables.fallback);
+    reader.Value(invocation.storeTables.shader);
+    if (invocation.storeTables.fallback > StoreTableFallback::Unevaluated) invocation.storeTables.fallback = StoreTableFallback::Unmatched;
+    reader.List(invocation.storeTables.tables, 62, [](Reader& in, StoreTableSnapshot& table) {
+        in.Value(table.base);
+        in.Value(table.size);
+        in.Value(table.keys);
+        in.Value(table.offset);
+        in.Value(table.stride);
+        in.Value(table.maxIndex);
+        in.Value(table.maxOffset);
+        in.Value(table.maxSoffset);
+        in.Value(table.pc);
+        for (auto& word : table.descriptor) in.Value(word);
+        in.Values(table.keyList);
+        in.Value(table.address);
+        in.Value(table.direct);
+        in.Value(table.scalar);
+    });
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -1211,10 +1248,27 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.Value(plan.srtGuardOffset);
     writer.Values(std::span<const std::uint8_t>(plan.cleanFlatSlots));
     writer.Values(std::span<const std::uint8_t>(plan.pureFlatSlots));
+    writer.List(plan.storeTables, [](Writer& out, const StoreTable& table) {
+        out.Value(table.source);
+        out.Value(table.boundSource);
+        out.Value(table.offset);
+        out.Value(table.stride);
+        out.Value(table.maxKey);
+        out.Value(table.maxIndex);
+        out.Value(table.maxOffset);
+        out.Value(table.maxSoffset);
+        out.Value(table.pc);
+        out.Values(std::span<const std::uint32_t>(table.keyList));
+        out.Value(table.address);
+        out.Value(table.bounded);
+        out.Value(table.direct);
+        out.Value(table.scalar);
+    });
     writer.Value(plan.denseValueIds);
     writer.Value(plan.requiresSpecializationMemory);
     writer.Value(plan.srtPlanComplete);
     writer.Value(plan.resourceTrackingComplete);
+    writer.Value(plan.storesBounded);
     encodeShaderInfo(writer, plan.info);
     const auto& fill = plan.uniformFill.fill;
     writer.Value(fill.kind);
@@ -1378,10 +1432,27 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Value(plan.srtGuardOffset);
     reader.Values(plan.cleanFlatSlots);
     reader.Values(plan.pureFlatSlots);
+    reader.List(plan.storeTables, 39, [](Reader& in, StoreTable& table) {
+        in.Value(table.source);
+        in.Value(table.boundSource);
+        in.Value(table.offset);
+        in.Value(table.stride);
+        in.Value(table.maxKey);
+        in.Value(table.maxIndex);
+        in.Value(table.maxOffset);
+        in.Value(table.maxSoffset);
+        in.Value(table.pc);
+        in.Values(table.keyList);
+        in.Value(table.address);
+        in.Value(table.bounded);
+        in.Value(table.direct);
+        in.Value(table.scalar);
+    });
     reader.Value(plan.denseValueIds);
     reader.Value(plan.requiresSpecializationMemory);
     reader.Value(plan.srtPlanComplete);
     reader.Value(plan.resourceTrackingComplete);
+    reader.Value(plan.storesBounded);
     decodeShaderInfo(reader, plan.info);
     auto& fill = plan.uniformFill.fill;
     reader.Value(fill.kind);
@@ -1394,6 +1465,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return std::ranges::all_of(source.requiredBlocks, [&](std::uint32_t block) { return block < plan.controlFlow.size(); }); })) return false;
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
+    if (!std::ranges::all_of(plan.storeTables, [&](const StoreTable& table) { return knownSource(table.source) && (!table.bounded || knownSource(table.boundSource)) && (table.direct || table.stride != 0u) && table.keyList.size() <= StoreTableMaxListedKeys && std::ranges::is_sorted(table.keyList); })) return false;
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && (!source.tableColumn->selected || knownSource(source.tableColumn->selection)) && std::ranges::all_of(source.tableColumn->keyDomains, [&](const KeyDomain& domain) { return knownSource(domain.source); }))); })) return false;
     for (const auto& source : plan.descriptorSources) {
         if (!source.tableColumn.has_value()) continue;

@@ -237,6 +237,15 @@ bool Replay(const char* path) {
                     std::printf("  buffer %zu: V# %08x %08x %08x %08x%s\n", i / 4, v[0], v[1], v[2], v[3], written ? " written" : "");
                 }
             }
+            const auto& stores = result.storeTables;
+            std::printf("  store tables: fallback %u, %zu tables\n", static_cast<unsigned>(stores.fallback), stores.tables.size());
+            for (const auto& table : stores.tables) {
+                if (table.direct) {
+                    std::printf("  store table pc 0x%x: direct V# %08x %08x %08x %08x, max index %u offset %u soffset %u\n", table.pc, table.descriptor[0], table.descriptor[1], table.descriptor[2], table.descriptor[3], table.maxIndex, table.maxOffset, table.maxSoffset);
+                    continue;
+                }
+                std::printf("  store table pc 0x%x: %s 0x%llx size %llu, %u keys at +%u stride %u, max index %u offset %u soffset %u\n", table.pc, table.address ? "pointer" : "buffer", static_cast<unsigned long long>(table.base), static_cast<unsigned long long>(table.size), table.keys, table.offset, table.stride, table.maxIndex, table.maxOffset, table.maxSoffset);
+            }
         }
         return OutputSpirv(path, result.spirv);
     } catch (const std::exception& error) {

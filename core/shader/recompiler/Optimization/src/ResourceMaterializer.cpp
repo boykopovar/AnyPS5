@@ -1865,6 +1865,69 @@ void materializeSrtGuards(const IrResourcePlan& plan, ResourceSnapshot& snapshot
     }
 }
 
+void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtime, const SrtWalker& walker, StoreTablesSnapshot& stores) {
+    stores = {};
+    stores.shader = runtime.shaderBase;
+    if (!plan.storesBounded || GcnGuestShaders()) return;
+    const auto evaluate = [&](std::uint32_t source, DescriptorValue& result) {
+        try {
+            walker.EvaluateDescriptorSource(plan, source, runtime, result);
+        } catch (const std::exception&) {
+            return false;
+        }
+        return true;
+    };
+    const auto fail = [&](StoreTableFallback reason) {
+        stores.tables.clear();
+        stores.fallback = reason;
+    };
+    for (const auto& table : plan.storeTables) {
+        StoreTableSnapshot entry;
+        entry.offset = table.offset;
+        entry.stride = table.stride;
+        entry.maxIndex = table.maxIndex;
+        entry.maxOffset = table.maxOffset;
+        entry.maxSoffset = table.maxSoffset;
+        entry.pc = table.pc;
+        entry.address = table.address;
+        entry.direct = table.direct;
+        entry.scalar = table.scalar;
+        DescriptorValue heap;
+        if (table.source >= plan.descriptorSources.size() || !evaluate(table.source, heap)) return fail(StoreTableFallback::Unevaluated);
+        std::uint64_t keys = static_cast<std::uint64_t>(table.maxKey) + 1u;
+        if (table.direct) {
+            if (heap.dwordCount != 4u) return fail(StoreTableFallback::NotBuffer);
+            std::copy_n(heap.dwords.begin(), 4u, entry.descriptor.begin());
+            keys = 1u;
+        } else if (table.address) {
+            if (heap.dwordCount != 2u) return fail(StoreTableFallback::Unevaluated);
+            entry.base = static_cast<std::uint64_t>(heap.dwords[0]) | (static_cast<std::uint64_t>(heap.dwords[1]) << 32u);
+        } else {
+            const auto holder = decodeBufferDescriptor(heap);
+            if (holder.Type() != 0u) return fail(StoreTableFallback::NotBuffer);
+            entry.base = holder.Base48();
+            entry.size = holder.GetSize();
+            const auto records = entry.size > table.offset && table.stride != 0u ? (entry.size - table.offset + table.stride - 1u) / table.stride : 0u;
+            keys = std::min(keys, records);
+        }
+        if (table.bounded) {
+            DescriptorValue limit;
+            if (table.boundSource >= plan.descriptorSources.size() || !evaluate(table.boundSource, limit) || limit.dwordCount == 0u) return fail(StoreTableFallback::Unevaluated);
+            keys = std::min<std::uint64_t>(keys, limit.dwords[0]);
+        }
+        if (!table.keyList.empty()) {
+            for (const auto key : table.keyList) {
+                if (key < keys) entry.keyList.push_back(key);
+            }
+            keys = entry.keyList.empty() ? 0u : static_cast<std::uint64_t>(entry.keyList.back()) + 1u;
+        }
+        if (keys > StoreTableMaxKeys) return fail(StoreTableFallback::TooMany);
+        entry.keys = static_cast<std::uint32_t>(keys);
+        stores.tables.push_back(entry);
+    }
+    stores.fallback = StoreTableFallback::None;
+}
+
 struct DecodeMemoKey {
     std::uint64_t artifact = 0;
     std::uint32_t resource = 0;
@@ -2911,6 +2974,8 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
     plan.cleanFlatSlots = source.cleanFlatSlots;
+    plan.storeTables = source.storeTables;
+    plan.storesBounded = source.storesBounded;
     plan.requiresSpecializationMemory = source.requiresSpecializationMemory;
     plan.srtPlanComplete = source.srtPlanComplete;
     plan.resourceTrackingComplete = source.resourceTrackingComplete;
@@ -2997,6 +3062,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 materializeForcedDegamma(plan, nextSnapshot);
                 materializeTables(plan, nextSnapshot);
                 materializeSrtGuards(plan, nextSnapshot);
+                materializeStoreTables(plan, runtime, walker, nextSnapshot.storeTables);
                 if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
                 completed = true;
                 break;
