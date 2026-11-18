@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <list>
 #include <map>
@@ -323,6 +324,15 @@ int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, co
     return _Cnd_init_nid_postfix(handle);
 }
 
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
+    constexpr std::size_t objectNameLimit = 32;
+    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
+        errno = 63;
+        return threadError;
+    }
+    return _Cnd_init_nid_postfix(handle);
+}
+
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");
@@ -546,7 +556,7 @@ void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
     }
 }
 
-void APS5_VABI _ZNSt4_PadC2EPKc_nid_postfix(GuestPad* pad, const char* name) {
+void APS5_VABI PadConstructWithName_nid_no_patch(GuestPad* pad, const char* name) {
     if (!pad) APS5_INVALID_ARG_EX;
     RequireThrd(_Cnd_init_nid_postfix(&pad->condition), "_Pad::_Pad: _Cnd_init");
     const int created = _Mtx_init_with_name_nid_postfix(&pad->mutex, 1, name);
@@ -563,6 +573,10 @@ void APS5_VABI _ZNSt4_PadC2EPKc_nid_postfix(GuestPad* pad, const char* name) {
 
         RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
     }
+}
+
+void APS5_VABI _ZNSt4_PadC2EPKc_nid_postfix(GuestPad* pad, const char* name) {
+    PadConstructWithName_nid_no_patch(pad, name);
 }
 
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
@@ -594,16 +608,24 @@ void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** t
     LaunchPad_nid_no_patch(pad, nullptr, nullptr, thread);
 }
 
-void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** thread) {
+void APS5_VABI PadLaunchWithName_nid_no_patch(GuestPad* pad, const char* name, void** thread) {
     LaunchPad_nid_no_patch(pad, name, nullptr, thread);
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** thread) {
+    PadLaunchWithName_nid_no_patch(pad, name, thread);
 }
 
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread) {
     LaunchPad_nid_no_patch(pad, nullptr, attrSlot, thread);
 }
 
-void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** attrSlot, void** thread) {
+void APS5_VABI PadLaunchWithNameAttr_nid_no_patch(GuestPad* pad, const char* name, void** attrSlot, void** thread) {
     LaunchPad_nid_no_patch(pad, name, attrSlot, thread);
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, const char* name, void** attrSlot, void** thread) {
+    PadLaunchWithNameAttr_nid_no_patch(pad, name, attrSlot, thread);
 }
 
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {

@@ -41,6 +41,7 @@ constexpr std::uint32_t StreamTypeTimedText = 2;
 
 constexpr std::uint32_t SourceTypeUnknown = 0;
 constexpr std::uint32_t SourceTypeFileMp4 = 1;
+constexpr std::uint32_t SourceTypeWebm = 2;
 constexpr std::uint32_t SourceTypeHls = 8;
 
 constexpr std::uint32_t SyncModeDefault = 0;
@@ -106,6 +107,7 @@ std::uint32_t DetectSourceType(std::string_view path);
 extern "C" {
 
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
+std::int32_t GetAvPlayerTrickSpeedForTest_nid_no_patch(AvPlayerInternal* h);
 void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
 bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
 bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
@@ -143,6 +145,7 @@ public:
     bool GetAudioData(AvPlayerFrameInfo& info);
     bool IsActive();
     std::uint64_t CurrentTime();
+    std::int32_t TrickSpeedForTest();
     void SetClockTimeForTest(double milliseconds);
     void SetHoldAudioEofForTest(bool hold);
     bool AudioEofHeldForTest();
@@ -188,6 +191,7 @@ private:
     State previous = State::Initial;
     bool looping = false;
     std::int32_t speed = NormalSpeed;
+    std::uint32_t activeSourceType = SourceTypeUnknown;
     std::uint32_t syncMode = SyncModeDefault;
     std::uint32_t demuxVideoBytes = 0;
 

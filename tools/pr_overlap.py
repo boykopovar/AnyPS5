@@ -843,7 +843,7 @@ def describe_failure(error):
 
 def resolve_branch(name):
     try:
-        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+        return git("rev-parse", "--verify", f"{name}^0").strip()
     except subprocess.CalledProcessError:
         raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
 
