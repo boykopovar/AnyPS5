@@ -29,7 +29,7 @@ Font Create(const CairoMatrix& matrix, const CairoMatrix& ctm, const std::array<
 }
 
 CairoFontFace* Face(CairoContext* context) {
-    return reinterpret_cast<CairoFontFace*>(aps5_cairo_get_font_face(reinterpret_cast<cairo_t*>(context)));
+    return cairo_scaled_font_get_font_face(ContextFont(context));
 }
 
 std::array<int, 4> Options(CairoScaledFont* font) {
@@ -48,6 +48,23 @@ int ContextStatus(CairoContext* context) {
 
 CairoScaledFont* ContextFont(CairoContext* context) {
     return reinterpret_cast<CairoScaledFont*>(aps5_cairo_get_scaled_font(reinterpret_cast<cairo_t*>(context)));
+}
+
+unsigned FaceReferences(CairoScaledFont* font) {
+    return aps5_cairo_font_face_get_reference_count(
+        aps5_cairo_scaled_font_get_font_face(reinterpret_cast<cairo_scaled_font_t*>(font)));
+}
+
+void FlushScaledFonts() {
+    cairo_font_face_t* face = aps5_cairo_toy_font_face_create("monospace", CAIRO_FONT_SLANT_ITALIC, CAIRO_FONT_WEIGHT_BOLD);
+    const cairo_matrix_t identity{1, 0, 0, 1, 0, 0};
+    cairo_font_options_t* options = aps5_cairo_font_options_create();
+    for (int i = 0; i < 300; ++i) {
+        const cairo_matrix_t scale{1.0 + i, 0, 0, 1.0 + i, 0, 0};
+        aps5_cairo_scaled_font_destroy(aps5_cairo_scaled_font_create(face, &scale, &identity, options));
+    }
+    aps5_cairo_font_options_destroy(options);
+    aps5_cairo_font_face_destroy(face);
 }
 
 Conversion Convert(const CairoMatrix& matrix, const CairoMatrix& ctm, const std::array<int, 4>& options,

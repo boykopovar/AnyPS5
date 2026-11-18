@@ -22,6 +22,8 @@ CairoFontFace* Face(CairoContext* context);
 std::array<int, 4> Options(CairoScaledFont* font);
 int ContextStatus(CairoContext* context);
 CairoScaledFont* ContextFont(CairoContext* context);
+unsigned FaceReferences(CairoScaledFont* font);
+void FlushScaledFonts();
 Conversion Convert(const CairoMatrix& matrix, const CairoMatrix& ctm, const std::array<int, 4>& options,
     const char* text, int length, int glyphCapacity, int clusterCapacity, bool clusters);
 CairoTextExtents Extents(const CairoMatrix& matrix, const CairoMatrix& ctm, const std::array<int, 4>& options,

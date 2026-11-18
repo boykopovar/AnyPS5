@@ -180,6 +180,75 @@ void Conversions() {
     }
 }
 
+int finalized;
+
+void FlushScaledFonts() {
+    Reference::FlushScaledFonts();
+    auto* surface = cairo_image_surface_create(0, 8, 8);
+    auto* context = cairo_create(surface);
+    cairo_select_font_face(context, "monospace", 1, 1);
+    auto* face = Reference::Face(context);
+    auto* options = cairo_font_options_create();
+    const CairoMatrix identity{1, 0, 0, 1, 0, 0};
+    for (int i = 0; i < 300; ++i) {
+        const CairoMatrix scale{1.0 + i, 0, 0, 1.0 + i, 0, 0};
+        cairo_scaled_font_destroy(cairo_scaled_font_create(face, &scale, &identity, options));
+    }
+    cairo_font_options_destroy(options);
+    cairo_destroy(context);
+    cairo_surface_destroy(surface);
+    Reference::FlushScaledFonts();
+}
+
+void APS5_VABI Finalized(void* data) {
+    finalized += *static_cast<int*>(data);
+}
+
+void Faces() {
+    int value = 3;
+    CairoUserDataKey key{};
+    auto* surface = cairo_image_surface_create(0, 96, 64);
+    auto* context = cairo_create(surface);
+    cairo_select_font_face(context, "serif", 0, 0);
+    auto* face = Reference::Face(context);
+    Check(Reference::Face(context) == face, "native face keeps one guest handle");
+    auto* options = Options();
+    Font font(cairo_scaled_font_create(face, &matrix, &ctm, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(font.get()) == 0, "guest handle creates a scaled font");
+    Check(cairo_scaled_font_get_font_face(font.get()) == face, "scaled font returns the face it was created with");
+    const auto references = Reference::FaceReferences(font.get());
+    Check(cairo_font_face_reference(face) == face, "reference returns the guest handle");
+    Check(Reference::FaceReferences(font.get()) == references + 1, "reference reaches the native face");
+    Check(cairo_font_face_set_user_data(face, &key, &value, Finalized) == 0, "native-backed face stores user data");
+    Check(cairo_font_face_get_user_data(face, &key) == &value, "native-backed face returns user data");
+    cairo_destroy(context);
+    cairo_surface_destroy(surface);
+    font.reset();
+    FlushScaledFonts();
+    Check(finalized == 0, "guest reference keeps the native face alive");
+    cairo_font_face_destroy(face);
+    FlushScaledFonts();
+    Check(finalized == 3, "last native release finalizes the guest handle");
+
+    auto bad = Create(CairoMatrix{std::numeric_limits<double>::infinity(), 0, 0, 1, 0, 0});
+    auto* nil = cairo_scaled_font_get_font_face(bad.get());
+    Check(nil == cairo_scaled_font_get_font_face(bad.get()), "static native face keeps one guest handle");
+    Check(cairo_font_face_reference(nil) == nil, "static native face ignores references");
+    cairo_font_face_destroy(nil);
+    Check(cairo_font_face_set_user_data(nil, &key, &value, Finalized) != 0, "static native face rejects user data");
+
+    FreeType::GuestFaceRec record{};
+    auto* unbacked = cairo_ft_font_face_create_for_ft_face(&record, 0);
+    Rejects([&] { cairo_scaled_font_create(unbacked, &matrix, &ctm, options); });
+    auto* drawSurface = cairo_image_surface_create(0, 96, 64);
+    auto* drawContext = cairo_create(drawSurface);
+    Rejects([&] { cairo_set_font_face(drawContext, unbacked); });
+    cairo_destroy(drawContext);
+    cairo_surface_destroy(drawSurface);
+    cairo_font_face_destroy(unbacked);
+    cairo_font_options_destroy(options);
+}
+
 void Contexts() {
     auto* surface = cairo_image_surface_create(0, 96, 64);
     auto* context = cairo_create(surface);
@@ -261,5 +330,6 @@ int main(int argc, char** argv) {
     else if (mode == "conversion") Conversions();
     else if (mode == "contexts") Contexts();
     else if (mode == "errors") Errors();
+    else if (mode == "faces") Faces();
     else Check(false, "known test mode");
 }

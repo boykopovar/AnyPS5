@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/ScaledFontOptions.hpp"
+#include "prx/libcairo/include/FontFace.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <CairoBackend.h>
@@ -58,8 +59,9 @@ CairoScaledFont* CairoScaledFontCreate_nid_no_patch(CairoFontFace* face,
     const CairoMatrix* fontMatrix, const CairoMatrix* ctm,
     const CairoContextFontOptions* options, bool failedOptions) {
     const cairo_matrix_t identity{1, 0, 0, 1, 0, 0};
-    if (!face || !fontMatrix || !ctm) {
-        auto* native = face ? reinterpret_cast<cairo_font_face_t*>(face) :
+    auto* backend = CairoFontFaceBackend_nid_no_patch(face, "cairo_scaled_font_create");
+    if (!backend || !fontMatrix || !ctm) {
+        auto* native = backend ? backend :
             aps5_cairo_toy_font_face_create(nullptr, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         const auto matrix = fontMatrix ? std::bit_cast<cairo_matrix_t>(*fontMatrix) : identity;
         return reinterpret_cast<CairoScaledFont*>(aps5_cairo_scaled_font_create(native, &matrix, &identity, nullptr));
@@ -76,7 +78,7 @@ CairoScaledFont* CairoScaledFontCreate_nid_no_patch(CairoFontFace* face,
         aps5_cairo_font_options_set_hint_metrics(native.get(), static_cast<cairo_hint_metrics_t>(options->hintMetrics));
     }
     return reinterpret_cast<CairoScaledFont*>(aps5_cairo_scaled_font_create(
-        reinterpret_cast<cairo_font_face_t*>(face), &matrix, &transform, native.get()));
+        backend, &matrix, &transform, native.get()));
 }
 
 CairoContextFontOptions CairoScaledFontOptions_nid_no_patch(CairoScaledFont* scaledFont) {
@@ -93,11 +95,11 @@ CairoContextFontOptions CairoScaledFontOptions_nid_no_patch(CairoScaledFont* sca
 extern "C" {
 
 CairoFontFace* APS5_VABI cairo_scaled_font_get_font_face(CairoScaledFont* scaledFont) {
-    return reinterpret_cast<CairoFontFace*>(aps5_cairo_scaled_font_get_font_face(Backend(scaledFont, __func__)));
+    return CairoFontFaceFromBackend_nid_no_patch(aps5_cairo_scaled_font_get_font_face(Backend(scaledFont, __func__)));
 }
 
 void APS5_VABI cairo_set_font_face(CairoContext* context, CairoFontFace* fontFace) {
-    aps5_cairo_set_font_face(reinterpret_cast<cairo_t*>(context), reinterpret_cast<cairo_font_face_t*>(fontFace));
+    aps5_cairo_set_font_face(reinterpret_cast<cairo_t*>(context), CairoFontFaceBackend_nid_no_patch(fontFace, __func__));
 }
 
 void APS5_VABI cairo_set_scaled_font(CairoContext* context, const CairoScaledFont* scaledFont) {
