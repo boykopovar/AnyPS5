@@ -376,11 +376,12 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
 
 EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
-    if (length > 0) {
+    const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
+    if (sized && length > 0) {
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
-    const std::optional<Parameters> parameters = length < 0 ? std::nullopt : DecodeParameters({bytes.data(), bytes.size()});
+    const std::optional<Parameters> parameters = sized ? DecodeParameters({bytes.data(), bytes.size()}) : std::nullopt;
     if (!parameters) {
         PutError(D2iEcpkParametersFailure);
         return nullptr;
@@ -440,11 +441,11 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         return nullptr;
     }
     std::vector<unsigned char> bytes;
-    if (length > 0) {
+    if (length > 0 && length <= std::numeric_limits<std::int32_t>::max()) {
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
-    if (!EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, length > 0 ? bytes.data() : cursor, static_cast<std::size_t>(length), nullptr)) {
+    if (bytes.empty() || !EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, bytes.data(), bytes.size(), nullptr)) {
         PutError(EcLibrary);
         return nullptr;
     }

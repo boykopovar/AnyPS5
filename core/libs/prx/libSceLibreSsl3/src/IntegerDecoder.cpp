@@ -74,7 +74,7 @@ public:
 
     bool ReadByte(unsigned char& byte) {
         if (offset == size) return false;
-        CopyIn(&byte, 1);
+        copyIn(&byte, 1);
         ++offset;
         return true;
     }
@@ -82,9 +82,9 @@ public:
     std::span<const unsigned char> Take(std::size_t count) {
         taken.clear();
         while (count != 0) {
-            const std::size_t step = std::min<std::size_t>(count, ChunkSize);
+            const std::size_t step = std::min<std::size_t>(count, chunkSize);
             taken.resize(taken.size() + step);
-            CopyIn(taken.data() + taken.size() - step, step);
+            copyIn(taken.data() + taken.size() - step, step);
             offset += step;
             count -= step;
         }
@@ -92,7 +92,7 @@ public:
     }
 
 private:
-    void CopyIn(unsigned char* destination, std::size_t count) {
+    void copyIn(unsigned char* destination, std::size_t count) {
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(destination, start + offset, count);
         errno = savedErrno;
@@ -101,7 +101,7 @@ private:
 
     const unsigned char* start;
     std::size_t size;
-    static constexpr std::size_t ChunkSize = 65536;
+    static constexpr std::size_t chunkSize = 65536;
 
     const char* function;
     std::size_t offset = 0;
