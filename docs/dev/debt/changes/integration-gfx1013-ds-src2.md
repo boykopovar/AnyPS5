@@ -1,0 +1,5 @@
+# shader
+
+## change [DS src2 operations]
+
+- [DS src2 operations](../../../core/shader/recompiler/Translation/src/MemoryInstructions/SharedMemoryInstructions.cpp) (`ds_*_src2_*`, GFX10.1 only) read `DS[B]`, with `B = A + 4 * sext(offset1[6:0]:offset0)`, and update `DS[A]` with the matching atomic, so the read of `B` is not atomic with the update of `A`. The 32-bit forms use 32-bit LDS atomics; the 64-bit forms add/sub/rsub/inc/dec/min/max/and/or/xor/write use 64-bit LDS atomics. The 4-byte scale is carried over from the 32-bit family: the pinned LLVM `DSInstructions.td` lines 1526-1555 and AMD RDNA2 ISA section 12.13 do not settle 4 versus 8, and whether the second address keeps `A[31:17]`. No 64-bit form is measured on gfx1013, so the scale, f64 NaN/denormal behaviour, misaligned/out-of-range access and cross-lane atomicity are unverified. The offset-from-address form (`offset1[7]`) and GDS still throw. f32 src2 follows the gfx1035-inferred LDS float atomics rule. Closes when: measured on a PS5.

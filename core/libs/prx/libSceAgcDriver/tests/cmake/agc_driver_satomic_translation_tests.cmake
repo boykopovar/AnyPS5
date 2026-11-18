@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_driver_satomic_translation_tests ${LIBS_INCLUDE_DIR}/tests/ScalarAtomicTranslation.cpp)
+    target_link_libraries(agc_driver_satomic_translation_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(agc_driver_satomic_translation_tests)
+    add_test(NAME agc_driver_satomic_translation COMMAND agc_driver_satomic_translation_tests)
+    if(WIN32)
+        set_tests_properties(agc_driver_satomic_translation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

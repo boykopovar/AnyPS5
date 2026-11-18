@@ -653,7 +653,7 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (addressInfo.access != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
-                if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
+                if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32 && addressInfo.access != AddressAccess::Atomic)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
                 }
                 const bool scalarAddress = memory.kind == ResourceKind::ScalarAddress;

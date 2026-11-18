@@ -150,12 +150,18 @@ private:
     IrU32 widenSubdword(IrValue* value, std::uint32_t bits, bool sign);
     IrValue* narrowSubdword(IrU32 value, std::uint32_t bits);
     bool sLoad(const RdnaInstruction& inst, bool raw);
+    bool sStore(const RdnaInstruction& inst, bool raw);
+    bool sAtomic(const RdnaInstruction& inst, IrOpcode opcode);
+    bool sAtomic64(const RdnaInstruction& inst, IrOpcode opcode);
     bool sScratchLoad(const RdnaInstruction& inst);
+    bool sScratchStore(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
     bool bufferStore(const RdnaInstruction& inst);
     bool bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);
+    bool scalarBufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);
+    bool scalarBufferAtomic64(const RdnaInstruction& inst, IrOpcode opcode);
     bool imageAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsWrxchg2(const RdnaInstruction& inst);
@@ -179,6 +185,8 @@ private:
     bool dsWrite(const RdnaInstruction& inst);
     bool dsWrite2(const RdnaInstruction& inst);
     bool dsSrc2(const RdnaInstruction& inst, IrOpcode opcode);
+    bool dsSrc264(const RdnaInstruction& inst, IrOpcode opcode);
+    bool dsWriteSrc264(const RdnaInstruction& inst);
     bool dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsCondxchg32(const RdnaInstruction& inst);

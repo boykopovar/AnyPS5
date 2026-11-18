@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(sbuffer_atomic_translation_tests ${LIBS_INCLUDE_DIR}/tests/SBufferAtomicTranslation.cpp)
+    target_link_libraries(sbuffer_atomic_translation_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(sbuffer_atomic_translation_tests)
+    add_test(NAME sbuffer_atomic_translation COMMAND sbuffer_atomic_translation_tests)
+    if(WIN32)
+        set_tests_properties(sbuffer_atomic_translation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

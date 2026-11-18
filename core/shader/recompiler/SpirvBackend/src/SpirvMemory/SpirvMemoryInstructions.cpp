@@ -671,6 +671,7 @@ void StoreAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
             StoreSubword(ctx, inst, mem, bits);
         }
         return;
+    case ResourceKind::ScalarAddress:
     case ResourceKind::Flat:
     case ResourceKind::Global:
         EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
@@ -1302,7 +1303,7 @@ std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, 
 std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto& mem = ctx.Memory(inst);
-    if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) {
+    if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global && mem.kind != ResourceKind::ScalarAddress) {
         ctx.Fail(inst, "must access a physical address resource");
     }
     const bool wide = inst.Type() == IrType::U64;

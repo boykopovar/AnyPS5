@@ -211,6 +211,46 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     return true;
 }
 
+bool TranslationContext::dsSrc264(const RdnaInstruction& inst, IrOpcode opcode) {
+    if (inst.gds) {
+        throw std::runtime_error("GDS src2 operations are not supported");
+    }
+    const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    const IrU32 address = readU32(inst.source0);
+    MemoryInfo source = memory;
+    source.offset = memory.secondaryOffset;
+    source.secondaryOffset = 0u;
+    IrValue* loaded = loadSharedU32(2u, address, source, inst.programCounter);
+    IrValue& low = *extractSharedU32(loaded, 2u, 0u);
+    IrValue& high = *extractSharedU32(loaded, 2u, 1u);
+    const IrU64 value(ir.ConstructU64(low, high));
+    MemoryInfo target = memory;
+    target.secondaryOffset = 0u;
+    target.flushDenormals = floatAtomicFlush(opcode);
+    IrValue& active = ir.GetExec();
+    (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active}, addMemoryInfo(target, inst.programCounter));
+    return true;
+}
+
+bool TranslationContext::dsWriteSrc264(const RdnaInstruction& inst) {
+    if (inst.gds) {
+        throw std::runtime_error("GDS src2 operations are not supported");
+    }
+    const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    const IrU32 address = readU32(inst.source0);
+    MemoryInfo source = memory;
+    source.offset = memory.secondaryOffset;
+    source.secondaryOffset = 0u;
+    IrValue* loaded = loadSharedU32(2u, address, source, inst.programCounter);
+    IrValue* low = extractSharedU32(loaded, 2u, 0u);
+    IrValue* high = extractSharedU32(loaded, 2u, 1u);
+    MemoryInfo target = memory;
+    target.secondaryOffset = 0u;
+    IrValue& active = ir.GetExec();
+    (void)ir.Emit(IrOpcode::WriteSharedU32x2, IrType::Void, {&address.Value(), low, high, &active}, addMemoryInfo(target, inst.programCounter));
+    return true;
+}
+
 bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.flushDenormals = floatAtomicFlush(opcode);

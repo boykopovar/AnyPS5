@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    set_tests_properties(agc_driver_sbuffer_atomic_x2_a PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+    foreach(mode IN ITEMS atomic_swap atomic_cmpswap atomic_add atomic_sub atomic_smin atomic_umin atomic_smax)
+        set(name agc_driver_sbuffer_atomic_x2_a_${mode})
+        add_test(NAME ${name} COMMAND agc_driver_sbuffer_atomic_x2_a_tests ${mode})
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
