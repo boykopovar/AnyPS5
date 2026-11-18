@@ -2489,10 +2489,6 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return nullptr;
     }
     if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
-    if (!freed && (replaced != 0 || live + bytes > budget)) {
-        ++state.credited;
-        state.creditedBytes += bytes;
-    }
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
     entry.range = run.ranges.front();
@@ -2682,6 +2678,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     state.allocationFailures = 0;
     ++counts.made;
     counts.madeBytes += bytes;
+    if (!freed && immediate && pinned + reserved + bytes > budget) {
+        ++state.credited;
+        state.creditedBytes += bytes;
+    }
     for (auto it = state.refusals.lower_bound({base, 0}); it != state.refusals.end() && it->first.first < base + bytes;) it = it->first.first + it->first.second <= base + bytes ? state.refusals.erase(it) : std::next(it);
     if (trace) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx ok (%zu live, %.1f MiB live, %.1f MiB ever)%s by %s\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), state.imports.size() + 1, state.liveBytes / 1048576.0, importedBytes / 1048576.0, joined ? ", joined at bind" : "", ImportRequesterName(requester));
     entry.joined = joined;

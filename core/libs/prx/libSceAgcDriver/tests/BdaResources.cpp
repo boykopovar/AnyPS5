@@ -3456,7 +3456,7 @@ void importRetireCreditTests(const Context& context) {
         Recorder recorder(importing);
         recorder.Activate();
         const auto before = HostImportCounters();
-        Require(!use(wanted) && HostImportCounters().retiredPinnedBytes == before.retiredPinnedBytes, "an import over the budget was made under recorded work without APS5_IMPORT_RETIRE_CREDIT");
+        Require(!use(wanted) && HostImportCounters().retiredPinnedBytes == before.retiredPinnedBytes && HostImportCounters().credited == before.credited, "an import over the budget was made under recorded work without APS5_IMPORT_RETIRE_CREDIT");
         SetImportRetireCredit(true);
         Require(use(wanted), "an import that retires one idle import was refused under recorded work with APS5_IMPORT_RETIRE_CREDIT");
         const auto credited = HostImportCounters();
