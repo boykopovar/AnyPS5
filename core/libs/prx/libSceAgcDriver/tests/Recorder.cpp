@@ -1782,6 +1782,44 @@ void writeSettledTests(const Device& device, Recorder& recorder) {
     Require(recorder.Idle() && !recorder.PendingWriteOverlaps(0x50000, 0x100), "writes outlived their batches");
 }
 
+void reachWriterTests(const Device& device, Recorder& recorder) {
+    constexpr std::uint64_t program = 0x8000123400;
+    {
+        const Recorder::WriterProgramScope writer(program, true);
+        const std::array reach{std::pair<std::uint64_t, std::uint64_t>{0x60000, 0x70000}};
+        recorder.NotePendingReach(reach);
+        {
+            const Recorder::WriterProgramScope nested(program + 0x100, false);
+            const std::array inner{std::pair<std::uint64_t, std::uint64_t>{0x90000, 0x91000}};
+            recorder.NotePendingReach(inner);
+        }
+        const std::array after{std::pair<std::uint64_t, std::uint64_t>{0xa0000, 0xa2000}};
+        recorder.NotePendingReach(after);
+    }
+    const std::array unattributed{std::pair<std::uint64_t, std::uint64_t>{0xb0000, 0xb0100}};
+    recorder.NotePendingReach(unattributed);
+    recorder.NotePendingWrite(0x80000, 0x100);
+    const auto reach = recorder.DescribePendingWrite(0x60100, 4);
+    Require(reach.has_value() && reach->reachOnly && reach->writer.program == program && reach->writer.indirect && reach->reachBytes == 0x10000, "a reach-only range did not name the program that noted it");
+    const auto nested = recorder.DescribePendingWrite(0x90000, 4);
+    Require(nested.has_value() && nested->reachOnly && nested->writer.program == program + 0x100 && !nested->writer.indirect && nested->reachBytes == 0x1000, "a nested writer scope was not attributed");
+    const auto restored = recorder.DescribePendingWrite(0xa1000, 4);
+    Require(restored.has_value() && restored->writer.program == program && restored->writer.indirect, "the outer writer was not restored after a nested scope");
+    const auto outside = recorder.DescribePendingWrite(0xb0000, 4);
+    Require(outside.has_value() && outside->reachOnly && outside->writer.program == 0, "a reach noted outside any writer scope named a program");
+    const auto store = recorder.DescribePendingWrite(0x80000, 4);
+    Require(store.has_value() && !store->reachOnly, "a store range counted as reach-only");
+    recorder.Submit();
+    const auto submitted = recorder.DescribePendingWrite(0x60200, 4);
+    Require(submitted.has_value() && !submitted->open && submitted->reachOnly && submitted->writer.program == program, "a submitted batch lost its reach attribution");
+    recorder.NotePendingWrite(0x60100, 4);
+    const auto mixed = recorder.DescribePendingWrite(0x60100, 4);
+    Require(mixed.has_value() && mixed->open && !mixed->reachOnly, "a store over a reach range counted as reach-only");
+    recorder.Sync();
+    device.WaitQueue();
+    Require(recorder.Idle() && !recorder.PendingWriteOverlaps(0x60000, 0x10000), "reach notes outlived their batches");
+}
+
 // Completion counting: a write-back completion (OnComplete) is pending until its batch finished;
 // a completion label the GPU also stored (AfterCompletions storedOnGpu) is pending only once a CPU
 // write-back overlapped it (NoteWrittenBack, once per label), one the GPU has no view of from its
@@ -17935,6 +17973,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--read-list-only") {
             readListTests(device, recorder);
             std::cout << "Read list tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--reach-writer-only") {
+            reachWriterTests(device, recorder);
+            std::cout << "Reach writer tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--deferred-failure-report-only") {

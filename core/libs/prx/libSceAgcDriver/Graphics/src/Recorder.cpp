@@ -804,8 +804,29 @@ std::size_t SizeBucket(std::uint64_t bytes) {
     return 5;
 }
 
+struct ReachWriterKey {
+    std::uint64_t program;
+    bool indirect;
+    std::uint32_t writer;
+    std::uint32_t reader;
+    GuestMemory::ReadSite site;
+    bool operator<(const ReachWriterKey& other) const {
+        return std::tie(program, indirect, writer, reader, site) < std::tie(other.program, other.indirect, other.writer, other.reader, other.site);
+    }
+};
+
+struct ReachWriterTotals {
+    std::uint64_t count = 0;
+    double waitedMs = 0;
+    HookSyncOutcomes outcomes;
+    std::uint64_t reachBytes = 0;
+};
+
 struct HookSyncStats {
     std::map<HookSyncKey, HookSyncTotals> byKey;
+    std::map<ReachWriterKey, ReachWriterTotals> byWriter;
+    std::uint64_t reachCount = 0, storeCount = 0;
+    double reachMs = 0, storeMs = 0;
     std::uint64_t count = 0, openTargets = 0, signaledTargets = 0, batchesFinished = 0;
     HookSyncOutcomes outcomes;
     double waitedMs = 0;
@@ -822,6 +843,37 @@ HookSyncStats& HookSyncs() {
 bool HookSyncProfiled() {
     static const bool profiled = std::getenv("APS5_PROFILE_DRAW") != nullptr && std::getenv("APS5_NO_HOOKSYNC_PROFILE") == nullptr;
     return profiled;
+}
+
+thread_local Recorder::WriteSource currentWriter{};
+
+Recorder::WriteSource NotedWriteSource() {
+    auto source = currentWriter;
+    source.queue = GuestMemory::CurrentPacket().queue;
+    return source;
+}
+
+void ReportReachWriters(const HookSyncStats& stats) {
+    std::vector<std::pair<const ReachWriterKey*, const ReachWriterTotals*>> hot;
+    hot.reserve(stats.byWriter.size());
+    for (const auto& [key, totals] : stats.byWriter) hot.emplace_back(&key, &totals);
+    std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second->waitedMs > b.second->waitedMs; });
+    const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+    std::string report;
+    char text[256];
+    std::snprintf(text, sizeof(text), "[reach-writers] (10 s) reach-only syncs %llu/%.0fms, store syncs %llu/%.0fms; top reach-only by wait (program writer->reader site: count/ms, unchanged open/unsignaled, changed, largest reach MiB):", count(stats.reachCount), stats.reachMs, count(stats.storeCount), stats.storeMs);
+    report += text;
+    for (std::size_t i = 0; i < hot.size() && i < 16; ++i) {
+        const auto& key = *hot[i].first;
+        const auto& totals = *hot[i].second;
+        const auto& k = totals.outcomes;
+        char program[32];
+        if (key.program != 0) std::snprintf(program, sizeof(program), "0x%llx%s", static_cast<unsigned long long>(key.program), key.indirect ? " indirect" : "");
+        else std::snprintf(program, sizeof(program), "other");
+        std::snprintf(text, sizeof(text), " [%s 0x%x->0x%x %s: %llu/%.0fms u%llu/%llu c%llu %.0f]", program, key.writer, key.reader, GuestMemory::ReadSiteName(key.site), count(totals.count), totals.waitedMs, count(k.unchangedOpen), count(k.unchangedPending), count(k.changed), static_cast<double>(totals.reachBytes) / (1024.0 * 1024.0));
+        report += text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("%s\n", report.c_str());
 }
 
 std::string PacketName(std::uint32_t opcode) {
@@ -869,6 +921,7 @@ void ReportHookSyncs(HookSyncStats& stats) {
         report += text;
     }
     AgcDriver::ProfilePrint_nid_no_patch("%s\n", report.c_str());
+    ReportReachWriters(stats);
     stats = HookSyncStats{};
 }
 
@@ -925,6 +978,17 @@ public:
         }();
         ++(totals.outcomes.*outcome);
         ++(stats.outcomes.*outcome);
+        if (info.has_value()) {
+            (info->reachOnly ? stats.reachCount : stats.storeCount) += 1;
+            (info->reachOnly ? stats.reachMs : stats.storeMs) += ms;
+            if (info->reachOnly) {
+                auto& writer = stats.byWriter[ReachWriterKey{info->writer.program, info->writer.indirect, info->writer.queue, key.queue, key.site}];
+                ++writer.count;
+                writer.waitedMs += ms;
+                ++(writer.outcomes.*outcome);
+                writer.reachBytes = std::max(writer.reachBytes, info->reachBytes);
+            }
+        }
         if (now - stats.lastReport > std::chrono::seconds(10)) ReportHookSyncs(stats);
     }
     HookSyncScope(const HookSyncScope&) = delete;
@@ -3987,6 +4051,7 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
     if (published != nullptr && !SnapshotCovers(published.get(), address, end)) published = nullptr;
     open->writeValues.push_back(static_cast<std::int16_t>(value));
     open->writeWords.push_back(word);
+    if (HookSyncProfiled()) open->writeSources.push_back(NotedWriteSource());
     if (!ownLabel) markOverwritten(address, end);
     // A poller waiting on this range learns that the open batch may now hold its producer.
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
@@ -4017,6 +4082,7 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
     if (published != nullptr && !SnapshotCovers(published.get(), address, address + bytes)) published = nullptr;
     batch.writeValues.push_back(-1);
     batch.writeWords.push_back(-1);
+    if (HookSyncProfiled()) batch.writeSources.push_back(NotedWriteSource());
     if (!ownLabel) markOverwritten(address, address + bytes);
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
     if (!SnapshotCovers(address, address + bytes)) {
@@ -4435,10 +4501,27 @@ std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::ui
     };
     // With SyncThrough disabled every hit is a full Sync: the open batch (if any) is submitted and
     // everything in flight finishes, whichever batch noted the range.
+    const auto classify = [&](const Batch& batch, PendingWriteInfo info) {
+        info.reachOnly = true;
+        bool attributed = false;
+        for (std::size_t i = 0; i < batch.writes.size(); ++i) {
+            if (!(address < batch.writes[i].second && batch.writes[i].first < end)) continue;
+            if (batch.writeValues[i] != ReachValue) {
+                info.reachOnly = false;
+                continue;
+            }
+            if (!attributed && i < batch.writeSources.size()) {
+                info.writer = batch.writeSources[i];
+                info.reachBytes = batch.writes[i].second - batch.writes[i].first;
+                attributed = true;
+            }
+        }
+        return info;
+    };
     const bool syncAll = !SyncThroughEnabled();
     const auto allBatches = inFlight.size() + (open != nullptr ? 1 : 0);
     if (open != nullptr) {
-        if (const auto* range = firstOverlap(*open)) return PendingWriteInfo{submissions + 1, true, false, range->first, range->second, inFlight.size() + 1};
+        if (const auto* range = firstOverlap(*open)) return classify(*open, PendingWriteInfo{submissions + 1, true, false, range->first, range->second, inFlight.size() + 1});
     }
     std::size_t finished = inFlight.size();
     for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it, --finished) {
@@ -4446,10 +4529,20 @@ std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::ui
         if (range == nullptr) continue;
         // In flight means submitted, so the fence is live; signaled = the GPU already ran it.
         const bool signaled = gpuDone(**it);
-        if (syncAll) return PendingWriteInfo{submissions + (open != nullptr ? 1 : 0), open != nullptr, signaled, range->first, range->second, allBatches};
-        return PendingWriteInfo{(*it)->serial, false, signaled, range->first, range->second, finished};
+        if (syncAll) return classify(**it, PendingWriteInfo{submissions + (open != nullptr ? 1 : 0), open != nullptr, signaled, range->first, range->second, allBatches});
+        return classify(**it, PendingWriteInfo{(*it)->serial, false, signaled, range->first, range->second, finished});
     }
     return std::nullopt;
+}
+
+Recorder::WriterProgramScope::WriterProgramScope(std::uint64_t program, bool indirect) : previousProgram(currentWriter.program), previousIndirect(currentWriter.indirect) {
+    currentWriter.program = program;
+    currentWriter.indirect = indirect;
+}
+
+Recorder::WriterProgramScope::~WriterProgramScope() {
+    currentWriter.program = previousProgram;
+    currentWriter.indirect = previousIndirect;
 }
 
 bool Recorder::HasCompletions() const {

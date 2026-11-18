@@ -268,6 +268,22 @@ public:
     void NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static constexpr std::int16_t ReachValue = -2;
     void NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    struct WriteSource {
+        std::uint64_t program = 0;
+        std::uint32_t queue = 0;
+        bool indirect = false;
+    };
+    class WriterProgramScope {
+    public:
+        WriterProgramScope(std::uint64_t program, bool indirect);
+        ~WriterProgramScope();
+        WriterProgramScope(const WriterProgramScope&) = delete;
+        WriterProgramScope& operator=(const WriterProgramScope&) = delete;
+
+    private:
+        std::uint64_t previousProgram;
+        bool previousIndirect;
+    };
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     bool PendingStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
@@ -342,6 +358,9 @@ public:
         std::uint64_t rangeBegin;
         std::uint64_t rangeEnd;
         std::size_t batchesToFinish;
+        bool reachOnly = false;
+        WriteSource writer;
+        std::uint64_t reachBytes = 0;
     };
     std::optional<PendingWriteInfo> DescribePendingWrite(std::uint64_t address, std::size_t bytes) const;
     // Ends and submits the open batch without waiting.
@@ -752,6 +771,7 @@ private:
         std::vector<std::uint64_t> stampedNotes;
         std::vector<std::int16_t> writeValues;
         std::vector<std::int64_t> writeWords;
+        std::vector<WriteSource> writeSources;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
         struct Read {
             std::uint64_t begin;
