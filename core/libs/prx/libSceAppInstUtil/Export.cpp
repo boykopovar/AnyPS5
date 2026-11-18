@@ -7,6 +7,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -18,6 +19,25 @@ static constexpr int ErrorNullArgument = static_cast<int>(0x80A30003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A31000);
 static constexpr int GuestEnomem = 12;
 static constexpr int GuestEfault = 14;
+
+[[noreturn]] static void FaultAt(const char* function, const char* what) {
+    throw std::logic_error(std::string(function) + ": " + what + " faults in firmware 13.60");
+}
+
+static std::uint64_t ReadMetaField(const void* metaInfo, std::size_t offset, std::size_t size, const char* function) {
+    std::uint64_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::uint8_t*>(metaInfo) + offset, size)) FaultAt(function, "reading MetaInfo where it is not readable");
+    return value;
+}
+
+static bool MetaStringFits(std::uint64_t text, std::size_t limit, const char* function) {
+    if (text == 0) return true;
+    std::string ignored;
+    const int error = CopyGuestString_nid_no_patch(reinterpret_cast<const char*>(text), limit, ignored);
+    if (error == GuestEfault) FaultAt(function, "reading a MetaInfo string where it is not readable");
+    if (error != 0 && error != 63) throw std::bad_alloc();
+    return error == 0;
+}
 
 extern "C" {
 
@@ -520,9 +540,26 @@ int APS5_VABI sceAppInstUtilCancelForMultiInstall(void) {
     return 0;
 }
 
-int APS5_VABI sceAppInstUtilInstallByPackage(void) {
+int APS5_VABI sceAppInstUtilInstallByPackage(const void* metaInfo, void* pkgInfo, const void* playGoInfo) {
+    if (metaInfo == nullptr || pkgInfo == nullptr || playGoInfo == nullptr) return ErrorNullArgument;
+    {
+        std::lock_guard lock(g_serviceMutex);
+        if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    }
+    const auto uri = ReadMetaField(metaInfo, 0x00, 8, __func__);
+    if (uri == 0) return ErrorNullArgument;
+    struct Limit {
+        std::size_t offset;
+        std::size_t length;
+    };
+    constexpr Limit limits[] = {{0x00, 0x3fff}, {0x08, 0x3fff}, {0x10, 0x3}, {0x18, 0x30}, {0x20, 0x80}, {0x28, 0x3fff}};
+    for (const Limit& limit : limits) {
+        const auto text = limit.offset == 0 ? uri : ReadMetaField(metaInfo, limit.offset, 8, __func__);
+        if (!MetaStringFits(text, limit.length, __func__)) return ErrorNullArgument;
+    }
+    ReadMetaField(metaInfo, 0x34, 1, __func__);
+    ReadMetaField(metaInfo, 0x30, 4, __func__);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppInstUtilIsRestoreState(void) {

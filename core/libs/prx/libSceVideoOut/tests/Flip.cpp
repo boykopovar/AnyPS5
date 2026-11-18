@@ -33,6 +33,9 @@
 #ifdef _WIN32
 #include <SDL.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
 
 #undef main
 
@@ -273,20 +276,6 @@ void testPs4Buffers() {
         check(sceVideoOutSubmitChangeBufferAttribute(invalid, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its handle before a null attribute");
         unchanged();
     }
-    for (int index : {-1, 4, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
-        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, index, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
-    }
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 3, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, nullptr, nullptr); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
-    int dummyOption = 42;
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &linearChange, &dummyOption); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
-    for (int index : {-1, 4, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
-        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, index, &linearChange, &dummyOption); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
-    }
-    for (int invalid : {-1, 0, VIDEO_OUT_NUM_MAX}) {
-        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(invalid, -1, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_HANDLE");
-        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(invalid, 0, nullptr, nullptr); }, "VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
     for (int field = 0; field < 3; ++field) {
         auto invalid = changed;
         if (field == 0) invalid.reserved0 = 1;
@@ -476,6 +465,13 @@ void testUnregisteredBuffer() {
     check(sceVideoOutUnregisterBuffers(handle, -1) == VIDEO_OUT_ERROR_INVALID_VALUE, "a negative set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 1) == VIDEO_OUT_ERROR_INVALID_VALUE, "an unused set was unregistered");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
+    VideoOutBufferAttribute2 changed = attribute;
+    changed.width = 32;
+    for (const int set : {0, 3, 4, 100, -1}) {
+        check(sceVideoOutSubmitChangeBufferAttribute2(handle, set, &changed, nullptr) == VIDEO_OUT_ERROR_INVALID_INDEX, "an attribute change of an unregistered or out of range set did not return its invalid index error");
+    }
+    int option = 0;
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &changed, &option) == VIDEO_OUT_ERROR_INVALID_OPTION, "an attribute change with an option did not return its invalid option error before the registration check");
     std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 7, 0};
     Packet flipPacket{flip.data(), 6, 0, {}};
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "a GPU flip of an unregistered buffer was rejected at submit");
@@ -488,6 +484,7 @@ void testUnregisteredBuffer() {
     }
     AgcDriverWaitIdle_nid_postfix();
     sceVideoOutClose(handle);
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &changed, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an attribute change on a closed handle did not return its invalid handle error");
     LibcRunShutdown_nid_postfix();
 }
 
@@ -1686,11 +1683,9 @@ int runTests(int argc, char** argv) {
 
 int main(int argc, char** argv) {
 #ifdef __APPLE__
-    static int arguments;
-    static char** values;
-    arguments = argc;
-    values = argv;
-    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(arguments, values)); }, nullptr);
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(*_NSGetArgc(), *_NSGetArgv())); }, nullptr);
 #else
     return runTests(argc, argv);
 #endif
