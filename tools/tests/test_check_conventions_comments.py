@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from check_conventions import NID_POSTFIX, compute_nid, symbol_nid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1022,6 +1023,22 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
+class SymbolNidTests(unittest.TestCase):
+    def test_postfix_and_disambiguation_suffixes_are_removed_before_hashing(self):
+        expected = compute_nid("sceFoo")
+        self.assertTrue(expected)
+        self.assertEqual(symbol_nid("sceFoo" + NID_POSTFIX), expected)
+        self.assertEqual(symbol_nid("sceFoo_nid_disambig2"), expected)
+        self.assertEqual(symbol_nid("sceFoo"), expected)
+
+    def test_unpatched_and_sdl_symbols_have_no_nid(self):
+        for name in ("sceFoo_nid_no_patch", "sceFoo_nid_no_patch_cut", "SDL_Init"):
+            with self.subTest(name=name):
+                self.assertIsNone(symbol_nid(name))
+
+    def test_empty_base_has_no_nid(self):
+        self.assertIsNone(symbol_nid(NID_POSTFIX))
 
 
 if __name__ == "__main__":
