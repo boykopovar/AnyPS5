@@ -288,6 +288,15 @@ class ScanTests(unittest.TestCase):
             with self.assertRaisesRegex(shader_scan.ScanError, r"TranslationContext::emitScalar\(\)"):
                 shader_scan.measure(directory, ISA)
 
+    def test_joined_keeps_prefixed_non_test_sources_without_comments(self):
+        files = {"core/a.cpp": "int a; // gone\n", "core/b.cpp": "int b;", "core/tests/c.cpp": "int c;", "other/d.cpp": "int d;"}
+        text = shader_scan.joined(files, "core/")
+        self.assertIn("int a;", text)
+        self.assertIn("int b;", text)
+        self.assertNotIn("gone", text)
+        self.assertNotIn("int c;", text)
+        self.assertNotIn("int d;", text)
+
     def test_comments_keep_offsets_and_literals(self):
         text = 'a // x\nb /* y\nz */ c "// not a comment"\n'
         stripped = shader_scan.strip_comments(text)
