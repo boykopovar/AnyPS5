@@ -632,6 +632,8 @@ if(BUILD_TESTING)
     set_tests_properties(agc_recorder_cmask PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_recorder_cube COMMAND agc_driver_recorder_tests --cube-only)
     set_tests_properties(agc_recorder_cube PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_recorder_rotated_repack COMMAND agc_driver_recorder_tests --rotated-repack-only)
+    set_tests_properties(agc_recorder_rotated_repack PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_recorder_failed_check COMMAND agc_driver_recorder_tests --failed-check-only)
     set_tests_properties(agc_recorder_failed_check PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
         PASS_REGULAR_EXPRESSION "a failed check stopped the test with a texture upload in its open batch"
@@ -641,7 +643,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race agc_driver_unit_shadow agc_driver_unit_shadow_budget agc_small_tiled_shadow_label PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        set_tests_properties(agc_recorder_completion_labels agc_recorder_cmask agc_recorder_cube agc_recorder_failed_check agc_recorder_upload_scratch PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_recorder_completion_labels agc_recorder_cmask agc_recorder_cube agc_recorder_rotated_repack agc_recorder_failed_check agc_recorder_upload_scratch PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     set_property(TEST agc_driver_host_import_lifetime APPEND PROPERTY ENVIRONMENT_MODIFICATION

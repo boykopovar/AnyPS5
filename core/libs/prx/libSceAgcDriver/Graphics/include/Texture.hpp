@@ -208,6 +208,7 @@ private:
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     VkFormat blockFormat = VK_FORMAT_UNDEFINED;
     bool repackCopy = false;
+    TextureRepack copyRepack = TextureRepack::Float10_11_11;
     std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
     std::uint32_t copyTexelsPerElement = 4;
 };

@@ -12,6 +12,8 @@ namespace AgcDriver::Graphics {
 
 struct Context;
 
+enum class TextureRepack : std::uint32_t { Float10_11_11, DepthToFloat, Rotate1_5_5_5 };
+
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat);
 VkFormat DccClearTextureFormat(std::uint32_t guestFormat);
 VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponentSwizzle component);
@@ -29,7 +31,9 @@ VkFormat Uint16ExportAlias(VkFormat format);
 std::uint32_t BytesPerElement(std::uint32_t guestFormat);
 bool IsConvertedTextureFormat(std::uint32_t guestFormat);
 bool IsRepackedTextureFormat(std::uint32_t guestFormat);
+TextureRepack TextureRepackFor(std::uint32_t guestFormat);
 std::uint32_t RepackTextureWord(std::uint32_t word);
+std::uint32_t RotateTextureWord(std::uint32_t word);
 bool IsBlockCompressed(std::uint32_t guestFormat);
 std::uint32_t BlockWidth(std::uint32_t guestFormat);
 std::uint32_t BlockHeight(std::uint32_t guestFormat);

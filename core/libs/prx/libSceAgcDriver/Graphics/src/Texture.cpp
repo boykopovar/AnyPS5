@@ -744,7 +744,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 commands = recorder->Commands();
                 if (staging != nullptr || !sources.empty()) {
                     tiled = recorder->UploadScratchBuffer(Recorder::UploadScratch::Tiled, snapshotSize);
-                    linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>(linearBytes));
+                    linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>((linearBytes + 3u) & ~std::uint64_t{3}));
                     if (staging != nullptr) recorder->Keep(staging, snapshotSize);
                 }
                 if (zeros != nullptr) recorder->Keep(zeros, static_cast<std::size_t>(sliceLinearBytes));
@@ -755,7 +755,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 commands = batch->Handle();
                 if (staging != nullptr || !sources.empty()) {
                     tiled = std::make_shared<DeviceBuffer>(context, snapshotSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-                    linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                    linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>((linearBytes + 3u) & ~std::uint64_t{3}), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 }
             }
 
@@ -781,12 +781,13 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 }
             }
             if (IsRepackedTextureFormat(descriptor.format) || depthToFloat) {
+                const auto repack = depthToFloat ? TextureRepack::DepthToFloat : TextureRepackFor(descriptor.format);
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
                 for (const auto& slot : uploaded) {
                     for (std::uint32_t level = firstUploaded; level < mips.size(); ++level) {
                         if (!geometry.HasLayer(level, slot.layer)) continue;
                         const auto offset = slot.linearOffset + mips[level].linearOffset;
-                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, depthToFloat);
+                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, repack);
                     }
                 }
             }
@@ -993,6 +994,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     try {
         Require(source != nullptr && CanRepackCopyFrom(*source, descriptor), "storage image cannot serve a repacked copy of the sampled texture");
         const auto format = SampledTextureFormat(context, descriptor.format);
+        copyRepack = TextureRepackFor(descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
         copyWidth = descriptor.width;
         copyHeight = descriptor.height;
@@ -1254,7 +1256,7 @@ bool Texture::RefreshDepthCopy() {
     if (srgbExpand) return refreshSrgbExpand();
     std::uint64_t linearBytes = 0;
     for (std::uint32_t level = 0; level < copyLevels; ++level) linearBytes += static_cast<std::uint64_t>(std::max(copyWidth >> level, 1u)) * std::max(copyHeight >> level, 1u) * copyElementBytes * copyLayers;
-    auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (repackCopy ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u));
+    auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>((linearBytes + 3u) & ~std::uint64_t{3}), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (repackCopy ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u));
     std::vector<VkBufferImageCopy> fromSource, toDepth;
     std::uint64_t offset = 0;
     for (std::uint32_t level = 0; level < copyLevels; ++level) {
@@ -1310,7 +1312,7 @@ bool Texture::RefreshDepthCopy() {
         barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1, &linearReady, 0, nullptr);
         for (const auto& region : fromSource) {
             const auto bytes = static_cast<std::uint64_t>(region.imageExtent.width) * region.imageExtent.height * copyElementBytes * copyLayers;
-            context.detiler->DispatchRepack(commands, linear->Handle(), region.bufferOffset, linear->Handle(), region.bufferOffset, bytes);
+            context.detiler->DispatchRepack(commands, linear->Handle(), region.bufferOffset, linear->Handle(), region.bufferOffset, bytes, copyRepack);
         }
         linearReady.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         linearReady.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -1647,6 +1649,12 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
         context.formatProperties(context.physical, candidate, &properties);
         return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
     };
+    const auto copies = [&](VkFormat candidate) {
+        VkFormatProperties properties{};
+        context.formatProperties(context.physical, candidate, &properties);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        return (properties.optimalTilingFeatures & required) == required;
+    };
     VkFormat storage = VK_FORMAT_UNDEFINED;
     const auto packed = PackedStorageViewFormat(format);
     VkFormat linear = VK_FORMAT_UNDEFINED;
@@ -1659,7 +1667,7 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
         default: break;
     }
     if (packed != VK_FORMAT_UNDEFINED) {
-        if (supports(packed)) storage = format;
+        if (supports(packed)) storage = copies(format) ? format : packed;
     } else if (linear != VK_FORMAT_UNDEFINED) {
         if (supports(linear)) storage = linear;
     } else if (supports(format)) {

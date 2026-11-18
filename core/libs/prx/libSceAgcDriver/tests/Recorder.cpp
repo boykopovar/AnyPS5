@@ -16372,6 +16372,78 @@ void cubeExtraSliceTests(const Device& device, Recorder& recorder) {
     }
 }
 
+void rotatedRepackTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    constexpr std::uint32_t texels = 0x10000u;
+    auto halves = std::make_shared<Buffer>(context, texels * 2u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto bytes = halves->Bytes();
+    for (std::uint32_t texel = 0; texel < texels; ++texel) {
+        const auto value = static_cast<std::uint16_t>(texel);
+        std::memcpy(bytes.data() + texel * 2u, &value, sizeof(value));
+    }
+    auto commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    detiler.DispatchRepack(commands, halves->Handle(), 0, halves->Handle(), 0, texels * 2u, TextureRepack::Rotate1_5_5_5);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Submit();
+    recorder.Sync();
+    for (std::uint32_t texel = 0; texel < texels; texel += 2u) {
+        std::uint32_t word = 0;
+        std::memcpy(&word, bytes.data() + texel * 2u, sizeof(word));
+        Require(word == RotateTextureWord(texel | ((texel + 1u) << 16u)), "the rotating repack differs from RotateTextureWord at texel " + std::to_string(texel));
+    }
+    const auto guarded = [](std::uint32_t texel) { return static_cast<std::uint16_t>(0x8001u + texel * 0x1111u); };
+    for (std::uint32_t texel = 0; texel < 16u; ++texel) {
+        const auto value = guarded(texel);
+        std::memcpy(bytes.data() + texel * 2u, &value, sizeof(value));
+    }
+    commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    detiler.DispatchRepack(commands, halves->Handle(), 6, halves->Handle(), 6, 10, TextureRepack::Rotate1_5_5_5);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Submit();
+    recorder.Sync();
+    for (std::uint32_t texel = 0; texel < 16u; ++texel) {
+        std::uint16_t actual = 0;
+        std::memcpy(&actual, bytes.data() + texel * 2u, sizeof(actual));
+        const auto expected = texel >= 3u && texel < 8u ? static_cast<std::uint16_t>(RotateTextureWord(guarded(texel))) : guarded(texel);
+        Require(actual == expected, "a rotating repack of texels 3 to 7 left texel " + std::to_string(texel) + " as " + std::to_string(actual) + ", expected " + std::to_string(expected));
+    }
+
+    SampleProgram program(context, recorder);
+    std::array<std::uint32_t, 8> words{0x1000u, 135u << 20u, 1u | (2u << 14u), 0x90010facu, 0u, 1u << 4u, 0u, 0u};
+    auto resource = DecodeTextureResource(words);
+    const auto geometry = DescribeSurface(resource);
+    Require(resource.width == 5u && resource.height == 3u && resource.mipCount == 2u && geometry.mips.size() == 2u, "the rotated repack fixture is not a 5x3 texture with two levels");
+    std::vector<std::byte> memory(static_cast<std::size_t>(geometry.guestBytes) + 256);
+    auto* surface = reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(memory.data()) + 255) & ~std::uintptr_t{255});
+    constexpr std::array<std::uint16_t, 2> levelTexels{0x5a5bu, 0xa6c4u};
+    for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+        const auto& mip = geometry.mips[level];
+        for (std::uint64_t offset = 0; offset < mip.tiledSize; offset += 2u) std::memcpy(surface + geometry.GuestOffset(0, mip) + offset, &levelTexels[level], 2u);
+    }
+    resource.baseAddress = reinterpret_cast<std::uint64_t>(surface);
+    auto storage = StorageTexture::Create(context, detiler, resource, 0);
+    recorder.Keep(storage);
+    Require(Texture::CanRepackCopyFrom(*storage, resource), "a 1_5_5_5 storage image cannot serve a rotated copy");
+    constexpr std::array<std::uint32_t, 4> lowBits{0u, 1u, 6u, 11u};
+    constexpr std::array<std::uint32_t, 4> widths{1u, 5u, 5u, 5u};
+    constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    for (std::size_t component = 0; component < components.size(); ++component) {
+        const auto channel = TextureComponentChannel(135u, components[component]);
+        Texture copy(context, storage, resource, VkComponentMapping{channel, channel, channel, channel}, Texture::RepackCopyTag{});
+        copy.RefreshDepthCopy();
+        for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+            const auto mask = (1u << widths[component]) - 1u;
+            const auto expected = static_cast<float>((levelTexels[level] >> lowBits[component]) & mask) / static_cast<float>(mask);
+            expectRed(program.Red(copy.View(), copy.Layout(), static_cast<float>(level)), expected, "a rotated copy of an odd-width 1_5_5_5 storage image read the wrong component");
+        }
+    }
+    std::cout << "1_5_5_5 rotated repack, a partial-word range and an odd-width rotated copy: passed\n";
+}
+
 struct SampledViewProbe {
     Context& context;
     PFN_vkGetDeviceProcAddr resolver;
@@ -19019,6 +19091,10 @@ int main(int argc, char** argv) {
             failedCheckReportTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--rotated-repack-only") {
+            rotatedRepackTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
             singleCubeTests(device, recorder);
             cubeExtraSliceTests(device, recorder);
@@ -19564,6 +19640,7 @@ int main(int argc, char** argv) {
         sampledStorageBaseLevelUsageTests(device, recorder);
         singleCubeTests(device, recorder);
         cubeExtraSliceTests(device, recorder);
+        rotatedRepackTests(device, recorder);
         atomicViewTests(device, recorder);
         metadataPassTests(device, recorder);
         cmaskPassTests(device, recorder);

@@ -146,7 +146,7 @@ VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
 }
 
 VkFormat DccClearTextureFormat(std::uint32_t guestFormat) {
-    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    if (guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format10_11_11Float) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     return ResolveTextureFormat(guestFormat);
 }
 
@@ -223,7 +223,8 @@ VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat)
     Require(scaled == 0u || (context.scaledSampledFormats & scaled) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
     const auto optional = OptionalSampledBit(guestFormat);
     Require(optional == 0u || (context.optionalSampledFormats & optional) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
-    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    if (guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format10_11_11Float) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    if (guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format1_5_5_5UNorm)) return VK_FORMAT_A1R5G5B5_UNORM_PACK16;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
@@ -307,11 +308,20 @@ bool IsConvertedTextureFormat(std::uint32_t guestFormat) {
 }
 
 bool IsRepackedTextureFormat(std::uint32_t guestFormat) {
-    return guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format10_11_11Float);
+    return guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format10_11_11Float) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format1_5_5_5UNorm);
+}
+
+TextureRepack TextureRepackFor(std::uint32_t guestFormat) {
+    Require(IsRepackedTextureFormat(guestFormat), "guest texture format " + std::to_string(guestFormat) + " is not sampled through a repacked copy");
+    return guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format1_5_5_5UNorm) ? TextureRepack::Rotate1_5_5_5 : TextureRepack::Float10_11_11;
 }
 
 std::uint32_t RepackTextureWord(std::uint32_t word) {
     return ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
+}
+
+std::uint32_t RotateTextureWord(std::uint32_t word) {
+    return ((word >> 1u) & 0x7fff7fffu) | ((word & 0x00010001u) << 15u);
 }
 
 VkFormat Uint16ExportAlias(VkFormat format) {
