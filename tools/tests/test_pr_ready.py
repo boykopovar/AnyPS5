@@ -351,5 +351,55 @@ class MainTests(unittest.TestCase):
             pr_ready.closed_with_label("o/r")
 
 
+class PaginationTests(unittest.TestCase):
+    def test_pagination_cursor_returns_each_new_cursor_once(self):
+        seen = set()
+        self.assertEqual(pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
+        with self.assertRaisesRegex(ValueError, 'did not advance'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x')
+        with self.assertRaisesRegex(ValueError, 'has no cursor'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
+
+    def test_listed_returns_nodes_and_refuses_other_shapes(self):
+        self.assertEqual(pr_ready.listed({'nodes': [1, 2]}), [1, 2])
+        with self.assertRaisesRegex(ValueError, 'expected a connection'):
+            pr_ready.listed([])
+class CheckMappingTests(unittest.TestCase):
+    def test_check_of_maps_commit_status_states(self):
+        pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
+
+    def test_check_of_maps_check_runs_and_refuses_non_objects(self):
+        run = pr_ready.check_of({'databaseId': 7, 'name': 'build', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'})
+        self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
+        with self.assertRaisesRegex(ValueError, 'check is not an object'):
+            pr_ready.check_of([])
+class LatestCheckTests(unittest.TestCase):
+    def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
+        checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
+        self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
+class LabelApplyTests(unittest.TestCase):
+    def test_apply_dry_run_reports_queue_label_changes_without_writing(self):
+        import contextlib, io
+        prs = [{'number': 1, 'labels': []}, {'number': 2, 'labels': [pr_ready.QUEUE_LABEL]}]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], True, closed=(3,))
+        text = out.getvalue()
+        self.assertIn(f'would change #1: +{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #2: -{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #3: -{pr_ready.QUEUE_LABEL}', text)
+
+    def test_apply_edits_the_label_through_gh_when_not_dry_run(self):
+        import contextlib, io
+        from unittest import mock
+        prs = [{'number': 1, 'labels': []}]
+        with mock.patch.object(pr_ready.pr_labels, 'gh') as gh, mock.patch.object(pr_ready.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], False)
+        gh.assert_called_once_with('pr', 'edit', '1', '-R', 'owner/repo', '--add-label', pr_ready.QUEUE_LABEL)
+
+
 if __name__ == "__main__":
     unittest.main()
