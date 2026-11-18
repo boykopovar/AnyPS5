@@ -321,6 +321,7 @@ int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppC
     const auto sdkVersion = ApplicationCompiledSdkVersion();
     const int savedErrno = errno;
     AppContentInitParam localInit{};
+    AppContentBootParam localBoot{};
     if (sdkVersion >= 0x01500000) {
         if (initialized.load()) return SCE_APP_CONTENT_ERROR_BUSY;
         if (initParam == nullptr || bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
@@ -329,17 +330,14 @@ int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppC
         if (!copiedInit) {
             return SCE_APP_CONTENT_ERROR_PARAMETER;
         }
-    }
-    if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    AppContentBootParam localBoot{};
-    const bool copiedBootIn = GuestCopyIn_nid_no_patch(&localBoot, bootParam, sizeof(localBoot));
-    errno = savedErrno;
-    if (!copiedBootIn) {
-        return SCE_APP_CONTENT_ERROR_PARAMETER;
-    }
-    if (sdkVersion >= 0x01500000) {
+        const bool copiedBootIn = GuestCopyIn_nid_no_patch(&localBoot, bootParam, sizeof(localBoot));
+        errno = savedErrno;
+        if (!copiedBootIn) {
+            return SCE_APP_CONTENT_ERROR_PARAMETER;
+        }
         if (!std::all_of(std::begin(localInit.reserved), std::end(localInit.reserved), [](char value) { return value == 0; }) || !std::all_of(std::begin(localBoot.reserved1), std::end(localBoot.reserved1), [](char value) { return value == 0; }) || !std::all_of(std::begin(localBoot.reserved2), std::end(localBoot.reserved2), [](char value) { return value == 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
     }
+    if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
     Temporary();
     AppContentBootParam clearedBoot{};
     const bool copiedBootOut = GuestCopyOut_nid_no_patch(bootParam, &clearedBoot, sizeof(clearedBoot));
