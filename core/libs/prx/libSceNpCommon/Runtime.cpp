@@ -142,6 +142,15 @@ void RequireTimeAdd(int result, const char* function) {
     if (result < 0) throw std::invalid_argument(std::string(function) + ": the tick is out of range");
 }
 
+std::uint64_t LoadTick(const RtcTick* value, const char* function) {
+    RtcTick local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, value, sizeof(local));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return local.tick;
+}
+
 constexpr int NP_ERROR_TITLE_ID_INVALID = static_cast<int>(0x80559E11);
 constexpr int NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
 constexpr std::size_t NP_TITLE_ID_CODE_LENGTH = 9;
@@ -1071,85 +1080,85 @@ int APS5_VABI _ZNK3sce2np4Time13FormatRFC3339EPcmi(const NpTime* self, char* tex
 }
 
 NpTime* APS5_VABI _ZN3sce2np4TimeplERKS1_(NpTime* self, const NpTime* other) {
-    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(other->tick)), "sce::np::Time::operator+");
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(LoadTick(other, __func__))), "sce::np::Time::operator+");
     return self;
 }
 
 NpTime* APS5_VABI _ZN3sce2np4TimeplERK10SceRtcTick(NpTime* self, const RtcTick* tick) {
-    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(tick->tick)), "sce::np::Time::operator+");
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(LoadTick(tick, __func__))), "sce::np::Time::operator+");
     return self;
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npeqERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick* utc, int timeZoneMinutes) {
