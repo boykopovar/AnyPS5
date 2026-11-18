@@ -229,6 +229,7 @@ struct PinProbe {
 };
 
 static PinProbe pinProbe;
+static void* pageBelowWorkerStack = nullptr;
 
 static bool ReleaseStackPin(std::uintptr_t, std::size_t) {
     ++pinProbe.waits;
@@ -241,6 +242,8 @@ static void CheckPinnedLaterPart(std::uintptr_t low) {
     auto stack = GuestAllocations::GuestAllocationsLookup_nid_postfix(low, false);
     Require(stack != nullptr && stack->allocationAddress % Page == 0 && stack->allocationAddress > Page);
     const auto earlier = static_cast<std::uintptr_t>(stack->allocationAddress) - Page;
+    Require(reinterpret_cast<std::uintptr_t>(pageBelowWorkerStack) <= earlier);
+    Require(munmap_nid_postfix(pageBelowWorkerStack, Page) == 0);
     Require(GuestAllocations::GuestAllocationsLookup_nid_postfix(earlier, false) == nullptr);
     Require(mmap_nid_postfix(reinterpret_cast<void*>(earlier), Page, 3, 0x1012, -1, 0) == reinterpret_cast<void*>(earlier));
     pinProbe.earlier = earlier;
@@ -609,6 +612,10 @@ int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
     ProtectStack(0);
+#endif
+#ifdef __linux__
+    pageBelowWorkerStack = mmap_nid_postfix(nullptr, Page, 3, 0x1002, -1, 0);
+    Require(pageBelowWorkerStack != nullptr && pageBelowWorkerStack != reinterpret_cast<void*>(-1));
 #endif
     std::atomic<bool> passed{false};
     Pthread thread = nullptr;
