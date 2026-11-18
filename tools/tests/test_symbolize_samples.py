@@ -674,6 +674,14 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(capture.stacks, {stack: 5})
         self.assertEqual(capture.self_counts, {})
 
+    def test_collapsed_stack_rejects_empty_frames(self):
+        samples = self.root / "worker.collapsed.txt"
+        for stack in (";draw", "worker;", "worker;;draw", "worker; \t ;draw"):
+            with self.subTest(stack=stack):
+                samples.write_text(f"# samples=5\n{stack} 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"worker\.collapsed\.txt:2:.*empty frame"):
+                    symbolize_samples.load(samples)
+
     def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
         samples = self.root / "mixed.txt"
         for collapsed_count, address_count in ((3, 7), (0, 7), (3, 0), (0, 0)):
