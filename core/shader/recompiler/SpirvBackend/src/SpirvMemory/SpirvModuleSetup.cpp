@@ -193,6 +193,31 @@ private:
 };
 
 constexpr std::uint64_t MaxNarrowedSwitchCases = 4096;
+constexpr std::uint32_t MaxSelectWindowSlots = 128;
+constexpr std::uint64_t MaxSelectWindowCases = 32768;
+
+bool WindowSelectsAllowed(const IrProgram& program, std::uint32_t laneCount) {
+    const auto window = program.Metadata().vectorWindowSize;
+    if (window == 0u || window > MaxSelectWindowSlots) return false;
+    std::uint64_t dynamicAccesses = 0;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() != IrOpcode::LoadVectorWindow && inst->Opcode() != IrOpcode::StoreVectorWindow) continue;
+            const IrValue* index = inst->Argument(0)->Resolve();
+            if (index->HasImmediate()) {
+                if (index->ImmediateU32() >= window) return false;
+                continue;
+            }
+            if (index->Opcode() != IrOpcode::UMin32) return false;
+            const IrValue* lhs = index->Argument(0)->Resolve();
+            const IrValue* rhs = index->Argument(1)->Resolve();
+            const bool bounded = (rhs->HasImmediate() && rhs->ImmediateU32() < window) || (lhs->HasImmediate() && lhs->ImmediateU32() < window);
+            if (!bounded) return false;
+            ++dynamicAccesses;
+        }
+    }
+    return dynamicAccesses != 0u && dynamicAccesses * window * laneCount <= MaxSelectWindowCases;
+}
 
 std::uint32_t IndexedWindowSlots(const IrProgram& program, std::uint32_t laneCount) {
     const auto window = program.Metadata().vectorWindowSize;
@@ -347,11 +372,12 @@ void DefineModule(SpirvEmitterState& state) {
     }
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
-        state.vectorWindowIndexed = narrowWindow && !state.meshWindowBuffer ? IndexedWindowSlots(state.program, state.laneCount) : 0u;
+        state.vectorWindowSelects = state.windowSelectsRequested && !state.meshWindowBuffer && WindowSelectsAllowed(state.program, state.laneCount);
+        state.vectorWindowIndexed = narrowWindow && !state.meshWindowBuffer && !state.vectorWindowSelects ? IndexedWindowSlots(state.program, state.laneCount) : 0u;
         if (state.meshWindowBuffer) PlanMeshWindowBuffer(state);
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
-            if (state.vectorWindowIndexed == 0u && !state.meshWindowBuffer) continue;
+            if (state.vectorWindowIndexed == 0u && !state.meshWindowBuffer && !state.vectorWindowSelects) continue;
             auto& slots = state.vectorWindowSlots.at(half);
             for (std::uint32_t slot = state.vectorWindowIndexed; slot < window; slot++) slots.push_back(state.module.AllocateId());
         }
@@ -565,7 +591,7 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.AddName(state.scratchVariable.at(half), "scratch_dwords");
         }
     }
-    if (state.program.Metadata().vectorWindowSize != 0u && !state.meshWindowBuffer) {
+    if (state.program.Metadata().vectorWindowSize != 0u && !state.meshWindowBuffer && !state.vectorWindowSelects) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.module.AddName(state.vectorWindowVariable.at(half), "vector_window");
         }

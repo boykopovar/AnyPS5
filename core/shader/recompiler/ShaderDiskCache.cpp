@@ -547,6 +547,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.instanceOffsetConflict);
     writer.Value(result.hostSubgroupSize);
     writer.Value(result.fullSubgroups);
+    writer.Value(result.windowSelects);
     writer.Value(result.functionLdsBuffer);
     writer.Value(result.meshWindowBuffer);
     writer.Value(result.scratchPoolSlotDwords);
@@ -614,6 +615,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.instanceOffsetConflict);
     reader.Value(result.hostSubgroupSize);
     reader.Value(result.fullSubgroups);
+    reader.Value(result.windowSelects);
     reader.Value(result.functionLdsBuffer);
     reader.Value(result.meshWindowBuffer);
     reader.Value(result.scratchPoolSlotDwords);

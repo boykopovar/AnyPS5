@@ -101,9 +101,37 @@ std::uint32_t AccessNarrowedWindow(SpirvEmitterState& state, std::uint32_t index
     return value;
 }
 
+std::uint32_t SelectedWindowLoad(SpirvEmitterState& state, std::uint32_t index) {
+    const auto& slots = state.vectorWindowSlots.at(state.laneHalf);
+    auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, slots.at(0));
+    for (std::size_t slot = 1; slot < slots.size(); ++slot) {
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, slots[slot]);
+        const auto hit = Binary(state, spv::OpIEqual, TypeBool(state), index, ConstantU32(state, static_cast<std::uint32_t>(slot)));
+        const auto selected = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelect, TypeU32(state), selected, hit, loaded, value);
+        value = selected;
+    }
+    return value;
+}
+
+void SelectedWindowStore(SpirvEmitterState& state, std::uint32_t index, std::uint32_t value) {
+    const auto& slots = state.vectorWindowSlots.at(state.laneHalf);
+    for (std::size_t slot = 0; slot < slots.size(); ++slot) {
+        const auto old = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), old, slots[slot]);
+        const auto hit = Binary(state, spv::OpIEqual, TypeBool(state), index, ConstantU32(state, static_cast<std::uint32_t>(slot)));
+        const auto merged = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelect, TypeU32(state), merged, hit, value, old);
+        state.module.AddFunction(spv::OpStore, slots[slot], merged);
+    }
+}
+
 std::uint32_t DirectWindowElement(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const IrValue* index = inst.Argument(0)->Resolve();
+    if (state.vectorWindowSelects) return index->HasImmediate() ? state.vectorWindowSlots.at(state.laneHalf).at(index->ImmediateU32()) : 0u;
     if (state.vectorWindowIndexed == 0u) return VectorWindowElement(state, ctx.Arg(inst, 0u), index);
     if (!index->HasImmediate()) return 0u;
     if (index->ImmediateU32() < state.vectorWindowIndexed) return VectorWindowElement(state, ctx.Arg(inst, 0u), index);
@@ -133,6 +161,10 @@ void EmitLoadVectorWindow(SpirvValueEmitContext& ctx, const IrValue& inst) {
         return;
     }
     const auto pointer = DirectWindowElement(ctx, inst);
+    if (pointer == 0u && state.vectorWindowSelects) {
+        ctx.Define(inst, SelectedWindowLoad(state, ctx.Arg(inst, 0u)));
+        return;
+    }
     ctx.Define(inst, pointer != 0u ? load(pointer) : AccessNarrowedWindow(state, ctx.Arg(inst, 0u), load));
 }
 
@@ -155,6 +187,7 @@ void EmitStoreVectorWindow(SpirvValueEmitContext& ctx, const IrValue& inst) {
         return;
     }
     if (const auto pointer = DirectWindowElement(ctx, inst); pointer != 0u) (void)store(pointer);
+    else if (state.vectorWindowSelects) SelectedWindowStore(state, ctx.Arg(inst, 0u), value);
     else (void)AccessNarrowedWindow(state, ctx.Arg(inst, 0u), store);
 }
 

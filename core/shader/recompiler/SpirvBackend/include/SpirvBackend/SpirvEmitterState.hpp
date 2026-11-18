@@ -248,6 +248,8 @@ struct SpirvEmitterState {
     std::uint32_t scratchPoolReturns = 0;
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
+    bool windowSelectsRequested = false;
+    bool vectorWindowSelects = false;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     bool meshWindowBuffer = false;
     std::uint32_t meshWindowBufferVariable = 0;
