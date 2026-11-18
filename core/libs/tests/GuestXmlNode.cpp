@@ -197,10 +197,107 @@ void TestUnavailable() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+using NodeGetter = XmlNodeId* (APS5_VABI*)(XmlNodeId*, const XmlNode*);
+using DocumentGetter = XmlNodeId* (APS5_VABI*)(XmlNodeId*, const XmlHandle*, XmlNodeId);
+
+struct Navigation {
+    NodeGetter node;
+    DocumentGetter document;
+    const char* name;
+};
+
+const Navigation Navigations[] = {
+    {&_ZNK3sce3Xml3Dom4Node13getFirstChildEv, &_ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE, "getFirstChild"},
+    {&_ZNK3sce3Xml3Dom4Node12getLastChildEv, &_ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE, "getLastChild"},
+    {&_ZNK3sce3Xml3Dom4Node14getNextSiblingEv, &_ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE, "getNextSibling"},
+    {&_ZNK3sce3Xml3Dom4Node13getParentNodeEv, &_ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE, "getParentNode"},
+};
+
+bool SameId(XmlNodeId left, XmlNodeId right) {
+    return left.first == right.first && left.second == right.second && left.flag == right.flag;
+}
+
+void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
+    if (IdIsNull(id)) return;
+    ++visited;
+    XmlNode node{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&node, id);
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId fromNode{reinterpret_cast<void*>(1), reinterpret_cast<void*>(2), 3};
+        XmlNodeId fromDocument{};
+        Require(navigation.node(&fromNode, &node) == &fromNode, "a node getter returns its result pointer");
+        navigation.document(&fromDocument, document, id);
+        Require(SameId(fromNode, fromDocument), navigation.name);
+    }
+    XmlNodeId attribute{};
+    _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(&attribute, document, id);
+    Visit(document, attribute, visited);
+    XmlNodeId child{};
+    _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(&child, document, id);
+    while (!IdIsNull(child)) {
+        Visit(document, child, visited);
+        XmlNodeId next{};
+        _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE(&next, document, child);
+        child = next;
+    }
+    _ZN3sce3Xml3Dom4NodeD1Ev(&node);
+}
+
+void TestNavigation() {
+    Fixture f;
+    Require(f.Parse("<r a=\"1\" b=\"2\"><x>one<y z=\"3\"/>two</x><!-- c --><w/>tail</r>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    int visited = 0;
+    XmlNodeId docRoot{};
+    _ZNK3sce3Xml3Dom8Document10getDocRootEv(&docRoot, &document);
+    Visit(&document, docRoot, visited);
+    Visit(&document, Root(&document), visited);
+    Require(visited >= 10, "the walk reaches every node");
+
+    XmlNode empty{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&empty, XmlNodeId{nullptr, nullptr, 0});
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId result{reinterpret_cast<void*>(1), reinterpret_cast<void*>(2), 3};
+        navigation.node(&result, &empty);
+        Require(IdIsNull(result), "a node without a document has no relatives");
+        bool threw = false;
+        try {
+            navigation.node(nullptr, &empty);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "a null result throws");
+        threw = false;
+        try {
+            navigation.node(&result, nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "a null node throws");
+    }
+
+    XmlNode stale{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&stale, Root(&document));
+    Require(f.Parse("<s/>") == 0, "parse again");
+    for (const Navigation& navigation : Navigations) {
+        XmlNodeId result{};
+        bool threw = false;
+        try {
+            navigation.node(&result, &stale);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        Require(threw, "reading a relative after the builder parsed again throws");
+    }
+    _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+}
+
 }
 
 int main() {
     TestElement();
     TestUnavailable();
+    TestNavigation();
     return 0;
 }

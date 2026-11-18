@@ -155,16 +155,8 @@ bool DocumentIsReadOnly(const XmlHandle* document) {
     return true;
 }
 
-XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery query, XmlNodeId node) {
-    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
-    if (document->impl == nullptr) {
-        SetInvalid(result);
-        return result;
-    }
-    Generation& generation = *RefOf(document)->generation;
-    Live(document);
+XmlNodeId* GenerationNode(XmlNodeId* result, Generation& generation, NodeQuery query, std::uint64_t offset) {
     const Reader reader(generation.buffers);
-    const std::uint64_t offset = OffsetOf(node);
     std::uint64_t found = 0;
     switch (query) {
     case NodeQuery::Root:
@@ -198,6 +190,17 @@ XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery 
         SetNode(result, &generation, found);
     }
     return result;
+}
+
+XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery query, XmlNodeId node) {
+    if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr) {
+        SetInvalid(result);
+        return result;
+    }
+    Generation& generation = *RefOf(document)->generation;
+    Live(document);
+    return GenerationNode(result, generation, query, OffsetOf(node));
 }
 
 XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node) {

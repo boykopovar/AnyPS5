@@ -54,4 +54,17 @@ bool NodeHasAttributes(const XmlNode* self) {
     return Reader(generation->buffers).HasAttributes(OffsetOf(self));
 }
 
+XmlNodeId* NodeRelative(XmlNodeId* result, const XmlNode* self, NodeQuery query) {
+    if (self == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Node: null object");
+    if (self->document == nullptr) {
+        result->first = nullptr;
+        result->second = nullptr;
+        result->flag = 0;
+        return result;
+    }
+    Generation* generation = static_cast<Generation*>(self->document);
+    if (!generation->alive) throw std::logic_error("sce::Xml::Dom::Node: reading a node after its builder parsed again or terminated reads freed memory in 13.42");
+    return GenerationNode(result, *generation, query, reinterpret_cast<std::uint64_t>(self->node));
+}
+
 }
