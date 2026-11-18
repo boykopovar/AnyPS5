@@ -1102,8 +1102,9 @@ int APS5_VABI libSceLibcInternalInventory_236_nid_no_patch() {
 }
 APS5_EXPORT("i4J5FvRPG-w", libSceLibcInternalInventory_236_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_237_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+[[noreturn]] void APS5_VABI libSceLibcInternalInventory_237_nid_no_patch(const char* message) {
+    if (message == nullptr) NotImplemented_nid_no_patch("std::_Rng_abort with a null message");
+    _Thrd_abort_nid_postfix(message);
 }
 APS5_EXPORT("VrWUXy1gqn8", libSceLibcInternalInventory_237_nid_no_patch);
 

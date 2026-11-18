@@ -10,18 +10,6 @@
 extern "C" {
 
 
-int APS5_VABI UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813BreakIterator23createCharacterInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35,10 +23,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator18createLineInstanceERKNS_6LocaleER10UErr
 }
 
 int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -252,10 +236,6 @@ int APS5_VABI uloc_getCharacterOrientation() {
 }
 
 int APS5_VABI uloc_minimizeSubtags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_toLanguageTag() {
     NotImplemented_nid_no_patch(__func__);
 }
 

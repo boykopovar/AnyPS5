@@ -17,6 +17,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
 
 
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+ALIAS_INTERPRETER = any(is_app_execution_alias(program) for program in {sys.executable, getattr(sys, "_base_executable", sys.executable)})
+ALIAS_REASON = "the interpreter is an App Execution Alias, whose process image is outside the launched directory"
+
+
 def feature(name):
     value = getattr(title_run, name, None)
     assert value is not None, f"title_run.{name} is missing"
@@ -670,6 +678,13 @@ class PreparationTests(unittest.TestCase):
             title_run.main(common)
         self.assertFalse((self.root / "out").exists())
 
+    def test_games_without_a_title_package_are_refused(self):
+        games = self.root / "games"
+        games.mkdir()
+        with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
+            title_run.main(["--games", str(games), "--out", str(self.root / "out")])
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -1137,12 +1152,14 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 3)
 
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_of_the_last_process(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "job process list is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_ignores_processes_outside_owned(self):
         child = "import subprocess, time; time.sleep(1); subprocess.run(['cmd.exe', '/c', 'exit 0']); raise SystemExit(7)"
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
@@ -1150,6 +1167,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_follows_a_junctioned_interpreter(self):
         interpreter = Path(getattr(sys, "_base_executable", sys.executable))
         target = interpreter.parent
