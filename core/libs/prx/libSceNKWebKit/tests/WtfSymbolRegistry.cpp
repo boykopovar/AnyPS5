@@ -3,11 +3,14 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfSymbolExports.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 using NKWebKit::WtfAbi::RegisteredSymbolImpl;
 using NKWebKit::WtfAbi::String;
@@ -125,8 +128,33 @@ static void TestRegistry() {
     Require(Throws<std::invalid_argument>([] { _ZN3WTF14SymbolRegistryD1Ev(nullptr); }));
 }
 
+static void TestConcurrentLookups() {
+    constexpr int Threads = 8;
+    for (int round = 0; round < 200; ++round) {
+        SymbolRegistry registry{nullptr, 0};
+        std::vector<String> keys(Threads);
+        for (auto& key : keys) key = _ZN3WTF10StringImpl6createEPKhj(Bytes("Symbol.shared"), 13);
+        std::vector<String> results(Threads);
+        std::atomic<int> ready{0};
+        std::vector<std::thread> threads;
+        for (int index = 0; index < Threads; ++index) {
+            threads.emplace_back([&, index] {
+                ++ready;
+                while (ready.load() < Threads) std::this_thread::yield();
+                results[index] = _ZN3WTF14SymbolRegistry12symbolForKeyERKNS_6StringE(&registry, &keys[index]);
+            });
+        }
+        for (auto& thread : threads) thread.join();
+        for (const auto& result : results) Require(result.impl && result.impl == results[0].impl);
+        Require(results[0].impl->refCount == 2 * (Threads + 1));
+        results.clear();
+        _ZN3WTF14SymbolRegistryD1Ev(&registry);
+    }
+}
+
 int main() {
     TestCreate();
     TestRegistry();
+    TestConcurrentLookups();
     return 0;
 }

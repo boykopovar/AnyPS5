@@ -190,24 +190,19 @@ String APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE(StringImpl*
 String APS5_VABI _ZN3WTF14SymbolRegistry12symbolForKeyERKNS_6StringE(SymbolRegistry* self, const String* key) {
     if (!self || !key || !key->impl) throw std::invalid_argument("WTF::SymbolRegistry::symbolForKey requires a registry and a non-null key");
     Key lookup = KeyOf(key->impl);
-    {
-        std::lock_guard<std::mutex> locker(RegistriesLock());
-        auto& table = Registries()[self];
-        auto found = table.find(lookup);
-        if (found != table.end()) {
-            Retain(&found->second->symbol.string);
-            return String(&found->second->symbol.string);
-        }
+    std::lock_guard<std::mutex> locker(RegistriesLock());
+    auto& table = Registries()[self];
+    auto found = table.find(lookup);
+    if (found != table.end()) {
+        Retain(&found->second->symbol.string);
+        return String(&found->second->symbol.string);
     }
     unsigned flags = NKWebKit::WtfAbi::SymbolFlagIsRegistered;
     if (self->symbolType == PrivateSymbolType) flags |= NKWebKit::WtfAbi::SymbolFlagIsPrivate;
     auto* symbol = CreateFrom<RegisteredSymbolImpl>(key->impl, flags, "WTF::SymbolRegistry::symbolForKey");
     symbol->symbolRegistry = self;
     Retain(&symbol->symbol.string);
-    {
-        std::lock_guard<std::mutex> locker(RegistriesLock());
-        Registries()[self].emplace(std::move(lookup), symbol);
-    }
+    table.emplace(std::move(lookup), symbol);
     return String(&symbol->symbol.string);
 }
 
