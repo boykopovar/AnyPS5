@@ -30,6 +30,11 @@ bool AnyPush2Context() {
 
 }
 
+bool NpPushInitialized_nid_no_patch() {
+    std::lock_guard lock(pushMutex);
+    return pushInitialized;
+}
+
 extern "C" {
 
 int APS5_VABI sceNpPushInit(void) {
