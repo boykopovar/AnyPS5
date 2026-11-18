@@ -84,6 +84,13 @@ void CheckProfile() {
     invalid([](auto& value) { value.core.shaderInt64 = VK_FALSE; }, "shaderInt64");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityGeometry); }, "geometryShader");
     invalid([](auto& value) { value.bytes.storageBuffer8BitAccess = VK_FALSE; }, "storageBuffer8BitAccess");
+    invalid([](auto& value) { value.extensions.pop_back(); }, "missing runtime extensions");
+    ProfileInput withoutBytes;
+    withoutBytes.capabilities.pop_back();
+    withoutBytes.extensions.pop_back();
+    withoutBytes.bda.pNext = &withoutBytes.indexing;
+    const AgcDriver::ShaderDeviceProfile wordAccess(withoutBytes.Target(), withoutBytes.device, withoutBytes.limits);
+    Require(std::ranges::find(wordAccess.Target().supportedCapabilities, spv::CapabilityStorageBuffer8BitAccess) == wordAccess.Target().supportedCapabilities.end(), "a device without storageBuffer8BitAccess was profiled with 8-bit storage");
     ProfileInput withoutNull;
     withoutNull.robustness.nullDescriptor = VK_FALSE;
     Require(!AgcDriver::ShaderDeviceProfile(withoutNull.Target(), withoutNull.device, withoutNull.limits).NullDescriptors(), "a device without nullDescriptor was profiled with it");

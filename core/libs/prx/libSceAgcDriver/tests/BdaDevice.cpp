@@ -260,13 +260,14 @@ int main(int argc, char** argv) {
         Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
         buffer.Bytes()[255] = std::byte{0x5a};
         Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
-        if (device->RunsOnCpu()) {
-            std::cout << "CPU Vulkan device: BDA read and multi-dword write execution not tested\n";
-        } else {
-            RunBdaExecutionTests(device->GetContext());
+        if (device->RunsOnCpu()) std::cout << "CPU Vulkan device: BDA read and multi-dword write execution not tested\n";
+        for (const bool bytePointers : {true, false}) {
+            SetBdaTestBytePointers(bytePointers);
+            if (!device->RunsOnCpu()) RunBdaExecutionTests(device->GetContext());
+            RunBdaStoreExecutionTests(device->GetContext());
+            std::cout << (bytePointers ? "BDA store boundary tests passed with 8-bit pointers\n" : "BDA store boundary tests passed with 32-bit word byte access\n");
         }
-        RunBdaStoreExecutionTests(device->GetContext());
-        std::cout << "BDA store boundary tests passed\n";
+        SetBdaTestBytePointers(true);
         RunBdaFaultSlotExecutionTests(device->GetContext());
         std::cout << "BDA report-only fault slot tests passed\n";
         RunColorTransferTests(device->GetContext());

@@ -3,11 +3,19 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
+#include <array>
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 
 namespace {
+
+constexpr std::array<std::uint32_t, 1> BytePointerCapabilities{spv::CapabilityStorageBuffer8BitAccess};
+bool bytePointers = true;
+
+void UseTestTarget(ShaderRecompiler::SpirvEmitterState& state) {
+    if (bytePointers) state.supportedCapabilities = BytePointerCapabilities;
+}
 
 template<typename TEmit>
 std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool stops, const TEmit& emit, std::uint32_t extracted = 0, bool writes = false) {
@@ -22,6 +30,7 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
         program.Resources().memoryInfo = {memory};
     }
     SpirvEmitterState state(program, {});
+    UseTestTarget(state);
     EmitBaseHeader(state.module, program);
     const auto define = [&](std::uint32_t binding) {
         const auto variable = state.module.DefineGlobalVariable(TypeStorageBufferPointer(state), spv::StorageClassStorageBuffer);
@@ -69,6 +78,10 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     return state.module.Finalize();
 }
 
+}
+
+void SetBdaTestBytePointers(bool enabled) {
+    bytePointers = enabled;
 }
 
 std::vector<std::uint32_t> MakeBdaTestShader(std::uint64_t address, std::uint32_t bits, std::int64_t offset) {
@@ -153,6 +166,7 @@ std::vector<std::uint32_t> MakeBdaAnchoredReadTestShader(const BdaAnchoredReadPr
         program.Resources().memoryInfo = {memory};
     }
     SpirvEmitterState state(program, {});
+    UseTestTarget(state);
     EmitBaseHeader(state.module, program);
     if (reads.elect) {
         state.module.EmitCapability(spv::CapabilityGroupNonUniform);
