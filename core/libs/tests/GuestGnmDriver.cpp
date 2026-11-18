@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -84,24 +85,39 @@ void TestWriters() {
 }
 
 void TestWorkloads() {
+
+    const char name[] = "workloads";
+    const auto nameAddress = reinterpret_cast<std::uint64_t>(name);
     std::uint32_t stream = 0xdeadbeefu;
-    check(sceGnmCreateWorkloadStream_nid_disambig1(1, nullptr) == 3, "a null workload stream output was accepted");
-    check(sceGnmCreateWorkloadStream_nid_disambig1(1, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
-    check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a zero workload stream name changed the output");
-    check(sceGnmCreateWorkloadStream_nid_disambig1(1, &stream) == 0 && stream == 1, "a workload stream was not created");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a workload stream without a name did not return 3 untouched");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, nullptr) == 3, "a workload stream without an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(0, nullptr) == 3, "a workload stream without a name and an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, &stream) == 0 && stream == 1, "the created workload stream is not 1");
+    stream = 0xdeadbeefu;
+    check(sceGnmCreateWorkloadStream_nid_disambig1(1, &stream) == 0 && stream == 1, "a second workload stream is not 1");
 
-    std::uint64_t workload = 0xdeadbeefdeadbeefull;
-    check(sceGnmBeginWorkload_nid_disambig1(stream, nullptr) == 3, "a null workload output was accepted");
-    check(sceGnmBeginWorkload_nid_disambig1(stream, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
-    check(sceGnmBeginWorkload_nid_disambig1(stream, &workload) == 0 && workload == 1, "the created stream did not begin a workload");
-    check(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the created workload did not end");
-    check(sceGnmBeginWorkload_nid_disambig1(0xf, &workload) == 0 && workload == 1, "the highest valid stream was rejected");
-    check(sceGnmBeginWorkload_nid_disambig1(0x10, &workload) == 1 && workload == 0, "the first invalid stream was accepted");
-    check(sceGnmBeginWorkload_nid_disambig1(0xffffffffu, &workload) == 1 && workload == 0, "the maximum stream was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0, nullptr) == 3, "a workload without an output did not return 3");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, nullptr) == 3, "the workload output is not checked before the stream");
+    check(sceGnmBeginWorkload_nid_disambig1(1, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, reinterpret_cast<std::uint64_t*>(1)) == 3, "the invalid workload output was not checked before the stream");
+    for (const std::uint32_t known : {0u, 1u, 0xfu}) {
+        std::uint64_t workload = ~0ull;
+        check(sceGnmBeginWorkload_nid_disambig1(known, &workload) == 0 && workload == 1, "stream " + std::to_string(known) + " did not begin workload 1");
+        check(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the workload begun on stream " + std::to_string(known) + " did not end");
+    }
+    for (const std::uint32_t unknown : {0x10u, 0x11u, 0x80000000u, 0xffffffffu}) {
+        std::uint64_t workload = ~0ull;
+        check(sceGnmBeginWorkload_nid_disambig1(unknown, &workload) == 1 && workload == 0, "stream " + std::to_string(unknown) + " did not return 1 with workload 0");
+        check(sceGnmEndWorkload_nid_disambig1(workload) == 2, "workload 0 ended");
+    }
 
-    check(sceGnmEndWorkload_nid_disambig1(0) == 2, "a zero workload was accepted");
-    check(sceGnmEndWorkload_nid_disambig1(0x0f00000000000001ull) == 0, "the highest valid workload tag was rejected");
-    check(sceGnmEndWorkload_nid_disambig1(0x1000000000000001ull) == 2, "the first invalid workload tag was accepted");
+    for (const std::uint64_t accepted : {1ull, 0x00ffffffffffffffull, 0x0100000000000000ull, 0x0f00000000000000ull, 0x0fffffffffffffffull}) {
+        check(sceGnmEndWorkload_nid_disambig1(accepted) == 0, "workload " + std::to_string(accepted) + " did not end");
+    }
+    for (const std::uint64_t refused : {0ull, 0x1000000000000000ull, 0x1000000000000001ull, 0x8000000000000000ull, 0xff00000000000000ull, ~0ull}) {
+        check(sceGnmEndWorkload_nid_disambig1(refused) == 2, "workload " + std::to_string(refused) + " did not return 2");
+    }
 }
 
 void TestSubmitValidation() {
@@ -201,9 +217,9 @@ int main() {
     try {
         TestQueries();
         TestWriters();
-        TestWorkloads();
         TestEmbeddedShaders();
         TestSubmitValidation();
+        TestWorkloads();
         TestFillerSubmit();
         LibcRunShutdown_nid_postfix();
         std::puts("gnm driver tests passed");

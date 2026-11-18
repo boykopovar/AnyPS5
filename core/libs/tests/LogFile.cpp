@@ -298,6 +298,7 @@ void BrokenTerminalKeepsFile() {
 void MissingTerminalKeepsFile() {
     Rig rig("terminal-absent.log", false);
     rig.Write(StandardOutput, "file only\n");
+    Require(rig.tee->Flush(false), "flush");
     rig.Write(StandardError, "also file only\n");
     rig.tee->Stop();
     Require(Slurp(rig.path) == "file only\nalso file only\n", "an absent terminal stopped the file");

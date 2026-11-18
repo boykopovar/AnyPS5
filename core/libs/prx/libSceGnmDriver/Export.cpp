@@ -25,7 +25,8 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
-#include "prx/libSceGnmDriver/include/WorkloadLifecycle.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
@@ -436,18 +437,6 @@ void WriteMarker(std::uint32_t* at, std::uint32_t kind, const char* marker, std:
 
 extern "C" {
 
-int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
-    return GnmWorkload::CreateStream(name, stream);
-}
-
-int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
-    return GnmWorkload::Begin(stream, workload);
-}
-
-int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
-    return GnmWorkload::End(workload);
-}
-
 int APS5_VABI sceGnmSetPsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmd || size <= 0x27) return -1;
     if (!regs) {
@@ -706,6 +695,25 @@ bool APS5_VABI sceGnmIsUserPaEnabled() {
 
 bool APS5_VABI sceGnmDriverCaptureInProgress() {
     return false;
+}
+
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
+    if (name == 0 || !stream) return 3;
+    const std::uint32_t value = 1;
+    if (!GuestCopyOut_nid_no_patch(stream, &value, sizeof(value))) return 3;
+    return 0;
+}
+
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
+    if (!workload) return 3;
+    const std::uint64_t value = stream < 0x10 ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(workload, &value, sizeof(value))) return 3;
+    return stream < 0x10 ? 0 : 1;
+}
+
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmDriverTriggerCapture() {

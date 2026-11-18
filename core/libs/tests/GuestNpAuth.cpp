@@ -52,10 +52,89 @@ static void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
 }
 
+static void CheckInFlightAborts() {
+    constexpr int aborted = static_cast<int>(0x80550304);
+    constexpr int signedOut = static_cast<int>(0x80550006);
+    constexpr int pollRunning = 1;
+    alignas(8) char parameter[16]{};
+    alignas(8) char output[16]{};
+    int issuerId = 0;
+
+    {
+        const int request = sceNpAuthCreateAsyncRequest(nullptr);
+        Require(request > 0);
+        Require(sceNpAuthGetIdTokenV3(request, parameter, output) == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        int result = 0;
+        Require(sceNpAuthPollAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthWaitAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+
+    {
+        const int request = sceNpAuthCreateAsyncRequest(nullptr);
+        Require(request > 0);
+        Require(sceNpAuthGetAuthorizationCodeV3(request, parameter, output, &issuerId) == 0);
+        int result = 0;
+        Require(sceNpAuthPollAsync(request, &result) == pollRunning);
+        Require(result == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        Require(sceNpAuthPollAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthWaitAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+
+    {
+        const int request = sceNpAuthCreateAsyncRequest(nullptr);
+        Require(request > 0);
+        Require(sceNpAuthGetIdTokenV3(request, parameter, output) == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        int result = 0;
+        Require(sceNpAuthWaitAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthPollAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+
+    {
+        const int request = sceNpAuthCreateAsyncRequest(nullptr);
+        Require(request > 0);
+        Require(sceNpAuthGetAuthorizationCodeV3(request, parameter, output, &issuerId) == 0);
+        int result = 0;
+        Require(sceNpAuthWaitAsync(request, &result) == 0);
+        Require(result == signedOut);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        Require(sceNpAuthWaitAsync(request, &result) == 0);
+        Require(result == signedOut);
+        Require(sceNpAuthPollAsync(request, &result) == 0);
+        Require(result == signedOut);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+
+    {
+        const int request = sceNpAuthCreateAsyncRequest(nullptr);
+        Require(request > 0);
+        Require(sceNpAuthGetIdTokenA(request, parameter, output) == 0);
+        int result = 0;
+        Require(sceNpAuthPollAsync(request, &result) == pollRunning);
+        Require(result == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        Require(sceNpAuthPollAsync(request, &result) == 0);
+        Require(result == aborted);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+}
+
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckUnstartedAborts();
+    CheckInFlightAborts();
     constexpr int invalidArgument = static_cast<int>(0x80550301);
     constexpr int signedOut = static_cast<int>(0x80550006);
     constexpr int aborted = static_cast<int>(0x80550304);

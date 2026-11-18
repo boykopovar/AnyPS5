@@ -11,7 +11,6 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
-#include "prx/libSceGnmDriver/include/WorkloadLifecycle.hpp"
 
 namespace {
 
@@ -142,7 +141,10 @@ int APS5_VABI sceGnmIsDebugResetAvailable() {
 }
 
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload) {
-    return GnmWorkload::Begin(stream, workload);
+    if (!workload) return 3;
+    const std::uint64_t value = stream < 0x10 ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(workload, &value, sizeof(value))) return 3;
+    return stream < 0x10 ? 0 : 1;
 }
 
 int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference) {
@@ -173,7 +175,10 @@ int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t si
 }
 
 int APS5_VABI sceGnmCreateWorkloadStream(std::uint64_t name, std::uint32_t* stream) {
-    return GnmWorkload::CreateStream(name, stream);
+    if (name == 0 || !stream) return 3;
+    const std::uint32_t value = 1;
+    if (!GuestCopyOut_nid_no_patch(stream, &value, sizeof(value))) return 3;
+    return 0;
 }
 
 int APS5_VABI sceGnmDebugModuleReset(void) {
@@ -420,7 +425,8 @@ int APS5_VABI sceGnmDriverTraceInProgress(void) {
 }
 
 int APS5_VABI sceGnmEndWorkload(std::uint64_t workload) {
-    return GnmWorkload::End(workload);
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmFindResources(void) {

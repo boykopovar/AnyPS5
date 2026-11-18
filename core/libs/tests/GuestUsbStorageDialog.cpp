@@ -20,7 +20,8 @@ constexpr int kStatusFinished = 3;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
 constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
-constexpr int kErrBusy = static_cast<int>(0x80B80007);
+constexpr int kErrInvalidState = static_cast<int>(0x80B80006);
+constexpr int kResultNone = static_cast<int>(0x80B80007);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000B);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
@@ -42,7 +43,7 @@ int main() {
     UsbStorageDialogResult result;
     std::memset(&result, 0x5a, sizeof(result));
     result.size = sizeof(result);
-    result.result = kErrBusy;
+    result.result = kResultNone;
 
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
     Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
@@ -74,7 +75,7 @@ int main() {
     }
     std::strcpy(param.path, "test");
     Require(sceUsbStorageDialogOpen(&param) == 0);
-    Require(sceUsbStorageDialogOpen(&param) == kErrBusy);
+    Require(sceUsbStorageDialogOpen(&param) == kErrInvalidState);
     Require(sceUsbStorageDialogGetStatus() == kStatusRunning);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotFinished);
 
@@ -88,7 +89,7 @@ int main() {
     result.size = sizeof(result);
     result.result = 0;
     Require(sceUsbStorageDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
-    result.result = kErrBusy;
+    result.result = kResultNone;
     Require(sceUsbStorageDialogGetResult(&result) == kResultUserCanceled);
     Require(result.result == kResultUserCanceled);
     Require(result.size == sizeof(result) && result.status == 0x5a5a5a5a);
