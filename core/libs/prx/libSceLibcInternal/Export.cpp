@@ -18,6 +18,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -932,14 +935,40 @@ int APS5_VABI _Getstr_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Gettime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Gettime_nid_postfix(const char* s, int n, int* len) {
+    if (s == nullptr) {
+        if (len != nullptr) *len = 0;
+        return "";
+    }
+    const char sep = *s;
+    if (sep == '\0' || n < 0) {
+        while (*s != '\0') ++s;
+        if (len != nullptr) *len = 0;
+        return s;
+    }
+    ++s;
+    for (; 0 < n; --n) {
+        while (*s != '\0' && *s != sep) {
+            ++s;
+        }
+        if (*s == '\0') {
+            if (len != nullptr) *len = 0;
+            return s;
+        }
+        ++s;
+    }
+    const char* start = s;
+    while (*s != '\0' && *s != sep) {
+        ++s;
+    }
+    if (len != nullptr) {
+        *len = static_cast<int>(s - start);
+    }
+    return start;
 }
 
-int APS5_VABI _Getzone_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getzone_nid_postfix() {
+    return ":";
 }
 
 int APS5_VABI _Hypot_nid_postfix() {
@@ -1011,9 +1040,13 @@ int APS5_VABI _Litob_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Lock_spin_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _Lock_spin_lock_nid_postfix(volatile char* lock, int mode) {
+    if (lock == nullptr) return;
+    while (__atomic_exchange_n(lock, 1, __ATOMIC_ACQUIRE) != 0) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        _mm_pause();
+#endif
+    }
 }
 
 int APS5_VABI _Locsum_nid_postfix() {

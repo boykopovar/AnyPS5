@@ -112,13 +112,12 @@ void* APS5_VABI _Ttotm_nid_postfix(void* time, std::int64_t seconds, int isdst) 
 }
 
 int APS5_VABI _Tzoff_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Unlock_spin_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _Unlock_spin_lock_nid_postfix(volatile char* lock, int mode) {
+    if (lock == nullptr) return;
+    __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
 }
 
 int APS5_VABI _WFrprep_nid_postfix() {
