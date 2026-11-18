@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,9 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#if defined(__linux__) && defined(__x86_64__)
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
+#endif
 #include <unistd.h>
 #endif
 
@@ -63,6 +67,20 @@ public:
     }
     unsigned char* Start() { return allocation; }
     unsigned char* End() { return allocation + size; }
+    void ReadOnlyTail(const Links& value) {
+#ifdef _WIN32
+        DWORD previous;
+        Check(VirtualProtect(allocation + size, size, PAGE_READWRITE, &previous) != 0);
+#else
+        Check(mprotect(allocation + size, size, PROT_READ | PROT_WRITE) == 0);
+#endif
+        std::memcpy(End() - sizeof(void*), &value, sizeof(value));
+#ifdef _WIN32
+        Check(VirtualProtect(allocation + size, size, PAGE_READONLY, &previous) != 0);
+#else
+        Check(mprotect(allocation + size, size, PROT_READ) == 0);
+#endif
+    }
     void ReadOnly() {
 #ifdef _WIN32
         DWORD previous;
@@ -120,6 +138,13 @@ static void InsqueGuards() {
     refuses(split, &previous);
     std::memcpy(&observed, split, sizeof(observed));
     Check(observed == prefix);
+
+    const Links splitValue{&next, &previous};
+    pages.ReadOnlyTail(splitValue);
+    refuses(split, nullptr);
+    Links splitObserved{};
+    std::memcpy(&splitObserved, split, sizeof(splitObserved));
+    Check(splitObserved.forward == splitValue.forward && splitObserved.back == splitValue.back);
 
     auto* readonly = reinterpret_cast<Links*>(pages.Start());
     *readonly = Links{&next, &previous};
@@ -210,6 +235,43 @@ static void BoundariesAndAliases() {
     Check(errno == 73);
 }
 
+static std::size_t hostWrites = 0;
+
+static void CountHostWrite(std::uintptr_t, std::size_t) {
+    ++hostWrites;
+}
+
+static void CopyCalls() {
+    bool faultCopy = false;
+#if defined(__linux__) && defined(__x86_64__)
+    faultCopy = GuestFaultCopy::Ready();
+#endif
+    Links previous{};
+    Links next{};
+    Links element{};
+    previous.forward = &next;
+    next.back = &previous;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(CountHostWrite);
+    hostWrites = 0;
+    errno = 73;
+    insque_nid_postfix(&element, &previous);
+    const auto insertWrites = hostWrites;
+    const int insertErrno = errno;
+    Check(previous.forward == &element && next.back == &element);
+    Check(element.forward == &next && element.back == &previous);
+    hostWrites = 0;
+    remque_nid_postfix(&element);
+    const auto removeWrites = hostWrites;
+    const int removeErrno = errno;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Check(previous.forward == &next && next.back == &previous);
+    std::printf("queue host-write calls: insque=%zu remque=%zu fault-copy=%d\n", insertWrites, removeWrites, faultCopy);
+    std::fflush(stdout);
+    Check(insertErrno == 73 && removeErrno == 73);
+    Check(insertWrites == (faultCopy ? 3u : 6u));
+    Check(removeWrites == (faultCopy ? 2u : 4u));
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -221,6 +283,7 @@ int main(int argc, char** argv) {
     if (mode == "insque") InsqueGuards();
     else if (mode == "remque") RemqueGuards();
     else if (mode == "valid") BoundariesAndAliases();
+    else if (mode == "calls") CopyCalls();
     else return 2;
     return 0;
 }
