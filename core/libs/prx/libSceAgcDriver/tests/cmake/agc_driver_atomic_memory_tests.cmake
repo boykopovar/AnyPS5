@@ -4,7 +4,7 @@ target_link_libraries(agc_driver_atomic_memory_tests PRIVATE libSceAgcDriver lib
 configure_windows_unwind(agc_driver_atomic_memory_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_driver_atomic_memory_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
-    foreach(mode IN ITEMS integers protocol concurrent32 concurrent64)
+    foreach(mode IN ITEMS integers protocol concurrent32 concurrent64 exclusion)
         add_test(NAME agc_driver_atomic_memory_${mode} COMMAND agc_driver_atomic_memory_tests ${mode})
         set_tests_properties(agc_driver_atomic_memory_${mode} PROPERTIES TIMEOUT 60)
         if(WIN32)

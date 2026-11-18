@@ -3145,6 +3145,16 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
     });
 }
 
+std::uint64_t StoreOwnAtomicBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store) {
+    if (bytes == 0) return 0;
+    const auto pinned = pinStoreRanges(address, bytes);
+    std::lock_guard gpu(GpuMutex());
+    GuardRead(address, bytes);
+    FlushGpuWrites(address, bytes);
+    const OwnHostWrite own;
+    return StoreOwnBytes(address, bytes, store);
+}
+
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store) {
     return storeOwn(address, bytes, true, [&](std::span<std::byte> image) {
         store(image);

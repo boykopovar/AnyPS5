@@ -39,13 +39,11 @@ T updated(std::uint32_t operation, T old, T source, T comparison) {
 template <typename T>
 void execute(const AtomicMemoryCommand& command) {
     auto* pointer = reinterpret_cast<T*>(static_cast<std::uintptr_t>(command.address));
-    GuestMemory::GuardRead(command.address, sizeof(T));
-    GuestMemory::FlushGpuWrites(command.address, sizeof(T));
-    GuestMemory::CheckRange(pointer, sizeof(T), std::atomic_ref<T>::required_alignment, true);
-    std::atomic_ref<T> word(*pointer);
     const auto source = static_cast<T>(command.source);
     const auto comparison = static_cast<T>(command.comparison);
-    GuestMemory::StoreOwnBytes(command.address, sizeof(T), [&] {
+    GuestMemory::StoreOwnAtomicBytes(command.address, sizeof(T), [&] {
+        GuestMemory::CheckRange(pointer, sizeof(T), std::atomic_ref<T>::required_alignment, true);
+        std::atomic_ref<T> word(*pointer);
         if (command.operation == 0x08) {
             auto expected = comparison;
             word.compare_exchange_strong(expected, source, std::memory_order_acq_rel, std::memory_order_acquire);
