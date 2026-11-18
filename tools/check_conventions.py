@@ -492,7 +492,8 @@ class Check:
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
                 path = line[6:].removesuffix("\t")
-        result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
+        result = subprocess.run(["git", "grep", "--no-color", "-nF", "--full-name", "-e", "APS5_", "-e", "ANYPS5_",
+                                 self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
         for line in result.stdout.split("\n"):
