@@ -288,6 +288,9 @@ void RunAttachedContext() {
     Require(sceFiberGetInfo(g_attached, &info) == 0 && info.addr_context == nullptr && info.size_context == 0, "fiber without a context reports none");
     errno = 71;
     Require(sceFiberGetInfo(g_attached, reinterpret_cast<FiberInfo*>(0x10)) == FiberErrorInvalid && errno == 71, "unwritable fiber info");
+    static const FiberInfo readOnlyInfo{sizeof(FiberInfo), nullptr, 999};
+    errno = 71;
+    Require(sceFiberGetInfo(g_attached, const_cast<FiberInfo*>(&readOnlyInfo)) == FiberErrorInvalid && errno == 71 && readOnlyInfo.arg_on_initialize == 999, "read-only fiber info");
     alignas(16) unsigned char notFiber[512] = {};
     Require(sceFiberRename(nullptr, "renamed") == FiberErrorNull, "rename a null fiber");
     Require(sceFiberRename(g_attached, nullptr) == FiberErrorNull, "rename to a null name");
