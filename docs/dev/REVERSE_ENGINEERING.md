@@ -115,6 +115,12 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    unallocated common symbols are omitted because their values are not addresses. Names use ASCII letters, digits and
    underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
    to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.
+   Initialization and cleanup arrays add `elf_init_array_<index>`, `elf_fini_array_<index>` and, for executables,
+   `elf_preinit_array_<index>` function entries. The tool reads stored pointers and resolves `R_X86_64_RELATIVE`
+   and defined, non-TLS, non-IFUNC `R_X86_64_64` targets. Entries requiring runtime resolution, conflicting or
+   overlapping relocations, and targets without executable file backing are omitted. Existing function exports
+   keep their names. This static map does not execute initializers or apply runtime symbol interposition.
+
    This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
    or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
 
