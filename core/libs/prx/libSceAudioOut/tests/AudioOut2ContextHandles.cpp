@@ -244,6 +244,11 @@ void FirmwareExSignatures() {
     Require(errno == 73, "an unwritable port attribute value changed host errno");
     FreePage(readOnlyValue);
     getVolume.value = readBack;
+    volume[0] = 0.75f;
+    volume[1] = 0.125f;
+    Require(sceAudioOut2PortSetAttributesEx(exPort, &setVolume, 1) == 0, "the attribute set through sceAudioOut2PortSetAttributesEx was refused");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == 0 && readBack[0] == 0.75f && readBack[1] == 0.125f, "the volume set through sceAudioOut2PortSetAttributesEx did not round trip");
+    Require(sceAudioOut2PortSetAttributesEx(portSentinel, &setVolume, 1) == errorInvalidHandle, "sceAudioOut2PortSetAttributesEx accepted a dead port");
     AudioOut2Attribute badAttribute{};
     badAttribute.attribute_id = 5;
     badAttribute.value = readBack;
@@ -303,6 +308,29 @@ void OversizedGrainIsRefused() {
     Require(sceAudioOut2ContextDestroy(context) == 0, "a context at the queue cap was not destroyed");
 }
 
+void PortCreateGuestPointers() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    constexpr AudioOut2PortHandle portSentinel = 0x6B6B;
+    constexpr std::uint32_t formatStereoFloat = 2u << 8;
+    const auto context = CreateContext();
+    AudioOut2PortParam params{};
+    params.data_format = formatStereoFloat;
+    params.sampling_freq = 48000;
+    AudioOut2PortHandle port = portSentinel;
+    errno = EBUSY;
+    Require(sceAudioOut2PortCreate(context, reinterpret_cast<const AudioOut2PortParam*>(std::uintptr_t{0x10}), &port) == errorInvalidArgument,
+            "unreadable port parameters were accepted");
+    Require(port == portSentinel && errno == EBUSY, "unreadable port parameters wrote a handle or changed errno");
+    errno = EBUSY;
+    Require(sceAudioOut2PortCreate(context, &params, reinterpret_cast<AudioOut2PortHandle*>(std::uintptr_t{0x10})) == errorInvalidArgument,
+            "an unwritable port handle slot was accepted");
+    Require(errno == EBUSY, "an unwritable port handle slot changed errno");
+    AudioOut2PortHandle created = 0;
+    Require(sceAudioOut2PortCreate(context, &params, &created) == 0 && created != 0, "a port created after the refusals was refused");
+    Require(sceAudioOut2PortDestroy(created) == 0, "the port created after the refusals was not destroyed");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "the context created for the refusals was not destroyed");
+}
+
 int main() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_context_handles-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
@@ -311,6 +339,7 @@ int main() {
     FirmwareExSignatures();
     ContextMemoryNullSize();
     ContextMemoryQuery();
+    PortCreateGuestPointers();
     OversizedGrainIsRefused();
     BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();

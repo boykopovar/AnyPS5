@@ -41,13 +41,6 @@ int main() {
     Require(std::strcmp(getprogname_nid_postfix(), "doom") == 0);
     setprogname_nid_postfix("");
     Require(std::strcmp(getprogname_nid_postfix(), "") == 0);
-    bool nullNameThrew = false;
-    try {
-        setprogname_nid_postfix(nullptr);
-    } catch (const std::invalid_argument&) {
-        nullNameThrew = true;
-    }
-    Require(nullNameThrew);
     setprogname_nid_postfix("/");
     Require(std::strcmp(getprogname_nid_postfix(), "") == 0);
     Require(std::strcmp(_getprogname_nid_postfix(), "") == 0);
@@ -64,4 +57,24 @@ int main() {
     setprogname_nid_postfix(original);
     Require(getprogname_nid_postfix() == original);
     Require(*__error_nid_postfix() == 45);
+    bool nullNameThrew = false;
+    try {
+        setprogname_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullNameThrew = true;
+    }
+    Require(nullNameThrew);
+    Require(getprogname_nid_postfix() == original);
+    bool unreadableNameThrew = false;
+    try {
+        setprogname_nid_postfix(reinterpret_cast<const char*>(0x10));
+    } catch (const std::invalid_argument&) {
+        unreadableNameThrew = true;
+    }
+    Require(unreadableNameThrew);
+    Require(getprogname_nid_postfix() == original);
+    static const char path[] = "/app0/sub/game.self";
+    setprogname_nid_postfix(path);
+    Require(getprogname_nid_postfix() == path + 10);
+    setprogname_nid_postfix(original);
 }

@@ -264,6 +264,7 @@ std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std:
 std::int32_t OverlayScaleRequest(const char* value);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);
+std::array<std::array<float, 4>, OverlayColorCount> ColorblindOverlayPalette(std::array<std::array<float, 4>, OverlayColorCount> palette);
 
 class PerformanceOverlay {
 public:

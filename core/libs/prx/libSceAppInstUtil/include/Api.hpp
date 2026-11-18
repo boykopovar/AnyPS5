@@ -107,7 +107,7 @@ int APS5_VABI sceAppInstUtilCancelInstallPatch(void);
 int APS5_VABI sceAppInstUtilCancelInstallAddcont(void);
 int APS5_VABI sceAppInstUtilCancelInstall(void);
 int APS5_VABI sceAppInstUtilCancelForMultiInstall(void);
-int APS5_VABI sceAppInstUtilInstallByPackage(void);
+int APS5_VABI sceAppInstUtilInstallByPackage(const void* metaInfo, void* pkgInfo, const void* playGoInfo);
 int APS5_VABI sceAppInstUtilIsRestoreState(void);
 int APS5_VABI sceAppInstUtilGetRestoreState(void);
 int APS5_VABI sceAppInstUtilGetAddons(void);

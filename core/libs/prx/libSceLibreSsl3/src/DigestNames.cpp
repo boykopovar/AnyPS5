@@ -168,7 +168,7 @@ const void* Resolve(Digest digest) {
     case Digest::Sha512_224:
         Missing("EVP_sha512_224");
     case Digest::Sha512_256:
-        Missing("EVP_sha512_256");
+        return EVP_sha512_256_nid_postfix();
     case Digest::Sha3_224:
         Missing("EVP_sha3_224");
     case Digest::Sha3_256:

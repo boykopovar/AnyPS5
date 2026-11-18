@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -15,6 +16,12 @@
 #include <utility>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -292,6 +299,124 @@ void Times() {
     RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "guarded page allocation");
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page mapping");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    template <typename T>
+    T* Tail(const void* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return reinterpret_cast<T*>(data + bytes - size);
+    }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only page protection");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only page protection");
+#endif
+    }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template<typename TAction>
+void Rejects(TAction action, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, message);
+}
+
+void GuestPointers() {
+    auto* badString = reinterpret_cast<Asn1String*>(0x10);
+    auto* badObject = reinterpret_cast<const LibreSslAsn1Object*>(0x10);
+    auto* badData = reinterpret_cast<unsigned char*>(0x10);
+    unsigned char* result = nullptr;
+    Rejects([&] { ASN1_TIME_print_nid_postfix(nullptr, badString); }, "unmapped time");
+    Rejects([&] { ASN1_INTEGER_get_nid_postfix(badString); }, "unmapped integer");
+    Rejects([&] { ASN1_STRING_data_nid_postfix(badString); }, "unmapped string data accessor");
+    Rejects([&] { ASN1_STRING_length_nid_postfix(badString); }, "unmapped string length accessor");
+    Rejects([&] { ASN1_STRING_type_nid_postfix(badString); }, "unmapped string type accessor");
+    Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, badString); }, "unmapped printed string");
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, badString); }, "unmapped converted string");
+    Rejects([&] { i2a_ASN1_OBJECT_nid_postfix(nullptr, badObject); }, "unmapped object");
+    Asn1String time{13, 23, badData, 0};
+    Rejects([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "unmapped time data");
+    Asn1String integer{2, 2, badData, 0};
+    Rejects([&] { ASN1_INTEGER_get_nid_postfix(&integer); }, "unmapped integer data");
+    Asn1String printed{3, 4, badData, 0};
+    Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, &printed); }, "unmapped printed data");
+    Asn1String converted{3, 12, badData, 0};
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &converted); }, "unmapped converted data");
+    converted.length = -1;
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &converted); }, "unmapped terminated data");
+    Require(result == nullptr, "rejected conversions leave the output alone");
+
+    {
+        GuardedPage page;
+        unsigned char latin[] = {'A', 0xff};
+        Asn1String value{2, 20, page.Tail<unsigned char>(latin, sizeof(latin)), 0x55};
+        Asn1String* stored = page.Tail<Asn1String>(&value, sizeof(value));
+        Require(ASN1_STRING_length_nid_postfix(stored) == 2 && ASN1_STRING_type_nid_postfix(stored) == 20 &&
+            ASN1_STRING_data_nid_postfix(stored) == value.data, "accessors read a string ending at a page boundary");
+        Asn1String terminated{-1, 20, page.Tail<unsigned char>(latin, sizeof(latin)), 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &terminated); }, "unterminated data running into an unmapped page");
+        Asn1String longer{3, 20, terminated.data, 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &longer); }, "data length running into an unmapped page");
+        Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, &longer); }, "printed length running into an unmapped page");
+        const unsigned char ending[] = {'A', 0xff, 0};
+        terminated.data = page.Tail<unsigned char>(ending, sizeof(ending));
+        Require(ASN1_STRING_to_UTF8_nid_postfix(&result, &terminated) == 3 && result && std::memcmp(result, "A\xc3\xbf", 4) == 0,
+            "terminated data ending at a page boundary converts");
+        free_nid_postfix(result);
+        result = nullptr;
+    }
+
+    {
+        GuardedPage page;
+        unsigned char* untouched = nullptr;
+        unsigned char** slot = page.Tail<unsigned char*>(&untouched, sizeof(untouched));
+        page.ReadOnly();
+        unsigned char text[] = {'A'};
+        Asn1String value{1, 12, text, 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(slot, &value); }, "read-only output");
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(reinterpret_cast<unsigned char**>(0x10), &value); }, "unmapped output");
+        Require(*slot == nullptr, "rejected output stays untouched");
+    }
+}
+
 std::size_t lastAllocationSize = 0;
 int allocationCount = 0;
 bool failAllocation = false;
@@ -367,4 +492,5 @@ int main(int argc, char**) {
     Strings();
     MalformedStrings();
     Times();
+    GuestPointers();
 }

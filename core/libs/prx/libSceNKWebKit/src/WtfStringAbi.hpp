@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <type_traits>
 
@@ -79,14 +80,30 @@ void Release(CStringBuffer* buffer);
 
 struct String {
     StringImpl* impl;
-    explicit String(StringImpl* value = nullptr) : impl(value) {}
+    String() : impl(nullptr) {}
+    explicit String(StringImpl* value) : impl(value) {}
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
     String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
 
+StringView ViewOf(const StringImpl* impl);
+char16_t CodeUnitAt(const StringView& view, unsigned index);
+std::optional<std::uint16_t> PortOf(const URL& url);
+
+struct StringViewWithUnderlyingString {
+    StringView view;
+    String underlyingString;
+};
+
+static_assert(sizeof(StringViewWithUnderlyingString) == 24);
+static_assert(offsetof(StringViewWithUnderlyingString, view) == 0);
+static_assert(offsetof(StringViewWithUnderlyingString, underlyingString) == 16);
+static_assert(!std::is_trivially_destructible_v<StringViewWithUnderlyingString>);
+
 StringImpl* EmptyStringImpl();
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
 String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length);

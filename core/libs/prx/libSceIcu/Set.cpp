@@ -1,8 +1,13 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/uchar.h"
+#include "unicode/uniset.h"
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <new>
 #include <vector>
 
@@ -25,8 +30,10 @@ std::int32_t Pin(std::int32_t codePoint) {
 struct CodePointSet {
     std::int32_t magic = SetMagic;
     std::vector<Range> ranges;
+    bool frozen{};
 
     void Add(std::int32_t start, std::int32_t end) {
+        if (frozen) return;
         auto first = std::lower_bound(ranges.begin(), ranges.end(), start, [](const Range& range, std::int32_t value) {
             return range.end + 1 < value;
         });
@@ -63,7 +70,61 @@ CodePointSet& Check(USet* set) {
 
 }
 
+namespace {
+
+void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(error, &value, sizeof(value));
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+}
+
 extern "C" {
+
+const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (incoming > 0) return nullptr;
+    if (property < UCHAR_BINARY_START || property >= UCHAR_BINARY_LIMIT) {
+        WriteError(error, U_ILLEGAL_ARGUMENT_ERROR, __func__);
+        return nullptr;
+    }
+    if (property >= UCHAR_BASIC_EMOJI && property <= UCHAR_RGI_EMOJI)
+        NotImplemented_nid_no_patch("u_getBinaryPropertySet: property of strings");
+
+    static std::array<CodePointSet, UCHAR_BINARY_LIMIT> sets;
+    static std::mutex mutex;
+    const std::lock_guard lock(mutex);
+    auto& set = sets[property];
+    if (!set.frozen) {
+        try {
+            auto status = U_ZERO_ERROR;
+            const auto* source = u_getBinaryPropertySet(static_cast<UProperty>(property), &status);
+            if (U_FAILURE(status)) {
+                WriteError(error, status, __func__);
+                return nullptr;
+            }
+            const auto* nativeSet = icu::UnicodeSet::fromUSet(source);
+            std::vector<Range> ranges;
+            const auto count = nativeSet->getRangeCount();
+            ranges.reserve(count);
+            for (std::int32_t index = 0; index < count; ++index)
+                ranges.push_back({nativeSet->getRangeStart(index), nativeSet->getRangeEnd(index)});
+            set.ranges = std::move(ranges);
+            set.frozen = true;
+        } catch (const std::bad_alloc&) {
+            WriteError(error, U_MEMORY_ALLOCATION_ERROR, __func__);
+            return nullptr;
+        }
+    }
+    return reinterpret_cast<const USet*>(&set);
+}
 
 USet* APS5_VABI uset_openEmpty_nid_postfix() {
     return reinterpret_cast<USet*>(new (std::nothrow) CodePointSet());
@@ -72,6 +133,7 @@ USet* APS5_VABI uset_openEmpty_nid_postfix() {
 void APS5_VABI uset_close_nid_postfix(USet* set) {
     if (!set) return;
     auto& target = Check(set);
+    if (target.frozen) NotImplemented_nid_no_patch(__func__);
     target.magic = 0;
     delete &target;
 }
@@ -90,6 +152,7 @@ void APS5_VABI uset_addRange_nid_postfix(USet* set, std::int32_t start, std::int
 
 void APS5_VABI uset_addAll_nid_postfix(USet* set, const USet* additionalSet) {
     auto& target = Check(set);
+    if (target.frozen) return;
     const std::vector<Range> ranges = Check(additionalSet).ranges;
     for (const auto& range : ranges) target.Add(range.start, range.end);
 }
@@ -105,19 +168,29 @@ std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet* set) {
 std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t itemIndex, std::int32_t* start, std::int32_t* end,
                                                 char16_t*, std::int32_t, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
-    if (*error > 0) return 0;
+    std::int32_t incoming = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (incoming > 0) return 0;
     if (itemIndex < 0) {
-        *error = IllegalArgumentError;
+        WriteError(error, IllegalArgumentError, __func__);
         return -1;
     }
     const auto& ranges = Check(set).ranges;
     if (static_cast<std::size_t>(itemIndex) >= ranges.size()) {
-        *error = IndexOutOfBoundsError;
+        WriteError(error, IndexOutOfBoundsError, __func__);
         return -1;
     }
     if (!start || !end) APS5_INVALID_ARG_EX;
-    *start = ranges[static_cast<std::size_t>(itemIndex)].start;
-    *end = ranges[static_cast<std::size_t>(itemIndex)].end;
+    const auto& range = ranges[static_cast<std::size_t>(itemIndex)];
+    const std::int32_t first = range.start;
+    const std::int32_t last = range.end;
+    const int keptErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(start, &first, sizeof(first)) && GuestCopyOut_nid_no_patch(end, &last, sizeof(last));
+    errno = keptErrno;
+    if (!stored) APS5_INVALID_ARG_EX;
     return 0;
 }
 
