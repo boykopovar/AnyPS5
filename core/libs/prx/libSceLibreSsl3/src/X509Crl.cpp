@@ -847,14 +847,7 @@ LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
     LibreSsl3X509Crl* crl = DecodeCrl(remaining);
     if (!crl) return nullptr;
     if (output) {
-        if (*output) {
-            try {
-                X509_CRL_free_nid_postfix(*output);
-            } catch (...) {
-                FreeCrl(crl);
-                throw;
-            }
-        }
+        X509_CRL_free_nid_postfix(*output);
         *output = crl;
     }
     *input += static_cast<std::size_t>(length) - remaining.size();
@@ -865,6 +858,15 @@ void* APS5_VABI X509_CRL_get_ext_d2i_nid_postfix(const LibreSsl3X509Crl* crl, in
     if (!crl) throw std::invalid_argument(std::string(__func__) + ": null CRL");
     if (!crl->crl) throw std::invalid_argument(std::string(__func__) + ": null CRL info");
     return GetExtension(crl->crl->extensions, nid, crit, idx);
+}
+
+void APS5_VABI X509_CRL_free_nid_postfix(LibreSsl3X509Crl* crl) {
+    if (!crl) return;
+    if (crl->references > 1) {
+        --crl->references;
+        return;
+    }
+    FreeCrl(crl);
 }
 
 int APS5_VABI X509_CRL_get0_by_cert_nid_postfix(LibreSsl3X509Crl* crl, LibreSsl3Revoked** revoked,

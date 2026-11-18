@@ -42,7 +42,6 @@ void TestNull() {
 void TestNonNull() {
     void* const unreadable = reinterpret_cast<void*>(std::uintptr_t{1});
     RequireNotImplemented([&] { AUTHORITY_KEYID_free_nid_postfix(unreadable); });
-    RequireNotImplemented([&] { X509_CRL_free_nid_postfix(unreadable); });
     RequireNotImplemented([&] { PKCS7_free_nid_postfix(unreadable); });
 }
 

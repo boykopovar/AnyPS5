@@ -300,24 +300,7 @@ void FreeRevokedValue(void* value) {
 }
 
 void FreeCrlValue(LibreSsl3X509Crl* crl) {
-    if (!crl) return;
-    if (crl->crl) {
-        FreeStringValue(crl->crl->version);
-        FreeAlgorValue(crl->crl->sigAlg);
-        if (crl->crl->issuer) {
-            FreeStackValue(reinterpret_cast<const LibreSsl3Stack*>(
-                const_cast<const LibreSslStack*>(crl->crl->issuer->entries)), FreeNameEntryValue);
-            free_nid_postfix(crl->crl->issuer);
-        }
-        FreeStringValue(crl->crl->lastUpdate);
-        FreeStringValue(crl->crl->nextUpdate);
-        FreeStackValue(crl->crl->revoked, FreeRevokedValue);
-        FreeStackValue(crl->crl->extensions, FreeExtensionValue);
-        free_nid_postfix(crl->crl);
-    }
-    FreeAlgorValue(crl->sigAlg);
-    FreeStringValue(crl->signature);
-    free_nid_postfix(crl);
+    X509_CRL_free_nid_postfix(crl);
 }
 
 void RequireString(const Asn1String* value, int type, const char* text) {
@@ -777,14 +760,30 @@ void TestArgumentErrors() {
     Require(input == der.data() + der.size());
     const std::size_t retained = allocations.size();
 
+    LibreSsl3X509Crl* const first = output;
     const unsigned char* second = der.data();
-    RequireNotImplemented([&] {
-        d2i_X509_CRL_nid_postfix(&output, &second, static_cast<std::int64_t>(der.size()));
-    });
-    Require(output != nullptr);
+    Require(d2i_X509_CRL_nid_postfix(&output, &second, static_cast<std::int64_t>(der.size())) == output);
+    Require(output != nullptr && output != first);
+    Require(second == der.data() + der.size());
     Require(allocations.size() == retained);
-    FreeCrlValue(output);
+    X509_CRL_free_nid_postfix(output);
     Require(allocations.empty());
+    DrainErrors();
+}
+
+void TestReferenceCountedFree() {
+    const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
+    const unsigned char* input = der.data();
+    LibreSsl3X509Crl* crl = d2i_X509_CRL_nid_postfix(nullptr, &input, static_cast<std::int64_t>(der.size()));
+    Require(crl != nullptr);
+    const std::size_t live = allocations.size();
+    crl->references = 2;
+    X509_CRL_free_nid_postfix(crl);
+    Require(crl->references == 1);
+    Require(allocations.size() == live);
+    X509_CRL_free_nid_postfix(crl);
+    Require(allocations.empty());
+    X509_CRL_free_nid_postfix(nullptr);
     DrainErrors();
 }
 
@@ -835,6 +834,7 @@ int main() {
     TestTrailingData();
     TestMalformed();
     TestArgumentErrors();
+    TestReferenceCountedFree();
     TestAllocationFailures();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509_CRL tests passed");
