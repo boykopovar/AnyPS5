@@ -596,6 +596,16 @@ void verifyZstdRoundTrip() {
     corrupt[corrupt.size() - 5u] ^= std::byte{0x40};
     require(ShaderDiskCache::DecodeEntry(corrupt, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a corrupt compressed entry loads");
     require(ShaderDiskCache::DecodeEntry(std::span(compressed).first(compressed.size() / 2u), key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a truncated compressed entry loads");
+    auto oversized = compressed;
+    constexpr std::size_t fileHeaderBytes = 48;
+    constexpr std::size_t payloadHashOffset = 40;
+    constexpr std::size_t spirvWordCountOffset = sizeof(std::uint32_t) * 2u;
+    const auto payloadOffset = (fileHeaderBytes + key.size() + 7u) / 8u * 8u;
+    const std::uint64_t tooManyWords = ShaderDiskCache::MaxCachedSpirvWords + 1u;
+    std::memcpy(oversized.data() + payloadOffset + spirvWordCountOffset, &tooManyWords, sizeof(tooManyWords));
+    const auto payloadHash = HashBytes(std::span(oversized).subspan(payloadOffset));
+    std::memcpy(oversized.data() + payloadHashOffset, &payloadHash, sizeof(payloadHash));
+    require(ShaderDiskCache::DecodeEntry(oversized, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a cached SPIR-V count above the word limit loads");
 }
 
 void verifyZstdConcurrent() {
