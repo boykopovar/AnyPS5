@@ -402,6 +402,21 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_cli_rejects_invalid_summary_windows(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        invalid = [(None, "window must be an object"), ([], "window must be an object")]
+        invalid += [({"ms": value}, "window.ms") for value in (None, True, "40", -1, float("inf"), 1e308)]
+        for window, message in invalid:
+            with self.subTest(window=window):
+                record = dict(SUMMARY, window=window)
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), "--json"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         explicit = summary.with_name("explicit-\u03a9.jsonl")
