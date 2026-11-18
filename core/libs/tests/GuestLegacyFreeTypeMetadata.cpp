@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -318,6 +320,26 @@ static void CheckHeader(const Api& api, FreeType::GuestFaceRec* face, FT_Face na
     Require(api.header(face, nullptr) == FT_Get_WinFNT_Header(native, nullptr));
 }
 
+static void CheckUnwritableOutputs(const Api& api, FreeType::GuestFaceRec* face, std::size_t font) {
+    const auto unmapped = std::uintptr_t{0x10};
+    static const BdfProperty readOnlyProperty{};
+    static const SfntLangTag readOnlyTag{};
+    static const WinFntHeader readOnlyHeader{};
+    if (font == 0) {
+        Require(api.property(face, "FONT_NAME", reinterpret_cast<BdfProperty*>(unmapped)) == FT_Err_Invalid_Argument);
+        Require(api.property(face, "MISSING_PROPERTY", reinterpret_cast<BdfProperty*>(unmapped)) == FT_Err_Invalid_Argument);
+        Require(api.property(face, "FONT_NAME", const_cast<BdfProperty*>(&readOnlyProperty)) == FT_Err_Invalid_Argument);
+    }
+    if (font == 1) {
+        Require(api.tag(face, 0x8001, reinterpret_cast<SfntLangTag*>(unmapped)) == FT_Err_Invalid_Argument);
+        Require(api.tag(face, 0x8001, const_cast<SfntLangTag*>(&readOnlyTag)) == FT_Err_Invalid_Argument);
+    }
+    if (font == 5) {
+        Require(api.header(face, reinterpret_cast<WinFntHeader*>(unmapped)) == FT_Err_Invalid_Argument);
+        Require(api.header(face, const_cast<WinFntHeader*>(&readOnlyHeader)) == FT_Err_Invalid_Argument);
+    }
+}
+
 int main(int argc, char** argv) {
     Require(argc == 4);
     const bool patched = std::strcmp(argv[3], "patched") == 0;
@@ -375,6 +397,7 @@ int main(int argc, char** argv) {
         CheckCharset(api, face, native);
         for (std::uint32_t language : {0u, 0x7FFFu, 0x8000u, 0x8001u, 0x8002u, 0xFFFFFFFFu}) CheckTag(api, face, native, language);
         CheckHeader(api, face, native);
+        CheckUnwritableOutputs(api, face, static_cast<std::size_t>(&bytes - fonts.data()));
 #ifdef _WIN32
         if (&bytes == &fonts[0] || &bytes == &fonts[1] || &bytes == &fonts[5])
             CheckGuestOutputs(api, kernelApi, face, static_cast<unsigned>(&bytes - fonts.data()));

@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 
@@ -13,11 +14,22 @@ def integer(value, minimum, maximum):
     return type(value) is int and minimum <= value <= maximum
 
 
+def unique_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field {name!r}")
+        result[name] = value
+    return result
+
+
 def read_report(path):
     try:
-        report = json.loads(path.read_text(encoding="utf-8-sig"))
+        report = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
     except RecursionError as error:
         raise ValueError(f"{path}: JSON nested too deeply") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     if not isinstance(report, dict):
         raise ValueError(f"{path}: expected a JSON object")
     required = {"schema_version", "assembly_target", "rows", *SETTINGS}
@@ -93,6 +105,9 @@ def nonnegative_integer(value):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="Compare two hw_oracle.py --json reports bit for bit without a GPU. "
                     "Inputs and settings must match; assembly targets may differ.",

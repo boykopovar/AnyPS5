@@ -7,13 +7,15 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
 REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
 REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
-FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
+FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
@@ -82,17 +84,13 @@ class Build:
         return nodes
 
     def leaves(self):
-        nodes = self.walk(["all"])
         leaves, todo, seen = set(), ["all"], set()
         while todo:
-            name = todo.pop()
-            if name in seen or name not in nodes:
-                continue
-            seen.add(name)
-            if nodes[name]["phony"]:
-                todo.extend(nodes[name]["inputs"])
-            else:
-                leaves.add(name)
+            batch = sorted(set(todo) - seen)
+            seen.update(batch)
+            nodes = self.query(batch) if batch else {}
+            todo = [i for t in batch if nodes.get(t, {}).get("phony") for i in nodes[t]["inputs"]]
+            leaves.update(t for t in batch if t in nodes and not nodes[t]["phony"])
         return sorted(leaves)
 
     def outputs(self, paths):
@@ -233,14 +231,15 @@ def load_graph(path):
 
 
 def dump(build, out):
+    repo, key = functools.lru_cache(maxsize=None)(build.repo), functools.lru_cache(maxsize=None)(build.key)
     deps = collections.defaultdict(set)
     current = None
     recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
     for line in recorded.splitlines():
         if not line.startswith(b" ") and b": #deps" in line:
-            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
+            current = key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(dependency_path(line.strip(), build.path))
+            path = repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
@@ -258,20 +257,20 @@ def dump(build, out):
             if name in seen:
                 continue
             seen.add(name)
-            path = build.repo(name)
+            path = repo(name)
             if path:
                 files.add(path)
-            files |= deps.get(build.key(name), set())
+            files |= deps.get(key(name), set())
             todo.extend(nodes.get(name, {"inputs": []})["inputs"])
         closures[target] = sorted(files)
     tests = {}
     for test in listed:
         registered, node = set(), test.get("backtrace")
         while node is not None:
-            registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
+            registered.add(repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs = {repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
         inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
@@ -329,13 +328,22 @@ def select(graph, changed, reasons=None):
     return picked, []
 
 
+@contextmanager
+def ctest_index_file(indices):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "indices.txt"
+        path.write_text(indices + "\n", encoding="utf-8")
+        yield str(path)
+
+
 def plan(build, graph, picked):
     _, listed = build.tests()
     run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
     if not run:
         skip = {build.target(t) for t in listed} - {None}
         return [], [t for t in build.leaves() if t not in skip], len(listed)
-    _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
+    with ctest_index_file("0,0,0," + ",".join(map(str, run))) as index_file:
+        _, selected = build.tests("-I", index_file)
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     if any(not t.get("command") for t in listed if t["name"] in names):
@@ -372,11 +380,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
+        command = ["ctest", "--test-dir", args.build, *args.arguments]
         try:
-            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+            indices = selected.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            return subprocess.run(command).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
-        return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
+        with ctest_index_file(indices) as index_file:
+            return subprocess.run([*command, "-I", index_file]).returncode
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)

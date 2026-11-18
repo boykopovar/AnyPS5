@@ -337,18 +337,44 @@ int APS5_VABI sceNpSessionSignalingJoinActivate(const char* sessionId, const voi
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!sessionId || !param || !groupId) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
     std::uint8_t mode = 0;
-    if (!GuestCopyIn_nid_no_patch(&mode, param, sizeof(mode)) || mode == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const bool copied = GuestCopyIn_nid_no_patch(&mode, param, sizeof(mode));
+    errno = savedErrno;
+    if (!copied || mode == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
     return SCE_NP_SESSION_SIGNALING_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI sceNpSessionSignalingSetCustomProperty(std::uint32_t contextId, const std::uint32_t* property, std::uint32_t* previous) {
-    (void)previous;
-    std::lock_guard lock(g_mutex);
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+        if (!property) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+        if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
+    }
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&value, property, sizeof(value));
+    errno = savedErrno;
+    if (!read) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    std::unique_lock lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!property) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    NotImplemented_nid_no_patch(__func__);
+    auto* context = FindContext(contextId);
+    if (!context) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
+    if (previous) {
+        const std::uint32_t current = context->customProperty;
+        lock.unlock();
+        const int savedErrnoOut = errno;
+        const bool written = GuestCopyOut_nid_no_patch(previous, &current, sizeof(current));
+        errno = savedErrnoOut;
+        if (!written) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+        lock.lock();
+        if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+        context = FindContext(contextId);
+        if (!context) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
+    }
+    context->customProperty = value;
+    return 0;
 }
 
 int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection() {

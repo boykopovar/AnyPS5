@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -918,6 +919,8 @@ def main(argv=None):
                              "fragments and stage them")
     args = parser.parse_args(argv)
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    if os.name == "nt" and not root.is_dir():
+        root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     try:
         {"refactor": command_refactor, "split": command_split, "resolve": command_resolve}[args.command](root)
     except SplitError as error:

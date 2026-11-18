@@ -33,14 +33,18 @@ PROJECT = {
 }
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 def excessively_nested_json(test):
     depth = sys.getrecursionlimit() + 64
     while True:
         text = "[" * depth + "]" * depth
-        try:
-            json.loads(text)
-        except RecursionError:
-            return text
+        if child_decoder_rejects(text):
+            return "[" * (depth + 128) + "]" * (depth + 128)
         depth *= 2
         if depth > 10_000_000:
             test.fail("the JSON decoder accepts every probed nesting depth")
@@ -467,15 +471,12 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         except (UnicodeEncodeError, UnicodeDecodeError):
             self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
         with tempfile.TemporaryDirectory() as directory:
+            recorded = os.path.join(name, "alpha.h").encode("mbcs")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(utf8, "alpha.h"))
             header = Path(directory, name, "alpha.h")
-            try:
-                recorded = str(header).encode("mbcs", "strict")
-            except UnicodeEncodeError:
-                self.skipTest("the ANSI code page cannot represent the temporary directory")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
             header.parent.mkdir()
             header.write_text("", encoding="utf-8")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(name, "alpha.h"))
             relative = os.path.join("..", name, "alpha.h")
             self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
                              relative)
@@ -756,6 +757,36 @@ class ChunkTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-I", "-c", "import json,sys; print(json.dumps(sys.argv[1:]))", *batch],
                                     capture_output=True, text=True, check=True, timeout=5)
             self.assertEqual(json.loads(result.stdout), batch)
+
+
+@unittest.skipUnless(shutil.which("ctest"), "needs ctest")
+class CTestIndexFileTests(unittest.TestCase):
+    def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            count = 8000
+            (root / "CTestTestfile.cmake").write_text(
+                "".join(f'add_test(test_{i} "{Path(sys.executable).as_posix()}" --version)\n'
+                        for i in range(1, count + 2)), encoding="utf-8")
+            (root / "select.tests").write_text(
+                "0,0,0," + ",".join(map(str, range(1, count + 1))), encoding="utf-8-sig")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"Total Tests: {count}", result.stdout)
+            self.assertNotIn(f"test_{count + 1}", result.stdout)
+
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            build.source = str(root)
+            graph = {"tests": {f"test_{i}": {} for i in range(1, count + 2)}}
+            picked = set(graph["tests"]) - {f"test_{count + 1}"}
+            with mock.patch.object(build, "leaves", return_value=[]), \
+                    mock.patch.object(build, "outputs", return_value=[]):
+                run, targets, total = select_tests.plan(build, graph, picked)
+            self.assertEqual(run, list(range(1, count + 1)))
+            self.assertEqual(targets, [])
+            self.assertEqual(total, count + 1)
 
 
 class PlanTests(unittest.TestCase):
