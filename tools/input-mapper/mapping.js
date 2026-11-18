@@ -41,6 +41,12 @@ export function actionsForInput(search, bindings) {
     }));
 }
 
+export function inputFilename(titleId) {
+    if (titleId === '') return 'anyps5-input.ini';
+    if (typeof titleId !== 'string' || titleId.length > 32 || /[^A-Za-z0-9_-]/u.test(titleId)) return undefined;
+    return `anyps5-input.${titleId}.ini`;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
     if (emulatorActions.includes(action)) return ['KEY', 'PAD'];

@@ -4,7 +4,9 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -77,6 +79,17 @@ void CheckCache() {
     cairo_font_face_destroy(nullptr);
 }
 
+void CheckUnreadableFace() {
+    auto* face = reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10});
+    bool rejected = false;
+    try {
+        cairo_ft_font_face_create_for_ft_face(face, 0);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+}
+
 void CheckUserData() {
     FreeType::GuestFaceRec face{};
     CairoFontFace* fontFace = cairo_ft_font_face_create_for_ft_face(&face, 0);
@@ -131,6 +144,7 @@ void CheckReentrantFinalizer() {
 
 int main() {
     CheckCache();
+    CheckUnreadableFace();
     CheckUserData();
     CheckReentrantFinalizer();
     std::puts("cairo FreeType font face tests passed");
