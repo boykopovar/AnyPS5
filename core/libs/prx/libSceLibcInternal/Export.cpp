@@ -905,9 +905,144 @@ int APS5_VABI _Getctyptab_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
+    if (s == nullptr || *s == '\0') {
+        return nullptr;
+    }
+    const char sep = *s;
+    ++s;
+    if (*s == '\0') {
+        return nullptr;
+    }
+
+    struct Rule {
+        std::uint8_t suffix;
+        std::uint8_t hour;
+        std::uint8_t day;
+        std::uint8_t month;
+        std::uint8_t year;
+    };
+
+    std::vector<Rule> rules;
+    std::uint8_t lastYear = 0;
+
+    while (*s != '\0') {
+        if (*s == sep) {
+            return nullptr;
+        }
+
+        std::uint8_t ruleYear = lastYear;
+        if (*s == '(') {
+            ++s;
+            int yearVal = 0;
+            int digits = 0;
+            while (*s >= '0' && *s <= '9') {
+                yearVal = yearVal * 10 + (*s - '0');
+                ++digits;
+                ++s;
+                if (digits > 4) {
+                    return nullptr;
+                }
+            }
+            if (digits != 4 || *s != ')' || yearVal < 1900) {
+                return nullptr;
+            }
+            ++s;
+            ruleYear = static_cast<std::uint8_t>((yearVal - 1900) & 0xff);
+            lastYear = ruleYear;
+        }
+
+        int dateDigits = 0;
+        char dateBuf[7] = {};
+        while (*s >= '0' && *s <= '9') {
+            if (dateDigits < 6) {
+                dateBuf[dateDigits] = *s;
+            }
+            ++dateDigits;
+            ++s;
+        }
+
+        if (dateDigits != 4 && dateDigits != 6) {
+            return nullptr;
+        }
+
+        int mm = (dateBuf[0] - '0') * 10 + (dateBuf[1] - '0');
+        int dd = (dateBuf[2] - '0') * 10 + (dateBuf[3] - '0');
+        int hh = 0;
+        if (dateDigits == 6) {
+            hh = (dateBuf[4] - '0') * 10 + (dateBuf[5] - '0');
+        }
+
+        if (mm < 1 || mm > 12) {
+            return nullptr;
+        }
+        if (dd < 1 || dd > 99) {
+            return nullptr;
+        }
+
+        std::uint8_t suffixByte = 0;
+        if (*s == '+' || *s == '-') {
+            char sign = *s;
+            ++s;
+            if (*s < '0' || *s > '6') {
+                return nullptr;
+            }
+            int w = *s - '0';
+            ++s;
+            int v = (w == 0) ? 7 : w;
+            if (sign == '+') {
+                suffixByte = static_cast<std::uint8_t>(v + 7);
+            } else {
+                suffixByte = static_cast<std::uint8_t>(v);
+            }
+        }
+
+        if (*s != '\0' && *s != sep) {
+            return nullptr;
+        }
+
+        Rule r;
+        r.suffix = suffixByte;
+        r.hour = static_cast<std::uint8_t>(hh);
+        r.day = static_cast<std::uint8_t>(dd - 1);
+        r.month = static_cast<std::uint8_t>(mm - 1);
+        r.year = ruleYear;
+        rules.push_back(r);
+
+        if (*s == sep) {
+            ++s;
+            if (*s == '\0') {
+                return nullptr;
+            }
+        }
+    }
+
+    if (rules.empty()) {
+        return nullptr;
+    }
+
+    std::size_t totalBytes = (rules.size() + 1) * 5;
+    char* buf = static_cast<char*>(std::malloc(totalBytes));
+    if (buf == nullptr) {
+        return nullptr;
+    }
+
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        buf[i * 5 + 0] = static_cast<char>(rules[i].suffix);
+        buf[i * 5 + 1] = static_cast<char>(rules[i].hour);
+        buf[i * 5 + 2] = static_cast<char>(rules[i].day);
+        buf[i * 5 + 3] = static_cast<char>(rules[i].month);
+        buf[i * 5 + 4] = static_cast<char>(rules[i].year);
+    }
+
+    std::size_t termOffset = rules.size() * 5;
+    buf[termOffset + 0] = static_cast<char>(0xff);
+    buf[termOffset + 1] = 0;
+    buf[termOffset + 2] = 0;
+    buf[termOffset + 3] = 0;
+    buf[termOffset + 4] = static_cast<char>(lastYear);
+
+    return buf;
 }
 
 int APS5_VABI _Getfld_nid_postfix() {

@@ -1820,7 +1820,7 @@ extern "C" {
 
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
     if (rsa && rsa->method) {
-        RSA_free_nid_postfix(reinterpret_cast<LibreSslRsa*>(rsa));
+        LibreSslRsaFree_nid_no_patch(reinterpret_cast<LibreSslRsa*>(rsa));
         return;
     }
     LibreSsl3::FreeRsa_nid_no_patch(rsa);
