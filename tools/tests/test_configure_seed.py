@@ -654,6 +654,34 @@ class ChecksParsingTests(unittest.TestCase):
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
 
+class WriteSeedTests(unittest.TestCase):
+    def test_creates_missing_parent_directories(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "a" / "seed.cmake"
+            configure_seed.write_seed(path, "set(A 1)\n")
+            self.assertEqual(path.read_bytes(), b"set(A 1)\n")
+
+    def test_replaces_content_and_leaves_no_temporary_files(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "seed.cmake"
+            path.write_bytes(b"old")
+            configure_seed.write_seed(path, "new\n")
+            self.assertEqual(path.read_bytes(), b"new\n")
+            self.assertEqual([entry.name for entry in Path(name).iterdir()], ["seed.cmake"])
+
+    @unittest.skipUnless(os.name == "nt", "read-only attribute is a Windows check")
+    def test_read_only_destination_is_refused_unchanged(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "seed.cmake"
+            path.write_bytes(b"keep")
+            os.chmod(path, 0o444)
+            try:
+                with self.assertRaisesRegex(PermissionError, "Seed output is read-only"):
+                    configure_seed.write_seed(path, "new")
+                self.assertEqual(path.read_bytes(), b"keep")
+            finally:
+                os.chmod(path, 0o666)
+
 
 if __name__ == "__main__":
     unittest.main()
