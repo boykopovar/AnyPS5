@@ -16,6 +16,9 @@
 #include <deque>
 #include <mutex>
 #include <stdexcept>
+#include <cstdio>
+#include <memory>
+#include "prx/libScePad/include/InputScript.hpp"
 
 namespace {
     struct Quat { float w = 1.0f, x = 0.0f, y = 0.0f, z = 0.0f; };
@@ -72,6 +75,7 @@ namespace {
     }();
     std::exception_ptr failure;
     bool initialized = false;
+    Pad::InputScript* Script();
     constexpr float kAngularVelocityDeadband = 0.017453292f;
 
     bool RefreshAudioHaptics(PadSlot& slot) {
@@ -164,6 +168,7 @@ namespace {
 void Pad::Initialize() {
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
+    Script();
     if (!initialized) {
         const std::uint64_t now = sceKernelGetProcessTime();
         for (std::size_t i = 0; i < slots.size(); ++i) {
@@ -189,11 +194,21 @@ bool Pad::IsInitialized() {
 }
 
 namespace {
+void InjectSticks(std::array<std::uint8_t, 4>& sticks, const Pad::InputCommandFile::Input& injected) {
+    if (!injected.hasSticks) return;
+    for (int stick = 0; stick < 2; ++stick) {
+        if ((injected.stickMask & (1u << stick)) == 0) continue;
+        sticks[stick * 2] = injected.sticks[stick * 2];
+        sticks[stick * 2 + 1] = injected.sticks[stick * 2 + 1];
+    }
+}
+
 PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t fuseTime, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
     const bool intercepted = state.intercepted;
     data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
-    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
+    auto sticks = state.sticks;
+    if (!intercepted) InjectSticks(sticks, injected);
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
@@ -303,9 +318,68 @@ Pad::InputCommandFile& InjectedCommands() {
     return commands;
 }
 
-Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
+std::uint64_t EnvironmentNumber(const char* name) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value == '\0') return 0;
+    std::uint64_t result = 0;
+    const std::string_view text(value);
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
+        std::fprintf(stderr, "%s must be a non-negative integer, not '%s'\n", name, value);
+        std::fflush(stderr);
+        std::exit(1);
+    }
+    return result;
+}
+
+Pad::InputScript* Script() {
+    static const std::unique_ptr<Pad::InputScript> script = [] () -> std::unique_ptr<Pad::InputScript> {
+#ifdef _WIN32
+        const auto* pathValue = _wgetenv(L"APS5_PAD_SCRIPT");
+        const auto* liveValue = _wgetenv(L"APS5_PAD_SCRIPT_LIVE");
+#else
+        const auto* pathValue = std::getenv("APS5_PAD_SCRIPT");
+        const auto* liveValue = std::getenv("APS5_PAD_SCRIPT_LIVE");
+#endif
+        const std::filesystem::path path = pathValue ? std::filesystem::path(pathValue) : std::filesystem::path{};
+        const std::filesystem::path live = liveValue ? std::filesystem::path(liveValue) : std::filesystem::path{};
+        if (path.empty() && live.empty()) return nullptr;
+        auto created = std::make_unique<Pad::InputScript>();
+        if (!path.empty()) {
+            try {
+                created->SetScript(Pad::InputScript::ParseFile(path));
+            } catch (const std::runtime_error& error) {
+                std::fprintf(stderr, "%s\n", error.what());
+                std::fflush(stderr);
+                std::exit(1);
+            }
+        }
+        created->SetLoopMs(EnvironmentNumber("APS5_PAD_SCRIPT_LOOP_MS"));
+        if (!live.empty()) created->SetLive(live);
+        return created;
+    }();
+    return script.get();
+}
+
+Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = false) {
     static Pad::InputCommandFile::Input lastInjected;
-    const auto injected = InjectedCommands().Poll(now);
+    auto injected = InjectedCommands().Poll(now);
+    if (auto* script = Script()) {
+        if (titleRead) script->Start(now);
+        Pad::InputScript::Report report;
+        const auto frame = script->Sample(now, &report);
+        for (const auto& fired : report.fired) {
+            std::fprintf(stderr, "[pad-script] t=%llu %s hold %llu\n", static_cast<unsigned long long>(fired.elapsedMs), fired.label.c_str(), static_cast<unsigned long long>(fired.holdMs));
+        }
+        for (const auto& error : report.errors) std::fprintf(stderr, "%s\n", error.c_str());
+        if (!report.fired.empty() || !report.errors.empty()) std::fflush(stderr);
+        injected.buttons |= frame.buttons;
+        if (frame.hasSticks && !injected.hasSticks) {
+            injected.hasSticks = true;
+            injected.sticks = frame.sticks;
+            injected.stickMask = frame.stickMask;
+        }
+    }
     if (injected != lastInjected) {
         lastInjected = injected;
         slots[0].timestamp = now;
@@ -315,7 +389,7 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
 }
 
 Pad::InputCommandFile::Input InjectedTitleInput(std::uint64_t now) {
-    auto injected = InjectedInput(now);
+    auto injected = InjectedInput(now, true);
     if (slots[0].state.intercepted) injectedHeldThroughCapture |= injected.buttons;
     else injectedHeldThroughCapture &= InjectedCommands().HeldThrough(injectedHeldAt, now);
     injectedHeldAt = now;
@@ -643,7 +717,7 @@ extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state) {
     injectedHeldThroughCapture |= injected.buttons;
     injectedHeldAt = sceKernelGetProcessTime();
     state->buttons |= injected.buttons;
-    if (injected.hasSticks) state->sticks = injected.sticks;
+    InjectSticks(state->sticks, injected);
 }
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
@@ -766,4 +840,8 @@ extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint
     });
     if (!hapticStreamOpen.load()) return false;
     return haptics.Take(std::span<std::int8_t, PadHapticBuffer::BlockFrames * 2>(block, PadHapticBuffer::BlockFrames * 2));
+}
+
+extern "C" bool PadScriptActive_nid_postfix() {
+    return Script() != nullptr;
 }

@@ -1,0 +1,5 @@
+# libSceNgs2.native
+
+## change [sceNgs2SystemCreateWithAllocator free handler]
+
+- [sceNgs2SystemCreateWithAllocator and sceNgs2RackCreateWithAllocator free handler](../../../core/libs/prx/libSceNgs2.native/src/System.cpp) (libSceNgs2.native) - an allocator with an `alloc_handler` but no `free_handler` throws after the option checks, for a rack also after the system check: the module only checks the `alloc_handler`, and what it does without a free handler is unknown. Otherwise `sceNgs2SystemCreate` and `sceNgs2RackCreate` return `0x804A8020` for a null buffer info or host buffer, and the `WithAllocator` calls `0x804A8023` for a null allocator or `alloc_handler`, before the null-handle `0x804A8010` and the option checks, per prosper's reading of the module ([create](https://github.com/mattias800/prosper/blob/8dcb5dfdb9997ede7c76783995010d6abd1222f8/prosper/src/hle/audio/hle_audio.cpp#L4246-L4334), [rack](https://github.com/mattias800/prosper/blob/8dcb5dfdb9997ede7c76783995010d6abd1222f8/prosper/src/hle/audio/hle_audio.cpp#L4401-L4408)); not measured on a console

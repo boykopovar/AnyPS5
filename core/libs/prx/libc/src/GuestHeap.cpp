@@ -362,6 +362,15 @@ void GuestHeapFree_nid_postfix(void* pointer) {
     free(mutation, pointer, range.bytes);
 }
 
+void GuestHeapFillAndFree_nid_no_patch(void* pointer, int fill) {
+    if (pointer == nullptr) return;
+    GuestAllocations::Mutation mutation;
+    const auto range = mutation.Find(pointer);
+    mutation.RequireUnpinned(pointer, range.bytes);
+    std::memset(pointer, fill, range.bytes);
+    free(mutation, pointer, range.bytes);
+}
+
 void* GuestHeapReallocate_nid_postfix(void* pointer, std::size_t bytes) {
     if (pointer == nullptr) return GuestHeapAllocate_nid_postfix(bytes);
     GuestAllocations::Mutation mutation;

@@ -2,6 +2,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -16,9 +18,59 @@ const GuestLocale::CollateVtable& FacetCollate(const GuestLocale::CollateFacet* 
     return *reinterpret_cast<const GuestLocale::CollateVtable*>(self->base.vtable);
 }
 
+struct ScopedLocinfo {
+    GuestLocale::LocinfoStorage storage{};
+    bool active = false;
+
+    explicit ScopedLocinfo(const char* localeName) {
+        _ZNSt8_LocinfoC1EPKc_nid_postfix(&storage, localeName);
+        active = true;
+    }
+
+    ~ScopedLocinfo() {
+        if (active) _ZNSt8_LocinfoD1Ev_nid_postfix(&storage);
+    }
+
+    ScopedLocinfo(const ScopedLocinfo&) = delete;
+    ScopedLocinfo& operator=(const ScopedLocinfo&) = delete;
+};
+
+void InitCollateFacet(GuestLocale::CollateFacet* self, std::size_t references) {
+    if (self == nullptr) throw std::invalid_argument("collate<char>::collate: null object");
+    self->base.vtable = &BaseCollate().facet;
+    self->base.references = static_cast<std::uint32_t>(references);
+    self->base.reserved = static_cast<std::uint32_t>(static_cast<std::uint64_t>(references) >> 32);
+    self->collation = nullptr;
+    self->wideCollation = nullptr;
+}
+
+void ConstructNamedCollate(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references) {
+    if (self == nullptr) throw std::invalid_argument("collate<char>::collate: null object");
+    ScopedLocinfo locinfo(localeName);
+    InitCollateFacet(self, references);
+}
+
 }
 
 extern "C" {
+
+void APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references) {
+    ConstructNamedCollate(self, "C", references);
+}
+
+void APS5_VABI _ZNSt7collateIcEC1EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references) {
+    ConstructNamedCollate(self, localeName, references);
+}
+
+void APS5_VABI _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references) {
+    if (self == nullptr) throw std::invalid_argument("collate<char>::collate: null object");
+    if (locinfo == nullptr) throw std::invalid_argument("collate<char>::collate: null _Locinfo");
+    InitCollateFacet(self, references);
+}
+
+void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references) {
+    ConstructNamedCollate(self, localeName, references);
+}
 
 int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2) {
     return BaseCollate().compare(self, first1, last1, first2, last2);

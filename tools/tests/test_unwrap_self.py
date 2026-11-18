@@ -1870,6 +1870,29 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         process.assert_not_called()
 
 
+class EntropyTests(unittest.TestCase):
+    def test_entropy_matches_known_byte_distributions(self):
+        self.assertEqual(unwrap_self.entropy(b''), 0.0)
+        self.assertEqual(unwrap_self.entropy(b'ab'), 1.0)
+        self.assertEqual(unwrap_self.entropy(b'aaaa'), 0.0)
+class DecryptedCheckTests(unittest.TestCase):
+    def test_check_decrypted_refuses_when_every_load_segment_is_encrypted(self):
+        uniform = bytes(range(256)) * 256
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}]
+        with self.assertRaisesRegex(unwrap_self.Refused, 'every load segment looks encrypted'):
+            unwrap_self.check_decrypted(uniform, headers)
+
+    def test_check_decrypted_passes_when_one_load_segment_is_plain(self):
+        uniform = bytes(range(256)) * 256
+        plain = bytes(len(uniform))
+        data = uniform + plain
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}, {'type': 1, 'size': len(plain), 'source': len(uniform), 'index': 1}]
+        unwrap_self.check_decrypted(data, headers)
+class RecordReadTests(unittest.TestCase):
+    def test_read_records_returns_nothing_for_an_empty_table(self):
+        self.assertEqual(unwrap_self.read_records(bytes(unwrap_self.FIRST_REGION)), [])
+
+
 if __name__ == "__main__":
     selected_test = os.environ.get("UNWRAP_SELF_TEST")
     unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)
