@@ -51,6 +51,16 @@ void TestParameterSubmissionWithoutSession() {
 }
 
 void TestCallsWithoutReprojectionSession() {
+    Hmd2::MirroringOption option{};
+    const auto before = option;
+    Require(sceHmd2ReprojectionSetMirroringOption(nullptr) == Hmd2::ReprojectionNotInitialized, "null mirroring option without a session");
+    Require(sceHmd2ReprojectionSetMirroringOption(&option) == Hmd2::ReprojectionNotInitialized, "mirroring option without a session");
+    Require(std::memcmp(&option, &before, sizeof(option)) == 0, "mirroring option was written without a session");
+    Require(sceHmd2ReprojectionDisableMirroring() == Hmd2::ReprojectionNotInitialized, "disable mirroring without a session");
+    Require(sceHmd2ReprojectionDisableVrMode() == Hmd2::ReprojectionNotInitialized, "disable VR mode without a session");
+    for (const auto frameId : frameIds) {
+        Require(sceHmd2ReprojectionBeginFrame(frameId) == Hmd2::ReprojectionNotInitialized, "begin frame without a session");
+    }
     TestParameterSubmissionWithoutSession();
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
@@ -371,6 +381,11 @@ bool Throws(Call call) {
 }
 
 void TestGatedCallsInsideReprojectionSession() {
+    Hmd2::MirroringOption option{};
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetMirroringOption(&option); }), "mirroring option reported no session inside one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableMirroring(); }), "disable mirroring reported no session inside one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableVrMode(); }), "disable VR mode reported no session inside one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionBeginFrame(1); }), "begin frame reported no session inside one");
     std::array<std::uint8_t, 64> memory;
     memory.fill(0xaa);
     const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
