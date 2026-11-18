@@ -27,17 +27,25 @@ void EmitBdaMarkWritten(SpirvEmitterState& state, std::uint32_t written, std::ui
     const auto granule = [&](std::uint32_t at) { return Unary(state, spv::OpUConvert, u32, binary(spv::OpISub, u64, binary(spv::OpShiftRightLogical, u64, at, shift), origin)); };
     const auto first = granule(address);
     const auto last = granule(binary(spv::OpISub, u64, end, BdaConstant(state, 1u)));
-    const auto wordOf = [&](std::uint32_t bit) { return binary(spv::OpIAdd, u32, block, binary(spv::OpShiftRightLogical, u32, bit, constant(5u))); };
     const auto maskOf = [&](std::uint32_t bit) { return binary(spv::OpShiftLeftLogical, u32, constant(1u), binary(spv::OpBitwiseAnd, u32, bit, constant(31u))); };
-    const auto firstWord = wordOf(first);
-    const auto lastWord = wordOf(last);
-    const auto shared = binary(spv::OpIEqual, boolean, firstWord, lastWord);
-    const auto firstMask = binary(spv::OpBitwiseOr, u32, maskOf(first), Select(state, u32, shared, maskOf(last), constant(0u)));
+    const auto setBits = [&](std::uint32_t firstWord, std::uint32_t first, std::uint32_t lastWord, std::uint32_t last) {
+        const auto shared = binary(spv::OpIEqual, boolean, firstWord, lastWord);
+        const auto firstMask = binary(spv::OpBitwiseOr, u32, maskOf(first), Select(state, u32, shared, maskOf(last), constant(0u)));
+        state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, firstWord), scope, relaxed, firstMask);
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, shared), [&] {
+            state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, lastWord), scope, relaxed, maskOf(last));
+        });
+    };
+    const auto blockWord = [&](std::uint32_t bit) { return binary(spv::OpIAdd, u32, block, binary(spv::OpShiftRightLogical, u32, bit, constant(5u))); };
+    const auto pageShift = BdaConstant(state, BdaAbi::WrittenPageShift);
+    const auto firstPage = Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, pageShift));
+    const auto lastPage = Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, binary(spv::OpISub, u64, end, BdaConstant(state, 1u)), pageShift));
+    const auto mapWord = [&](std::uint32_t page) {
+        return binary(spv::OpIAdd, u32, constant(BdaAbi::WrittenPageMapWord), binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, page, constant(5u)), constant(BdaAbi::WrittenPageMapWords - 1u)));
+    };
     state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::WrittenDirtyWord)), scope, relaxed, constant(1u));
-    state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, firstWord), scope, relaxed, firstMask);
-    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, shared), [&] {
-        state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, lastWord), scope, relaxed, maskOf(last));
-    });
+    setBits(blockWord(first), first, blockWord(last), last);
+    setBits(mapWord(firstPage), firstPage, mapWord(lastPage), lastPage);
 }
 
 // (u64 address, u32 bytes, u32 instruction) -> u64 device address of the range holding all the bytes,
@@ -146,8 +154,9 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
     const auto result = binary(spv::OpIAdd, u64, base, offset);
     const auto deviceEnd = binary(spv::OpIAdd, u64, result, Unary(state, spv::OpUConvert, u64, bytes));
     const bool tracksWrites = (permission & BdaAbi::Write) != 0;
-    const auto written = tracksWrites ? BdaLoadWord(state, at(7)) : 0u;
+    const auto written = BdaLoadWord(state, at(7));
     failFirst({
+        {tracksWrites ? ConstantBool(state, false) : binary(spv::OpIEqual, boolean, written, constant(BdaAbi::WrittenInvalid)), BdaAbi::FaultReason::InvalidTable},
         {binary(spv::OpUGreaterThanEqual, boolean, begin, finish), BdaAbi::FaultReason::InvalidTable},
         {binary(spv::OpUGreaterThan, boolean, end, finish), BdaAbi::FaultReason::Unmapped},
         {binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(permission)), constant(permission)), BdaAbi::FaultReason::Permission},

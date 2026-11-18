@@ -156,7 +156,7 @@ VkDeviceSize faultStride(const Context& context, VkDeviceSize bytes) {
 bool faultSlotClean(std::span<const std::byte> bytes) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     if (bytes.size() < Abi::FaultBufferBytes) return std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
-    std::array<std::uint32_t, Abi::WrittenPoolWord> head{};
+    std::array<std::uint32_t, Abi::WrittenPageMapWord> head{};
     std::memcpy(head.data(), bytes.data(), sizeof(head));
     std::uint32_t guard = 0;
     std::memcpy(&guard, bytes.data() + Abi::SrtGuardWord * sizeof(std::uint32_t), sizeof(guard));
@@ -177,6 +177,14 @@ bool writeStatsEnabled() {
     return enabled;
 }
 
+struct WriteCounts {
+    std::uint64_t granules = 0;
+    std::uint64_t grantedPages = 0;
+    std::uint64_t pages = 0;
+    std::uint64_t coarseGrantedPages = 0;
+    std::uint64_t coarsePages = 0;
+};
+
 struct WriteStats {
     std::mutex mutex;
     std::uint64_t tables = 0;
@@ -187,10 +195,7 @@ struct WriteStats {
     std::uint32_t maxCoarse = 0;
     std::uint32_t maxShift = 0;
     std::uint64_t dispatches = 0;
-    std::uint64_t granules = 0;
-    std::uint64_t pages = 0;
-    std::uint64_t coarseGranules = 0;
-    std::uint64_t coarsePages = 0;
+    WriteCounts total;
     std::uint64_t coarseDispatchLines = 0;
 };
 
@@ -218,23 +223,26 @@ void noteTableAssignment(std::size_t ranges, const ShaderRecompiler::BdaAbi::Wri
     }
 }
 
-void noteDispatchWrites(std::uint64_t granules, std::uint64_t pages, std::uint64_t coarseGranules, std::uint64_t coarsePages) {
+void noteDispatchWrites(const WriteCounts& counts) {
     if (!writeStatsEnabled()) return;
     auto& stats = writeStats();
     std::lock_guard lock(stats.mutex);
     ++stats.dispatches;
-    stats.granules += granules;
-    stats.pages += pages;
-    stats.coarseGranules += coarseGranules;
-    stats.coarsePages += coarsePages;
-    if (coarsePages != 0 && stats.coarseDispatchLines < 64) {
+    stats.total.granules += counts.granules;
+    stats.total.grantedPages += counts.grantedPages;
+    stats.total.pages += counts.pages;
+    stats.total.coarseGrantedPages += counts.coarseGrantedPages;
+    stats.total.coarsePages += counts.coarsePages;
+    if (counts.coarseGrantedPages != 0 && stats.coarseDispatchLines < 64) {
         ++stats.coarseDispatchLines;
-        std::fprintf(stderr, "[bda-written] dispatch #%llu granules=%llu pages=%llu coarse granules=%llu coarse pages=%llu\n",
-            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(granules), static_cast<unsigned long long>(pages), static_cast<unsigned long long>(coarseGranules), static_cast<unsigned long long>(coarsePages));
+        std::fprintf(stderr, "[bda-written] dispatch #%llu granules=%llu pages in them=%llu marked=%llu, coarse: pages in granules=%llu marked=%llu\n",
+            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(counts.granules), static_cast<unsigned long long>(counts.grantedPages), static_cast<unsigned long long>(counts.pages),
+            static_cast<unsigned long long>(counts.coarseGrantedPages), static_cast<unsigned long long>(counts.coarsePages));
     }
     if (stats.dispatches % 4096 == 0) {
-        std::fprintf(stderr, "[bda-written] %llu dispatches wrote: granules=%llu pages=%llu, of which coarse granules=%llu coarse pages=%llu\n",
-            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(stats.granules), static_cast<unsigned long long>(stats.pages), static_cast<unsigned long long>(stats.coarseGranules), static_cast<unsigned long long>(stats.coarsePages));
+        std::fprintf(stderr, "[bda-written] %llu dispatches stored: granules=%llu pages in them=%llu marked=%llu, coarse: pages in granules=%llu marked=%llu\n",
+            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(stats.total.granules), static_cast<unsigned long long>(stats.total.grantedPages), static_cast<unsigned long long>(stats.total.pages),
+            static_cast<unsigned long long>(stats.total.coarseGrantedPages), static_cast<unsigned long long>(stats.total.coarsePages));
     }
 }
 
@@ -658,17 +666,16 @@ void BdaResources::markWrittenPages(const BdaResources& record) const {
     std::memcpy(&header, tableBytes.data(), sizeof(header));
     Require(header.entryBytes == sizeof(Abi::Range) && (tableBytes.size() - sizeof(header)) / sizeof(Abi::Range) >= header.count, "invalid BDA page table for the written-page record");
     const auto wordCount = bytes.size() / sizeof(std::uint32_t);
-    std::uint64_t granules = 0;
-    std::uint64_t pages = 0;
-    std::uint64_t coarseGranules = 0;
-    std::uint64_t coarsePages = 0;
+    WriteCounts counts;
+    std::vector<std::pair<std::uint64_t, std::size_t>> granted;
+    const auto pagesOf = [](std::uint64_t begin, std::size_t size) { return ((begin + size - 1) >> Abi::WrittenPageShift) - (begin >> Abi::WrittenPageShift) + 1; };
     for (std::uint32_t index = 0; index < header.count; ++index) {
         Abi::Range range{};
         std::memcpy(&range, tableBytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
         if (range.written == 0) continue;
         const auto block = Abi::DecodeWrittenBlock(range.written);
         const bool coarse = block.shift > Abi::WrittenPageShift;
-        Require(Abi::ForEachWrittenRange(words, wordCount, range, [&](std::uint64_t begin, std::size_t size) {
+        Require(Abi::ForEachWrittenPage(words, wordCount, range, [&](std::uint64_t begin, std::size_t size) {
             const auto end = begin + size;
             for (const auto& [base, length] : imageTableRanges) {
                 if (length != 0 && begin < base + length && base < end) {
@@ -678,22 +685,22 @@ void BdaResources::markWrittenPages(const BdaResources& record) const {
                 }
             }
             GuestMemory::MarkPossiblyWritten(begin, size);
-            if (writeStatsEnabled()) {
-                const auto marked = ((end - 1) >> Abi::WrittenPageShift) - (begin >> Abi::WrittenPageShift) + 1;
-                const auto set = ((end - 1) >> block.shift) - (begin >> block.shift) + 1;
-                pages += marked;
-                granules += set;
-                if (coarse) {
-                    coarsePages += marked;
-                    coarseGranules += set;
-                }
-            }
+            const auto marked = pagesOf(begin, size);
+            counts.pages += marked;
+            if (coarse) counts.coarsePages += marked;
+        }, [&](std::uint64_t begin, std::size_t size) {
+            granted.emplace_back(begin, size);
+            const auto inside = pagesOf(begin, size);
+            counts.granules += ((begin + size - 1) >> block.shift) - (begin >> block.shift) + 1;
+            counts.grantedPages += inside;
+            if (coarse) counts.coarseGrantedPages += inside;
         }), "invalid BDA written-page record");
         const auto count = Abi::WrittenBlockWords(range.begin, range.end, block.shift);
         std::memset(words + block.word, 0, static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     }
+    for (const auto& [begin, size] : granted) Abi::ClearWrittenPageMap(words, begin, size);
     words[Abi::WrittenDirtyWord] = 0;
-    noteDispatchWrites(granules, pages, coarseGranules, coarsePages);
+    noteDispatchWrites(counts);
 }
 
 }

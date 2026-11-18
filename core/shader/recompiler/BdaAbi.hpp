@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::BdaAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 inline constexpr std::uint32_t Read = 1;
 inline constexpr std::uint32_t Write = 2;
 
@@ -65,14 +65,19 @@ static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 2
 
 inline constexpr std::uint32_t WrittenPageShift = 12;
 inline constexpr std::uint32_t WrittenDirtyWord = sizeof(Fault) / sizeof(std::uint32_t);
-inline constexpr std::uint32_t WrittenPoolWord = WrittenDirtyWord + 1;
-inline constexpr std::uint32_t WrittenPoolWords = 6145;
+inline constexpr std::uint32_t WrittenPageMapWord = WrittenDirtyWord + 1;
+inline constexpr std::uint32_t WrittenPageMapWords = 4096;
+inline constexpr std::uint64_t WrittenPageMapBits = std::uint64_t{WrittenPageMapWords} * 32u;
+inline constexpr std::uint32_t WrittenPoolWord = WrittenPageMapWord + WrittenPageMapWords;
+inline constexpr std::uint32_t WrittenPoolWords = 8192;
 inline constexpr std::uint32_t SrtGuardWord = WrittenPoolWord + WrittenPoolWords;
 inline constexpr std::uint32_t SrtGuardStageShift = 24;
 inline constexpr std::size_t FaultBufferBytes = (SrtGuardWord + 1) * sizeof(std::uint32_t);
 inline constexpr std::uint32_t WrittenBlockBits = 16;
 inline constexpr std::uint32_t WrittenMaxShift = 47;
-static_assert(SrtGuardWord < (1u << WrittenBlockBits));
+inline constexpr std::uint32_t WrittenInvalid = 0xffffffffu;
+static_assert((WrittenPageMapWords & (WrittenPageMapWords - 1u)) == 0);
+static_assert(SrtGuardWord < (1u << WrittenBlockBits) && ((WrittenMaxShift << WrittenBlockBits) | 0xffffu) != WrittenInvalid);
 
 struct WrittenBlock {
     std::uint32_t word;
@@ -182,6 +187,77 @@ bool ForEachWrittenRange(const std::uint32_t* words, std::size_t wordCount, cons
     }
     flush();
     return true;
+}
+
+inline constexpr std::uint32_t WrittenPageMapWordOf(std::uint64_t page) {
+    return WrittenPageMapWord + static_cast<std::uint32_t>((page >> 5u) & (WrittenPageMapWords - 1u));
+}
+
+inline constexpr std::uint32_t WrittenPageMapMaskOf(std::uint64_t page) {
+    return 1u << (page & 31u);
+}
+
+template<typename TMark, typename TGranted>
+bool ForEachWrittenPage(const std::uint32_t* words, std::size_t wordCount, const Range& range, TMark&& mark, TGranted&& granted) {
+    if (wordCount < WrittenPoolWord) return false;
+    return ForEachWrittenRange(words, wordCount, range, [&](std::uint64_t begin, std::size_t bytes) {
+        granted(begin, bytes);
+        const auto end = begin + bytes;
+        const auto firstPage = begin >> WrittenPageShift;
+        const auto lastPage = (end - 1u) >> WrittenPageShift;
+        std::uint64_t runStart = 0;
+        bool open = false;
+        const auto close = [&](std::uint64_t page) {
+            if (!open) return;
+            const auto from = std::max(begin, runStart << WrittenPageShift);
+            const auto to = std::min(end, page << WrittenPageShift);
+            mark(from, static_cast<std::size_t>(to - from));
+            open = false;
+        };
+        if (lastPage - firstPage + 1u <= WrittenPageMapBits) {
+            for (auto page = firstPage; page <= lastPage;) {
+                const auto bits = words[WrittenPageMapWordOf(page)];
+                const auto stop = std::min(lastPage, page | 31u);
+                if (bits == 0) {
+                    close(page);
+                    page = stop + 1u;
+                    continue;
+                }
+                for (; page <= stop; ++page) {
+                    if (bits & WrittenPageMapMaskOf(page)) {
+                        if (!open) runStart = page, open = true;
+                    } else {
+                        close(page);
+                    }
+                }
+            }
+            close(lastPage + 1u);
+        } else {
+            for (std::uint32_t word = 0; word < WrittenPageMapWords; ++word) {
+                const auto bits = words[WrittenPageMapWord + word];
+                for (std::uint32_t bit = 0; bits != 0 && bit < 32; ++bit) {
+                    if (((bits >> bit) & 1u) == 0) continue;
+                    const auto residue = std::uint64_t{word} * 32u + bit;
+                    auto page = firstPage + ((residue + WrittenPageMapBits - firstPage % WrittenPageMapBits) % WrittenPageMapBits);
+                    for (; page <= lastPage; page += WrittenPageMapBits) {
+                        const auto from = std::max(begin, page << WrittenPageShift);
+                        const auto to = std::min(end, (page + 1u) << WrittenPageShift);
+                        mark(from, static_cast<std::size_t>(to - from));
+                    }
+                }
+            }
+        }
+    });
+}
+
+inline void ClearWrittenPageMap(std::uint32_t* words, std::uint64_t begin, std::size_t bytes) {
+    const auto firstPage = begin >> WrittenPageShift;
+    const auto lastPage = (begin + bytes - 1u) >> WrittenPageShift;
+    if (lastPage - firstPage + 1u >= WrittenPageMapBits) {
+        std::fill(words + WrittenPageMapWord, words + WrittenPageMapWord + WrittenPageMapWords, 0u);
+        return;
+    }
+    for (auto page = firstPage; page <= lastPage; ++page) words[WrittenPageMapWordOf(page)] &= ~WrittenPageMapMaskOf(page);
 }
 }
 

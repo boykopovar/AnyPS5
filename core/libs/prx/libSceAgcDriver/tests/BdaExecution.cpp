@@ -173,6 +173,41 @@ void RunWrittenRangeDecodeTests() {
     Require(Abi::AssignWrittenBlocks(many.data(), many.size(), &used) && used.words == Abi::WrittenPoolWords, "one word per writable range did not fill the pool exactly");
     many.push_back({0x200000000ULL, 0x200001000ULL, 0x1000, Abi::Write, 0});
     Require(!Abi::AssignWrittenBlocks(many.data(), many.size()), "more writable ranges than pool words were accepted");
+
+    std::fill(words.begin(), words.end(), 0u);
+    constexpr std::uint64_t huge = 0x8000000000ULL;
+    Abi::Range coarse{huge, huge + (std::uint64_t{1} << 30), 0x1000, Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, 21})};
+    words[Abi::WrittenPoolWord] = 1u << 3;
+    const auto setPage = [&](std::uint64_t address) { words[Abi::WrittenPageMapWordOf(address >> Abi::WrittenPageShift)] |= Abi::WrittenPageMapMaskOf(address >> Abi::WrittenPageShift); };
+    const auto granule3 = huge + 3 * (std::uint64_t{1} << 21);
+    setPage(granule3 + 5 * page);
+    setPage(granule3 + 6 * page);
+    setPage(granule3 + 300 * page);
+    setPage(granule3 + (std::uint64_t{1} << 21));
+    std::vector<std::pair<std::uint64_t, std::size_t>> granted;
+    const auto decodePages = [&](const Abi::Range& range) {
+        marked.clear();
+        granted.clear();
+        return Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) { marked.emplace_back(address, bytes); },
+            [&](std::uint64_t address, std::size_t bytes) { granted.emplace_back(address, bytes); });
+    };
+    Require(decodePages(coarse) && marked == Marks{{granule3 + 5 * page, 2 * page}, {granule3 + 300 * page, page}} && granted == Marks{{granule3, std::size_t{1} << 21}},
+        "the page map did not narrow a coarse granule to its stored pages");
+    for (const auto& [address, bytes] : granted) Abi::ClearWrittenPageMap(words.data(), address, bytes);
+    Require(words[Abi::WrittenPageMapWordOf((granule3 + (std::uint64_t{1} << 21)) >> Abi::WrittenPageShift)] != 0, "clearing a granule's page bits cleared a page outside it");
+    words[Abi::WrittenPageMapWordOf((granule3 + (std::uint64_t{1} << 21)) >> Abi::WrittenPageShift)] = 0;
+    Require(std::all_of(words.begin() + Abi::WrittenPageMapWord, words.begin() + Abi::WrittenPoolWord, [](std::uint32_t word) { return word == 0; }), "clearing a granule left page bits set");
+
+    std::fill(words.begin(), words.end(), 0u);
+    Abi::Range wide{huge, huge + (std::uint64_t{1} << 30), 0x1000, Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, 30})};
+    words[Abi::WrittenPoolWord] = 1u;
+    setPage(huge + 7 * page);
+    Require(decodePages(wide) && marked.size() == ((std::uint64_t{1} << 30) >> Abi::WrittenPageShift) / Abi::WrittenPageMapBits, "a granule longer than the page map did not mark each congruent page once");
+    for (std::size_t index = 0; index < marked.size(); ++index) {
+        Require(marked[index] == std::pair<std::uint64_t, std::size_t>{huge + 7 * page + index * (Abi::WrittenPageMapBits << Abi::WrittenPageShift), page}, "a granule longer than the page map marked the wrong pages");
+    }
+    Abi::ClearWrittenPageMap(words.data(), huge, std::size_t{1} << 30);
+    Require(std::all_of(words.begin() + Abi::WrittenPageMapWord, words.begin() + Abi::WrittenPoolWord, [](std::uint32_t word) { return word == 0; }), "clearing a granule longer than the page map left page bits set");
 }
 
 static void RunBdaDwordWriteTests(const Context& context) {
@@ -204,10 +239,10 @@ static void RunBdaDwordWriteTests(const Context& context) {
         std::uint64_t covered = 0, total = 0;
         const auto* faultWords = reinterpret_cast<const std::uint32_t*>(fault.Bytes().data());
         for (const auto& range : ranges) {
-            Require(Abi::ForEachWrittenRange(faultWords, Abi::FaultBufferBytes / sizeof(std::uint32_t), range, [&](std::uint64_t begin, std::size_t bytes) {
+            Require(Abi::ForEachWrittenPage(faultWords, Abi::FaultBufferBytes / sizeof(std::uint32_t), range, [&](std::uint64_t begin, std::size_t bytes) {
                 total += bytes;
                 for (const auto address : {first, last}) covered += address >= begin && address < begin + bytes ? 1u : 0u;
-            }), "a BDA dword write left an invalid written-page record");
+            }, [](std::uint64_t, std::size_t) {}), "a BDA dword write left an invalid written-page record");
         }
         return std::pair{covered, total};
     };
@@ -618,13 +653,13 @@ void RunBdaStoreExecutionTests(const Context& context) {
         } else {
             Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && Abi::OtherFaults(report) == 1, label + "incorrect first fault metadata");
         }
-        std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
-        std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));
+        std::vector<std::uint32_t> words(Abi::FaultBufferBytes / sizeof(std::uint32_t));
+        std::memcpy(words.data(), fault.Bytes().data(), words.size() * sizeof(std::uint32_t));
         std::set<std::uint64_t> recordedPages;
         for (const auto& range : annotated) {
-            Require(Abi::ForEachWrittenRange(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) {
+            Require(Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) {
                 for (auto page = address >> Abi::WrittenPageShift; page <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++page) recordedPages.insert(page);
-            }), label + "invalid written-page record");
+            }, [](std::uint64_t, std::size_t) {}), label + "invalid written-page record");
         }
         std::set<std::uint64_t> expectedPages;
         for (const auto writtenAddress : writtenAddresses) expectedPages.insert(writtenAddress >> Abi::WrittenPageShift);
