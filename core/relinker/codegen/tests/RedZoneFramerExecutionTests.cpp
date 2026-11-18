@@ -202,6 +202,10 @@ bool hostHasBmi1() {
     return __builtin_cpu_supports("bmi") != 0;
 }
 
+bool hostHasMovbe() {
+    return __builtin_cpu_supports("movbe") != 0;
+}
+
 const std::vector<std::uint8_t> FramelessPushes{0x53, 0x41, 0x56, 0x41, 0x57};
 const std::vector<std::uint8_t> FramelessPops{0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xc3};
 
@@ -260,7 +264,7 @@ std::vector<Leaf> skippedDirectRspLeaves() {
             0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
             0x49, 0x0f, 0x38, 0xf1, 0x21, 0x4d, 0x0f, 0x38, 0xf0, 0x01, 0x48, 0x89, 0x74, 0x24, 0xf0, 0x49, 0x8b, 0x00,
             0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
-        }, kA},
+        }, kA, hostHasMovbe()},
         {"leaf writing rsp through immediate imul", {
             0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
             0x4d, 0x8d, 0x41, 0x10, 0x4d, 0x89, 0x01, 0x49, 0x6b, 0x21, 0x01, 0x48, 0x8b, 0x04, 0x24,
@@ -511,6 +515,10 @@ void verifySkippedLeaves(const std::vector<Leaf>& leaves) {
     const auto image = place(leaves);
     const auto framing = load(image, true);
     for (std::size_t index = 0; index < leaves.size(); ++index) {
+        if (!leaves[index].HostRuns) {
+            std::cout << leaves[index].Name << ": left unframed but not executed, this CPU cannot execute an instruction in it\n";
+            continue;
+        }
         const auto executed = run(image.Starts[index], false);
         require(executed.Result == leaves[index].Expected,
                 std::string(leaves[index].Name) + ": returned " + hex(executed.Result) + " after framing pass, not " + hex(leaves[index].Expected));
