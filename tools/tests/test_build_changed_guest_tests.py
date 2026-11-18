@@ -356,6 +356,7 @@ class Main(unittest.TestCase):
         ]})
         testfile = build / "core" / "libs" / "CTestTestfile.cmake"
         testfile.parent.mkdir(parents=True)
+        (build / "CTestTestfile.cmake").write_text('subdirs("core/libs")\n', encoding="utf-8")
         testfile.write_text('add_test("guest_pad" "C:/b/tests/guest_pad_tests.exe")\n'
                             'add_test("nid_buffer_validation" "C:/b/tests/nid_buffer_validation_tests.exe")\n'
                             'set_tests_properties("nid_buffer_validation" PROPERTIES TIMEOUT "10")\n'
@@ -372,12 +373,16 @@ class Main(unittest.TestCase):
         builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
         self.assertTrue(ran and builds and max(builds) < min(ran))
 
-    def test_registered_commands_come_from_every_testfile_without_a_built_executable(self):
+    def test_registered_commands_ignore_stale_testfiles(self):
         build = Path(self.temporary.name) / "tree"
         (build / "sub").mkdir(parents=True)
-        (build / "CTestTestfile.cmake").write_text('add_test("a b" "/x/a_tests" "arg \\"q\\"")\n', encoding="utf-8")
+        (build / "stale").mkdir()
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test("a b" "/x/a_tests" "arg \\"q\\"")\nsubdirs("sub")\n', encoding="utf-8")
         (build / "sub" / "CTestTestfile.cmake").write_text(
             '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
+        (build / "stale" / "CTestTestfile.cmake").write_text(
+            'add_test("nid_one" "/old/nid_one_tests")\nadd_test("removed" "/old/removed_tests")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
