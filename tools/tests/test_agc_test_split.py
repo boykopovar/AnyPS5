@@ -281,6 +281,14 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
 
+class DedentTests(unittest.TestCase):
+    def test_removes_the_indent_only_from_lines_that_have_it(self):
+        self.assertEqual(agc_test_split.dedent(["    a", "  b", "c", "      d"], 4), ["a", "  b", "c", "  d"])
+
+    def test_zero_amount_and_empty_input_are_unchanged(self):
+        self.assertEqual(agc_test_split.dedent(["  a"], 0), ["  a"])
+        self.assertEqual(agc_test_split.dedent([], 4), [])
+
 
 if __name__ == "__main__":
     unittest.main()
