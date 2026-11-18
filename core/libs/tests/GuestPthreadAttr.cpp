@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <future>
@@ -441,6 +442,7 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
     Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(self, reinterpret_cast<int*>(std::uintptr_t{0x10})) == SCE_KERNEL_ERROR_EFAULT);
     Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadSetprio(self, original) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
