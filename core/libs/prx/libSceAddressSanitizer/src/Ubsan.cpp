@@ -229,7 +229,11 @@ std::string RenderLocation(const Location& location) {
 
 class Report {
 public:
-    explicit Report(const Location& summary) : summary(summary), exceptions(std::uncaught_exceptions()) {}
+    explicit Report(const Location& summary) : exceptions(std::uncaught_exceptions()) {
+        tail = "SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior";
+        if (summary.source && !summary.at.IsInvalid()) tail += " " + RenderLocation(summary) + " in ";
+        tail += "\n";
+    }
 
     void Error(const Location& location, const std::string& message) {
         text += RenderLocation(location) + ": runtime error: " + message + "\n";
@@ -245,9 +249,7 @@ public:
 
     ~Report() {
         if (std::uncaught_exceptions() > exceptions) return;
-        text += "SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior";
-        if (summary.source && !summary.at.IsInvalid()) text += " " + RenderLocation(summary) + " in ";
-        text += "\n";
+        text += tail;
         static std::mutex mutex;
         std::lock_guard lock(mutex);
         std::fwrite(text.data(), 1, text.size(), stderr);
@@ -255,9 +257,9 @@ public:
     }
 
 private:
-    Location summary;
     int exceptions;
     std::string text;
+    std::string tail;
 };
 
 [[noreturn]] void Die() {
