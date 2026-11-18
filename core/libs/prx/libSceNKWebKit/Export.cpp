@@ -488,10 +488,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_1wgLUOSOs9Q_nid_no_patch() {
 }
 APS5_EXPORT("1wgLUOSOs9Q", libSceNKWebKitLegacyUnknown_1wgLUOSOs9Q_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore9FrameView10renderViewEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3887,10 +3883,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager37processDidReceiveRemoteC
 }
 
 int APS5_VABI _ZNK7WebCore17CSSPrimitiveValue13primitiveTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
