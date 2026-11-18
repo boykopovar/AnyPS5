@@ -38,7 +38,11 @@
         <div id="mappings" tabindex="-1" aria-label="Controls" data-i18n-label="controls"></div>
         <section id="configuration" class="configuration-panel" aria-label="Configuration output" data-i18n-label="output" tabindex="-1" hidden>
                 <div class="output-heading"><h2 data-i18n="configuration">Configuration</h2><span id="count" class="tag">0 / 31</span></div>
-                <label for="preview">anyps5-input.ini</label>
+                <label for="profile-title-id" data-i18n="profileTitleId">Title ID (optional)</label>
+                <input id="profile-title-id" type="text" placeholder="PPSA00001" aria-describedby="profile-title-id-help profile-title-id-error" autocomplete="off" autocapitalize="off" spellcheck="false" dir="ltr">
+                <p id="profile-title-id-help" class="hint" data-i18n="profileTitleIdHelp">Use the game's exact Title ID for a per-game profile. Leave blank for a shared configuration.</p>
+                <p id="profile-title-id-error" class="error" role="status" data-i18n="profileTitleIdError" hidden>Use up to 32 characters from A–Z, a–z, 0–9, _ and -.</p>
+                <label id="preview-name" for="preview">anyps5-input.ini</label>
                 <textarea id="preview" readonly spellcheck="false" placeholder="Add a binding to begin." data-i18n-placeholder="previewEmpty" dir="ltr"></textarea>
                 <div class="export-actions">
                     <button id="download" class="primary" type="button" data-i18n="download">Download INI</button>
