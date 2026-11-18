@@ -102,6 +102,12 @@ void testCatalog() {
     }
 }
 
+void testLodStatsRejected() {
+    const auto packet = makePacket(0x8e, {0x33333333u, 0x22222200u, 0u, 0x10051000u});
+    check(packet[0] == 0xc0038e00u, "the LOD statistics header is not the one sceAgcDcbGetLodStats emits");
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "GPU LOD statistics are not implemented");
+}
+
 void testNopPad() {
     check(AgcDriver::Pm4::PacketWords(0xffff1000u) == 1, "the one-dword NOP is not one dword");
     for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(std::vector<std::uint32_t>{0xffff1000u}, queue);
@@ -2936,6 +2942,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
+        testLodStatsRejected();
         testNopPad();
         testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
