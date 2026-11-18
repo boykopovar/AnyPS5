@@ -9,7 +9,9 @@
 #include <stdexcept>
 #include <type_traits>
 
+#ifdef _WIN32
 extern "C" void _cairo_mutex_initialize();
+#endif
 
 static_assert(std::is_same_v<decltype(&cairo_ft_scaled_font_lock_face),
                              FreeType::GuestFaceRec* (APS5_VABI*)(CairoScaledFont*)>);
@@ -36,7 +38,9 @@ bool Throws(Callback&& callback) {
 }
 
 int main() {
+#ifdef _WIN32
     _cairo_mutex_initialize();
+#endif
     cairo_font_face_t* toy = aps5_cairo_toy_font_face_create("", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
     cairo_matrix_t matrix;
     aps5_cairo_matrix_init_scale(&matrix, 12, 12);
