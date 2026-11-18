@@ -1333,6 +1333,19 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
+class WindowsResponseTextTests(unittest.TestCase):
+    def test_decodes_utf16_with_either_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-16")), "-DA=é")
+        self.assertEqual(check_compile.windows_response_text(b"\xfe\xff" + "-DA=é".encode("utf-16-be")), "-DA=é")
+
+    def test_strips_utf8_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text(b"\xef\xbb\xbf-DA"), "-DA")
+
+    def test_plain_utf8_is_decoded_and_invalid_bytes_raise(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-8")), "-DA=é")
+        with self.assertRaises(UnicodeDecodeError):
+            check_compile.windows_response_text(b"\xff\xff\xff")
+
 
 if __name__ == "__main__":
     unittest.main()
