@@ -642,6 +642,51 @@ class PatchAdvisorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 suggest_patches.confined(root, "../outside.txt")
 
+class ValidateEntryTests(unittest.TestCase):
+    DIGEST = "A" * 64
+
+    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+        (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
+        return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
+
+    def test_valid_entry_returns_the_patch_lowercase_digests_and_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            entry["name"] = "Name"
+            patch, targets, metadata = suggest_patches.validate_entry(Path(directory), entry)
+            self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
+            self.assertEqual(targets, {"eboot.bin": "a" * 64})
+            self.assertEqual(metadata, {"name": "Name"})
+
+    def test_missing_or_unknown_fields_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            del entry["targets"]
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+            entry = self.setup(directory)
+            entry["surprise"] = 1
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_targets_must_be_a_nonempty_object_of_sha256_digests(self):
+        for targets, message in (({}, "targets must be a nonempty object"), ([], "targets must be a nonempty object"),
+                                 ({"eboot.bin": "abc"}, "invalid target digest"), ({"eboot.bin": 5}, "invalid target digest")):
+            with self.subTest(targets=targets), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory)
+                entry["targets"] = targets
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_patch_file_must_name_targets_that_match_the_digests(self):
+        for text, message in (("", "patch file has no valid targets"), ("patch = [1]\n", "patch file has no valid targets"),
+                              ('[[patch]]\ntarget = "other.bin"\n', "target hashes must cover exactly the patch targets"),
+                              ('[[patch]]\ntarget = "eboot.bin"\n[[patch]]\ntarget = "extra.bin"\n', "target hashes must cover exactly the patch targets")):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, text)
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
+
 
 if __name__ == "__main__":
     unittest.main()
