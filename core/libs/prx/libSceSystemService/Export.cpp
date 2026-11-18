@@ -765,7 +765,11 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
+ const bool localLaunched = true;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));
+ errno = savedErrno;
+ if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -786,6 +790,7 @@ int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* ca
 }
 
 int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ if (categoryType != nullptr && appId != SYSTEM_SERVICE_RUNNING_APP_ID) return LNC_UTIL_ERROR_GAME_PROCESS;
  return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 

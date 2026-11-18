@@ -6,6 +6,8 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -36,9 +38,11 @@ extern "C" {
 int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, int length) {
     if (length == -1) {
         if (!data) return 0;
-        const auto size = std::strlen(static_cast<const char*>(data));
-        if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) return 0;
-        length = static_cast<int>(size);
+        std::string text;
+        int error = CopyGuestString_nid_no_patch(static_cast<const char*>(data), 65536, text);
+        if (error == 63) error = CopyGuestString_nid_no_patch(static_cast<const char*>(data), 1u << 20, text);
+        if (error) return 0;
+        length = static_cast<int>(text.size());
     }
     auto& value = Checked(string);
     if (data && length > 0 && value.data && value.length >= 0 && !(value.flags & BorrowedData)) {
@@ -55,7 +59,10 @@ int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, 
         LibreSslPutError_nid_no_patch(13, 0xfff, 65);
         return 0;
     }
-    if (data && length) std::memcpy(output, data, static_cast<std::size_t>(length));
+    if (data && length && !GuestCopyIn_nid_no_patch(output, data, static_cast<std::size_t>(length))) {
+        free_nid_postfix(output);
+        return 0;
+    }
     value.data = output;
     value.length = length;
     return 1;
@@ -83,16 +90,24 @@ int APS5_VABI ASN1_INTEGER_set_nid_postfix(Asn1String* integer, std::int64_t val
 
 int APS5_VABI ASN1_OCTET_STRING_cmp_nid_postfix(const Asn1String* first, const Asn1String* second) {
     if (!first || !second) return -1;
-    if (first->length < 0 || second->length < 0)
+    Asn1String left;
+    Asn1String right;
+    if (!GuestCopyIn_nid_no_patch(&left, first, sizeof(left)) || !GuestCopyIn_nid_no_patch(&right, second, sizeof(right)))
+        throw std::invalid_argument("ASN1_OCTET_STRING_cmp: unreadable object");
+    if (left.length < 0 || right.length < 0)
         throw std::invalid_argument("ASN1_OCTET_STRING_cmp: negative length");
-    if (first->length != second->length) return first->length - second->length;
-    if (first->length) {
-        if (!first->data || !second->data)
+    if (left.length != right.length) return left.length - right.length;
+    if (left.length) {
+        if (!left.data || !right.data)
             throw std::invalid_argument("ASN1_OCTET_STRING_cmp: null nonempty data");
-        const int order = std::memcmp(first->data, second->data, static_cast<std::size_t>(first->length));
+        std::vector<unsigned char> a(static_cast<std::size_t>(left.length));
+        std::vector<unsigned char> b(a.size());
+        if (!GuestCopyIn_nid_no_patch(a.data(), left.data, a.size()) || !GuestCopyIn_nid_no_patch(b.data(), right.data, b.size()))
+            throw std::invalid_argument("ASN1_OCTET_STRING_cmp: unreadable data");
+        const int order = std::memcmp(a.data(), b.data(), a.size());
         if (order) return order;
     }
-    const auto typeDifference = static_cast<std::int64_t>(first->type) - second->type;
+    const auto typeDifference = static_cast<std::int64_t>(left.type) - right.type;
     if (typeDifference < std::numeric_limits<int>::min() || typeDifference > std::numeric_limits<int>::max())
         throw std::overflow_error("ASN1_OCTET_STRING_cmp: type difference overflow");
     return static_cast<int>(typeDifference);

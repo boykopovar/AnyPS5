@@ -592,6 +592,7 @@ static void CheckIfNameIndex() {
     for (int i = 0; i < withoutLoopback; ++i) Require(ids[i] >= 1 && ids[i] <= 8);
     Require(sceNetGetIfnameNumList(ids.data(), 1, 1) == 1 && ids[0] == (primary > 0 ? 1u : 0u));
     Require(Failed(sceNetGetIfnameNumList(ids.data(), 1, 2), 22));
+    Require(Failed(sceNetGetIfnameNumList(reinterpret_cast<std::uint32_t*>(0x10), 1, 1), 14));
 }
 
 static void CheckRandom() {
@@ -703,6 +704,17 @@ static void CheckNetMemory() {
         Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 64 == 0);
         sceNetMemoryFree(block);
     }
+    auto* freed = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 0));
+    Require(freed != nullptr);
+    std::memset(freed, 0x5a, 64);
+    sceNetMemoryFree(freed);
+    auto* reused = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 0));
+    Require(reused == freed);
+    Require(std::all_of(reused, reused + 64, [](std::uint8_t byte) { return byte == 0xdd; }));
+    sceNetMemoryFree(reused);
+    auto* cleared = static_cast<std::uint8_t*>(sceNetMemoryAllocate(64, 2));
+    Require(cleared == freed && std::all_of(cleared, cleared + 64, [](std::uint8_t byte) { return byte == 0; }));
+    sceNetMemoryFree(cleared);
     sceNetMemoryFree(nullptr);
     Require(*sceNetErrnoLoc() == 33);
 }
@@ -3102,10 +3114,12 @@ int main(int argc, char** argv) {
     Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 &&
         resolver_error == static_cast<int>(0x804101E1));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", reinterpret_cast<void*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
     Require(ipv4[0] == 127);
     std::array<std::uint8_t, 16> resolved6{};
     resolved6.fill(0xA5);
+    Require(Failed(sceNetResolverStartNtoa6(resolver, "::1", reinterpret_cast<void*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoa6(resolver, "::1", resolved6.data(), 5000000, 1, 0) == 0);
     Require(std::all_of(resolved6.begin(), resolved6.end() - 1, [](std::uint8_t byte) { return byte == 0; }) && resolved6[15] == 1);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
@@ -3118,6 +3132,7 @@ int main(int argc, char** argv) {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     alignas(NetResolverInfo) std::array<std::uint8_t, 512> records{};
     records.fill(0xA5);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", reinterpret_cast<NetResolverInfo*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", reinterpret_cast<NetResolverInfo*>(records.data()), 5000000, 1, 0) == 0);
     std::int32_t record_family = 0;
     std::int32_t record_count = 0;

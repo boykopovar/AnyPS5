@@ -5,15 +5,32 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
+
+std::size_t heapAllocations = 0;
+std::size_t heapFrees = 0;
 
 constexpr int RsaType = 6;
 constexpr int EcType = 408;
@@ -624,8 +641,76 @@ void TestBioMalformedAndMultiChunkObjects() {
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
 }
 
-void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
-void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
+void TestGuestOutput() {
+    const unsigned char* cursor = RsaPkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(RsaPkcs8Der.size()));
+    Require(p8 != nullptr);
+    const int size = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, nullptr);
+    Require(size > 0);
+    std::vector<unsigned char> expected(static_cast<std::size_t>(size));
+    unsigned char* expectedCursor = expected.data();
+    Require(i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, &expectedCursor) == size);
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memset(page, 0, pageSize);
+    std::vector<unsigned char> buffer(static_cast<std::size_t>(size), 0x5a);
+    auto** const readOnlyNull = static_cast<unsigned char**>(page);
+    auto** const readOnlyBuffer = readOnlyNull + 1;
+    auto** const readOnlyTarget = readOnlyNull + 2;
+    *readOnlyBuffer = buffer.data();
+    *readOnlyTarget = static_cast<unsigned char*>(page) + pageSize / 2;
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    const auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); } catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    auto** const unmapped = reinterpret_cast<unsigned char**>(std::uintptr_t{0x10});
+    Require(rejectsKeepingErrno([&] { i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, unmapped); }));
+    unsigned char* unmappedTarget = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    Require(rejectsKeepingErrno([&] { i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, &unmappedTarget); }));
+    Require(unmappedTarget == reinterpret_cast<unsigned char*>(std::uintptr_t{0x10}));
+    Require(rejectsKeepingErrno([&] { i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, readOnlyTarget); }));
+    Require(*readOnlyTarget == static_cast<unsigned char*>(page) + pageSize / 2);
+    const std::size_t allocationsBefore = heapAllocations;
+    const std::size_t freesBefore = heapFrees;
+    Require(rejectsKeepingErrno([&] { i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, readOnlyNull); }));
+    Require(heapAllocations - allocationsBefore == 1 && heapFrees - freesBefore == 1 && *readOnlyNull == nullptr);
+    Require(rejectsKeepingErrno([&] { i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, readOnlyBuffer); }));
+    Require(*readOnlyBuffer == buffer.data());
+    Require(buffer == expected);
+    unsigned char* writePtr = buffer.data();
+    Require(i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, &writePtr) == size && writePtr == buffer.data() + size);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8);
+}
+
+void* APS5_VABI HeapAllocate(std::size_t size) {
+    ++heapAllocations;
+    return std::malloc(size == 0 ? 1 : size);
+}
+void APS5_VABI HeapRelease(void* pointer) {
+    if (pointer) ++heapFrees;
+    std::free(pointer);
+}
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
     return std::calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
 }
@@ -641,7 +726,7 @@ int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) { std::abor
 int main() {
     std::array<void*, 10> heapApi{
         reinterpret_cast<void*>(HeapAllocate),
-        reinterpret_cast<void*>(HeapFree),
+        reinterpret_cast<void*>(HeapRelease),
         reinterpret_cast<void*>(HeapCallocate),
         reinterpret_cast<void*>(HeapReallocate),
         reinterpret_cast<void*>(UnexpectedAlign),
@@ -658,5 +743,6 @@ int main() {
     TestConsecutiveBioObjects();
     TestPkcs8AttributesRoundTrip();
     TestBioMalformedAndMultiChunkObjects();
+    TestGuestOutput();
     return 0;
 }
