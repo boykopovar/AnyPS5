@@ -5055,6 +5055,30 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     Require(grew(copiedBefore, ResidentCounts().copied) >= 1, "a resident range the CPU wrote was not copied in again");
     Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeStore, "a resident range the CPU wrote was copied in from a carried device shadow");
     Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x33}; }), "the copy-back after a CPU store into a resident range stored stale bytes");
+    {
+        const auto skippedBeforeMidUse = ResidentCounts().skipped;
+        auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+        memory.AllowDeviceStaging();
+        memory.AddWritable(element, elementBytes, false, true);
+        memory.Upload(false);
+        Require(grew(skippedBeforeMidUse, ResidentCounts().skipped) == 1, "the use before the mid-use CPU store did not skip the resident copy-in");
+        std::memset(reinterpret_cast<void*>(element + 8192), 0x44, 4096);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(element, elementBytes));
+        memory.RecordCopyBacks(recorder);
+        recorder.NotePendingWrites(memory.Writes());
+        const auto invalidatedBeforeMark = ResidentCounts().invalidated;
+        memory.MarkDirectWrites();
+        Require(grew(invalidatedBeforeMark, ResidentCounts().invalidated) == 1, "a CPU store collected before the direct-write mark did not invalidate the resident range");
+        memory.NoteCarriedShadows(recorder);
+    }
+    const auto copiedBeforeInvalidated = ResidentCounts().copied;
+    const auto carriedBeforeInvalidated = GuestBufferMemory::CarriedShadowCopies();
+    use(recorder);
+    Require(GuestBufferMemory::CarriedShadowCopies() == carriedBeforeInvalidated, "a resident range invalidated by a CPU store was copied in from a carried device shadow");
+    Require(grew(copiedBeforeInvalidated, ResidentCounts().copied) >= 1, "a resident range invalidated by a CPU store was not copied in again");
+    recorder.Sync();
+    Require(std::all_of(reinterpret_cast<const std::byte*>(element + 8192), reinterpret_cast<const std::byte*>(element + 12288), [](std::byte value) { return value == std::byte{0x44}; }), "the copy-back after an invalidating CPU store into a resident range stored stale bytes");
     kept.clear();
     ClearResidentRanges(context.device);
     struct Reactivate {

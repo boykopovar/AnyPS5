@@ -7543,7 +7543,7 @@ void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
     auto& shadows = Carried();
     std::uint64_t generation = 0;
     for (const auto& region : regions) {
-        if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
+        if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0 || region.resident) continue;
         const auto bytes = region.end - region.begin;
         const auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(bytes), false);
         if (serial == 0) continue;
@@ -7640,7 +7640,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             continue;
         }
         std::shared_ptr<Buffer> carried;
-        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
+        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0 && !region->resident) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
         if (carried != nullptr) {
             carriedShadowCopies.fetch_add(1, std::memory_order_relaxed);
             if (carried->Handle() != region->buffer->Handle()) {
