@@ -8833,10 +8833,6 @@ int APS5_VABI _ZN7WebCore7Element26scrollIntoViewIfNotVisibleEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC30int52AwareSpeculationFromValueENS_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
