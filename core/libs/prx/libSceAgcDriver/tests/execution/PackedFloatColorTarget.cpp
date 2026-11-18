@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -172,21 +173,21 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder, std::uint32_t sampleShift = 0) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
     cx[0x31c] = standardOrder ? StandardOrderInfo : Float11_11_10Info;
-    cx[0x31d] = 0;
+    cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == (standardOrder ? 0xe4u : 0xc6u) && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.bytes == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
+    Require(color.format == VK_FORMAT_R32_UINT && color.elementBytes == 4 && color.componentMapping == (standardOrder ? 0xe4u : 0xc6u) && color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && color.samples == 1u << sampleShift && (color.bytes << sampleShift) == block.bytes, "the 11_11_10 float target did not decode as a packed R32_UINT surface");
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, std::uint16_t sampleMask = 0xffffu) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -221,6 +222,8 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
+    state.samples = color.samples;
+    state.quadSampleMask.fill(sampleMask);
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
     const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, exportFormat}};
@@ -279,6 +282,30 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const Co
     }
 }
 
+void ResolveTests(AgcDriver::VulkanDevice& device) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
+    Block source(layout.Bytes() * 4u);
+    Block resolved(layout.Bytes());
+    std::memset(source.data, 0, source.bytes);
+    std::memset(resolved.data, 0x5a, resolved.bytes);
+    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, 2u);
+    const std::array<std::array<float, 3>, 2> samples{{
+        {1.0f + 1.0f / 32.0f, 3.0f, std::ldexp(1.0f, -15)},
+        {1.0f + 1.0f / 16.0f, 0.5f, std::ldexp(1.0f, -16)},
+    }};
+    for (std::uint32_t sample = 0; sample < 4u; ++sample) Draw(device, multisampled, Float32Export, Float32Program(samples[sample % 2u]), static_cast<std::uint16_t>(1u << sample));
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+    pass.source = multisampled;
+    pass.targets = {DecodeTarget(resolved, TiledAttrib3, true)};
+    device.ColorMetadataPass(pass);
+    const std::array<float, 3> average{(samples[0][0] + samples[1][0]) / 2.0f, (samples[0][1] + samples[1][1]) / 2.0f, (samples[0][2] + samples[1][2]) / 2.0f};
+    const auto word = Packed(average, true);
+    Require(word == ((SmallFloat(1.0f, 5) + 1u) | (SmallFloat(1.75f, 6) << 10u) | (24u << 21u)), "the expected resolve does not truncate the halfway red average or keep the subnormal blue average");
+    ExpectSurface(device, resolved, layout, std::vector<std::uint32_t>(resolved.bytes / 4u, 0u), word, "a CB resolve of a four-sample 11_11_10 float target");
+    AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
 std::vector<std::uint32_t> Fill(Block& block) {
     std::vector<std::uint32_t> words(block.bytes / 4u);
     for (std::size_t index = 0; index < words.size(); ++index) words[index] = static_cast<std::uint32_t>(index * 0x9e3779b9u);
@@ -333,6 +360,7 @@ int main() {
             TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, standardOrder ? "tiled standard-order" : "tiled", standardOrder);
             TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, standardOrder ? "linear standard-order" : "linear", standardOrder);
         }
+        ResolveTests(*device);
         std::puts("11_11_10 float color target tests passed");
         return 0;
     } catch (const std::exception& error) {
