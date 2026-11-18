@@ -936,6 +936,15 @@ jobs:
       - name: Check the video output skips
         if: github.event_name != 'pull_request'
         run: python tools/check_skips.py build/video_out.xml --job windows
+      - name: Upload the video output test report
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: video-out-report
+          path: |
+            build/video_out.xml
+            video_out.log
+          if-no-files-found: ignore
       - name: Unregister the lavapipe ICD
         if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         run: |
