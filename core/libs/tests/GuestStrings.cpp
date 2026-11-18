@@ -372,7 +372,45 @@ static void CheckStrtonum() {
     fails("-9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too small", 34);
     fails("9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too large", 34);
     *__error_nid_postfix() = 34;
-    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
+    errno = 34;
+    Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34 && errno == 34);
+    std::size_t page = 0;
+    char* memory = nullptr;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    page = info.dwPageSize;
+    memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    page = static_cast<std::size_t>(size);
+    memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    const std::array<const char**, 2> badErrors = {
+        reinterpret_cast<const char**>(std::uintptr_t{0x10}),
+        reinterpret_cast<const char**>(memory + page)
+    };
+    for (const char** badError : badErrors) {
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("42", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+        *__error_nid_postfix() = 71;
+        errno = 71;
+        Require(strtonum_nid_postfix("invalid", 0, 100, badError) == 0);
+        Require(*__error_nid_postfix() == 14 && errno == 14);
+    }
+#ifdef _WIN32
+    VirtualFree(memory, 0, MEM_RELEASE);
+#else
+    munmap(memory, 2 * page);
+#endif
 }
 
 static void CheckStrnlenSBounds() {
