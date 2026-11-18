@@ -418,9 +418,19 @@ def unwrap(path, output, verbose=False):
                       % (cursor, output_limit, len(data)))
 
     result = bytearray(cursor)
-    image = data + zero_filled
+    output_bytes = memoryview(result)
+    input_bytes = memoryview(data)
+    tail_bytes = memoryview(zero_filled)
     for region in regions:
-        result[region["new"]:region["new"] + region["size"]] = image[region["old"]:region["old"] + region["size"]]
+        start = region["old"]
+        end = start + region["size"]
+        target = region["new"]
+        destination_bytes = output_bytes[target:target + region["size"]]
+        file_part = input_bytes[start:end]
+        destination_bytes[:len(file_part)] = file_part
+        if len(file_part) < len(destination_bytes):
+            tail_start = max(0, start - len(data))
+            destination_bytes[len(file_part):] = tail_bytes[tail_start:end - len(data)]
 
     for header in headers:
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
