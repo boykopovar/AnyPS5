@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "mbedtls/bignum.h"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 struct TestBignum {
     std::uint64_t* d;
@@ -1070,6 +1078,58 @@ static void TestGenerateKey() {
     for (TestBignum* number : {exponent, even, one, three}) BN_free_nid_postfix(reinterpret_cast<Bignum*>(number));
 }
 
+template<typename TAction> static bool Rejected(TAction action) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::invalid_argument&) { rejected = true; }
+    return rejected && errno == 71;
+}
+
+static unsigned char* MapReadOnlyPage(const void* contents, std::size_t size) {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, contents, size);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, contents, size);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+static void UnmapPage(unsigned char* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+static void TestGenerateKeyGuestPointers() {
+    auto* exponent = reinterpret_cast<Bignum*>(AllocatedBignum(65537));
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(reinterpret_cast<LibreSslRsa*>(std::uintptr_t{0x10}), 512, exponent, nullptr); }));
+
+    auto* rsa = RSA_new_nid_postfix();
+    const LibreSslRsaMethod* defaultMethod = rsa->meth;
+    rsa->meth = reinterpret_cast<const LibreSslRsaMethod*>(std::uintptr_t{0x10});
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, exponent, nullptr); }));
+    rsa->meth = defaultMethod;
+
+    unsigned char* page = MapReadOnlyPage(rsa, sizeof(*rsa));
+    auto* readOnly = reinterpret_cast<LibreSslRsa*>(page);
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(readOnly, 512, exponent, nullptr); }));
+    Require(readOnly->n == nullptr && readOnly->e == nullptr && readOnly->p == nullptr);
+    UnmapPage(page);
+
+    RSA_free_nid_postfix(rsa);
+    BN_free_nid_postfix(exponent);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -1087,5 +1147,6 @@ int main() {
     TestVerify();
     TestAddedDigestObjects();
     TestGenerateKey();
+    TestGenerateKeyGuestPointers();
     std::puts("libSceLibreSsl RSA tests passed");
 }
