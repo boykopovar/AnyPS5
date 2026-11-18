@@ -55,6 +55,7 @@ struct TestSsl {
 static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstate) == 156 && offsetof(TestSslInternal, shutdown) == 168);
 static_assert(offsetof(TestSslInternal, exData) == 272);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, error) == 140 && offsetof(TestSsl, errorCode) == 144 && offsetof(TestSsl, ctx) == 152);
+static_assert(offsetof(TestSsl, param) == 64);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
 static LibreSslSsl* Ssl(TestSsl* ssl) {
@@ -221,6 +222,17 @@ static void TestWant() {
     Require(SSL_want_nid_postfix(Ssl(&ssl)) == 3);
 }
 
+static void TestGet0Param() {
+    int param = 0;
+    int context = 0;
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get0_param_nid_postfix(nullptr); });
+    Require(SSL_get0_param_nid_postfix(Ssl(&ssl)) == nullptr);
+    ssl.param = &param;
+    ssl.ctx = &context;
+    Require(SSL_get0_param_nid_postfix(Ssl(&ssl)) == &param);
+}
+
 static void FreeExData(TestSslInternal& internal) {
     auto* const stack = static_cast<LibreSslStack*>(internal.exData.stack);
     if (!stack) return;
@@ -321,5 +333,6 @@ int main() {
     TestSetExData();
     TestSetExDataPrefilledStack();
     TestGetPeerCertChain();
+    TestGet0Param();
     return 0;
 }

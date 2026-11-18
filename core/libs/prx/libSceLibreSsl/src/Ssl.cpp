@@ -17,6 +17,7 @@ static_assert(offsetof(LibreSslSslInternal, shutdown) == 168);
 static_assert(sizeof(LibreSslSsl) == 232);
 static_assert(offsetof(LibreSslSsl, rbio) == 16);
 static_assert(offsetof(LibreSslSsl, wbio) == 24);
+static_assert(offsetof(LibreSslSsl, param) == 64);
 static_assert(offsetof(LibreSslSsl, session) == 128);
 static_assert(offsetof(LibreSslSsl, ctx) == 152);
 static_assert(offsetof(LibreSslSsl, verifyResult) == 160);
@@ -302,6 +303,10 @@ std::int64_t APS5_VABI SSL_ctrl_nid_postfix(LibreSslSsl* ssl, int command, std::
     default:
         NotImplemented_nid_no_patch(("SSL_ctrl: command " + std::to_string(command)).c_str());
     }
+}
+
+void* APS5_VABI SSL_get0_param_nid_postfix(const LibreSslSsl* ssl) {
+    return Connection(ssl, __func__).param;
 }
 
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value) {
