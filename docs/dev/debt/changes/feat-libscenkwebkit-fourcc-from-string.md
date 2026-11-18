@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Functional
+
+- [FourCC::fromString](../../../core/libs/prx/libSceNKWebKit/src/FourCC.cpp) - console behavior and ABI are unmeasured. The `const WTF::String&` signature follows [FourCC.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/FourCC.cpp) and [`String::ascii()`](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/WTFString.cpp#L735-L771) at that revision, already used by this library; the PS5-WebKit `80f77e94` revision has only the incompatible StringView overload. The pinned [Optional.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Optional.h)/FourCC.h probe gives an 8-byte result, alignment 4, flag at 0 and value at 4, returned through a hidden pointer. NUL and 0x20–0x7f survive; other units become `?`. Null accessed storage throws where upstream faults. Closes when: compared with a console module.
