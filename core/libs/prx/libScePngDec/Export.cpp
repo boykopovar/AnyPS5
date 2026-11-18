@@ -255,11 +255,11 @@ std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offs
             }
         } else {
             inImageData = false;
-            if (chunk->is("IHDR")) {
+            if (chunk->is("IHDR") || chunk->is("PLTE")) {
                 result = SCE_PNG_DEC_ERROR_INVALID_DATA;
                 break;
             }
-            const bool known = chunk->is("IEND") || chunk->is("PLTE");
+            const bool known = chunk->is("IEND");
             if ((chunk->critical() && !known) || !chunk->complete || (chunk->critical() && !chunk->crcValid)) {
                 result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
                 break;
@@ -309,8 +309,10 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png) {
                 return scan;
             }
         } else if (chunk->is("PLTE")) {
-            const bool validLength = chunk->length % 3 == 0 && chunk->length <= MAX_PALETTE_SIZE;
-            if (paletteSeen || (*colorType == static_cast<std::uint8_t>(Decoder::Png::ColorType::Palette) && !validLength)) {
+            const bool validLength = chunk->length != 0 && chunk->length % 3 == 0 && chunk->length <= MAX_PALETTE_SIZE;
+            const bool grayscale = *colorType == static_cast<std::uint8_t>(Decoder::Png::ColorType::Grayscale)
+                || *colorType == static_cast<std::uint8_t>(Decoder::Png::ColorType::GrayscaleAlpha);
+            if (paletteSeen || !validLength || grayscale) {
                 scan.headerResult = SCE_PNG_DEC_ERROR_INVALID_DATA;
                 return scan;
             }
