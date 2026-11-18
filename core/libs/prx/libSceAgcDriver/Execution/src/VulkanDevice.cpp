@@ -5799,6 +5799,7 @@ struct RecordedDispatch {
     // Whether the data refresh recorded anything.
     bool refreshed = false;
     bool resourceKeyMatched = false;
+    bool indirect = false;
     std::shared_ptr<Graphics::ShaderResources::DrawBindings> bindings{};
     std::uint64_t cpuArguments = 0;
     int cpuReason = 0;
@@ -6559,7 +6560,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         const auto htileClear = *record.htileClear;
         recorder.ChangeUndoneOnDiscard([htileClear] { Graphics::ArmHtileDepthClear(htileClear.first, htileClear.second); }, [htileClear, htileDispatch] { Graphics::DiscardHtileDepthClear(*htileDispatch, htileClear.first, htileClear.second); });
     }
-    resources.MarkGpuWrites(recorder);
+    {
+        const Graphics::Recorder::WriterProgramScope writer(record.programAddress, record.indirect);
+        resources.MarkGpuWrites(recorder);
+    }
     if (record.htileClear.has_value()) {
         Graphics::QueueHtileDepthClear(*htileDispatch, record.htileClear->first, record.htileClear->second);
         recorder.NotePendingWrite(record.htileClear->first, record.htileClear->second);
@@ -7000,6 +7004,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     IndirectOutcome outcome{0, 0};
     RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer, htileClear};
     record.resourceKeyMatched = fromCache;
+    record.indirect = arguments != 0;
     record.bindings = overlay;
     record.threadGroup = threadGroup;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
@@ -7172,6 +7177,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     if (dataRefresh == RecordedDispatch::DataRefresh::Words) counters.refreshByWords.fetch_add(1, std::memory_order_relaxed);
     RecordedDispatch record{&context, &shaders[0], hit->resources, hit->objects, recipe.pushes ? VkShaderStageFlags{VK_SHADER_STAGE_COMPUTE_BIT} : VkShaderStageFlags{0}, &recipe.pushBytes, x, y, z, arguments, nullptr, programAddress, dataRefresh, recipe.dataWordsHash, 0, &timer};
     record.resourceKeyMatched = verify != nullptr;
+    record.indirect = arguments != 0;
     record.threadGroup = threadGroup;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;
