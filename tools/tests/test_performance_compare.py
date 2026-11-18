@@ -650,6 +650,15 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             performance_compare.validate(dict(SUMMARY, graphics_track={"bad": -1}))
 
+class UniqueJsonObjectTests(unittest.TestCase):
+    def test_nested_objects_are_each_checked(self):
+        text = '{"a": {"x": 1}, "b": {"x": 2}}'
+        self.assertEqual(json.loads(text, object_pairs_hook=performance_compare.unique_json_object), {"a": {"x": 1}, "b": {"x": 2}})
+
+    def test_duplicate_field_names_the_field(self):
+        with self.assertRaisesRegex(ValueError, "duplicate JSON field: 'x'"):
+            json.loads('{"a": {"x": 1, "x": 2}}', object_pairs_hook=performance_compare.unique_json_object)
+
 
 if __name__ == "__main__":
     unittest.main()
