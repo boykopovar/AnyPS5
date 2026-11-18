@@ -806,7 +806,8 @@ def main_status(names, ref):
         aliases = {canonical(item) for item in defined}
         for name in wanted & (aliases | ({nids[nid]} if nid in nids else set())):
             declared[name].setdefault(library, set()).update(aliases | {name})
-    scanned = {library: library_status(ref, library) for libraries in declared.values() for library in libraries if library}
+    libraries = {library for exports in declared.values() for library in exports if library}
+    scanned = {library: library_status(ref, library) for library in sorted(libraries)}
     status = {}
     for name, libraries in declared.items():
         status[name] = {}
@@ -842,7 +843,7 @@ def describe_failure(error):
 
 def resolve_branch(name):
     try:
-        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+        return git("rev-parse", "--verify", f"{name}^0").strip()
     except subprocess.CalledProcessError:
         raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
 

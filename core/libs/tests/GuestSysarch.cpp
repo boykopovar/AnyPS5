@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -50,7 +51,7 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 22);
     }
-    for (const int operation : {0, 1, 3, 4, 11, 132}) {
+    for (const int operation : {3, 4, 11, 132}) {
         *__error_nid_postfix() = 0;
         Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 14);
     }
@@ -61,15 +62,21 @@ int main() {
         std::uint32_t num;
     } ldt{};
     static_assert(sizeof(ldt) == 16);
-    Require(sysarch(0, &ldt) == 0);
-    ldt.num = 4;
-    Require(sysarch(0, &ldt) == 0 && sysarch(1, &ldt) == 0);
-    ldt.start = 3;
-    ldt.num = 0;
-    *__error_nid_postfix() = 0;
-    Require(sysarch(1, &ldt) == -1 && *__error_nid_postfix() == 22);
-    ldt.start = 0;
-    Require(sysarch(1, &ldt) == 0);
+    static std::uint64_t descriptor = 0;
+    for (const int operation : {0, 1}) {
+        for (void* const argument : {static_cast<void*>(&ldt), static_cast<void*>(nullptr), reinterpret_cast<void*>(std::uintptr_t{0x10})}) {
+            for (const std::uint32_t count : {0u, 4u, 513u}) {
+                ldt = {};
+                ldt.start = count == 0 ? 3 : 0;
+                ldt.num = count;
+                const auto address = reinterpret_cast<std::uintptr_t>(&descriptor);
+                ldt.descsLow = static_cast<std::uint32_t>(address);
+                ldt.descsHigh = static_cast<std::uint32_t>(address >> 32);
+                *__error_nid_postfix() = 0;
+                Require(sysarch(operation, argument) == -1 && *__error_nid_postfix() == 22);
+            }
+        }
+    }
     std::uint32_t ports[3] = {0x60, 5, 1};
     Require(sysarch(3, ports) == 0 && ports[0] == 0x60 && ports[1] == 0 && ports[2] == 1);
     std::uint32_t outsidePorts[3] = {65536, 5, 1};

@@ -16,6 +16,7 @@ constexpr int GuestEagain = 35;
 constexpr std::size_t NameCapacity = 32;
 constexpr std::uint32_t FirstId = 1;
 constexpr std::uint32_t LastId = 0xFFFF;
+constexpr std::uint16_t TypeTag = 0x1000;
 
 std::mutex namedObjectMutex;
 std::unordered_map<std::uint32_t, std::uint16_t> namedObjectTypes;
@@ -50,7 +51,7 @@ int APS5_VABI __sys_namedobj_delete_nid_postfix(std::uint32_t id, std::uint32_t 
     std::lock_guard lock(namedObjectMutex);
     const auto found = namedObjectTypes.find(id);
     if (found == namedObjectTypes.end()) return Fail(GuestEsrch);
-    if (found->second != static_cast<std::uint16_t>(type)) NotImplemented_nid_no_patch("__sys_namedobj_delete: a type other than the object's");
+    if ((found->second | TypeTag) != (static_cast<std::uint16_t>(type) | TypeTag)) return Fail(GuestEsrch);
     releasedIds.insert(id);
     namedObjectTypes.erase(found);
     return 0;
