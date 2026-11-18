@@ -263,6 +263,54 @@ class RunReportSummaryTests(unittest.TestCase):
                 self.assertIn("Missing functions: unknown calls across 2 functions", summary)
                 self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
 
+    def test_rejects_report_missing_a_required_section(self):
+        for key in ("game", "stop"):
+            with self.subTest(key=key):
+                report = self.report("stop-none.json")
+                report[key] = []
+                with self.assertRaisesRegex(ValueError, f"report field '{key}' must be an object"):
+                    render(report)
+
+    def test_lists_are_limited_to_five_entries(self):
+        report = self.report("stop-none.json")
+        report["coverage"].update(missing=True, unsupported=True)
+        report["missing"]["functions"] = [{"library": "libX", "name": f"fn{i}", "calls": 1} for i in range(7)]
+        report["shaders"]["unsupported"] = [{"encoding": "SOPP", "opcode": f"op{i}", "count": 1} for i in range(7)]
+        summary = render(report)
+        self.assertIn("Missing functions: 7 calls across 7 functions", summary)
+        self.assertIn("libX::fn4", summary)
+        self.assertNotIn("libX::fn5", summary)
+        self.assertIn("SOPP: op4", summary)
+        self.assertNotIn("SOPP: op5", summary)
+
+    def test_stop_summary_includes_reason_and_message(self):
+        report = self.report("stop-none.json")
+        report["stop"].update(kind="crash", reason="SIGSEGV", message="bad access")
+        self.assertIn("Stop: crash (SIGSEGV): bad access", render(report))
+
+    def test_average_fps_is_formatted_with_two_decimals(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = 59.9
+        self.assertIn("average FPS", render(report))
+        self.assertIn(", 59.90 average FPS", render(report))
+
+    def test_cli_reports_unreadable_and_invalid_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            invalid = Path(directory) / "invalid.json"
+            invalid.write_text("{not json", encoding="utf-8")
+            wrong = Path(directory) / "wrong.json"
+            wrong.write_text("[]", encoding="utf-8")
+            for path in (missing, invalid, wrong):
+                with self.subTest(path=path.name):
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("run_report_summary:", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

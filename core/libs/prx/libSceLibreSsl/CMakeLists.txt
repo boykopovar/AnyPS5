@@ -17,6 +17,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NamePrintEx.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RsaKeygen.cpp)
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemPrivateKey.cpp)
 
 if(BUILD_TESTING)
@@ -242,7 +243,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_libressl_rsa_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsa.cpp)
     target_include_directories(guest_libressl_rsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl libc)
+    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl libc mbedcrypto)
     configure_windows_unwind(guest_libressl_rsa_tests)
     add_test(NAME guest_libressl_rsa COMMAND guest_libressl_rsa_tests)
     set_tests_properties(guest_libressl_rsa PROPERTIES TIMEOUT 30)
@@ -708,6 +709,21 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_x509_lookup guest_libressl_x509_lookup_allocator PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_x509_lookup guest_libressl_x509_lookup_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslMethod.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslBio.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslLifecycle.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_ssl_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslSslLifecycle.cpp)
+    target_include_directories(guest_libressl_ssl_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ssl_lifecycle_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ssl_lifecycle_tests)
+    add_test(NAME guest_libressl_ssl_lifecycle COMMAND guest_libressl_ssl_lifecycle_tests)
+    set_tests_properties(guest_libressl_ssl_lifecycle PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ssl_lifecycle PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()
