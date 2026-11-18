@@ -347,12 +347,6 @@ T EvaluateGuestPolynomial(const T* table, int degree, const char* message, Step 
     return result;
 }
 
-long double ExtendedValue(const ExtendedBits& bits) {
-    const int exponent = bits.signExponent & 0x7fff;
-    const long double magnitude = std::ldexp(static_cast<long double>(bits.mantissa), (exponent == 0 ? 1 : exponent) - 16383 - 63);
-    return (bits.signExponent & 0x8000) != 0 ? -magnitude : magnitude;
-}
-
 template<typename TBits, int FractionBits, int ExponentBits>
 short DropFraction(void* value, short scale) {
     constexpr TBits Sign = TBits{1} << (FractionBits + ExponentBits);
@@ -1048,9 +1042,35 @@ short APS5_VABI _LDscale_nid_postfix(long double* value, std::int64_t exponent) 
         StoreGuestExtended(value, host, "_LDscale: unwritable value");
         return Zero;
     }
-    host = ExtendedValue(bits);
-    const short code = ScaleBinary(&host, exponent);
-    if (code == Zero) host = 0.0L;
+    const std::uint16_t sign = bits.signExponent & 0x8000;
+    const int field = bits.signExponent & 0x7fff;
+    const int shift = std::countl_zero(bits.mantissa);
+    const std::uint64_t mantissa = bits.mantissa << shift;
+    const std::int64_t normalized = (field != 0 ? field : 1) - shift;
+    ExtendedBits scaled{mantissa, sign};
+    short code = Finite;
+    if (exponent > 0 && 0x7fff - normalized <= exponent) {
+        scaled = {0x8000000000000000ull, static_cast<std::uint16_t>(sign | 0x7fff)};
+        code = Infinite;
+    } else if (-normalized < exponent) {
+        scaled.signExponent = static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(normalized + exponent));
+    } else if (normalized + exponent < -63) {
+        scaled = {0, 0};
+        code = Zero;
+    } else {
+        const int dropped = static_cast<int>(1 - normalized - exponent);
+        const std::uint64_t lost = dropped == 64 ? mantissa : mantissa & ((std::uint64_t{1} << dropped) - 1);
+        scaled.mantissa = dropped == 64 ? 0 : mantissa >> dropped;
+        if (lost != 0) {
+            const std::uint64_t half = std::uint64_t{1} << (dropped - 1);
+            const int rounding = _Fltrounds_nid_postfix();
+            const bool up = rounding == 3 ? sign != 0 : rounding == 2 ? sign == 0 : rounding != 0 && (lost > half || (lost == half && (scaled.mantissa & 1) != 0));
+            if (up) ++scaled.mantissa;
+        }
+        if (scaled.mantissa == 0x8000000000000000ull) scaled.signExponent = static_cast<std::uint16_t>(sign | 1);
+        if (scaled.mantissa == 0) code = Zero;
+    }
+    StoreExtended(&host, scaled);
     StoreGuestExtended(value, host, "_LDscale: unwritable value");
     return code;
 }
@@ -1073,11 +1093,13 @@ short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
         storeExponent();
         return Zero;
     }
-    host = ExtendedValue(bits);
-    const short code = UnscaleBinary(&scaled, &host);
+    const int field = bits.signExponent & 0x7fff;
+    const int shift = std::countl_zero(bits.mantissa);
+    scaled = static_cast<short>((field != 0 ? field - 0x3ffe : -16381) - shift);
+    StoreExtended(&host, {bits.mantissa << shift, static_cast<std::uint16_t>((bits.signExponent & 0x8000) | 0x3ffe)});
     storeExponent();
     StoreGuestExtended(value, host, "_LDunscale: unwritable value");
-    return code;
+    return Finite;
 }
 
 short APS5_VABI _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
