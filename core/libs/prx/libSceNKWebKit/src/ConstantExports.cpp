@@ -230,14 +230,6 @@ int APS5_VABI WKKeyValueStorageManagerGetStorageDetailsByOrigin() {
     return 0;
 }
 
-int APS5_VABI WKOpenPanelParametersCopyCapture() {
-    return 0;
-}
-
-int APS5_VABI WKOpenPanelParametersGetMediaCaptureType() {
-    return 0;
-}
-
 int APS5_VABI WKPageGetFrameSetLargestFrame() {
     return 0;
 }
