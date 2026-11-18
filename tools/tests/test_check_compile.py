@@ -1333,7 +1333,8 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
-class EntryKeyTests(unittest.TestCase):
+
+class CheckCompileEntryKeyTests(unittest.TestCase):
     def test_relative_file_is_resolved_against_the_entry_directory(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
