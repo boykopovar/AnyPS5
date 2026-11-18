@@ -176,6 +176,27 @@ void testIndirectPlaceholder() {
     }
 }
 
+void testIndirectOutOfRange() {
+    const std::array writers{sceAgcDcbSetCxRegistersIndirect, sceAgcDcbSetShRegistersIndirect, sceAgcDcbSetUcRegistersIndirect};
+    const std::array headers{0xc0039f00u, 0xc0036300u, 0xc0036400u};
+    const std::array<std::uint64_t, 3> addresses{0x11111111u, 1u, 0x1111111122222222u};
+    const std::array<std::uint32_t, 3> counts{0x22222222u, 2u, 0x44444444u};
+    const std::array<std::uint32_t, 3> encodedLow{0x11111110u, 0u, 0x22222220u};
+    const std::array<std::uint32_t, 3> encodedHigh{0u, 0u, 0x11111111u};
+    const std::array<std::uint32_t, 3> encodedCounts{0x2222u, 2u, 0x444u};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (std::size_t c = 0; c < addresses.size(); ++c) {
+            Storage storage;
+            storage.words.fill(0xabcdef01u);
+            const auto* regs = reinterpret_cast<const volatile ShaderRegister*>(addresses[c]);
+            auto* packet = writers[i](&storage.buffer, regs, counts[c]);
+            const std::array expected{headers[i], encodedLow[c], encodedHigh[c], 0x80000000u, encodedCounts[c]};
+            check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "out-of-range indirect registers were not encoded as the console encodes them");
+            check(storage.buffer.cursor_up == packet + 5 && packet[5] == 0xabcdef01u, "out-of-range indirect packet size mismatch");
+        }
+    }
+}
+
 void testDirectList() {
     constexpr std::uint32_t sentinel = 0xabcdef01u;
     constexpr std::uint32_t wordSize = sizeof(std::uint32_t);
@@ -237,6 +258,7 @@ int main() {
         testListFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
+        testIndirectOutOfRange();
         testDirectList();
         std::puts("AGC register command tests passed");
         return 0;
