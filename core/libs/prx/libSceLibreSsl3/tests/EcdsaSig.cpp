@@ -2,6 +2,7 @@
 
 #include <array>
 #include <bit>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +55,24 @@ void Run(Getter getter) {
         catch (const std::exception&) { threw = true; }
         Require(threw && r == &values[2] && s == &values[2]);
     }
+    const LibreSsl3EcdsaSig sig{&values[0], &values[1]};
+    const auto* const unmappedSig = reinterpret_cast<const LibreSsl3EcdsaSig*>(std::uintptr_t{0x10});
+    auto** const unwritable = reinterpret_cast<const void**>(std::uintptr_t{0x10});
+    const auto throws = [&](const LibreSsl3EcdsaSig* source, const void** first, const void** second) {
+        try {
+            getter(source, first, second);
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    const void* r = &values[2];
+    const void* s = &values[2];
+    Require(throws(unmappedSig, &r, &s) && r == &values[2] && s == &values[2]);
+    Require(throws(&sig, &r, unwritable) && r == &values[2]);
+    Require(throws(&sig, unwritable, &s) && s == &values[2]);
+    getter(&sig, &r, &s);
+    Require(r == sig.r && s == sig.s);
 }
 
 }

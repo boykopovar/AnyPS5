@@ -58,6 +58,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -121,10 +122,16 @@ extern "C" {
 void APS5_VABI ECDSA_SIG_get0_nid_postfix(const LibreSsl3EcdsaSig* sig, const void** r, const void** s) {
     if (!sig && (r || s))
         throw std::invalid_argument("ECDSA_SIG_get0 requires a signature when outputs are requested");
-    if (r)
-        *r = sig->r;
-    if (s)
-        *s = sig->s;
+    if (!r && !s)
+        return;
+    LibreSsl3EcdsaSig local{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&local, sig, sizeof(local));
+    const bool writable = (!r || GuestWritable_nid_no_patch(r, sizeof(*r))) && (!s || GuestWritable_nid_no_patch(s, sizeof(*s)));
+    const bool written = read && writable && (!r || GuestCopyOut_nid_no_patch(r, &local.r, sizeof(*r))) && (!s || GuestCopyOut_nid_no_patch(s, &local.s, sizeof(*s)));
+    errno = savedErrno;
+    if (!written)
+        NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value) {
