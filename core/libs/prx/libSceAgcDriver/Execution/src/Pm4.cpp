@@ -287,7 +287,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x11: case 0x12: case 0x13: case 0x15: case 0x16: case 0x20: case 0x22: case 0x26: case 0x27:
         case 0x2a: case 0x2d: case 0x2f: case 0x35: case 0x37: case 0x40: case 0x42: case 0x45: case 0x46: case 0x50:
         case 0x58: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
-        case 0x51: case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
+        case 0x51: case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: case 0x8e: return {};
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
             return {};
@@ -304,7 +304,6 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x49: return {};
         case 0x43: case 0x47: case 0x48:
             return "guest cache actions, GPU events and interrupt delivery are not implemented";
-        case 0x8e: return "GPU LOD statistics are not implemented; synthetic results are forbidden";
         case 0x41: case 0x68: case 0x78:
             return "opcode is named but has no handler in the reference dispatch table";
         default: return "opcode is not known in the reference";
@@ -456,6 +455,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[4] & ~ConditionalWordsMask) == 0, "COND_EXEC reserved count bits are not implemented");
             break;
         case 0x42: size(2); require(packet[1] == 0, "unsupported PFP_SYNC_ME payload"); break;
+        case 0x8e: size(5); require((packet[2] & 0x3fu) == 0 && (packet[4] & ~0x300ffffcu) == 0, "unsupported LOD statistics address alignment or control bits"); break;
         case 0x28:
             graphics();
             size(3);
@@ -1338,7 +1338,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             GuestMemory::Write(destination, data);
             return;
         }
-        case 0x28: return;
+        case 0x28: case 0x8e: return;
         case 0x50: {
             const std::size_t bytes = DmaBytes(packet);
             if (bytes == 0 || dmaDestination(packet) == DmaDestinationNowhere) return;

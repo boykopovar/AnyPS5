@@ -102,10 +102,19 @@ void testCatalog() {
     }
 }
 
-void testLodStatsRejected() {
-    const auto packet = makePacket(0x8e, {0x33333333u, 0x22222200u, 0u, 0x10051000u});
+void testLodStatsSkipped() {
+    alignas(64) std::array<std::uint32_t, 16> stats;
+    stats.fill(0xa5a5a5a5u);
+    const auto before = stats;
+    const auto packet = makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data()), 0x10051004u});
     check(packet[0] == 0xc0038e00u, "the LOD statistics header is not the one sceAgcDcbGetLodStats emits");
-    expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "GPU LOD statistics are not implemented");
+    AgcDriver::QueueState state;
+    execute(state, packet);
+    check(stats == before, "the LOD statistics packet wrote its buffer");
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.instanceCount == 1 && state.predication.operation == 0 && !state.savedContext && state.constantRam.empty(), "the LOD statistics packet reached queue state");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()) | 0x20u, high(stats.data()), 0}), 0); }, "LOD statistics");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data()), 0x40000000u}), 0); }, "LOD statistics");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data())}), 0); }, "packet size");
 }
 
 void testNopPad() {
@@ -2942,7 +2951,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
-        testLodStatsRejected();
+        testLodStatsSkipped();
         testNopPad();
         testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
