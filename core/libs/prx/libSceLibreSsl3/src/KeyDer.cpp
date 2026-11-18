@@ -1376,6 +1376,10 @@ void FreePreservingErrno(void* pointer) {
 
 }
 
+bool ReadDerObjectFromBio_nid_no_patch(LibreSsl::Bio* bio, std::vector<unsigned char>& result) {
+    return ReadSingleDerObjectFromBio(bio, result);
+}
+
 LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
     const unsigned char** input, std::int64_t length) {
     if (!input || !*input || length < 0) {

@@ -265,6 +265,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_vad PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
+
+    add_test_executable(guest_wtf_data_log_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWtfDataLog.cpp)
+    target_include_directories(guest_wtf_data_log_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_wtf_data_log_tests PRIVATE libSceNKWebKit libSceJsc libc)
+    configure_windows_unwind(guest_wtf_data_log_tests)
+    add_test(NAME guest_wtf_data_log COMMAND guest_wtf_data_log_tests)
+    add_test(NAME guest_wtf_data_log_install_first COMMAND guest_wtf_data_log_tests install-first)
+    add_test(NAME guest_wtf_data_log_install_null COMMAND guest_wtf_data_log_tests install-null)
+    set_tests_properties(guest_wtf_data_log guest_wtf_data_log_install_first guest_wtf_data_log_install_null PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_wtf_data_log guest_wtf_data_log_install_first guest_wtf_data_log_install_null PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
