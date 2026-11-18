@@ -147,6 +147,10 @@ GuestLocale::String* APS5_VABI sceLibcInternalCollateDoTransform_nid_no_patch(Gu
 std::int64_t APS5_VABI sceLibcInternalCollateDoHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
 int APS5_VABI sceLibcInternalCollateCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
 std::int64_t APS5_VABI sceLibcInternalCollateHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
+void APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC1EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);

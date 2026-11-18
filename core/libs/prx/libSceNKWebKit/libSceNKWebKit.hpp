@@ -13,6 +13,7 @@
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
+#include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
@@ -50,6 +51,7 @@
 #include "prx/libSceNKWebKit/include/DiagnosticLoggingKeysExports.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
 #include "prx/libSceNKWebKit/include/JsonExports.hpp"
+#include "prx/libSceNKWebKit/include/HEVCCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
@@ -62,5 +64,7 @@
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
+#include "prx/libSceNKWebKit/include/SVGPathStringBuilderExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
+#include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"

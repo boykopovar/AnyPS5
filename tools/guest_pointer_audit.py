@@ -108,7 +108,7 @@ def names_parameter(argument, name):
 
 def accesses(body, name):
     word = re.escape(name)
-    operand = rf"(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
+    operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
     for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
                           ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
