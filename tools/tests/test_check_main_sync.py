@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import types
 import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -403,6 +404,22 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(strict.returncode, 1, strict.stderr)
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
+
+class GitVersionTests(unittest.TestCase):
+    @staticmethod
+    def version(text):
+        return unittest.mock.patch.object(check_main_sync, "git", lambda *args, **kwargs: types.SimpleNamespace(stdout=text))
+
+    def test_parses_major_and_minor(self):
+        with self.version("git version 2.43.0.windows.1\n"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 43))
+        with self.version("git version 2.5"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 5))
+
+    def test_unrecognised_output_has_no_version(self):
+        for text in ("", "not git\n", "git version unknown"):
+            with self.subTest(text=text), self.version(text):
+                self.assertIsNone(check_main_sync.git_version(Path(".")))
 
 
 if __name__ == "__main__":
