@@ -1419,7 +1419,9 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
     if (result != VK_SUCCESS) {
         std::fprintf(stderr, "[gpu] timeline semaphore creation failed (Vulkan result %d); drains wait under the GPU mutex\n", static_cast<int>(result));
         timeline = VK_NULL_HANDLE;
+        return;
     }
+    getSemaphoreCounterValue = context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR");
 }
 
 Recorder::~Recorder() {
@@ -5174,7 +5176,12 @@ bool Recorder::Reap() {
     const bool profile = DrawProfiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t retired = 0;
+    std::uint64_t reached = 0;
     while (!inFlight.empty()) {
+        if (getSemaphoreCounterValue != nullptr && inFlight.front()->serial > reached) {
+            if (getSemaphoreCounterValue(context.device, timeline, &reached) != VK_SUCCESS) reached = std::numeric_limits<std::uint64_t>::max();
+            if (inFlight.front()->serial > reached) break;
+        }
         if (fenceStatus(inFlight.front()->fence) != VK_SUCCESS) break;
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();

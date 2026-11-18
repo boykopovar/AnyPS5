@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -11,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using namespace AgcDriver::Graphics;
@@ -39,9 +42,12 @@ struct MockDevice {
     bool lostSubmissionPending = false;
     std::uint64_t idleWaits = 0;
     VkResult idleResult = VK_ERROR_DEVICE_LOST;
+    std::uint64_t fenceStatusCalls = 0;
 };
 
 MockDevice mock;
+std::atomic<std::uint64_t> timelineValue{0};
+std::atomic<VkResult> counterResult{VK_SUCCESS};
 std::vector<char> commandOrder;
 std::vector<std::pair<VkPipelineStageFlags, VkAccessFlags>> barrierMasks;
 
@@ -68,7 +74,26 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAll
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockGetFenceStatus(VkDevice, VkFence fence) {
+    ++mock.fenceStatusCalls;
     return mock.signaled.at(fence) ? VK_SUCCESS : VK_NOT_READY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateSemaphore(VkDevice, const VkSemaphoreCreateInfo*, const VkAllocationCallbacks*, VkSemaphore* semaphore) {
+    *semaphore = reinterpret_cast<VkSemaphore>(mock.next++);
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroySemaphore(VkDevice, VkSemaphore, const VkAllocationCallbacks*) {}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockWaitSemaphores(VkDevice, const VkSemaphoreWaitInfo* info, std::uint64_t) {
+    if (timelineValue.load() >= info->pValues[0]) return VK_SUCCESS;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return VK_TIMEOUT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockGetSemaphoreCounterValue(VkDevice, VkSemaphore, std::uint64_t* value) {
+    *value = timelineValue.load();
+    return counterResult.load();
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t count, const VkFence* fences, VkBool32, std::uint64_t) {
@@ -138,6 +163,10 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBindPipeline)},
         {"vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPushConstants)},
         {"vkCmdDispatch", reinterpret_cast<PFN_vkVoidFunction>(mockCmdDispatch)},
+        {"vkCreateSemaphore", reinterpret_cast<PFN_vkVoidFunction>(mockCreateSemaphore)},
+        {"vkDestroySemaphore", reinterpret_cast<PFN_vkVoidFunction>(mockDestroySemaphore)},
+        {"vkWaitSemaphoresKHR", reinterpret_cast<PFN_vkVoidFunction>(mockWaitSemaphores)},
+        {"vkGetSemaphoreCounterValueKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetSemaphoreCounterValue)},
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -244,6 +273,31 @@ void SharedOwnerCountsOncePerBatch() {
     recorder.Sync();
 }
 
+void ReapPollsAFenceOnlyOnceTheTimelineReachedItsBatch() {
+    mock = MockDevice{};
+    timelineValue = 0;
+    counterResult = VK_SUCCESS;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext(), true);
+    Expect(recorder.HasTimeline(), "a recorder created with timeline semaphores has no timeline");
+    for (int batch = 0; batch < 2; ++batch) {
+        recorder.Keep(std::make_shared<int>(batch));
+        recorder.Submit();
+    }
+    Expect(recorder.Submissions() == 2 && recorder.InFlightBatches() == 2, "two submits did not leave two batches in flight");
+    mock.fenceStatusCalls = 0;
+    const bool idle = recorder.Reap();
+    Expect(!idle && recorder.InFlightBatches() == 2 && mock.fenceStatusCalls == 0, "Reap polled " + std::to_string(mock.fenceStatusCalls) + " fences while the timeline had reached no batch");
+    timelineValue = 1;
+    Expect(!recorder.Reap() && recorder.InFlightBatches() == 2 && mock.fenceStatusCalls == 1, "Reap retired a batch with an unsignaled fence or did not poll the batch the timeline reached");
+    for (auto& [fence, signaled] : mock.signaled) signaled = true;
+    Expect(!recorder.Reap() && recorder.InFlightBatches() == 1 && mock.fenceStatusCalls == 2, "Reap did not retire exactly the batch the timeline and its fence both reported finished");
+    counterResult = VK_ERROR_DEVICE_LOST;
+    Expect(recorder.Reap() && recorder.InFlightBatches() == 0, "Reap did not fall back to the fence when the timeline could not be read");
+    counterResult = VK_SUCCESS;
+    timelineValue = 2;
+}
+
 void SeparateStoresOfOneRunAreOrdered() {
     if (std::getenv("APS5_LABEL_RUNS_INLINE") != nullptr || std::getenv("APS5_NO_LABEL_RUNS") != nullptr) {
         std::printf("skipping SeparateStoresOfOneRunAreOrdered: APS5_LABEL_RUNS_INLINE/APS5_NO_LABEL_RUNS disables per-batch label runs\n");
@@ -347,6 +401,7 @@ int main() {
         SyncedWithinTwiceTheBudget();
         CountFollowsEveryPath();
         SharedOwnerCountsOncePerBatch();
+        ReapPollsAFenceOnlyOnceTheTimelineReachedItsBatch();
         SeparateStoresOfOneRunAreOrdered();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
