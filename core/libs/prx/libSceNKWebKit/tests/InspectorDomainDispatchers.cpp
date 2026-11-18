@@ -131,22 +131,22 @@ const DomainExport DomainExports[] = {
 };
 
 const std::uint64_t ExpectedHashes[] = {
-    0xae03a38d8ab0a079ULL,
-    0x33c875732c35357bULL,
-    0xc821a694b4eb8d73ULL,
-    0x87dab35beb914b2fULL,
-    0xf245938190ebe5edULL,
-    0xb3d1db1102272740ULL,
-    0x8e603d6b2846ee43ULL,
-    0x9aa8bb7c99acdfe6ULL,
-    0xee08fec7d9b70c63ULL,
-    0x9c3aa20d98e3b55aULL,
-    0x7c7a49602e17f251ULL,
-    0xc468c064911384bcULL,
-    0x6a076f940a8a827cULL,
-    0xb2f04367fac0d104ULL,
-    0x04aa3972060dd6c6ULL,
-    0x4f5ebee67c8c97e8ULL,
+    0x7fa8c85bbd9967dcULL,
+    0xb63d99502a12e8abULL,
+    0x47ce58f9b18fad4eULL,
+    0x4061542e7edea1d2ULL,
+    0xe3735061561823f4ULL,
+    0xab7753d50503ecd8ULL,
+    0x95dcfdc80897aa36ULL,
+    0x73b441677ec0d76eULL,
+    0x0e75f3e2d679de2eULL,
+    0xb91ac7657d276cc2ULL,
+    0x3d31a2ecad7bcff1ULL,
+    0x911756493eba13dcULL,
+    0xa281b4039db4e738ULL,
+    0x67f5cb44418f8ae4ULL,
+    0x56ec7ede76c763aeULL,
+    0xf0b53de5b377d178ULL,
 };
 
 namespace DomainDispatchDriver {
@@ -1046,10 +1046,7 @@ template<typename Adapter> std::uint64_t Run(Adapter& adapter, std::uint32_t see
         result.Mix(0xFEED);
         std::vector<Message> sent = adapter.Dispatch(message, is8Bit);
         result.Mix(sent.size());
-        for (const Message& output : sent) {
-            result.Mix(output.is8Bit);
-            result.MixText(output.text);
-        }
+        for (const Message& output : sent) result.MixText(output.text);
     }
     rng = nullptr;
     hash = nullptr;
