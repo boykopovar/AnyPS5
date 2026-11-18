@@ -362,13 +362,15 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
     }
     *integer = {static_cast<std::int32_t>(content->size()), negative ? 0x102 : 2, data, 0};
     try {
-        GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
         if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
+        GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
     } catch (...) {
         FreeInteger(integer);
-        try {
-            GuestStore(input, start, "d2i_ASN1_INTEGER");
-        } catch (...) {
+        if (output) {
+            try {
+                GuestStore(output, previous, "d2i_ASN1_INTEGER");
+            } catch (...) {
+            }
         }
         throw;
     }
