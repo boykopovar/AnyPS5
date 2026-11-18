@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
+#include "FakeHandles.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
@@ -66,9 +67,6 @@ bool Throws(Body&& body) {
 
 std::vector<std::string> log;
 
-VkCommandBuffer fakeBuffer(std::uintptr_t value) {
-    return reinterpret_cast<VkCommandBuffer>(value << 4);
-}
 
 std::uintptr_t id(VkCommandBuffer commands) {
     return reinterpret_cast<std::uintptr_t>(commands) >> 4;
@@ -359,8 +357,8 @@ std::string firstDifference(const std::vector<std::string>& expected, const std:
 }
 
 void StreamReplayRecordsWhatDirectRecords() {
-    const auto direct = fakeBuffer(3);
-    const auto target = fakeBuffer(4);
+    const auto direct = FakeCommandBuffer(3);
+    const auto target = FakeCommandBuffer(4);
     for (std::uint32_t seed = 1; seed <= 40; ++seed) {
         const auto expected = retarget(runProgram(seed, 200, direct, false), direct, target);
         CommandStream stream(Real());
@@ -387,8 +385,8 @@ public:
 };
 
 void DemotionReplaysThePrefixInOrder() {
-    const auto direct = fakeBuffer(5);
-    const auto target = fakeBuffer(6);
+    const auto direct = FakeCommandBuffer(5);
+    const auto target = FakeCommandBuffer(6);
     std::size_t demotedSeeds = 0;
     for (std::uint32_t seed = 1; seed <= 40; ++seed) {
         auto expected = retarget(runProgram(seed, 120, direct, true), direct, target);
@@ -415,7 +413,7 @@ void DemotionReplaysThePrefixInOrder() {
 }
 
 void PushDescriptorsDemoteOnlyWhatTheyCannotCopy() {
-    const auto target = fakeBuffer(8);
+    const auto target = FakeCommandBuffer(8);
     VkDescriptorImageInfo image{fake<VkSampler>(3), fake<VkImageView>(4), VK_IMAGE_LAYOUT_GENERAL};
     {
         FakeMaterializer materializer(target);
@@ -485,7 +483,7 @@ void DemotionWithoutAMaterializerPoisons() {
 
 void DirectCallsReachTheirOwnEntryPoint() {
     log.clear();
-    thunks().draw(fakeBuffer(9), 1, 2, 3, 4);
+    thunks().draw(FakeCommandBuffer(9), 1, 2, 3, 4);
     Require(log == std::vector<std::string>{"draw@9 1 2 3 4"}, "a direct call did not reach the real entry point: " + (log.empty() ? std::string("nothing") : log.front()));
 }
 
@@ -535,7 +533,7 @@ void EntryPointsBeyondTheSlotsAreKeyedByDevice() {
         for (const auto earlier : given) Require(earlier != thunk, "two entry points shared a thunk slot");
         given.push_back(thunk);
         log.clear();
-        reinterpret_cast<PFN_vkCmdSetStencilReference>(thunk)(fakeBuffer(2), VK_STENCIL_FACE_FRONT_BIT, 9);
+        reinterpret_cast<PFN_vkCmdSetStencilReference>(thunk)(FakeCommandBuffer(2), VK_STENCIL_FACE_FRONT_BIT, 9);
         Require(log == std::vector<std::string>{"stencil@2 " + std::to_string(index) + " 9"}, "slot " + std::to_string(index) + " reached the wrong entry point");
     }
     Require(CommandThunk(Name, entry(0)) == given[0], "the same entry point took a second slot");
@@ -568,7 +566,7 @@ void EntryPointsBeyondTheSlotsAreKeyedByDevice() {
         call(stream.Handle(), VK_STENCIL_FACE_FRONT_BIT, 4);
         Require(log.empty() && stream.Ops() == 1, "the keyed thunk did not stream a stream handle");
         stream.Seal();
-        AgcDriver::Graphics::Replay(stream, fakeBuffer(3), functions);
+        AgcDriver::Graphics::Replay(stream, FakeCommandBuffer(3), functions);
         Require(log == std::vector<std::string>{"stencil@3 10 4"}, "the keyed thunk's streamed call replayed wrongly");
     }
     AgcDriver::Graphics::ForgetCommandDevice(deviceOf(first));
@@ -1254,7 +1252,7 @@ std::string firstByteDifference(const std::string& expected, const std::string& 
 
 void SpecializedStreamersKeepEveryArgument() {
     const auto exact = exactFunctions();
-    const auto direct = fakeBuffer(70);
+    const auto direct = FakeCommandBuffer(70);
     Sources sources;
     prepare(sources);
     captured.clear();
@@ -1310,7 +1308,7 @@ CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds)
     const AgcDriver::Graphics::Context* volatile context = &device;
     const CommandFunctions* volatile directBatch = &direct;
     const CommandFunctions* volatile streamedBatch = &AgcDriver::Graphics::StreamedCommands();
-    const auto target = fakeBuffer(1);
+    const auto target = FakeCommandBuffer(1);
     std::vector<double> raw, thunk, typed, thunkStreamed, typedStreamed;
     const std::array<std::function<void()>, 3> direct3{
         [&] { raw.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { rawDevice->CmdDraw(target, call, 1, 0, 0); })); },
@@ -1363,13 +1361,13 @@ void PushDescriptorCost(int calls, int rounds) {
     writes[1].pBufferInfo = &buffer;
     std::vector<double> raw, append, replay;
     for (int round = 0; round < rounds; ++round) {
-        raw.push_back(nanosPerCall(calls, [&](std::uint32_t call) { direct.CmdPushDescriptorSetKHR(fakeBuffer(1), VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(call & 7), 0, 2, writes.data()); }));
+        raw.push_back(nanosPerCall(calls, [&](std::uint32_t call) { direct.CmdPushDescriptorSetKHR(FakeCommandBuffer(1), VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(call & 7), 0, 2, writes.data()); }));
         CommandStream stream(direct);
         const auto handle = stream.Handle();
         append.push_back(nanosPerCall(calls, [&](std::uint32_t call) { streamedPush(handle, VK_PIPELINE_BIND_POINT_GRAPHICS, fake<VkPipelineLayout>(call & 7), 0, 2, writes.data()); }));
         stream.Seal();
         const auto start = std::chrono::steady_clock::now();
-        AgcDriver::Graphics::Replay(stream, fakeBuffer(1), direct);
+        AgcDriver::Graphics::Replay(stream, FakeCommandBuffer(1), direct);
         replay.push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / calls);
     }
     std::printf("push descriptors (2 writes, 3 descriptors; medians of %d rounds): direct %.2f ns, streamed append %.2f ns, replay %.2f ns per call\n", rounds, median(raw), median(append), median(replay));

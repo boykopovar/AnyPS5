@@ -1,4 +1,5 @@
 #include "HostImportFailure.hpp"
+#include "FakeHandles.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -54,7 +55,7 @@ bool Live(VkBuffer buffer) {
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
-    *commands = reinterpret_cast<VkCommandBuffer>(mock.next++);
+    *commands = FakeCommandBuffer(mock.next++);
     return VK_SUCCESS;
 }
 

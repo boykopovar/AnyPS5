@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "BdaTests.hpp"
+#include "FakeHandles.hpp"
 #include "GraphicsTests.hpp"
 #include "CommandStateLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -6029,7 +6030,8 @@ bool releaseOptimizedLink = false;
 template<typename THandle>
 THandle makeHandle() {
     const auto value = mock.next++;
-    if constexpr (std::is_pointer_v<THandle>) return reinterpret_cast<THandle>(static_cast<std::uintptr_t>(value));
+    if constexpr (std::is_same_v<THandle, VkCommandBuffer>) return FakeCommandBuffer(value);
+    else if constexpr (std::is_pointer_v<THandle>) return reinterpret_cast<THandle>(static_cast<std::uintptr_t>(value));
     else return static_cast<THandle>(value);
 }
 
@@ -7549,7 +7551,7 @@ void resourceTests() {
     mock = MockVulkan{};
     const auto context = mockContext();
     const auto state = AgcDriver::Graphics::DecodeState(makeState());
-    const auto commands = reinterpret_cast<VkCommandBuffer>(std::uintptr_t{1});
+    const auto commands = FakeCommandBuffer(1);
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
@@ -8816,7 +8818,7 @@ void misalignedShaderDataTests() {
     mock = MockVulkan{};
     auto context = mockContext();
     context.limits.minStorageBufferOffsetAlignment = 16;
-    const auto commands = reinterpret_cast<VkCommandBuffer>(std::uintptr_t{1});
+    const auto commands = FakeCommandBuffer(1);
     alignas(64) std::array<std::uint32_t, 8> guest{1, 2, 3, 4, 5, 6, 7, 8};
     {
         ShaderRecompiler::RecompileResult compute;
@@ -8851,7 +8853,7 @@ void imageTableTemplateRefreshTests() {
     context.imageTableCapacity = 2;
     context.limits.maxDescriptorSetSampledImages = 2;
     context.limits.maxPerStageDescriptorSampledImages = 2;
-    const auto commands = reinterpret_cast<VkCommandBuffer>(std::uintptr_t{1});
+    const auto commands = FakeCommandBuffer(1);
     {
         ShaderRecompiler::RecompileResult compute;
         auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords));
