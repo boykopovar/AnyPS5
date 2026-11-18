@@ -1319,6 +1319,13 @@ void CheckRawGetcwdPathLimit() {
         ++depth;
     }
 
+    Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+    std::string climb;
+    for (std::size_t level = 0; level < depth + 4; ++level) climb += "../";
+    const std::string inside = std::string(current.data() + 1) + "/" + std::string(1023 - climb.size() - length, 'e');
+    Require(mkdirat_nid_postfix(-100, (climb + inside).c_str(), 0755) == 0 && std::filesystem::is_directory(inside));
+    Require(unlinkat_nid_postfix(-100, ("/../../" + inside).c_str(), 0x800) == 0 && !std::filesystem::exists(inside));
+
     std::array<char, 4096> buffer;
     for (const std::size_t target : {std::size_t{1023}, std::size_t{1024}}) {
         const std::string leaf(target - length - 1, target == 1023 ? 'a' : 'b');
