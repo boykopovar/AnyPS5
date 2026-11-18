@@ -4,6 +4,7 @@
 #include "prx/libSceXml/src/DomParser.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace XmlDom {
@@ -35,6 +36,7 @@ XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNo
 std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNodeId node);
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
+XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name);
 int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list);
 
 }

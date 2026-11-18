@@ -343,4 +343,17 @@ int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const X
     return NodeListReplace(list, items);
 }
 
+XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name) {
+    const std::uint32_t length = NodeListLength(list);
+    for (std::uint32_t index = 0; index < length; ++index) {
+        const XmlNodeId item = NodeListItem(list, index);
+        if (item.first == nullptr) continue;
+        const auto* generation = static_cast<const Generation*>(item.first);
+        if (!generation->alive) throw std::logic_error("sce::Xml::Dom::NodeList::findItem: reading a node after its builder parsed again or terminated reads freed memory in 13.42");
+        const char* itemName = Reader(generation->buffers).NodeName(OffsetOf(item));
+        if (itemName != nullptr && name == itemName) return item;
+    }
+    return XmlNodeId{nullptr, nullptr, 0};
+}
+
 }

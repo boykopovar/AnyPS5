@@ -238,11 +238,78 @@ void TestDocumentLists() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+bool Same(XmlNodeId left, XmlNodeId right) {
+    return left.first == right.first && left.second == right.second && left.flag == right.flag;
+}
+
+XmlNodeId Find(const XmlHandle* list, const char* name) {
+    const XmlString string{name, std::strlen(name)};
+    return _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(list, &string);
+}
+
+void TestFindByName() {
+    Fixture f;
+    Require(f.Parse("<r k=\"v\"><b/><c>t</c><b x=\"1\"/>tail</r>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    const XmlNodeId root = Root(&document);
+
+    XmlHandle list{nullptr};
+    _ZN3sce3Xml3Dom8NodeListC1Ev(&list);
+    Require(Find(&list, "b").first == nullptr && Find(&list, "b").second == nullptr, "an uninitialized list finds nothing");
+    Require(Start(&list, &f.initializer) == 0, "the list starts");
+    Require(Find(&list, "b").first == nullptr, "an empty list finds nothing");
+    Require(_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(&document, root, &list) == 0, "the children");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 4, "four children");
+
+    Require(Same(Find(&list, "b"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 0)), "the first of two matching elements");
+    Require(Same(Find(&list, "c"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a later element");
+    const XmlNodeId missing = Find(&list, "z");
+    Require(missing.first == nullptr && missing.second == nullptr && missing.flag == 0, "no match gives the null node id");
+    Require(Find(&list, "").first == nullptr && Find(&list, "bb").first == nullptr, "only an exact name matches");
+    const XmlString longer{"c-and-more", 1};
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &longer), XmlNodeId{nullptr, nullptr, 0}), "the name is compared up to its terminator, not its size");
+    const XmlString cWithSize{"c", 0};
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &cWithSize), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a zero size does not matter either");
+
+    _ZN3sce3Xml3Dom8NodeList11insertFirstENS1_6NodeIdE(&list, XmlNodeId{nullptr, nullptr, 0});
+    Require(Same(Find(&list, "b"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a null item is skipped");
+
+    bool threw = false;
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a null name throws");
+    threw = false;
+    const XmlString nullBuffer{nullptr, 0};
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &nullBuffer);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a null name buffer throws");
+
+    Require(_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(&document, root, &list) == 0, "the children again");
+    Require(f.Parse("<s/>") == 0, "parse again");
+    threw = false;
+    try {
+        Find(&list, "b");
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "searching nodes of a stale document throws");
+    _ZN3sce3Xml3Dom8NodeListD1Ev(&list);
+    _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+}
+
 }
 
 int main() {
     TestLifecycle();
     TestItems();
     TestDocumentLists();
+    TestFindByName();
     return 0;
 }
