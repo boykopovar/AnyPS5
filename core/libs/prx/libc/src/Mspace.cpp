@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -239,7 +240,13 @@ int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result
     if (!arena) return 22;
     void* pointer = Allocate(arena, size, alignment);
     if (!pointer) return 12;
-    *result = pointer;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(result, &pointer, sizeof(pointer));
+    errno = savedErrno;
+    if (!writable) {
+        Release(*arena, arena->chunks.find(reinterpret_cast<std::uintptr_t>(pointer)));
+        throw std::invalid_argument("sceLibcMspacePosixMemalign: unwritable result");
+    }
     return 0;
 }
 
@@ -283,6 +290,12 @@ int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSi
 
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return FillStats(handle, stats);
+}
+
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    std::lock_guard lock(arenaMutex);
+    const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
+    return found != arenas.end() && found->second->inUse == 0 ? 1 : 0;
 }
 
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
@@ -350,5 +363,9 @@ int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManage
 
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
 }

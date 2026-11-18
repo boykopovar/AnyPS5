@@ -92,7 +92,7 @@ void CheckRejections(AgcDriver::VulkanDevice& device) {
     constexpr std::array<std::uint32_t, 3> gds{0xd9fa0000u, 0x02000400u, 0xbf810000u};
     ExpectError([&] { translate(sourceOverflow); }, "DS conditional exchange source register range overflow");
     ExpectError([&] { translate(destinationOverflow); }, "DS conditional exchange destination register range overflow");
-    ExpectError([&] { translate(gds); }, "DS conditional exchange GDS mode is not supported");
+    translate(gds);
 }
 
 void Fill(std::uint32_t threads, std::uint32_t offset, bool contended) {

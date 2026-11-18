@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -32,14 +33,14 @@ int APS5_VABI sceAgcDriverDestroyQueue(void) {
     return 0;
 }
 
-int APS5_VABI sceAgcDriverGetRegShadowInfo(void) {
+int APS5_VABI sceAgcDriverGetRegShadowInfo(void* info) {
+    if (info == nullptr) return static_cast<int>(0x8A6D0003u);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void) {
+int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void* info) {
+    if (info == nullptr) return static_cast<int>(0x8A6D0003u);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAgcDriverGetReservedDmemForAgc(void) {
@@ -127,6 +128,56 @@ int APS5_VABI sceAgcDriverTmpInitIdhs(void) {
     return 0;
 }
 
+int APS5_VABI sceAgcSdmaClose(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaConstFill(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyLinear(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyTiledBC(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyTiledGen2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyWindowBC(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyWindowGen2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaFlush(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaSetTileModesBC(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -210,5 +261,13 @@ int APS5_VABI libSceAgcDriverUnknown_wxdcyVqXJEY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("wxdcyVqXJEY", libSceAgcDriverUnknown_wxdcyVqXJEY_nid_no_patch);
+
+int APS5_VABI sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do(std::int32_t kind, std::int64_t arg) {
+    if (kind != 1) return static_cast<int>(0x8A6D0003u);
+    if (arg != 0) return static_cast<int>(0x8A6D0005u);
+    sceKernelDebugRaiseException(0xA002030A, 0);
+    return static_cast<int>(0x8A6D0003u);
+}
+APS5_EXPORT("yuO+lNrj+Do", sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do);
 
 }

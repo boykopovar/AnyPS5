@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -57,6 +58,7 @@ int main() {
 
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(reinterpret_cast<const void*>(0x10)) == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(&param) == kErrNotInitialized);
     Require(sceNpFriendListDialogClose() == kErrNotInitialized);
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrNotInitialized);
@@ -70,6 +72,9 @@ int main() {
     Require(sceNpFriendListDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpFriendListDialogOpenA(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceNpFriendListDialogGetResultA(result) == kErrNotFinished);
     Require(result[0] == 0x5a5a5a5a);
@@ -80,6 +85,9 @@ int main() {
     Require(sceNpFriendListDialogUpdateStatus() == kStatusFinished);
 
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpFriendListDialogGetResultA(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpFriendListDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == 0x5a5a5a5a);
@@ -103,6 +111,9 @@ int main() {
     Require(sceNpFriendListDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == 0x5a5a5a5a);
+    errno = 71;
+    Require(sceNpFriendListDialogGetResultA(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpFriendListDialogTerminate() == 0);
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);

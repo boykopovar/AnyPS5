@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
+#include "ControlFlow/GraphBuilder.hpp"
+#include "Optimization/SrtWalker.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -49,7 +51,7 @@ std::uint64_t Driver::DispatchCacheBytes() {
     static const std::uint64_t bytes = [] {
         const char* text = std::getenv("APS5_DISPATCH_CACHE_BYTES");
         const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
-        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{256} << 20u;
+        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{1} << 30u;
     }();
     return bytes;
 }
@@ -66,7 +68,15 @@ Driver::DispatchCacheFootprint Driver::DispatchCacheSize() {
 
 std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
     const auto held = [](const auto& values) { return static_cast<std::uint64_t>(values.capacity() * sizeof(values[0])); };
-    return sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.registeredViews != nullptr ? held(*variant.registeredViews) : 0u) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0);
+    auto bytes = sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.registeredViews != nullptr ? held(*variant.registeredViews) : 0u) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0);
+    if (variant.linking != nullptr) {
+        const auto& link = *variant.linking;
+        bytes += sizeof(link) + held(link.callees) + held(link.code) + held(link.tableUserData) + held(link.dependencies);
+        for (const auto& code : link.code) bytes += held(code);
+        for (const auto& dependency : link.dependencies) bytes += sizeof(*dependency) + held(dependency->words) + held(dependency->runs) + (dependency->stamp != nullptr ? sizeof(*dependency->stamp) : 0u);
+        if (link.linked != nullptr) bytes += sizeof(*link.linked) + held(link.linked->code) + held(link.linked->fallbacks);
+    }
+    return bytes;
 }
 
 void Driver::accountVariant(const DispatchVariant& variant, bool added) {

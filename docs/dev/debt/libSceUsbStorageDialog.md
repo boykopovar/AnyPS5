@@ -4,6 +4,10 @@
 
 - [libSceUsbStorageDialog](../../../core/libs/prx/libSceUsbStorageDialog/Export.cpp) (libSceUsbStorageDialog) - the USB storage dialog runs the common-dialog state machine without showing a UI and reports the dialog as canceled by the user (`COMMON_DIALOG_RESULT_USER_CANCELED = 1`). `sceUsbStorageDialogOpen` transitions to `RUNNING` (2), while `sceUsbStorageDialogUpdateStatus` and `sceUsbStorageDialogClose` transition to `FINISHED` (3) before returning results, matching other common dialogs in the repository; Firmware 13.42 checks only for null and accesses the structure directly (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns COMMON_DIALOG_ERROR_INVALID_ARGUMENT instead.
 
+### Host-safety fallback
+
+- [libSceUsbStorageDialog](../../../core/libs/prx/libSceUsbStorageDialog/Export.cpp) (`sceUsbStorageDialogOpen`) - Firmware 13.42 checks only for null and accesses the structure directly (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns `COMMON_DIALOG_ERROR_ARG_NULL` (`0x80B8000D`) instead.
+
 ### Unknown function info
 
 - [libSceUsbStorageDialog](../../../core/libs/prx/libSceUsbStorageDialog/Export.cpp) - the service-specific result status at offset 12 is not produced because the UI always cancels. The 80-byte result header and SDK-dependent validation are recovered; the remaining 64 bytes are untouched by the native wrapper. The purpose of the Open parameter size field remains unverified; the native wrapper does not validate it.

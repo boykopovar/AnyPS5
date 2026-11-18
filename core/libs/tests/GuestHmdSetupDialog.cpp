@@ -1,6 +1,7 @@
 #include "prx/libSceHmdSetupDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
@@ -61,6 +62,9 @@ int main() {
     Require(sceHmdSetupDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceHmdSetupDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceHmdSetupDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceHmdSetupDialogGetResult(result) == kErrNotFinished);
 
     Require(sceHmdSetupDialogOpen(&param) == 0);
@@ -68,6 +72,9 @@ int main() {
     Require(sceHmdSetupDialogUpdateStatus() == kStatusFinished);
 
     Require(sceHmdSetupDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceHmdSetupDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceHmdSetupDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
@@ -87,6 +94,9 @@ int main() {
     result[0] = -1;
     Require(sceHmdSetupDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    errno = 71;
+    Require(sceHmdSetupDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceHmdSetupDialogTerminate() == 0);
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
     Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);

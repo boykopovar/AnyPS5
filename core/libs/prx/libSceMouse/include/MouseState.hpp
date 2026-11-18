@@ -28,10 +28,15 @@ int CheckHandle(std::int32_t handle);
 bool IsInitialized();
 int GetHandle(int userId, std::int32_t type);
 int SetExtensionConfig(std::int32_t handle, const std::uint8_t* config);
+int SetCursor(std::int32_t handle, std::int32_t cursor);
+int GetCursor(std::int32_t handle, std::int32_t* cursor);
+int SetHandType(std::int32_t handle, std::uint32_t type);
+int SetPointerSpeed(std::int32_t handle, std::uint32_t speed);
 int ResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y);
 int SetAbsoluteVirtualScreenSize(std::int32_t handle, std::int32_t size);
 int SetAbsoluteHighPrecisionMode(std::int32_t handle, std::int32_t mode);
 int ReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int32_t num);
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId);
 void Publish(const MouseInputEvent& event);
 }
 

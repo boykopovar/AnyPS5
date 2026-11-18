@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -14,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 #include "PitchShift.hpp"
 
@@ -106,8 +108,11 @@ struct Ngs2Port {
     Ngs2Handle detachedDest = 0;
     float volume = 1.0f;
     std::int32_t matrix = -1;
-    std::vector<float> rampFrom;
     std::uint32_t destInput = 0;
+    std::vector<float> mixedGains;
+    std::uint32_t mixedOutputs = 0;
+    std::uint32_t mixedSources = 0;
+    bool mixed = false;
 };
 
 struct Ngs2UserFx2 {
@@ -132,6 +137,17 @@ struct Ngs2VoiceCustomGain {
     std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> target{};
     bool configured = false;
     bool lifecycleUnknown = false;
+};
+
+struct Ngs2VoiceCustomChannelMixer {
+    std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> level{};
+    bool configured = false;
+};
+
+struct Ngs2SubmixerCompressor {
+    bool configured = false;
+    Ngs2SubmixerVoiceCompressorParam param{};
+    std::array<float, NGS2_MAX_CHANNELS> gain{};
 };
 
 struct Ngs2QueuedCallback {
@@ -195,6 +211,7 @@ struct Ngs2Voice {
     alignas(std::atomic_ref<std::uint32_t>::required_alignment) mutable std::uint32_t queuedBlocks = 0;
     const std::uint8_t* queuedTailEnd = nullptr;
     std::uintptr_t queuedTailUserData = 0;
+    std::uint32_t queuedTailBytes = 0;
     bool decodePendingAtGrain = false;
     std::vector<Ngs2PendingControl> pendingControls;
     bool pendingPlay = false;
@@ -217,6 +234,8 @@ struct Ngs2Voice {
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
+    std::vector<Ngs2VoiceCustomChannelMixer> customChannelMixer;
+    Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
     Ngs2UserFxProcessHandler userFxHandler = nullptr;
@@ -305,6 +324,9 @@ struct Ngs2System {
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
     std::atomic<std::uint64_t> callbackSequence{0};
+    std::array<std::array<std::uint8_t, 24>, 32> slotData{};
+    std::array<bool, 32> slotSet{};
+    float unnamedParam = 0.0f;
 };
 
 std::string Ngs2Hex(std::uint32_t value);
@@ -401,9 +423,15 @@ void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_
 void Ngs2PublishSamplerState(Ngs2Voice& voice);
 void Ngs2ResetJobSchedulerOption(Ngs2JobSchedulerOption& option);
 void Ngs2ResetUserFx2(Ngs2Voice& voice);
-void Ngs2PrepareControlMix(Ngs2Voice& voice);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
+inline bool Ngs2Ps4UnsupportedChannels(std::uint32_t channels) {
+    return channels == 3 || channels == 4 || channels == 5 || channels == 7;
+}
+inline bool Ngs2Ps4UnsupportedBufferChannels(std::uint32_t channels) {
+    return Ngs2Ps4UnsupportedChannels(channels) || channels > NGS2_MAX_CHANNELS;
+}
+void Ngs2RenderRefused(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 float Ngs2FixedDownmixLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers);
@@ -412,5 +440,29 @@ int Ngs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param);
 int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* outWork, std::uint32_t flags);
 int Ngs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* outAttrib, std::uint32_t flags);
 int Ngs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param);
+
+inline bool ReadGuestBytes(void* local, const void* guest, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, guest, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+inline bool WriteGuestBytes(void* guest, const void* local, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(guest, local, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool ReadGuest(const T* guest, T& local) {
+    return ReadGuestBytes(&local, guest, sizeof(local));
+}
+
+template <typename T>
+bool WriteGuest(T* guest, const T& local) {
+    return WriteGuestBytes(guest, &local, sizeof(local));
+}
 
 #endif

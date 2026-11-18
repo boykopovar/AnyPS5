@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -770,7 +772,14 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    Libc::StartHostThread([watch, host = std::move(host)]() mutable {
+        try {
+            RunHostWatch(watch, std::move(host));
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            std::fflush(stderr);
+        }
+    }).detach();
     return 0;
 }
 

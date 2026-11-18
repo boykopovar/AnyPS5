@@ -5,6 +5,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 constexpr auto Invalid = static_cast<std::size_t>(-1);
 constexpr auto Incomplete = static_cast<std::size_t>(-2);
@@ -114,6 +121,52 @@ static void CheckStrings() {
     Require(wcstombs_nid_postfix(nullptr, source, 0) == 6, "wcstombs counts bytes");
 }
 
+static void CheckZeroCapacity() {
+    const std::uint16_t empty[] = {0};
+    const std::uint16_t source[] = {'a', 0xe9, 0x20ac, 0};
+    char destination[8];
+    char unchanged[8];
+    std::memset(unchanged, 'x', sizeof(unchanged));
+    for (const auto* text : {empty, source}) {
+        std::memcpy(destination, unchanged, sizeof(destination));
+        *__error_nid_postfix() = 7;
+        Require(wcstombs_nid_postfix(destination, text, 0) == 0, "zero capacity converts no bytes");
+        Require(std::memcmp(destination, unchanged, sizeof(destination)) == 0, "zero capacity leaves destination untouched");
+        Require(*__error_nid_postfix() == 7, "zero capacity preserves errno");
+    }
+    for (const auto capacity : {std::size_t{0}, std::size_t{1}}) {
+        *__error_nid_postfix() = 7;
+        Require(wcstombs_nid_postfix(nullptr, source, capacity) == 6, "null destination counts all bytes independently of capacity");
+        Require(*__error_nid_postfix() == 7, "length query preserves errno");
+    }
+    Require(wcstombs_nid_postfix(nullptr, empty, 0) == 0, "empty length query");
+#ifdef _WIN32
+    SYSTEM_INFO information{};
+    GetSystemInfo(&information);
+    const auto pageSize = static_cast<std::size_t>(information.dwPageSize);
+    auto* inaccessible = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(inaccessible != nullptr, "allocate inaccessible source page");
+#else
+    const auto nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0, "query source page size");
+    const auto pageSize = static_cast<std::size_t>(nativePageSize);
+    auto* inaccessible = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(inaccessible != MAP_FAILED, "allocate inaccessible source page");
+#endif
+    std::memcpy(destination, unchanged, sizeof(destination));
+    std::fputs("checking wcstombs zero-capacity source access\n", stderr);
+    *__error_nid_postfix() = 7;
+    Require(wcstombs_nid_postfix(destination, static_cast<const std::uint16_t*>(inaccessible), 0) == 0,
+        "zero capacity does not read source");
+    Require(std::memcmp(destination, unchanged, sizeof(destination)) == 0, "inaccessible source leaves destination untouched");
+    Require(*__error_nid_postfix() == 7, "inaccessible source with zero capacity preserves errno");
+#ifdef _WIN32
+    Require(VirtualFree(inaccessible, 0, MEM_RELEASE) != 0, "release source page");
+#else
+    Require(munmap(inaccessible, pageSize) == 0, "release source page");
+#endif
+}
+
 static void CheckMbrlen() {
     unsigned char state[16]{};
     Require(mbrlen_nid_postfix("A", 1, state) == 1, "mbrlen counts an ASCII byte");
@@ -133,11 +186,36 @@ static void CheckMbrlen() {
     Require(mbrlen_nid_postfix("\x82\xac", 2, nullptr) == 2, "mbrlen completes the form from its internal state");
 }
 
+static void CheckDinkumwareHelpers() {
+    unsigned char state[16]{};
+    unsigned char referenceState[16]{};
+    std::uint16_t value = 0;
+    std::uint16_t reference = 0;
+    Require(_Mbrtowc_nid_postfix(&value, "\xe2\x82\xac", 3, state) == mbrtowc_nid_postfix(&reference, "\xe2\x82\xac", 3, referenceState),
+        "_Mbrtowc matches mbrtowc for a three-byte form");
+    Require(value == reference && value == 0x20ac, "_Mbrtowc decodes the character");
+    std::memset(state, 0, sizeof(state));
+    std::memset(referenceState, 0, sizeof(referenceState));
+    Require(_Mbrtowc_nid_postfix(&value, "\xe2", 1, state) == mbrtowc_nid_postfix(&reference, "\xe2", 1, referenceState),
+        "_Mbrtowc matches mbrtowc for an incomplete form");
+    Require(_Mbrtowc_nid_postfix(nullptr, nullptr, 0, nullptr) == mbrtowc_nid_postfix(nullptr, nullptr, 0, nullptr),
+        "_Mbrtowc matches mbrtowc for a null string and state");
+
+    char encoded[8]{};
+    char referenceEncoded[8]{};
+    const auto encodedLength = _Wcrtomb_nid_postfix(encoded, 0x20ac, nullptr);
+    Require(encodedLength == wcrtomb_nid_postfix(referenceEncoded, 0x20ac, nullptr), "_Wcrtomb matches wcrtomb");
+    Require(encodedLength == 3 && std::memcmp(encoded, referenceEncoded, encodedLength) == 0, "_Wcrtomb encodes the character");
+    Require(_Wcrtomb_nid_postfix(nullptr, 'A', nullptr) == 1, "_Wcrtomb accepts a null destination");
+}
+
 int main() {
     CheckDecoding();
     CheckState();
     CheckMbrlen();
     CheckEncoding();
     CheckStrings();
+    CheckZeroCapacity();
+    CheckDinkumwareHelpers();
     return 0;
 }

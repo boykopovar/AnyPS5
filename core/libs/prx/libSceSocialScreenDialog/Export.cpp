@@ -1,5 +1,7 @@
 #include "prx/libSceSocialScreenDialog/include/Api.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -8,16 +10,7 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
@@ -36,6 +29,13 @@ int APS5_VABI sceSocialScreenDialogOpen(const void* param) {
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     return 0;
 }
@@ -54,7 +54,10 @@ int APS5_VABI sceSocialScreenDialogGetResult(void* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
-    std::memcpy(result, &canceled, sizeof(canceled));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 

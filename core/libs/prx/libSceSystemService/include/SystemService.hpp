@@ -180,7 +180,7 @@ int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDu
 int APS5_VABI sceLncUtilKillApp(uint32_t appId);
 int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason);
 int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void);
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void);
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param);
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void);
 int APS5_VABI sceSystemServiceTelemetrySetData2WithUserId(void);
 int APS5_VABI sceShellCoreUtilStartUmmDictation(void);
@@ -238,7 +238,7 @@ int APS5_VABI sceShellCoreUtilGetStreamingClientInfo(void);
 int APS5_VABI sceShellCoreUtilRequestCffUpdate(void);
 int APS5_VABI sceShellCoreUtilGetCffConfig(void);
 int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void);
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count);
 int APS5_VABI sceShellCoreUtilDebugGetCffInfo(void);
 int APS5_VABI sceShellCoreUtilDebugSetCffStatus(void);
 int APS5_VABI sceShellCoreUtilGetPeripheralConnectionSessionId(void);
@@ -622,7 +622,7 @@ int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t sel
 int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event);
 int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode();
 int APS5_VABI sceSystemServiceGetLocalProcessStatusList(SystemServiceLocalProcessStatus* statuses, std::uint32_t capacity, std::uint32_t* count);
-int APS5_VABI sceSystemServiceGetMainAppTitleId();
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId);
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent);
 int APS5_VABI sceSystemServiceGetParentSocket();
 int APS5_VABI sceSystemServiceGetParentSocketForJvm();

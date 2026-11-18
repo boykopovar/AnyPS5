@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/SecurityOriginAbi.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -441,6 +442,11 @@ void APS5_VABI _ZN7WebCore20LegacySchemeRegistry27registerURLSchemeAsNoAccessERK
     AddScheme(g_noAccessSchemes, scheme.impl);
 }
 
+bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry27shouldTreatURLSchemeAsLocalERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_localSchemes, scheme.impl);
+}
+
 void APS5_VABI _ZN7WebCore20LegacySchemeRegistry30registerURLSchemeAsCORSEnabledERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
     std::lock_guard lock(g_schemeMutex);
     AddScheme(g_corsSchemes, scheme.impl);
@@ -454,6 +460,11 @@ void APS5_VABI _ZN7WebCore20LegacySchemeRegistry32registerURLSchemeAsEmptyDocume
 bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry33shouldTreatURLSchemeAsCORSEnabledERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
     std::lock_guard lock(g_schemeMutex);
     return HasScheme(g_corsSchemes, scheme.impl);
+}
+
+bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry34shouldLoadURLSchemeAsEmptyDocumentERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_emptyDocSchemes, scheme.impl);
 }
 
 void APS5_VABI _ZN7WebCore20LegacySchemeRegistry34registerURLSchemeAsDisplayIsolatedERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
@@ -700,3 +711,17 @@ bool APS5_VABI _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMEType
 }
 
 }
+
+namespace NKWebKit::WebCoreAbi {
+
+bool ShouldTreatURLSchemeAsNoAccess(const WtfAbi::StringImpl* scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_noAccessSchemes, scheme);
+}
+
+bool ShouldPartitionCacheForURLScheme(const WtfAbi::StringImpl* scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_cachePartitionedSchemes, scheme);
+}
+
+}  // namespace NKWebKit::WebCoreAbi

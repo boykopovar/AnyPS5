@@ -10,8 +10,38 @@
 
 namespace NKWebKit {
 
-class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {};
-class Page : public ObjectOf<ObjectType::Page> {};
+class Page : public ObjectOf<ObjectType::Page> {
+public:
+    bool canGoBack = false;
+    bool canGoForward = false;
+    mutable Retained<Inspector> inspector;
+    bool suppressScrollbarAnimations = false;
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
+    bool willHandleHorizontalScrollEvents = false;
+    std::uint32_t scrollPinningBehavior = 0;
+    bool useFixedLayout = false;
+    SizeValue fixedLayoutSize{ 0.0, 0.0 };
+    std::uint32_t paginationMode = 0;
+    bool paginationBehavesLikeColumns = false;
+    bool paginationLineGridEnabled = false;
+    double gapBetweenPages = 0.0;
+    double pageLength = 0.0;
+    bool isPinnedToLeftSide = true;
+    bool isPinnedToRightSide = true;
+    bool isPinnedToTopSide = true;
+    bool isPinnedToBottomSide = true;
+    bool addsVisitedLinks = true;
+    bool horizontalRubberBanding = true;
+    bool verticalRubberBanding = true;
+    bool rubberBandsAtBottom = true;
+    bool rubberBandsAtLeft = true;
+    bool rubberBandsAtRight = true;
+    bool rubberBandsAtTop = true;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+    bool supportsTextZoom = true;
+};
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -31,17 +61,45 @@ public:
     std::optional<std::u16string> injectedBundlePath;
     std::optional<std::u16string> webProcessPath;
     std::optional<std::u16string> networkProcessPath;
+    std::optional<std::u16string> cookieStoragePath;
     std::int32_t userId = -1;
     bool fullySynchronousModeIsAllowedForTesting = false;
     bool ignoreSynchronousMessagingTimeoutsForTesting = false;
     std::optional<bool> processSwapsOnNavigationFromClient;
     bool processSwapsOnNavigationFromExperimentalFeatures = false;
+    bool processSwapsOnWindowOpenWithOpener = false;
     bool alwaysKeepAndReuseSwappedProcesses = false;
     std::optional<bool> isAutomaticProcessWarmingEnabledByClient;
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
     std::vector<std::u16string> overrideLanguages;
+};
+
+class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
+public:
+    ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
+    explicit ProcessPool(Retained<ProcessPoolConfiguration> config) : configuration(std::move(config)) {}
+
+    Retained<ProcessPoolConfiguration> configuration;
+    bool usesSingleWebProcess = false;
+    std::uint32_t cacheModel = 0;
+    bool accessibilityEnabled = false;
+    bool processTerminationEnabled = true;
+    std::vector<std::string> visitedLinks;
+    bool alwaysUsesComplexTextCodePath = false;
+    bool memoryCacheDisabled = false;
+    bool httpPipeliningEnabled = true;
+    bool shouldUseFontSmoothing = true;
+    bool javaScriptConfigurationFileEnabled = false;
+    bool javaScriptGarbageCollectorTimerEnabled = true;
+    bool storageAccessAPIEnabled = false;
+    std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
+    std::vector<std::string> bypassingCSPSchemes;
+    std::vector<std::string> cachePartitionedSchemes;
+    std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
+    std::vector<std::string> emptyDocumentSchemes;
+    std::vector<std::string> secureSchemes;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

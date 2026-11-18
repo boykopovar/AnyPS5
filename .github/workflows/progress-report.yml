@@ -7,15 +7,25 @@ on:
       - 'core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp'
       - 'tools/nid_names.py'
       - 'tools/progress.py'
+      - 'tools/shader_scan.py'
+      - 'tools/isa_profiles.py'
+      - 'tools/rdna2_isa_forms.txt'
+      - 'tools/gfx1013_isa_forms.txt'
+      - 'core/shader/recompiler/**'
       - 'tools/rdna_isa.txt'
       - '.github/workflows/progress-report.yml'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   report:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
