@@ -2197,7 +2197,7 @@ int APS5_VABI _ZNK6icu_6816ICULocaleService22validateFallbackLocaleEv_nid_postfi
 int APS5_VABI sceIcuLegacyUnknown_yjKiaXVikr8_nid_no_patch();
 int APS5_VABI uhash_get_nid_postfix();
 int APS5_VABI _ZN6icu_6824ForwardCharacterIteratorC2ERKS0__nid_postfix();
-int APS5_VABI ucnv_countAvailable_nid_postfix();
+std::int32_t APS5_VABI ucnv_countAvailable_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_yt5SoFC3Qbs_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_yuIik2mcgeM_nid_no_patch();
 int APS5_VABI _ZN6icu_6811ICU_Utility12appendToRuleERNS_13UnicodeStringEiaaS2__nid_postfix();

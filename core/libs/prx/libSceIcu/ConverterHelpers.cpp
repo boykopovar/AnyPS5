@@ -109,6 +109,10 @@ constexpr Signature Signatures[] = {
 
 extern "C" {
 
+std::int32_t APS5_VABI ucnv_countAvailable_nid_postfix() {
+    return ucnv_countAvailable();
+}
+
 void APS5_VABI u_flushDefaultConverter_nid_postfix() {
     const std::lock_guard lock(DefaultConverterMutex);
     u_flushDefaultConverter();

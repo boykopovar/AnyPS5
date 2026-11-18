@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [Converter-name and signature helpers]
+
+- [Converter-name and signature helpers](../../../core/libs/prx/libSceIcu/ConverterHelpers.cpp) have no console ABI or behavior verification. Their five names/NIDs occur in the PS5 3.20 inventory. Behavior follows ICU 78.1 [ucnv_io.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv_io.cpp) and [ucnv.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv.cpp). Name comparison uses ASCII; the EBCDIC normalizer keeps EBCDIC output. Null normalization arguments throw instead of following upstream invalid access. Signature detection keeps ICU status, optional length and NUL-terminated input behavior. `ucnv_countAvailable` reports the bundled ICU alias-table count; this build embeds no such table, so it reports zero. The console's converter list remains unverified. Closes when: compared with the console and converter alias data is available.

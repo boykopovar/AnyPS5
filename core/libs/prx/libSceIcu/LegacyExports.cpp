@@ -9530,10 +9530,6 @@ int APS5_VABI _ZN6icu_6824ForwardCharacterIteratorC2ERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_countAvailable_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_yt5SoFC3Qbs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

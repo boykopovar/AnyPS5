@@ -207,6 +207,16 @@ void NameMatching() {
     }
 }
 
+void AvailableConverters() {
+    const std::int32_t hostCount = ucnv_countAvailable();
+    Require(ucnv_countAvailable_nid_postfix() == hostCount, "converter count matches bundled ICU");
+    Require(ucnv_countAvailable_nid_postfix() == hostCount, "converter count is stable");
+    for (std::int32_t index = 0; index < hostCount; ++index) {
+        Require(ucnv_getAvailableName(index) != nullptr, "each counted converter has a name");
+    }
+    Require(ucnv_getAvailableName(hostCount) == nullptr, "count is the first invalid converter index");
+}
+
 void CheckSignature(const char* source, std::int32_t length, const char* expected, std::int32_t expectedLength) {
     for (std::int32_t initial : {0, -1, -128}) {
         std::int32_t status = initial;
@@ -344,6 +354,7 @@ void SignatureGuestPointers() {
 int main() {
     DefaultConverterLifecycle();
     DefaultConverterNames();
+    AvailableConverters();
     NameMatching();
     Signatures();
     SignatureGuestPointers();
