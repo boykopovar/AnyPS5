@@ -469,10 +469,10 @@ struct GentimeText {
     int length;
 };
 
-GentimeText GentimeField(const char* guest, int index) {
+GentimeText GentimeField(const char* guest, int index, const char* function = "_Gentime") {
     std::string copy;
-    if (CopyGuestString_nid_no_patch(guest, 0x10000, copy) != 0) throw std::invalid_argument("_Gentime: an unreadable time information string");
-    if (copy.empty()) return {guest, 0};
+    if (CopyGuestString_nid_no_patch(guest, 0x10000, copy) != 0) throw std::invalid_argument(std::string(function) + ": an unreadable time information string");
+    if (copy.empty() || index < 0) return {guest + copy.size(), 0};
     const char separator = copy[0];
     std::size_t start = 1;
     for (; index > 0; --index) {
@@ -1071,35 +1071,12 @@ int APS5_VABI _Getstr_nid_postfix() {
 }
 
 const char* APS5_VABI _Gettime_nid_postfix(const char* s, int n, int* len) {
-    if (s == nullptr) {
-        if (len != nullptr) *len = 0;
-        return "";
-    }
-    const char sep = *s;
-    if (sep == '\0' || n < 0) {
-        while (*s != '\0') ++s;
-        if (len != nullptr) *len = 0;
-        return s;
-    }
-    ++s;
-    for (; 0 < n; --n) {
-        while (*s != '\0' && *s != sep) {
-            ++s;
-        }
-        if (*s == '\0') {
-            if (len != nullptr) *len = 0;
-            return s;
-        }
-        ++s;
-    }
-    const char* start = s;
-    while (*s != '\0' && *s != sep) {
-        ++s;
-    }
-    if (len != nullptr) {
-        *len = static_cast<int>(s - start);
-    }
-    return start;
+    const int savedErrno = errno;
+    const GentimeText field = s == nullptr ? GentimeText{"", 0} : GentimeField(s, n, "_Gettime");
+    const bool stored = len == nullptr || GuestCopyOut_nid_no_patch(len, &field.length, sizeof(field.length));
+    errno = savedErrno;
+    if (!stored) throw std::invalid_argument("_Gettime: an unwritable length");
+    return field.text;
 }
 
 const char* APS5_VABI _Getzone_nid_postfix() {
