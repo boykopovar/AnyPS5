@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#if defined(__linux__) && defined(__x86_64__)
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
+#endif
 
 namespace {
 
@@ -31,6 +34,9 @@ class QueueWrite {
     std::size_t bytes;
     const char* function;
     GuestArena::HostWrite guard;
+#if defined(__linux__) && defined(__x86_64__)
+    const bool faultCopy = GuestFaultCopy::Ready();
+#endif
 
     static void* CheckedRange(void* destination, std::size_t bytes, const char* function) {
         const auto address = reinterpret_cast<std::uintptr_t>(destination);
@@ -40,9 +46,22 @@ class QueueWrite {
 public:
     QueueWrite(void* destination, std::size_t bytes, const char* function)
         : destination(destination), bytes(bytes), function(function), guard(CheckedRange(destination, bytes, function), bytes) {
-        if (!guard.Open() || !GuestWritable_nid_no_patch(destination, bytes)) NotImplemented_nid_no_patch(function);
+        if (!guard.Open()) NotImplemented_nid_no_patch(function);
+#if defined(__linux__) && defined(__x86_64__)
+        if (faultCopy) {
+            if (!GuestFaultCopy::Copy(destination, destination, bytes)) NotImplemented_nid_no_patch(function);
+            return;
+        }
+#endif
+        if (!GuestWritable_nid_no_patch(destination, bytes)) NotImplemented_nid_no_patch(function);
     }
     void Store(const void* source) const {
+#if defined(__linux__) && defined(__x86_64__)
+        if (faultCopy) {
+            if (!GuestFaultCopy::Copy(destination, source, bytes)) NotImplemented_nid_no_patch(function);
+            return;
+        }
+#endif
         if (!GuestCopyOut_nid_no_patch(destination, source, bytes)) NotImplemented_nid_no_patch(function);
     }
 };
