@@ -1,12 +1,15 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -26,11 +29,14 @@ void refused(F action) {
     check(failed, "unsupported atomic command was accepted");
 }
 
-struct Storage {
-    alignas(64) std::array<std::uint64_t, 8> words{};
-    Storage() { GuestAllocations::Mutation().Add(words.data(), sizeof(words), true, true, true); }
-    ~Storage() { GuestAllocations::Mutation().Remove(words.data()); }
+template <typename T>
+struct MemoryStorage {
+    alignas(64) std::array<T, 8> words{};
+    MemoryStorage() { GuestAllocations::Mutation().Add(words.data(), sizeof(words), true, true, true); }
+    ~MemoryStorage() { GuestAllocations::Mutation().Remove(words.data()); }
 };
+
+using Storage = MemoryStorage<std::uint64_t>;
 
 std::array<std::uint32_t, 9> packet(void* target, std::uint32_t operation, std::uint64_t source, std::uint64_t comparison = 0, std::uint32_t flags = 0) {
     const auto address = reinterpret_cast<std::uintptr_t>(target);
@@ -144,19 +150,51 @@ void protocol() {
     check(storage.words == std::array<std::uint64_t, 8>{}, "a refused atomic changed memory");
 }
 
-void concurrent(bool wide) {
-    Storage storage;
-    const auto command = packet(&storage.words[1], wide ? 0x6fu : 0x4fu, 1);
+template <typename T>
+void concurrentTyped() {
+    MemoryStorage<T> storage;
+    const auto command = packet(&storage.words[1], sizeof(T) == 8 ? 0x6fu : 0x4fu, 1);
     std::atomic<bool> failed{false};
     std::vector<std::thread> workers;
-    for (int i = 0; i < 4; ++i) workers.emplace_back([&] {
+    for (int i = 0; i < 4; ++i) workers.emplace_back([&, i] {
         try {
             AgcDriver::QueueState queue;
-            for (int iteration = 0; iteration < 250; ++iteration) AgcDriver::Pm4::Execute(command, queue);
+            for (int iteration = 0; iteration < 250; ++iteration) {
+                if (i < 2) AgcDriver::Pm4::Execute(command, queue);
+                else std::atomic_ref<T>(storage.words[1]).fetch_add(1, std::memory_order_acq_rel);
+            }
         } catch (...) { failed.store(true); }
     });
     for (auto& worker : workers) worker.join();
     check(!failed.load() && storage.words[1] == 1000, "concurrent atomic increments were lost");
+}
+
+void concurrent(bool wide) {
+    if (wide) concurrentTyped<std::uint64_t>();
+    else concurrentTyped<std::uint32_t>();
+}
+
+void exclusion() {
+    Storage storage;
+    const auto command = packet(&storage.words[1], 0x6f, 1);
+    std::atomic<bool> started{false}, done{false}, failed{false};
+    auto& mutex = AgcDriver::GuestMemory::GpuMutex();
+    std::unique_lock lock(mutex);
+    std::thread worker([&] {
+        started.store(true, std::memory_order_release);
+        try {
+            AgcDriver::QueueState queue;
+            AgcDriver::Pm4::Execute(command, queue);
+        } catch (...) { failed.store(true); }
+        done.store(true, std::memory_order_release);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while ((!started.load(std::memory_order_acquire) || (!done.load(std::memory_order_acquire) && mutex.Waiters() == 0)) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    const bool excluded = !done.load(std::memory_order_acquire) && mutex.Waiters() != 0;
+    lock.unlock();
+    worker.join();
+    check(excluded, "CP atomic ran while another GPU transaction held the device mutex");
+    check(!failed.load() && storage.words[1] == 1, "excluded atomic did not finish after the GPU transaction released");
 }
 
 }
@@ -169,6 +207,7 @@ int main(int argc, char** argv) {
         else if (mode == "protocol") protocol();
         else if (mode == "concurrent32") concurrent(false);
         else if (mode == "concurrent64") concurrent(true);
+        else if (mode == "exclusion") exclusion();
         else throw std::runtime_error("unknown atomic test mode");
         LibcRunShutdown_nid_postfix();
         std::puts("atomic memory tests passed");
