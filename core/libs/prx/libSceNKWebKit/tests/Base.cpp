@@ -2264,7 +2264,6 @@ static void TestImage() {
     Require(threwOutOfRange);
 }
 
-<<<<<<< HEAD
 static void TestAuthentication() {
     Require(WKAuthenticationChallengeGetTypeID() == 2);
     Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
