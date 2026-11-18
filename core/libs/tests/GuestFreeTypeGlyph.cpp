@@ -426,28 +426,32 @@ static void OutlineCountLimits() {
     FT_Done_Glyph(native);
 }
 
-static void UnsupportedChanges() {
+static void DestructionAndUnsupportedChanges() {
     Fixture fixture;
     fixture.Load(1, FT_LOAD_NO_HINTING);
     GuestGlyphRec* glyph = nullptr;
     Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == 0);
     auto& outline = reinterpret_cast<GuestOutlineGlyphRec*>(glyph)->outline;
-    const auto points = outline.points;
-    std::array<GuestVector, 4> replacement{};
+    std::array<GuestVector, 4> replacement{{{1, 2}, {3, 4}, {5, 6}, {7, 8}}};
     outline.points = replacement.data();
-    Require(Throws([&] { FT_Done_Glyph_nid_postfix(glyph); }, "FT_Done_Glyph"));
-    outline.points = points;
-    outline.flags ^= FT_OUTLINE_OWNER;
-    Require(Throws([&] { FT_Done_Glyph_nid_postfix(glyph); }, "FT_Done_Glyph"));
-    outline.flags ^= FT_OUTLINE_OWNER;
+    outline.tags = reinterpret_cast<unsigned char*>(1);
+    outline.contours = reinterpret_cast<std::uint16_t*>(1);
+    outline.flags &= ~FT_OUTLINE_OWNER;
+    glyph->format = UINT32_MAX;
+    glyph->advance = {std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()};
+    FT_Done_Glyph_nid_postfix(glyph);
+    Require(replacement[0].x == 1 && replacement[0].y == 2 && replacement[3].x == 7 && replacement[3].y == 8);
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == 0);
     const auto library = glyph->library;
     glyph->library = nullptr;
     GuestGlyphRec* copy = nullptr;
+    Require(Throws([&] { FT_Done_Glyph_nid_postfix(glyph); }, "FT_Done_Glyph"));
     Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
     glyph->library = library;
     const auto clazz = glyph->clazz;
     const unsigned char foreignClass = 0;
     glyph->clazz = &foreignClass;
+    Require(Throws([&] { FT_Done_Glyph_nid_postfix(glyph); }, "FT_Done_Glyph"));
     Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
     glyph->clazz = clazz;
     FT_Done_Glyph_nid_postfix(glyph);
@@ -458,11 +462,13 @@ static void UnsupportedChanges() {
     fixture.face->glyph->bitmap.buffer = slotBuffer;
     Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == 0);
     auto& bitmap = reinterpret_cast<GuestBitmapGlyphRec*>(glyph)->bitmap;
-    const auto buffer = bitmap.buffer;
-    bitmap.buffer = nullptr;
-    Require(Throws([&] { FT_Done_Glyph_nid_postfix(glyph); }, "FT_Done_Glyph"));
-    bitmap.buffer = buffer;
+    std::array<unsigned char, 4> replacementBitmap{9, 10, 11, 12};
+    bitmap.buffer = replacementBitmap.data();
+    bitmap.rows = UINT32_MAX;
+    bitmap.width = UINT32_MAX;
+    bitmap.pitch = INT32_MIN;
     FT_Done_Glyph_nid_postfix(glyph);
+    Require(replacementBitmap[0] == 9 && replacementBitmap[1] == 10 && replacementBitmap[2] == 11 && replacementBitmap[3] == 12);
 }
 
 static int NativeBoxComparisons = 0;
@@ -690,6 +696,6 @@ int main() {
     WideOutlineCoordinates();
     ErrorsAndEmptyGlyphs();
     OutlineCountLimits();
-    UnsupportedChanges();
+    DestructionAndUnsupportedChanges();
     std::puts("FreeType glyph ownership and reference comparisons passed");
 }

@@ -1,0 +1,5 @@
+# libSceFreeType
+
+## change [FT_Get_Glyph, FT_Glyph_Copy and FT_Done_Glyph]
+
+- [FT_Get_Glyph, FT_Glyph_Copy and FT_Done_Glyph](../../../core/libs/prx/libSceFreeType/src/Glyph.cpp) - console ABI/version, build options and errors are unverified. LP64 layout and ownership follow [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftglyph.c); names/NIDs match [PS5 3.20](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFreeTypeOt.c). Bitmap copy/transfer follows the host FreeType version; console ownership is unverified. Class pointers stay native and opaque. Outline counts outside native field ranges throw. SVG/custom classes, foreign glyphs, changed library/class pointers and foreign bitmap slots or replaced slot buffers throw. Destruction reclaims the adapter-owned native arrays and buffers without reading or freeing replacements in the published guest record. Free glyphs before their library.
