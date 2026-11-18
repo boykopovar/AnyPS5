@@ -158,6 +158,14 @@ std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const st
     return normalized;
 }
 
+std::array<std::uint32_t, 8> R128TextureWords(std::span<const std::uint32_t> words) {
+    Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
+    const std::array<std::uint32_t, 8> chain{words[0], words[1], words[2], words[3], 0u, ((words[3] >> 16u) & 0xfu) << 4u, 0u, 0u};
+    if (IsNullTextureResource(chain)) return chain;
+    if (const auto resident = R128ResidentLevelWords(words)) return *resident;
+    return chain;
+}
+
 bool IsNullTextureResource(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
     const auto type = (words[3] >> 28u) & 0xfu;

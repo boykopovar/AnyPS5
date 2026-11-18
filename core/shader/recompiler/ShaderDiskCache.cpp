@@ -87,10 +87,10 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 288, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 296, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(ShaderInvocation) == 240, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 584, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 920, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -113,8 +113,8 @@ static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 216, "DescriptorSource changed: update the plan encoder");
-static_assert(sizeof(TableColumn) == 112, "TableColumn changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 224, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(TableColumn) == 120, "TableColumn changed: update the plan encoder");
 static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 104, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
@@ -145,7 +145,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -154,7 +154,7 @@ static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 19, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 20, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -581,6 +581,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaWrites);
     writer.Value(result.layerReplaySafe);
     writer.Value(result.stencilReferenceDword);
+    writer.Value(result.bindlessHeap);
 }
 
 void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
@@ -652,6 +653,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaWrites);
     reader.Value(result.layerReplaySafe);
     reader.Value(result.stencilReferenceDword);
+    reader.Value(result.bindlessHeap);
     result.variantId = 0;
 }
 
@@ -691,6 +693,17 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
+    writer.List(invocation.bindlessTables, [](Writer& out, const BindlessImageAbi::TableRegistration& table) {
+        out.Value(table.base);
+        out.Value(table.records);
+        out.Value(table.stride);
+        out.List(table.uses, [](Writer& use, const BindlessImageAbi::TableUse& entry) {
+            use.Value(entry.interfaceId);
+            use.Value(entry.samplerClass);
+            for (const auto word : entry.sampler) use.Value(word);
+        });
+        out.Value(table.dwords);
+    });
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -732,6 +745,17 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
+    reader.List(invocation.bindlessTables, 24, [](Reader& in, BindlessImageAbi::TableRegistration& table) {
+        in.Value(table.base);
+        in.Value(table.records);
+        in.Value(table.stride);
+        in.List(table.uses, 28, [](Reader& use, BindlessImageAbi::TableUse& entry) {
+            use.Value(entry.interfaceId);
+            use.Value(entry.samplerClass);
+            for (auto& word : entry.sampler) use.Value(word);
+        });
+        in.Value(table.dwords);
+    });
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -832,6 +856,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.emulatedCompare);
         out.Value(image.table);
         out.Value(image.tableOperation);
+        out.Value(image.nestedTable);
         out.Value(image.targetMerge);
     });
     writer.Value(!info.runtimeImageModes.empty());
@@ -949,6 +974,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.emulatedCompare);
         in.Value(image.table);
         in.Value(image.tableOperation);
+        in.Value(image.nestedTable);
         in.Value(image.targetMerge);
     });
     bool preparedImageModes = false;
@@ -1193,6 +1219,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.foldedCarry);
         out.Value(column.selected);
         out.Value(column.selection);
+        out.Value(column.dynamic);
         out.Values(std::span<const std::uint32_t>(source.requiredBlocks));
     });
     writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
@@ -1359,6 +1386,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.foldedCarry);
         in.Value(column.selected);
         in.Value(column.selection);
+        in.Value(column.dynamic);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
         in.Values(source.requiredBlocks);
     });
