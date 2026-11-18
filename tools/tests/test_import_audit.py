@@ -3958,6 +3958,34 @@ class LocateAndNamesTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
 
+class MachoCommandsTests(unittest.TestCase):
+    @staticmethod
+    def image(commands, magic=0xfeedfacf):
+        body = b"".join(commands)
+        return struct.pack("<IiiIIIII", magic, 0, 0, 0, len(commands), len(body), 0, 0) + body
+
+    def test_yields_each_command_with_its_offset_and_length(self):
+        first = struct.pack("<II", 0x19, 16) + bytes(8)
+        second = struct.pack("<II", 0x2, 8)
+        self.assertEqual(list(import_audit.macho_commands("m", self.image([first, second]))), [(0x19, 32, 16), (0x2, 48, 8)])
+
+    def test_wrong_magic_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "little-endian 64-bit Mach-O"):
+            list(import_audit.macho_commands("m", self.image([], magic=0xfeedface)))
+
+    def test_command_shorter_than_its_header_or_past_the_end_is_refused(self):
+        short = struct.pack("<II", 0x19, 4) + bytes(8)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([short])))
+        long = struct.pack("<II", 0x19, 64)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([long])))
+
+    def test_missing_load_commands_are_refused(self):
+        data = struct.pack("<IiiIIIII", 0xfeedfacf, 0, 0, 0, 1, 64, 0, 0)
+        with self.assertRaises(import_audit.AuditError):
+            list(import_audit.macho_commands("m", data))
+
 
 if __name__ == "__main__":
     unittest.main()
