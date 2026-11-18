@@ -130,6 +130,10 @@ std::int32_t Decode(Icu::UnescapeCharacterAt characterAt, std::int32_t& position
     return control ? result & 0x1f : result;
 }
 
+std::int32_t DecodeAtGuestOffset(Icu::UnescapeCharacterAt characterAt, std::int32_t* offset, std::int32_t length, void* context) {
+    return Decode(characterAt, *offset, length, context);
+}
+
 char16_t APS5_VABI ByteAt(std::int32_t position, void* context) {
     return static_cast<const unsigned char*>(context)[position];
 }
@@ -145,7 +149,7 @@ std::int32_t APS5_VABI u_unescapeAt_nid_postfix(Icu::UnescapeCharacterAt charact
     const bool usable = GuestCopyIn_nid_no_patch(&probed, offset, sizeof(probed)) && GuestCopyOut_nid_no_patch(offset, &probed, sizeof(probed));
     errno = savedErrno;
     if (!usable) throw std::invalid_argument("u_unescapeAt: unusable offset");
-    return Decode(characterAt, *offset, length, context);
+    return DecodeAtGuestOffset(characterAt, offset, length, context);
 }
 
 std::int32_t APS5_VABI u_unescape_nid_postfix(const char* guestSource, char16_t* guestDestination, std::int32_t capacity) {
