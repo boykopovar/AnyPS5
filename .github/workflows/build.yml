@@ -808,6 +808,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           curl -sSfL --max-time 300 --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/mesa.7z" "https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z"
+          echo "b2e00615feaba45942343c265cc8c5f576142ca682c1ac6661922d4b72492877  $RUNNER_TEMP/mesa.7z" | sha256sum -c -
           7z x "$RUNNER_TEMP/mesa.7z" -o"$RUNNER_TEMP/mesa" 'x64/*' > /dev/null
           json=$(find "$RUNNER_TEMP/mesa" -iname '*lvp*.json' | head -1)
           if [ -z "$json" ]; then
@@ -832,6 +833,11 @@ jobs:
         run: |
           if [ -f /c/Windows/System32/vulkan-1.dll ]; then echo "runner already has the loader"; exit 0; fi
           git clone --depth 1 --branch v1.4.304 --recurse-submodules --shallow-submodules https://github.com/KhronosGroup/Vulkan-Loader.git "$RUNNER_TEMP/vulkan-loader"
+          actual=$(git -C "$RUNNER_TEMP/vulkan-loader" rev-parse HEAD)
+          if [ "$actual" != "804a7a4efd865532646e54ad98807c0f318da413" ]; then
+            echo "::error::Vulkan-Loader v1.4.304 resolved to $actual, expected 804a7a4efd865532646e54ad98807c0f318da413"
+            exit 1
+          fi
           cmake -S "$RUNNER_TEMP/vulkan-loader" -B "$RUNNER_TEMP/vulkan-loader/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_LOADER=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
           cmake --build "$RUNNER_TEMP/vulkan-loader/build" --target vulkan
           dll=$(find "$RUNNER_TEMP/vulkan-loader/build" -iname 'vulkan-1.dll' | head -1)
