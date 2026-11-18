@@ -160,8 +160,6 @@ int frameNumberMatchesCaption() {
         const auto open = title.rfind('(');
         check(open != std::string::npos, "caption has no frame counter: " + title);
         const std::uint64_t caption = std::stoull(title.substr(open + 1));
-        // The title is pushed on frame 1 and when the fps window closes, so the counter
-        // may lag FrameNumber but must never run ahead of it or go backwards.
         check(expected != 1 || caption == 1, "first frame must push the caption: " + title);
         check(caption >= 1 && caption <= expected && caption >= lastCaption, "caption counter out of range: " + title);
         lastCaption = caption;
