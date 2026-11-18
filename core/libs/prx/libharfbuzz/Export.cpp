@@ -18,21 +18,6 @@ bool GuestCopyInPreservingErrno(T& out, const void* source) {
     return ok;
 }
 
-template <typename T>
-bool GuestCopyOutPreservingErrno(void* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return ok;
-}
-
-bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
-    return ok;
-}
-
 void APS5_VABI FinalizeCachedFace(void* object) {
     auto* face = static_cast<FreeType::GuestFaceRec*>(object);
     std::remove_reference_t<decltype(face->generic)> generic{};
@@ -60,12 +45,18 @@ hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec
 
     auto generic = guestFace.generic;
     if (!generic.data || generic.finalizer != FinalizeCachedFace) {
-        if (!GuestWritablePreservingErrno(&face->generic, sizeof(face->generic))) {
+        int savedErrno = errno;
+        const bool writable = GuestCopyOut_nid_no_patch(&face->generic, &generic, sizeof(generic));
+        errno = savedErrno;
+        if (!writable) {
             NotImplemented_nid_no_patch(__func__);
         }
         if (generic.finalizer) generic.finalizer(face);
         generic = {hb_ft_face_create(host, nullptr), FinalizeCachedFace};
-        if (!GuestCopyOutPreservingErrno(&face->generic, generic)) {
+        savedErrno = errno;
+        const bool copiedOut = GuestCopyOut_nid_no_patch(&face->generic, &generic, sizeof(generic));
+        errno = savedErrno;
+        if (!copiedOut) {
             hb_face_destroy(static_cast<hb_face_t*>(generic.data));
             NotImplemented_nid_no_patch(__func__);
         }
