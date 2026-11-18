@@ -4,9 +4,21 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static_assert(sizeof(FcFontSet) == 16);
 static_assert(sizeof(FcObjectSet) == 16);
@@ -17,6 +29,13 @@ static_assert(std::is_same_v<decltype(FcFontSetAdd(nullptr, nullptr)), int>);
 static_assert(std::is_same_v<decltype(FcObjectSetBuild(nullptr)), FcObjectSet*>);
 
 namespace {
+
+static void Require(bool value, int line) {
+    if (!value) {
+        std::fprintf(stderr, "fontconfig sets check failed at line %d\n", line);
+        std::abort();
+    }
+}
 
 int destroyed;
 int destroyedSum;
@@ -88,6 +107,78 @@ void CheckObjects() {
     FcObjectSetDestroy(one);
 }
 
+template <typename Fn> static void ExpectThrowsPreservingErrno(Fn&& fn, int line) {
+    errno = 71;
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, line);
+}
+
+#define EXPECT_REJECTED(...) ExpectThrowsPreservingErrno([&] { __VA_ARGS__; }, __LINE__)
+
+void CheckGuestPointerSafety() {
+    const int duplicatesBefore = destroyed;
+    const int duplicatesSumBefore = destroyedSum;
+    auto* pattern = reinterpret_cast<FcPattern*>(new PatternState{4242, false});
+
+    auto* unmappedSet = reinterpret_cast<FcFontSet*>(std::uintptr_t{0x10});
+    EXPECT_REJECTED(FcFontSetAdd(unmappedSet, pattern));
+    EXPECT_REJECTED(FcFontSetDestroy(unmappedSet));
+    EXPECT_REJECTED(FcObjectSetDestroy(reinterpret_cast<FcObjectSet*>(std::uintptr_t{0x10})));
+    assert(destroyed == duplicatesBefore);
+
+    auto* setWithUnmappedArray = FcFontSetCreate();
+    assert(setWithUnmappedArray);
+    setWithUnmappedArray->nfont = 1;
+    setWithUnmappedArray->sfont = 8;
+    setWithUnmappedArray->fonts = reinterpret_cast<FcPattern**>(std::uintptr_t{0x10});
+    EXPECT_REJECTED(FcFontSetDestroy(setWithUnmappedArray));
+    assert(destroyed == duplicatesBefore);
+
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    assert(page);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    assert(size > 0);
+    pageSize = static_cast<std::size_t>(size);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    assert(page != MAP_FAILED);
+#endif
+    auto* readOnlySet = reinterpret_cast<FcFontSet*>(page);
+    auto* array = static_cast<FcPattern**>(std::malloc(8));
+    assert(array);
+    readOnlySet->nfont = 0;
+    readOnlySet->sfont = 8;
+    readOnlySet->fonts = array;
+#ifdef _WIN32
+    DWORD previous = 0;
+    assert(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    assert(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    EXPECT_REJECTED(FcFontSetAdd(readOnlySet, pattern));
+    assert(destroyed == duplicatesBefore + 1);
+    assert(destroyedSum == duplicatesSumBefore + 4242);
+    assert(readOnlySet->nfont == 0);
+    std::free(array);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+
+    delete reinterpret_cast<PatternState*>(pattern);
+}
+
 }
 
 extern "C" void APS5_VABI FcPatternDestroy_nid_postfix(FcPattern* pattern) {
@@ -111,4 +202,5 @@ extern "C" FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* 
 int main() {
     CheckFonts();
     CheckObjects();
+    CheckGuestPointerSafety();
 }

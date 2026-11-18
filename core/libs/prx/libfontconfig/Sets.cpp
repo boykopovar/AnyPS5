@@ -1,6 +1,8 @@
 #include "prx/libfontconfig/include/Sets.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdarg>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +18,20 @@ char* CopyObject(const char* object) {
     return copy;
 }
 
+bool ReadGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool WriteGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
 }
 
 extern "C" {
@@ -25,28 +41,45 @@ FcFontSet* APS5_VABI FcFontSetCreate() {
 }
 
 int APS5_VABI FcFontSetAdd(FcFontSet* set, FcPattern* pattern) {
-    if (!set || !pattern || set->nfont < 0 || set->sfont < 0 || set->nfont >= 1024)
+    if (!set || !pattern) return 0;
+    FcFontSet record{};
+    if (!ReadGuestBytes(&record, set, sizeof(record))) NotImplemented_nid_no_patch(__func__);
+    if (record.nfont < 0 || record.sfont < 0 || record.nfont >= 1024)
         return 0;
-    if (set->nfont >= set->sfont / static_cast<int>(sizeof(FcPattern*))) {
-        if (set->sfont >= 8192) return 0;
+    if (record.nfont >= record.sfont / static_cast<int>(sizeof(FcPattern*))) {
+        if (record.sfont >= 8192) return 0;
         constexpr int increment = 16 * sizeof(FcPattern*);
-        if (set->sfont > std::numeric_limits<int>::max() - increment) return 0;
-        const auto next = static_cast<std::size_t>(set->sfont + increment);
-        void* storage = std::realloc(set->fonts, next);
+        if (record.sfont > std::numeric_limits<int>::max() - increment) return 0;
+        const auto next = static_cast<std::size_t>(record.sfont + increment);
+        void* storage = std::realloc(record.fonts, next);
         if (!storage) return 0;
-        set->fonts = static_cast<FcPattern**>(storage);
-        set->sfont = static_cast<int>(next);
+        record.fonts = static_cast<FcPattern**>(storage);
+        record.sfont = static_cast<int>(next);
     }
     FcPattern* duplicate = FcPatternDuplicate_nid_postfix(pattern);
     if (!duplicate) return 0;
-    set->fonts[set->nfont++] = duplicate;
+    if (!WriteGuestBytes(&record.fonts[record.nfont], &duplicate, sizeof(duplicate))) {
+        FcPatternDestroy_nid_postfix(duplicate);
+        NotImplemented_nid_no_patch(__func__);
+    }
+    ++record.nfont;
+    if (!WriteGuestBytes(set, &record, sizeof(record))) {
+        FcPatternDestroy_nid_postfix(duplicate);
+        NotImplemented_nid_no_patch(__func__);
+    }
     return 1;
 }
 
 void APS5_VABI FcFontSetDestroy(FcFontSet* set) {
     if (!set) return;
-    for (int i = 0; i < set->nfont; ++i) FcPatternDestroy_nid_postfix(set->fonts[i]);
-    std::free(set->fonts);
+    FcFontSet record{};
+    if (!ReadGuestBytes(&record, set, sizeof(record))) NotImplemented_nid_no_patch(__func__);
+    for (int i = 0; i < record.nfont; ++i) {
+        FcPattern* pattern = nullptr;
+        if (!ReadGuestBytes(&pattern, &record.fonts[i], sizeof(pattern))) NotImplemented_nid_no_patch(__func__);
+        FcPatternDestroy_nid_postfix(pattern);
+    }
+    std::free(record.fonts);
     std::free(set);
 }
 
@@ -115,8 +148,13 @@ FcObjectSet* APS5_VABI FcObjectSetBuild(const char* first, ...) {
 
 void APS5_VABI FcObjectSetDestroy(FcObjectSet* set) {
     if (!set) return;
-    for (int i = 0; i < set->nobject; ++i)
-        std::free(const_cast<char*>(set->objects[i]));
+    FcObjectSet record{};
+    if (!ReadGuestBytes(&record, set, sizeof(record))) NotImplemented_nid_no_patch(__func__);
+    for (int i = 0; i < record.nobject; ++i) {
+        const char* object = nullptr;
+        if (!ReadGuestBytes(&object, &record.objects[i], sizeof(object))) NotImplemented_nid_no_patch(__func__);
+        std::free(const_cast<char*>(object));
+    }
     std::free(set);
 }
 
