@@ -184,35 +184,30 @@ class TitleRunIdentityTests(unittest.TestCase):
                 self.runner.validate_layout(args, {TITLE: {"package": package}}, [TITLE], titles, self.root / "source", "windows" if os.name == "nt" else "linux")
         self.assertEqual(snapshot(self.root), before)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_case_alias_of_package_is_refused_before_cleanup(self):
         physical, alias = self.root / "TitleRuns", self.root / "titleruns"
         self.package(physical / "work" / TITLE)
         self.out = alias
         self.refuse_alias(alias, physical)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_unicode_alias_of_package_is_refused_before_cleanup(self):
         physical, alias = self.root / "caf\u00e9", self.root / "cafe\u0301"
         self.package(physical / "work" / TITLE)
         self.out = alias
         self.refuse_alias(alias, physical)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_missing_output_descendant_of_case_aliased_package_is_refused(self):
         physical, alias = self.root / "Package", self.root / "package"
         self.package(physical)
         self.out = alias / "missing" / "reports"
         self.refuse_alias(alias, physical)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_missing_output_descendant_of_unicode_aliased_package_is_refused(self):
         physical, alias = self.root / "caf\u00e9", self.root / "cafe\u0301"
         self.package(physical)
         self.out = alias / "missing" / "reports"
         self.refuse_alias(alias, physical)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_case_alias_of_titles_configuration_is_refused_before_cleanup(self):
         self.package(self.root / "games" / TITLE)
         physical, alias = self.root / "TitleRuns", self.root / "titleruns"
