@@ -52,6 +52,7 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/SecurityOriginAbi.hpp"
@@ -85,13 +86,17 @@ char16_t GetChar(const NKWebKit::WtfAbi::StringView& view, unsigned index) {
     return static_cast<const char16_t*>(view.data)[index];
 }
 
+char16_t ToASCIILower(char16_t c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char16_t>(c | 0x20) : c;
+}
+
 bool EqualIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::string_view s) {
     if (!impl) return s.empty();
     if (impl->length != s.length()) return false;
     for (unsigned i = 0; i < impl->length; ++i) {
         char16_t c1 = GetChar(impl, i);
         char c2 = s[i];
-        if (std::tolower(static_cast<unsigned char>(c1)) != std::tolower(static_cast<unsigned char>(c2))) {
+        if (ToASCIILower(c1) != ToASCIILower(static_cast<char16_t>(static_cast<unsigned char>(c2)))) {
             return false;
         }
     }
@@ -103,7 +108,7 @@ bool EqualIgnoringASCIICase(const NKWebKit::WtfAbi::StringView& view, std::strin
     for (unsigned i = 0; i < view.length; ++i) {
         char16_t c1 = GetChar(view, i);
         char c2 = s[i];
-        if (std::tolower(static_cast<unsigned char>(c1)) != std::tolower(static_cast<unsigned char>(c2))) {
+        if (ToASCIILower(c1) != ToASCIILower(static_cast<char16_t>(static_cast<unsigned char>(c2)))) {
             return false;
         }
     }
@@ -116,7 +121,7 @@ bool StartsWithIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::
     for (unsigned i = 0; i < prefix.length(); ++i) {
         char16_t c1 = GetChar(impl, i);
         char c2 = prefix[i];
-        if (std::tolower(static_cast<unsigned char>(c1)) != std::tolower(static_cast<unsigned char>(c2))) {
+        if (ToASCIILower(c1) != ToASCIILower(static_cast<char16_t>(static_cast<unsigned char>(c2)))) {
             return false;
         }
     }
@@ -137,10 +142,6 @@ bool StartsWithLettersIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl
 bool EqualLettersIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::string_view lowercaseLetters) {
     unsigned length = impl ? impl->length : 0;
     return length == lowercaseLetters.length() && StartsWithLettersIgnoringASCIICase(impl, lowercaseLetters);
-}
-
-char16_t ToASCIILower(char16_t c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char16_t>(c | 0x20) : c;
 }
 
 bool LiteralLessThanASCIICaseFolding(std::string_view lowercaseLiteral, const NKWebKit::WtfAbi::StringImpl* impl) {
@@ -171,7 +172,7 @@ bool EndsWithIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* impl, std::st
     for (unsigned i = 0; i < suffix.length(); ++i) {
         char16_t c1 = GetChar(impl, offset + i);
         char c2 = suffix[i];
-        if (std::tolower(static_cast<unsigned char>(c1)) != std::tolower(static_cast<unsigned char>(c2))) {
+        if (ToASCIILower(c1) != ToASCIILower(static_cast<char16_t>(static_cast<unsigned char>(c2)))) {
             return false;
         }
     }
@@ -315,6 +316,7 @@ static const char* const kNonImageTypes[] = {
     "application/atom+xml",
     "application/json",
     "image/svg+xml",
+    "application/x-ftp-directory",
     "multipart/x-mixed-replace"
 };
 
@@ -580,6 +582,20 @@ bool IsSystemPreviewMIMEType(const NKWebKit::WtfAbi::StringImpl* impl) {
     auto it = std::lower_bound(std::begin(kSystemPreviewMIMETypes), std::end(kSystemPreviewMIMETypes), impl,
         [](std::string_view literal, const NKWebKit::WtfAbi::StringImpl* key) { return LiteralLessThanASCIICaseFolding(literal, key); });
     return it != std::end(kSystemPreviewMIMETypes) && EqualLettersIgnoringASCIICase(impl, *it);
+}
+
+void AppendIfNotContains(NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& vector, const NKWebKit::WtfAbi::String& value) {
+    for (unsigned i = 0; i < vector.size; ++i) {
+        if (_ZN3WTF5equalEPKNS_10StringImplES2_(vector.buffer[i].impl, value.impl)) return;
+    }
+    vector.append(value);
+}
+
+NKWebKit::WtfAbi::String TrimmedExtension(const NKWebKit::WtfAbi::String& extension) {
+    if (extension.impl && _ZNK3WTF10StringImpl10startsWithEDs(extension.impl, u'.')) {
+        return _ZN3WTF10StringImpl9substringEjj(extension.impl, 1, extension.impl->length - 1);
+    }
+    return extension;
 }
 
 }  // namespace
@@ -902,6 +918,41 @@ bool APS5_VABI _ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6St
 
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(const NKWebKit::WtfAbi::String& extension) {
     return MakeString(MediaMIMETypeForExtension(ToString(extension.impl)));
+}
+
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType) {
+    if (IsSupportedImageMIMEType(mimeType.impl)) return true;
+    if (IsSupportedNonImageMIMEType(mimeType.impl)) return true;
+    if (!mimeType.impl || mimeType.impl->length == 0) return false;
+    if (IsSupportedJSONMIMEType(mimeType.impl)) return true;
+    if (StartsWithIgnoringASCIICase(mimeType.impl, "text/")) return !IsUnsupportedTextMIMEType(mimeType.impl);
+    NotImplemented_nid_no_patch(__func__);
+}
+
+NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETypeRegistry21extensionsForMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String&) {
+    return {};
+}
+
+NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETypeRegistry21allowedFileExtensionsERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(
+    const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& mimeTypes,
+    const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& extensions) {
+    NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> result;
+    for (unsigned i = 0; i < mimeTypes.size; ++i) {
+        auto perType = _ZN7WebCore16MIMETypeRegistry21extensionsForMIMETypeERKN3WTF6StringE(mimeTypes.buffer[i]);
+        for (unsigned j = 0; j < perType.size; ++j) {
+            AppendIfNotContains(result, perType.buffer[j]);
+        }
+    }
+    for (unsigned i = 0; i < extensions.size; ++i) {
+        auto trimmed = TrimmedExtension(extensions.buffer[i]);
+        AppendIfNotContains(result, trimmed);
+    }
+    return result;
+}
+
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry24isSupportedMediaMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType) {
+    if (!mimeType.impl || mimeType.impl->length == 0) return false;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

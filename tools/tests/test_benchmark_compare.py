@@ -560,6 +560,14 @@ class BenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(benchmark_compare.benchmark_display(16.6666666), "16.6667")
         self.assertEqual(benchmark_compare.benchmark_display(1234567.0), "1.23457e+06")
 
+    def test_benchmark_metric_value_walks_dotted_keys_and_raises_for_missing(self):
+        summary = {"metrics": {"fps": 60.0, "frame_ms": {"p99": 17.5}}}
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "fps"), 60.0)
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "frame_ms.p99"), 17.5)
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "frame_ms"), {"p99": 17.5})
+        with self.assertRaises(KeyError):
+            benchmark_compare.benchmark_metric_value(summary, "frame_ms.p50")
+
     def test_read_benchmark_json_reads_plain_bom_and_gzip_and_rejects_bad_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

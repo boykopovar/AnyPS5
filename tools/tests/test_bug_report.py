@@ -129,6 +129,12 @@ class BundleTests(unittest.TestCase):
         for secret in ("/home/ana", "ana", "serverfestivo", "10.0.0.7"):
             self.assertNotIn(secret, raw)
 
+    def test_utf8_bom_report_is_redacted(self):
+        self.report.write_text('{"path": "/home/ana/title.elf"}', encoding="utf-8-sig")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"path": "~/title.elf"})
+
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])

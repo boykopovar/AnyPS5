@@ -1109,6 +1109,16 @@ class LineNoteTests(unittest.TestCase):
             def resolve(self, value):
                 raise AssertionError("not expected for a plain instruction")
         self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
 class FakeNamer:
     def resolve(self, name):
         return name.upper()
