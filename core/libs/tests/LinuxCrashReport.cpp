@@ -197,6 +197,7 @@ void Scenario(const std::string& name) {
     Load();
     if (name == "near-null" || name == "logged") WriteNearNull();
     if (name == "trap") Trap();
+    if (name == "locked-monitorx") asm volatile(".byte 0xf0, 0x0f, 0x01, 0xfa");
     if (name == "guest-abort") asm volatile("int $0x45");
     if (name == "guest-assert") asm volatile("int $0x41");
     if (name == "other-interrupt") asm volatile("int $0x44");
@@ -383,7 +384,11 @@ int main(int argc, char** argv) {
         Expect(Has(fault, "  rax 0x") && Has(fault, " r15 0x"), "fault registers missing");
         Expect(Has(fault, "  frame chain from rbp:") && Has(fault, "  stack words that point at code, from rsp:"), "fault stack missing");
         Expect(!Has(fault, "  guest "), "memory fault misidentified as guest interrupt");
-        Expect(Has(run("trap", SIGILL), "[libc] fatal SIGILL"), "trap report missing");
+        const auto trap = run("trap", SIGILL);
+        Expect(Has(trap, "[libc] fatal SIGILL"), "trap report missing");
+        Expect(!Has(trap, "AMD-only instruction"), "trap named as an AMD-only instruction");
+        const auto monitorx = run("locked-monitorx", SIGILL);
+        Expect(Has(monitorx, "[libc] fatal SIGILL") && Has(monitorx, "  MONITORX is an AMD-only instruction this CPU lacks: relink with --to-intel"), "AMD-only instruction not named");
         for (const char* name : {"guest-abort", "guest-abort-edge"}) {
             const auto result = run(name, SIGSEGV);
             Expect(Has(result, "  guest abort() (int 0x45)"), std::string(name) + ": guest abort description missing");

@@ -1181,7 +1181,8 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     std::uint32_t mixed = 0;
     for (std::uint32_t i = 0; i < words; ++i) {
         uploaded[i] = i * 2654435761u;
-        shader[i] = i % 7 == 0 ? uploaded[i] ^ (0x5a5a5a5au & byteMasks[(i / 7) % 6]) : uploaded[i];
+        const bool shaderChanges = (i / 2048) % 2 == 0 ? i % 7 == 0 : i % 211 == 0;
+        shader[i] = shaderChanges ? uploaded[i] ^ (0x5a5a5a5au & byteMasks[(i / 7) % 6]) : uploaded[i];
         held[i] = i % 5 == 0 ? uploaded[i] ^ (0xc3c3c3c3u & byteMasks[(i / 5 + 1) % 6]) : uploaded[i];
         bool overlap = false;
         for (std::uint32_t shift = 0; shift < 32; shift += 8) {
@@ -1256,7 +1257,8 @@ void boundChangedCopyRun(const Device& device, const Context& context, const std
     std::uint32_t contested = 0;
     for (std::uint32_t i = 0; i < words; ++i) {
         uploaded[i] = i * 2246822519u + 1u;
-        shader[i] = i % 3 == 0 ? uploaded[i] ^ (0x0f0f0f0fu << (8u * (i % 4))) : uploaded[i];
+        const bool shaderChanges = (i / 2048) % 2 == 0 ? i % 3 == 0 : i % 211 == 0;
+        shader[i] = shaderChanges ? uploaded[i] ^ (0x0f0f0f0fu << (8u * (i % 4))) : uploaded[i];
         held[i] = i % 4 == 1 ? uploaded[i] ^ (0x3c3c3c3cu & (0xffu << (8u * ((i / 12) % 4)))) : uploaded[i];
         bool overlap = false;
         for (std::uint32_t shift = 0; shift < 32; shift += 8) {
@@ -7655,6 +7657,10 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
     const auto probe = ProbeImportWriteProtection(base);
     if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
         std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
+    if (device.Properties().deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+        std::cout << "skipped, the device reports a CPU rasterizer, whose GPU copies are host writes the write watch cannot tell from CPU stores\n";
         return false;
     }
     SetImportWatch(base, ImportWatch::Watch);

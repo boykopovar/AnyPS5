@@ -55,9 +55,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
-    if (size > 16) NotImplemented_nid_no_patch("cpuset_getaffinity with a size of 17 to 23 bytes");
-    if (!mask) return fail(GuestEfault);
+    if (size < sizeof(KernelCpumask) || size > 16) return fail(GuestErange);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
     switch (which) {
@@ -73,8 +71,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         if (id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_getaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichDomain:
         break;
@@ -96,6 +93,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     default:
         return fail(GuestEinval);
     }
+    if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     std::memcpy(buffer.data(), &affinity, sizeof(affinity));
     if (!GuestCopyOut_nid_no_patch(mask, buffer.data(), size)) return fail(GuestEfault);
@@ -135,8 +133,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
             if (id != -1) NotImplemented_nid_no_patch("cpuset_setaffinity of a numbered cpuset");
             break;
         case WhichJail:
-            NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-            break;
+            return fail(GuestEsrch);
         case WhichIrq:
         case WhichDomain:
         default:
@@ -160,8 +157,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         NotImplemented_nid_no_patch(id == -1 ? "cpuset_setaffinity of the calling thread's base cpuset" : "cpuset_setaffinity of a numbered cpuset");
         break;
     case WhichJail:
-        NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
-        break;
+        return fail(GuestEsrch);
     case WhichIrq:
     case WhichInterruptHandler:
     case WhichInterruptThread:
@@ -183,7 +179,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22;
+    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22;
     constexpr int GuestSchedFifo = 1, GuestSchedRr = 3;
     constexpr std::uint16_t Realtime = 2, Normal = 3, Idle = 4, Fifo = 10, FifoBit = 8;
     const auto fail = [](int error) {
@@ -191,12 +187,12 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         return -1;
     };
     if (function != Lookup && function != Set) return fail(function == 2 ? GuestEsrch : GuestEinval);
-    if (priority == nullptr) return fail(GuestEfault);
     auto* self = scePthreadSelf();
     int policy = self->schedPolicy.load(std::memory_order_relaxed);
     int schedPriority = self->priority.load(std::memory_order_relaxed);
     const bool other = lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid);
     if (other && !GetLiveGuestThreadSched_nid_no_patch(lwpid, policy, schedPriority)) return fail(GuestEsrch);
+    if (priority == nullptr) return fail(GuestEfault);
     GuestRtPrio requested{};
     if (function == Set && !GuestCopyIn_nid_no_patch(&requested, priority, sizeof(requested))) return fail(GuestEfault);
     const bool realTime = policy == GuestSchedFifo || policy == GuestSchedRr;
@@ -208,10 +204,16 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         return 0;
     }
     const auto requestedClass = static_cast<std::uint16_t>(requested.type & ~FifoBit);
-    if (requestedClass == Realtime || requestedClass == Idle) return fail(GuestEperm);
-    if (requested.type == Normal && !other) return fail(GuestEinval);
-    if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
-    if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
+    const std::uint16_t value = requested.prio;
+    if (requestedClass == Idle) {
+        if (value != 960) return fail(GuestEinval);
+        NotImplemented_nid_no_patch("rtprio_thread: an idle-class set");
+    }
+    if (requestedClass == Normal) {
+        if (requested.type == Normal || value < 615 || value > 895) return fail(GuestEinval);
+        NotImplemented_nid_no_patch("rtprio_thread: a normal-class set with the FIFO bit");
+    }
+    if (requestedClass != Realtime || value < 256 || value > 767) return fail(GuestEinval);
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
 

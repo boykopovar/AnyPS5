@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
@@ -15,7 +16,9 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __linux__
 #include <link.h>
+#endif
 #endif
 #include <stdexcept>
 #include <source_location>
@@ -250,6 +253,10 @@ int main(int argc, char** argv) {
             Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020003u) && stopped == -1);
             Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020003u));
         }
+        auto* const unwritable = reinterpret_cast<int*>(0x10);
+        errno = 71;
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, unwritable) == static_cast<int>(0x8002000eu) && errno == 71);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, unwritable) == static_cast<int>(0x8002000eu) && errno == 71);
         add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);

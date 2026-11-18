@@ -2445,6 +2445,47 @@ static void CheckCbrtlConsoleBits() {
     check(0x027f, doublePrecision);
 }
 
+static void CheckHypotlConsoleBits() {
+    struct Expected { std::uint64_t mantissa; std::uint16_t signExponent; std::uint16_t x87Flags; };
+    struct Case { std::uint64_t xMantissa; std::uint16_t xSignExponent; std::uint64_t yMantissa; std::uint16_t ySignExponent; Expected extended; Expected doublePrecision; };
+    const Case cases[] = {
+        {0xc000000000000000ull, 0x4000, 0x8000000000000000ull, 0x4001, {0xa000000000000000ull, 0x4001, 0x00}, {0xa000000000000000ull, 0x4001, 0x00}},
+        {0xffffffffffffffffull, 0x7ffe, 0xffffffffffffffffull, 0x7ffe, {0x8000000000000000ull, 0x7fff, 0x28}, {0x8000000000000000ull, 0x7fff, 0x28}},
+        {0xffffffffffffffffull, 0x7ffd, 0xffffffffffffffffull, 0x7ffd, {0xb504f333f9de6484ull, 0x7ffe, 0x20}, {0xb504f333f9de6800ull, 0x7ffe, 0x20}},
+        {0x8000000000000000ull, 0x7000, 0xc000000000000000ull, 0x7001, {0xca62c1d6d2da9490ull, 0x7001, 0x20}, {0xca62c1d6d2da9800ull, 0x7001, 0x20}},
+        {0x8000000000000000ull, 0x0100, 0xc000000000000000ull, 0x0101, {0xca62c1d6d2da9490ull, 0x0101, 0x20}, {0xca62c1d6d2da9800ull, 0x0101, 0x20}},
+        {0x8000000000000000ull, 0x0001, 0x8000000000000000ull, 0x0001, {0xb504f333f9de6484ull, 0x0001, 0x20}, {0xb504f333f9de6800ull, 0x0001, 0x20}},
+        {0x8000000000000000ull, 0x3fff, 0x8000000000000000ull, 0x3f9b, {0x8000000000000000ull, 0x3fff, 0x20}, {0x8000000000000000ull, 0x3fff, 0x20}},
+        {0xb504f333f9de6484ull, 0x3fff, 0x8000000000000000ull, 0x3fe0, {0xb504f333f9de6485ull, 0x3fff, 0x20}, {0xb504f333f9de6800ull, 0x3fff, 0x20}},
+        {0xcce56ce05f6cdac4ull, 0xbfdd, 0xdc86e8ada6c48b60ull, 0xbff3, {0xdc86e8ada6ca7e5cull, 0x3ff3, 0x20}, {0xdc86e8ada6ca8000ull, 0x3ff3, 0x20}},
+        {0xcf60e4336a5ee9f5ull, 0x3ff1, 0xc2bb0393d4243f62ull, 0x3ff2, {0xdc9db48c47121f38ull, 0x3ff2, 0x20}, {0xdc9db48c47122000ull, 0x3ff2, 0x20}},
+        {0x8e0412b10b328599ull, 0x4021, 0xa5e56711d52bca5eull, 0xc00f, {0x8e0412b11140db2full, 0x4021, 0x20}, {0x8e0412b11140e000ull, 0x4021, 0x20}},
+        {0x9f6238ecb845578aull, 0xbfd9, 0x97bf0c39555930eaull, 0x3fe8, {0x97bf0c3aa428cb0bull, 0x3fe8, 0x20}, {0x97bf0c3aa428c800ull, 0x3fe8, 0x20}},
+        {0xef49df1b6b66f9c5ull, 0x401e, 0xfe63a94b5f780114ull, 0xc006, {0xef49df1b6b6780fdull, 0x401e, 0x20}, {0xef49df1b6b678000ull, 0x401e, 0x20}},
+        {0xcceddc08359cab33ull, 0x4018, 0xe4234da9b58ee241ull, 0xc00d, {0xccedde0428dd7f3aull, 0x4018, 0x20}, {0xccedde0428dd8000ull, 0x4018, 0x20}},
+        {0x8000000000000000ull, 0x7fff, 0xc000000000000001ull, 0x7fff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0x7fff, 0x8000000000000000ull, 0xffff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0xffff, 0x8000000000000000ull, 0x3fff, {0xc000000000000001ull, 0x7fff, 0x00}, {0xc000000000000001ull, 0x7fff, 0x00}},
+        {0x0000000000000000ull, 0x8000, 0x0000000000000000ull, 0x8000, {0x0000000000000000ull, 0x0000, 0x00}, {0x0000000000000000ull, 0x0000, 0x00}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000004ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000300000000000ull, 0x0000, 0x0000400000000000ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x095f2ce63cfd8f12ull, 0x8024, 0x000000000005f660ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000000ull, 0x0000, 0x0000000000000003ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000000ull, 0x8000, {0x0000000000000003ull, 0x0000, 0x00}, {0x0000000000000003ull, 0x0000, 0x00}},
+        {0x0000000000000001ull, 0x0000, 0xffffffffffffffffull, 0x0047, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+    };
+    for (const Case& test : cases) {
+        for (const auto& [control, expected] : {std::pair{std::uint16_t{0x037f}, test.extended}, std::pair{std::uint16_t{0x027f}, test.doublePrecision}}) {
+            *__error_nid_postfix() = 12345;
+            const X87Call call = CallAtControlWord(control, [&] { return hypotl_nid_postfix(MakeExtended(test.xMantissa, test.xSignExponent), MakeExtended(test.yMantissa, test.ySignExponent)); });
+            if (!ExtendedBits(call.result, expected.mantissa, expected.signExponent) || call.control != control || call.x87Flags != expected.x87Flags || call.sseFlags != 0 || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest hypotl failed for %016llx:%04x, %016llx:%04x with control word %04x\n", static_cast<unsigned long long>(test.xMantissa), test.xSignExponent, static_cast<unsigned long long>(test.yMantissa), test.ySignExponent, control);
+                std::abort();
+            }
+        }
+    }
+}
+
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
         for (const long long denominator : {3LL, -3LL}) {
@@ -4042,6 +4083,108 @@ static void CheckFloatRounding(float value, std::int64_t expected, bool invalid)
     }
 }
 
+struct TrigonometryCase {
+    std::uint64_t mantissa;
+    std::uint16_t signExponent;
+    struct Result {
+        std::uint64_t mantissa;
+        std::uint16_t signExponent;
+    } results[3];
+};
+
+static void CheckLongDoubleTrigonometry() {
+    using LongDoubleFunction = long double (APS5_VABI *)(long double);
+    const LongDoubleFunction functions[] = {sinl_nid_postfix, cosl_nid_postfix, tanl_nid_postfix};
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double nan = std::numeric_limits<long double>::quiet_NaN();
+    Require(ExtendedBits(sinl_nid_postfix(0.0L), 0, 0) && ExtendedBits(sinl_nid_postfix(-0.0L), 0, 0x8000));
+    Require(ExtendedBits(tanl_nid_postfix(0.0L), 0, 0) && ExtendedBits(tanl_nid_postfix(-0.0L), 0, 0x8000));
+    Require(ExtendedBits(cosl_nid_postfix(0.0L), 0x8000000000000000ull, 0x3fff) && ExtendedBits(cosl_nid_postfix(-0.0L), 0x8000000000000000ull, 0x3fff));
+    const long double tiny = MakeExtended(1, 0);
+    Require(ExtendedBits(sinl_nid_postfix(tiny), 1, 0) && ExtendedBits(sinl_nid_postfix(-tiny), 1, 0x8000));
+    Require(ExtendedBits(tanl_nid_postfix(tiny), 1, 0) && ExtendedBits(tanl_nid_postfix(-tiny), 1, 0x8000));
+    Require(ExtendedBits(cosl_nid_postfix(tiny), 0x8000000000000000ull, 0x3fff));
+    for (const LongDoubleFunction function : functions) {
+        for (const long double input : {infinity, -infinity}) {
+            std::feclearexcept(FE_ALL_EXCEPT);
+            *__error_nid_postfix() = 12345;
+            Require(std::isnan(function(input)) && std::fetestexcept(FE_INVALID) != 0 && *__error_nid_postfix() == 12345);
+        }
+        Require(std::isnan(function(nan)) && std::isnan(function(-nan)));
+    }
+    const TrigonometryCase cases[] = {
+        {0x8000000000000000ull, 0x3ffe, {{0xf57743a2582f7f44ull, 0x3ffd}, {0xe0a94032dbea7ceeull, 0x3ffe}, {0x8bda7adf9a3a5219ull, 0x3ffe}}},
+        {0x8000000000000000ull, 0x3fff, {{0xd76aa47848677021ull, 0x3ffe}, {0x8a51407da8345c92ull, 0x3ffe}, {0xc75922e5f71d2dc5ull, 0x3fff}}},
+        {0x8000000000000000ull, 0x4000, {{0xe8c7b7568da22efdull, 0x3ffe}, {0xd51132ba9b902522ull, 0xbffd}, {0x8bd7b1704a87c1dbull, 0xc000}}},
+        {0xc000000000000000ull, 0x4000, {{0x9081c36db6aada79ull, 0x3ffc}, {0xfd7025f42f2e9308ull, 0xbffe}, {0x91f7b892a5c37866ull, 0xbffc}}},
+        {0x9000000000000000ull, 0xc001, {{0xfa3f69ee3a040354ull, 0x3ffe}, {0xd7dadaa2c1eb52fdull, 0xbffc}, {0x946506315faca600ull, 0xc001}}},
+        {0xb333333333333333ull, 0x3ffe, {{0xa4eb734a30cdc2a7ull, 0x3ffe}, {0xc3ccb294fcec930cull, 0x3ffe}, {0xd7a03617e3c572a6ull, 0x3ffe}}},
+        {0x999999999999999aull, 0xbffd, {{0x974e6cadd5d19c2bull, 0xbffd}, {0xf490eea1784dd2c9ull, 0x3ffe}, {0x9e61522714ccbdccull, 0xbffd}}},
+        {0x999999999999999aull, 0x3fff, {{0xee9a1d10d2ae246aull, 0x3ffe}, {0xb986f4a1dbce99b1ull, 0x3ffd}, {0xa49e21d658b26b2cull, 0x4000}}},
+        {0xa000000000000000ull, 0x4000, {{0x9935786e7e558405ull, 0x3ffe}, {0xcd17bf7c2c5be958ull, 0xbffe}, {0xbf3cda7005d8a565ull, 0xbffe}}},
+        {0xc800000000000000ull, 0x4005, {{0x81a12dbc626dc038ull, 0xbffe}, {0xdcc0edfb32fefb20ull, 0x3ffe}, {0x9653a6b15ae9bd7cull, 0xbffe}}},
+        {0xc0e6b645a1cac083ull, 0x400c, {{0xb43eac484b8de7c6ull, 0xbffe}, {0xb5ca61ddf13ccd3bull, 0x3ffe}, {0xfdd2c1b191917a13ull, 0xbffe}}},
+        {0x9b66666666666666ull, 0xc005, {{0xbe98e598fb253c77ull, 0xbffe}, {0xaae7ce497015c131ull, 0xbffe}, {0x8ebf88f235c29989ull, 0x3fff}}},
+        {0xa2425ff75e14fc32ull, 0x3f9b, {{0xa2425ff75e14fc32ull, 0x3f9b}, {0x8000000000000000ull, 0x3fff}, {0xa2425ff75e14fc32ull, 0x3f9b}}},
+        {0x9502f90000000000ull, 0x4020, {{0xf99a63c4b5271a66ull, 0xbffd}, {0xdf84c480e498cc19ull, 0x3ffe}, {0x8ef0007a21fa82f2ull, 0xbffe}}},
+        {0x9502f90000000000ull, 0xc020, {{0xf99a63c4b5271a66ull, 0x3ffd}, {0xdf84c480e498cc19ull, 0x3ffe}, {0x8ef0007a21fa82f2ull, 0x3ffe}}},
+        {0xde0b6b3a76400000ull, 0x403a, {{0xfe333cc682e96d39ull, 0xbffe}, {0xf26d039603acd38cull, 0x3ffb}, {0x86377fdeb0569285ull, 0xc002}}},
+        {0x8ac7230489e80000ull, 0x403e, {{0xed5402fb8152e223ull, 0xbffe}, {0xbff39204a4b1ae2eull, 0xbffd}, {0x9e4240c88410a8a2ull, 0x4000}}},
+        {0xe5f4c8d0a2c28f5cull, 0x4023, {{0xd3dc7648c9cc2cd6ull, 0xbffd}, {0xe90e1f51ae37fc8eull, 0xbffe}, {0xe8b82baa21930f73ull, 0x3ffd}}},
+        {0xbf21e44003acdd2dull, 0x43e3, {{0xb5412e861ddef8ecull, 0x3ffe}, {0xb4c8a3d095a93267ull, 0xbffe}, {0x805558d665b191bcull, 0xbfff}}},
+        {0xbf21e44003acdd2dull, 0xc3e3, {{0xb5412e861ddef8ecull, 0xbffe}, {0xb4c8a3d095a93267ull, 0xbffe}, {0x805558d665b191bcull, 0x3fff}}},
+        {0xf38db1f9dd3dac05ull, 0x4cf8, {{0xc2f9afe0adbddf48ull, 0xbffe}, {0xa5e4b533a97eac09ull, 0xbffe}, {0x967065652b917a33ull, 0x3fff}}},
+        {0xd1ba8323fe558c61ull, 0x73e6, {{0x90de0837a745738aull, 0x3ffe}, {0xd31143593ff9dec5ull, 0x3ffe}, {0xafb4fff78a51d56bull, 0x3ffe}}},
+        {0xd1ba8323fe558c61ull, 0xf3e6, {{0x90de0837a745738aull, 0xbffe}, {0xd31143593ff9dec5ull, 0x3ffe}, {0xafb4fff78a51d56bull, 0xbffe}}},
+        {0xffffffffffffffffull, 0x7ffe, {{0xfdfd9d4b6d0e5f7cull, 0x3ffe}, {0x800bbd0061d4f543ull, 0xbffc}, {0xfde654994ce86fdbull, 0xc001}}},
+        {0xc90fdaa22168c235ull, 0x3ffe, {{0xb504f333f9de6484ull, 0x3ffe}, {0xb504f333f9de6484ull, 0x3ffe}, {0x8000000000000000ull, 0x3fff}}},
+        {0xc90fdaa22168c234ull, 0x3ffe, {{0xb504f333f9de6484ull, 0x3ffe}, {0xb504f333f9de6485ull, 0x3ffe}, {0xfffffffffffffffeull, 0x3ffe}}},
+        {0xc90fdaa22168c234ull, 0xbffe, {{0xb504f333f9de6484ull, 0xbffe}, {0xb504f333f9de6485ull, 0x3ffe}, {0xfffffffffffffffeull, 0xbffe}}},
+        {0xcccccccccccccccdull, 0x3ffe, {{0xb7a4a615fff665dbull, 0x3ffe}, {0xb25b5ef38cc32a6full, 0x3ffe}, {0x83cb323c9db05471ull, 0x3fff}}},
+        {0xc90fdaa21fffffffull, 0x4018, {{0xb4611adea7f5cd1full, 0xbff1}, {0xfffffff01ce9abb2ull, 0x3ffe}, {0xb4611ae9d9a8376full, 0xbff1}}},
+        {0xc90fdaa200000000ull, 0x4018, {{0x85a302c14d5a039cull, 0xbff6}, {0xffffdd1e994afed9ull, 0x3ffe}, {0x85a314f6a015a8e4ull, 0xbff6}}},
+        {0xc90fdaa2ffffffffull, 0x4018, {{0xde957d09bb9a9fe5ull, 0x3ff8}, {0xfff9f3b0d49bdb28ull, 0x3ffe}, {0xde9abf5e50450e03ull, 0x3ff8}}},
+        {0x8000000000000000ull, 0x0001, {{0x8000000000000000ull, 0x0001}, {0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x0001}}},
+        {0xa000000000000000ull, 0x0001, {{0xa000000000000000ull, 0x0001}, {0x8000000000000000ull, 0x3fff}, {0xa000000000000000ull, 0x0001}}},
+        {0xc90fdaa22168c235ull, 0x3fff, {{0x8000000000000000ull, 0x3fff}, {0xece675d1fc8f8cbbull, 0xbfbd}, {0x8a51e04daabda35full, 0xc040}}},
+        {0xc90fdaa22168c235ull, 0xbfff, {{0x8000000000000000ull, 0xbfff}, {0xece675d1fc8f8cbbull, 0xbfbd}, {0x8a51e04daabda35full, 0x4040}}},
+        {0xc90fdaa22168c235ull, 0x4000, {{0xece675d1fc8f8cbbull, 0xbfbe}, {0x8000000000000000ull, 0xbfff}, {0xece675d1fc8f8cbbull, 0x3fbe}}},
+        {0x96cbe3f9990e91a8ull, 0x4001, {{0x8000000000000000ull, 0xbfff}, {0xd8d66c2ebeb5d4c6ull, 0x3fc0}, {0x971e224f6c0521c6ull, 0xc03d}}},
+        {0x96cbe3f9990e91a8ull, 0xc001, {{0x8000000000000000ull, 0x3fff}, {0xd8d66c2ebeb5d4c6ull, 0x3fc0}, {0x971e224f6c0521c6ull, 0x403d}}},
+        {0xc90fdaa22168c235ull, 0x4001, {{0xece675d1fc8f8cbbull, 0x3fbf}, {0x8000000000000000ull, 0x3fff}, {0xece675d1fc8f8cbbull, 0x3fbf}}},
+        {0xfb53d14aa9c2f2c2ull, 0x4001, {{0x8000000000000000ull, 0x3fff}, {0xa0804d19eecdbfa9ull, 0xbfbd}, {0xcc29165941e7936eull, 0xc040}}},
+        {0xfb53d14aa9c2f2c2ull, 0xc001, {{0x8000000000000000ull, 0xbfff}, {0xa0804d19eecdbfa9ull, 0xbfbd}, {0xcc29165941e7936eull, 0x4040}}},
+        {0xafeddf4ddd3ba9eeull, 0x4002, {{0x8000000000000000ull, 0xbfff}, {0xb0b658e8430264dcull, 0xbfc0}, {0xb96e6d3a6649930eull, 0x403d}}},
+        {0xafeddf4ddd3ba9eeull, 0xc002, {{0x8000000000000000ull, 0x3fff}, {0xb0b658e8430264dcull, 0xbfc0}, {0xb96e6d3a6649930eull, 0xc03d}}},
+        {0x9d1462ceaa19d7b9ull, 0x4006, {{0xe6ebf3f3f2afda0eull, 0xbfc4}, {0x8000000000000000ull, 0x3fff}, {0xe6ebf3f3f2afda0eull, 0xbfc4}}},
+        {0xbfbf88503fa2f219ull, 0x4013, {{0x8000000000000000ull, 0xbfff}, {0xfd8a9ae013a84a53ull, 0xbfd1}, {0x813dbfc5ab21e438ull, 0x402c}}},
+        {0xbfbf88503fa2f219ull, 0xc013, {{0x8000000000000000ull, 0x3fff}, {0xfd8a9ae013a84a53ull, 0xbfd1}, {0x813dbfc5ab21e438ull, 0xc02c}}},
+        {0xc90fe7331f12e44bull, 0x4013, {{0x8000000000000000ull, 0x3fff}, {0xa1d35dafce09a9beull, 0x3fd2}, {0xca7d520df81c615cull, 0x402b}}},
+        {0xc90fe7331f12e44bull, 0xc013, {{0x8000000000000000ull, 0xbfff}, {0xa1d35dafce09a9beull, 0x3fd2}, {0xca7d520df81c615cull, 0xc02b}}},
+        {0xc90fdaa4181064caull, 0x4020, {{0x8000000000000000ull, 0x3fff}, {0xc262407b6660996full, 0x3fdd}, {0xa892df6cdbb26a04ull, 0x4020}}},
+        {0xc90fdaa4181064caull, 0xc020, {{0x8000000000000000ull, 0xbfff}, {0xc262407b6660996full, 0x3fdd}, {0xa892df6cdbb26a04ull, 0xc020}}},
+        {0xb6dd60e7c7cdf3fbull, 0x4027, {{0xfffffffffffff36aull, 0xbffe}, {0xa08c77fb421a56aaull, 0xbfe5}, {0xcc199d55f80d9712ull, 0x4018}}},
+        {0xb6dd60e7c7cdf3fbull, 0xc027, {{0xfffffffffffff36aull, 0x3ffe}, {0xa08c77fb421a56aaull, 0xbfe5}, {0xcc199d55f80d9712ull, 0xc018}}},
+        {0xc90fdaa22168c28dull, 0x403b, {{0xffdb921c8ba030f9ull, 0xbffe}, {0x888d728222aae2e1ull, 0x3ffa}, {0xefd5373c35468ce8ull, 0xc003}}},
+        {0xc90fdaa22168c28dull, 0xc03b, {{0xffdb921c8ba030f9ull, 0x3ffe}, {0x888d728222aae2e1ull, 0x3ffa}, {0xefd5373c35468ce8ull, 0x4003}}},
+        {0x9e9c2224714f9850ull, 0x4063, {{0xdfe4ba9066492516ull, 0xbffe}, {0xf841705cf082bca4ull, 0x3ffd}, {0xe6e0bc0ada6a14ceull, 0xbfff}}},
+        {0x9e9c2224714f9850ull, 0xc063, {{0xdfe4ba9066492516ull, 0x3ffe}, {0xf841705cf082bca4ull, 0x3ffd}, {0xe6e0bc0ada6a14ceull, 0x3fff}}},
+        {0xe5cfae1f975c21f4ull, 0x414b, {{0x8bbddcbf03b85291ull, 0xbffb}, {0xff6742fa70ad6f11ull, 0x3ffe}, {0x8c116e848bc53d13ull, 0xbffb}}},
+        {0xe5cfae1f975c21f4ull, 0xc14b, {{0x8bbddcbf03b85291ull, 0x3ffb}, {0xff6742fa70ad6f11ull, 0x3ffe}, {0x8c116e848bc53d13ull, 0x3ffb}}},
+        {0xc90fdaa22168c235ull, 0x5387, {{0xe105dd82b3b1045eull, 0x3ffe}, {0xf42302b76cbafeadull, 0xbffd}, {0xebf51581decbfac7ull, 0xbfff}}},
+        {0xc90fdaa22168c235ull, 0xd387, {{0xe105dd82b3b1045eull, 0xbffe}, {0xf42302b76cbafeadull, 0xbffd}, {0xebf51581decbfac7ull, 0x3fff}}},
+    };
+    for (const TrigonometryCase& test : cases) {
+        const long double input = MakeExtended(test.mantissa, test.signExponent);
+        for (int index = 0; index < 3; index++) {
+            if (!ExtendedBits(functions[index](input), test.results[index].mantissa, test.results[index].signExponent)) {
+                std::fprintf(stderr, "Guest trigonometric function %d failed for %La\n", index, input);
+                std::abort();
+            }
+        }
+    }
+}
+
 static void CheckLongDoubleRounding(long double value, std::int64_t expected, bool invalid) {
     std::feclearexcept(FE_ALL_EXCEPT);
     errno = 12345;
@@ -4530,6 +4673,7 @@ int main() {
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
     CheckCbrtlConsoleBits();
+    CheckHypotlConsoleBits();
     CheckExtendedMath();
     CheckAcosl();
     CheckAtanl();
@@ -5006,6 +5150,70 @@ int main() {
             }
         }
     }
+    struct DoubleCategory { std::uint64_t bits; int code; };
+    for (const auto& item : {
+             DoubleCategory{0x7ff0000000000001ull, 2},
+             DoubleCategory{0x7ff8000000000001ull, 2},
+             DoubleCategory{0x7fffffffffffffffull, 2},
+             DoubleCategory{0x7ff0000000000000ull, 1},
+             DoubleCategory{0x0ull, 0},
+             DoubleCategory{0x1ull, -2},
+             DoubleCategory{0x000fffffffffffffull, -2},
+             DoubleCategory{0x0010000000000000ull, -1},
+             DoubleCategory{0x3ff0000000000000ull, -1},
+             DoubleCategory{0x7fefffffffffffffull, -1}
+         }) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{0x8000000000000000ull}}) {
+            volatile double input = std::bit_cast<double>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const double value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _Dclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyd_nid_postfix(value)
+                        : _Dtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct FloatCategory { std::uint32_t bits; int code; };
+    for (const auto& item : {
+             FloatCategory{0x7f800001u, 2},
+             FloatCategory{0x7fc00001u, 2},
+             FloatCategory{0x7fffffffu, 2},
+             FloatCategory{0x7f800000u, 1},
+             FloatCategory{0x0u, 0},
+             FloatCategory{0x1u, -2},
+             FloatCategory{0x007fffffu, -2},
+             FloatCategory{0x00800000u, -1},
+             FloatCategory{0x3f800000u, -1},
+             FloatCategory{0x7f7fffffu, -1}
+         }) {
+        for (const std::uint32_t sign : {std::uint32_t{0}, std::uint32_t{0x80000000u}}) {
+            volatile float input = std::bit_cast<float>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const float value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _FDclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyf_nid_postfix(value)
+                        : _FDtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
     std::feclearexcept(FE_ALL_EXCEPT);
     CheckAsin();
     const auto quotient = div_nid_postfix(7, 2);
@@ -5084,6 +5292,7 @@ int main() {
     CheckScaling();
     CheckLongDoubleFunctions();
     CheckLongDoubleHyperbolic();
+    CheckLongDoubleTrigonometry();
     CheckLongDoubleExponentialHyperbolic();
     CheckLongDoubleExpm1();
     CheckLongDoubleErf();

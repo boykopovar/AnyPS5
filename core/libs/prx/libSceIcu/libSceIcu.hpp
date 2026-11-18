@@ -2,6 +2,7 @@
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "ConstrainedFieldPosition.hpp"
 #include "TerminateBuffer.hpp"
+#include "Mutex.hpp"
 #include "Enumeration.hpp"
 #include "List.hpp"
 #include "ErrorName.hpp"
@@ -45,3 +46,4 @@
 #include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
+#include "UtfConversions.hpp"

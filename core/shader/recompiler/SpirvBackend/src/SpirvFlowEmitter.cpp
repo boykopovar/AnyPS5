@@ -840,6 +840,13 @@ public:
         return result;
     }
 
+    bool KnownFalse(const IrValue* value) {
+        return False(value, [&](const IrValue* source) {
+            const auto found = known.find(source->Resolve());
+            return found != known.end() && found->second.has_value();
+        });
+    }
+
     std::vector<const IrValue*> inputs;
 
 private:
@@ -849,12 +856,13 @@ private:
         return exponent <= 126 ? std::optional(std::max(exponent, -149)) : std::nullopt;
     }
 
-    bool False(const IrValue* value) {
+    template<typename TFinite>
+    bool False(const IrValue* value, const TFinite& finite) {
         value = value->Resolve();
         if (value->Flags<std::uint64_t>() != 0u) return false;
-        if (value->Opcode() == IrOpcode::LogicalAnd) return False(value->Argument(0)) || False(value->Argument(1));
-        if (value->Opcode() == IrOpcode::LogicalOr) return False(value->Argument(0)) && False(value->Argument(1));
-        if (const auto* source = RegionNanCondition(value)) return Bound(source).has_value();
+        if (value->Opcode() == IrOpcode::LogicalAnd) return False(value->Argument(0), finite) || False(value->Argument(1), finite);
+        if (value->Opcode() == IrOpcode::LogicalOr) return False(value->Argument(0), finite) && False(value->Argument(1), finite);
+        if (const auto* source = RegionNanCondition(value)) return finite(source);
         if (value->Opcode() != IrOpcode::IEqual32) return false;
         for (unsigned index = 0u; index < 2u; ++index) {
             const auto* constant = value->Argument(index)->Resolve();
@@ -862,7 +870,7 @@ private:
             if (!constant->HasImmediate() || constant->ImmediateU32() != 0x7f800000u || magnitude->Opcode() != IrOpcode::BitwiseAnd32 || magnitude->Flags<std::uint64_t>() != 0u) continue;
             for (unsigned part = 0u; part < 2u; ++part) {
                 const auto* mask = magnitude->Argument(part)->Resolve();
-                if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return Bound(magnitude->Argument(1u-part)).has_value();
+                if (mask->HasImmediate() && mask->ImmediateU32() == 0x7fffffffu) return finite(magnitude->Argument(1u-part));
             }
         }
         return false;
@@ -876,6 +884,24 @@ private:
             const int exponent = bits == 0u ? -149 : bits < 0x00800000u ? static_cast<int>(std::bit_width(bits)) - 150 + (std::has_single_bit(bits) ? 0 : 1) : static_cast<int>(bits >> 23u) - 127 + ((bits & 0x007fffffu) != 0u ? 1 : 0);
             return exponent <= 126 ? std::optional(exponent) : std::nullopt;
         }
+        if (value->Flags<std::uint64_t>() == 0u) {
+            switch (value->Opcode()) {
+                case IrOpcode::BitCastU32F32:
+                case IrOpcode::BitCastF32U32: return Bound(value->Argument(0));
+                case IrOpcode::FPSaturate32: return 0;
+                case IrOpcode::BitwiseAnd32:
+                case IrOpcode::BitwiseXor32:
+                    for (unsigned part = 0u; part < 2u; ++part) {
+                        const auto* mask = value->Argument(part)->Resolve();
+                        if (!mask->HasImmediate()) continue;
+                        if (value->Opcode() == IrOpcode::BitwiseAnd32 && mask->ImmediateU32() == 0x80000000u) return -149;
+                        const auto accepted = value->Opcode() == IrOpcode::BitwiseAnd32 ? 0x7fffffffu : 0x80000000u;
+                        if (mask->ImmediateU32() == accepted) return Bound(value->Argument(1u-part));
+                    }
+                    break;
+                default: break;
+            }
+        }
         if (!members.contains(value)) {
             if (value->Type() != IrType::U32 && value->Type() != IrType::F32) return std::nullopt;
             if (uniqueInputs.insert(value).second) inputs.push_back(value);
@@ -883,20 +909,8 @@ private:
         }
         if (value->Flags<std::uint64_t>() != 0u) return std::nullopt;
         switch (value->Opcode()) {
-            case IrOpcode::BitCastU32F32:
-            case IrOpcode::BitCastF32U32:
             case IrOpcode::FPAbs32:
             case IrOpcode::FPNeg32: return Bound(value->Argument(0));
-            case IrOpcode::BitwiseAnd32:
-            case IrOpcode::BitwiseXor32:
-                for (unsigned part = 0u; part < 2u; ++part) {
-                    const auto* mask = value->Argument(part)->Resolve();
-                    if (!mask->HasImmediate()) continue;
-                    if (value->Opcode() == IrOpcode::BitwiseAnd32 && mask->ImmediateU32() == 0x80000000u) return -149;
-                    const auto accepted = value->Opcode() == IrOpcode::BitwiseAnd32 ? 0x7fffffffu : 0x80000000u;
-                    if (mask->ImmediateU32() == accepted) return Bound(value->Argument(1u-part));
-                }
-                return std::nullopt;
             case IrOpcode::FPMul32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), true, false);
             case IrOpcode::FPAdd32:
             case IrOpcode::FPSub32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), false, true);
@@ -904,9 +918,8 @@ private:
             case IrOpcode::FPMad32: return Join(Join(Bound(value->Argument(0)), Bound(value->Argument(1)), true, false), Bound(value->Argument(2)), false, true);
             case IrOpcode::SelectU32:
             case IrOpcode::SelectF32:
-                if (RegionNanSource(value) != nullptr || False(value->Argument(0))) return Bound(value->Argument(2));
+                if (RegionNanSource(value) != nullptr || False(value->Argument(0), [&](const IrValue* source) { return Bound(source).has_value(); })) return Bound(value->Argument(2));
                 return Join(Bound(value->Argument(1)), Bound(value->Argument(2)), false, false);
-            case IrOpcode::FPSaturate32: return 0;
             case IrOpcode::FPSin:
             case IrOpcode::FPCos:
             case IrOpcode::FPFract32:
@@ -954,6 +967,13 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         } else high = exponent - 1;
     }
     const bool entryGuard = accepted >= -149 && entryInputs.size() < sources.size();
+    if (entryGuard) {
+        RegionEntryBounds certificate(members, accepted);
+        for (const auto* source : sources) certificate.Bound(source);
+        for (const auto* value : region) {
+            if ((value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::SelectF32 || value->Opcode() == IrOpcode::SelectU1) && certificate.KnownFalse(value->Argument(0))) bypassed.insert(value);
+        }
+    }
 
     std::size_t first = 0u;
     while (!bypassed.contains(region[first])) {
