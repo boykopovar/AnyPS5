@@ -3,6 +3,62 @@
 #include <string>
 
 namespace anyps5::experimental {
+namespace {
+struct WideValue {
+    std::uint64_t low;
+    std::uint64_t high;
+};
+
+WideValue multiplyWide(std::uint64_t left, std::uint64_t right) {
+    const auto leftLow = left & UINT64_C(0xFFFFFFFF);
+    const auto leftHigh = left >> 32;
+    const auto rightLow = right & UINT64_C(0xFFFFFFFF);
+    const auto rightHigh = right >> 32;
+    const auto lowLow = leftLow * rightLow;
+    const auto lowHigh = leftLow * rightHigh;
+    const auto highLow = leftHigh * rightLow;
+    const auto highHigh = leftHigh * rightHigh;
+    const auto middle = (lowLow >> 32) + (lowHigh & UINT64_C(0xFFFFFFFF)) +
+                        (highLow & UINT64_C(0xFFFFFFFF));
+    const auto low = (lowLow & UINT64_C(0xFFFFFFFF)) | (middle << 32);
+    const auto high = highHigh + (lowHigh >> 32) + (highLow >> 32) + (middle >> 32);
+    return {low, high};
+}
+
+WideValue negateWide(WideValue value) {
+    const auto low = ~value.low + 1;
+    const auto high = ~value.high + (low == 0 ? 1 : 0);
+    return {low, high};
+}
+
+WideValue absoluteWide(std::uint64_t high, std::uint64_t low) {
+    const WideValue value{low, high};
+    return (high >> 63) != 0 ? negateWide(value) : value;
+}
+
+struct DivisionResult {
+    std::uint64_t quotient;
+    std::uint64_t remainder;
+};
+
+DivisionResult divideWide(std::uint64_t high, std::uint64_t low,
+                          std::uint64_t divisor) {
+    if (high >= divisor)
+        throw std::runtime_error("Guest division quotient overflow");
+    std::uint64_t quotient = 0;
+    std::uint64_t remainder = high;
+    for (int bit = 63; bit >= 0; --bit) {
+        const bool carry = (remainder >> 63) != 0;
+        remainder = (remainder << 1) | ((low >> bit) & 1u);
+        if (carry || remainder >= divisor) {
+            remainder -= divisor;
+            quotient |= UINT64_C(1) << bit;
+        }
+    }
+    return {quotient, remainder};
+}
+}
+
 GuestCpu::GuestCpu(std::span<const std::uint8_t> program, std::size_t stackBytes)
     : program_(program.begin(), program.end()), memory_(stackBytes, 0) {
     if (stackBytes < 8 || stackBytes > std::numeric_limits<std::uint32_t>::max()) {
@@ -282,17 +338,36 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             registers_[reg] = fromOperand;
             continue;
         }
-        if (opcode == 0x98 && !operand16) {
+        if (opcode == 0x98) {
             if (wide) {
                 const auto value = static_cast<std::uint32_t>(registers_[0]);
                 registers_[0] = (value & 0x80000000u)
                     ? (static_cast<std::uint64_t>(value) | UINT64_C(0xFFFFFFFF00000000))
                     : value;
+            } else if (operand16) {
+                const auto value = static_cast<std::uint8_t>(registers_[0]);
+                const auto extended = (value & 0x80u) != 0
+                    ? static_cast<std::uint16_t>(0xFF00u | value)
+                    : static_cast<std::uint16_t>(value);
+                registers_[0] = (registers_[0] & ~UINT64_C(0xFFFF)) | extended;
             } else {
                 const auto value = static_cast<std::uint16_t>(registers_[0]);
                 registers_[0] = (value & 0x8000u)
                     ? (static_cast<std::uint32_t>(value) | 0xFFFF0000u)
                     : value;
+            }
+            continue;
+        }
+        if (opcode == 0x99) {
+            if (wide) {
+                registers_[2] = (registers_[0] >> 63) != 0 ? UINT64_MAX : 0;
+            } else if (operand16) {
+                const auto value = static_cast<std::uint16_t>(registers_[0]);
+                registers_[2] = (registers_[2] & ~UINT64_C(0xFFFF)) |
+                    ((value & 0x8000u) != 0 ? UINT64_C(0xFFFF) : 0);
+            } else {
+                const auto value = static_cast<std::uint32_t>(registers_[0]);
+                registers_[2] = (value & 0x80000000u) != 0 ? UINT64_C(0xFFFFFFFF) : 0;
             }
             continue;
         }
@@ -699,6 +774,108 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
         if (opcode == 0xF7) {
             const auto modrm = read8();
             const auto operation = static_cast<unsigned>((modrm >> 3) & 7);
+            if (operation == 4 || operation == 5) {
+                const auto operand = decodeOperand(modrm, extended, rexX);
+                const auto value = readOperand(operand, wide);
+                if (operation == 4) {
+                    if (!wide) {
+                        const auto product =
+                            static_cast<std::uint64_t>(static_cast<std::uint32_t>(registers_[0])) *
+                            static_cast<std::uint32_t>(value);
+                        registers_[0] = static_cast<std::uint32_t>(product);
+                        registers_[2] = static_cast<std::uint32_t>(product >> 32);
+                        carryFlag_ = overflowFlag_ = (product >> 32) != 0;
+                    } else {
+                        const auto product = multiplyWide(registers_[0], value);
+                        registers_[0] = product.low;
+                        registers_[2] = product.high;
+                        carryFlag_ = overflowFlag_ = product.high != 0;
+                    }
+                } else if (!wide) {
+                    const auto product =
+                        static_cast<std::int64_t>(static_cast<std::int32_t>(registers_[0])) *
+                        static_cast<std::int64_t>(static_cast<std::int32_t>(value));
+                    registers_[0] = static_cast<std::uint32_t>(product);
+                    registers_[2] = static_cast<std::uint32_t>(
+                        static_cast<std::uint64_t>(product) >> 32);
+                    carryFlag_ = overflowFlag_ =
+                        product < INT32_MIN || product > INT32_MAX;
+                } else {
+                    const auto left = registers_[0];
+                    const auto right = value;
+                    const bool leftNegative = (left >> 63) != 0;
+                    const bool rightNegative = (right >> 63) != 0;
+                    const auto leftMagnitude = leftNegative
+                        ? std::uint64_t{0} - left : left;
+                    const auto rightMagnitude = rightNegative
+                        ? std::uint64_t{0} - right : right;
+                    auto product = multiplyWide(leftMagnitude, rightMagnitude);
+                    if (leftNegative != rightNegative) product = negateWide(product);
+                    registers_[0] = product.low;
+                    registers_[2] = product.high;
+                    const bool fits = product.high == 0
+                        ? (product.low >> 63) == 0
+                        : product.high == UINT64_MAX && (product.low >> 63) != 0;
+                    carryFlag_ = overflowFlag_ = !fits;
+                }
+                continue;
+            }
+            if (operation == 7) {
+                const auto operand = decodeOperand(modrm, extended, rexX);
+                const auto divisor = readOperand(operand, wide);
+                if (divisor == 0)
+                    throw std::runtime_error("Guest division by zero");
+                if (!wide) {
+                    const auto divisorBits = static_cast<std::uint32_t>(divisor);
+                    const auto dividend =
+                        (static_cast<std::uint64_t>(
+                            static_cast<std::uint32_t>(registers_[2])) << 32) |
+                        static_cast<std::uint32_t>(registers_[0]);
+                    const bool dividendNegative = (dividend >> 63) != 0;
+                    const bool divisorNegative = (divisorBits & 0x80000000u) != 0;
+                    const auto dividendMagnitude = dividendNegative
+                        ? std::uint64_t{0} - dividend : dividend;
+                    const auto divisorMagnitude = divisorNegative
+                        ? (std::uint64_t{1} << 32) - divisorBits
+                        : static_cast<std::uint64_t>(divisorBits);
+                    const auto quotientMagnitude = dividendMagnitude / divisorMagnitude;
+                    const auto remainderMagnitude = dividendMagnitude % divisorMagnitude;
+                    const bool quotientNegative = dividendNegative != divisorNegative;
+                    const auto limit = quotientNegative
+                        ? (std::uint64_t{1} << 31) : UINT64_C(0x7FFFFFFF);
+                    if (quotientMagnitude > limit)
+                        throw std::runtime_error("Guest division quotient overflow");
+                    registers_[0] = quotientNegative
+                        ? static_cast<std::uint32_t>(
+                            0u - static_cast<std::uint32_t>(quotientMagnitude))
+                        : static_cast<std::uint32_t>(quotientMagnitude);
+                    registers_[2] = dividendNegative
+                        ? static_cast<std::uint32_t>(
+                            0u - static_cast<std::uint32_t>(remainderMagnitude))
+                        : static_cast<std::uint32_t>(remainderMagnitude);
+                } else {
+                    const auto high = registers_[2];
+                    const auto low = registers_[0];
+                    const bool dividendNegative = (high >> 63) != 0;
+                    const bool divisorNegative = (divisor >> 63) != 0;
+                    const auto dividendMagnitude = absoluteWide(high, low);
+                    const auto divisorMagnitude = divisorNegative
+                        ? std::uint64_t{0} - divisor : divisor;
+                    const auto result = divideWide(dividendMagnitude.high,
+                        dividendMagnitude.low, divisorMagnitude);
+                    const bool quotientNegative = dividendNegative != divisorNegative;
+                    const auto limit = quotientNegative
+                        ? (std::uint64_t{1} << 63)
+                        : static_cast<std::uint64_t>(INT64_MAX);
+                    if (result.quotient > limit)
+                        throw std::runtime_error("Guest division quotient overflow");
+                    registers_[0] = quotientNegative
+                        ? std::uint64_t{0} - result.quotient : result.quotient;
+                    registers_[2] = dividendNegative
+                        ? std::uint64_t{0} - result.remainder : result.remainder;
+                }
+                continue;
+            }
             if (operation == 6) {
                 // DIV r/m32 or r/m64: unsigned EDX:EAX / operand.
                 // Quotient overflow and zero divisor raise a guest fault.
@@ -716,24 +893,9 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                     registers_[0] = quotient;
                     registers_[2] = dividend % static_cast<std::uint32_t>(divisor);
                 } else {
-                    // Avoid non-portable 128-bit arithmetic: a quotient fits
-                    // in 64 bits iff the high dividend limb is below divisor.
-                    const auto high = registers_[2];
-                    const auto low = registers_[0];
-                    if (high >= divisor)
-                        throw std::runtime_error("Guest division quotient overflow");
-                    std::uint64_t quotient = 0;
-                    std::uint64_t remainder = high;
-                    for (int bit = 63; bit >= 0; --bit) {
-                        const bool overflow = (remainder >> 63) != 0;
-                        remainder = (remainder << 1) | ((low >> bit) & 1u);
-                        if (overflow || remainder >= divisor) {
-                            remainder -= divisor;
-                            quotient |= UINT64_C(1) << bit;
-                        }
-                    }
-                    registers_[0] = quotient;
-                    registers_[2] = remainder;
+                    const auto result = divideWide(registers_[2], registers_[0], divisor);
+                    registers_[0] = result.quotient;
+                    registers_[2] = result.remainder;
                 }
                 // x86 DIV leaves arithmetic flags undefined.
                 continue;
