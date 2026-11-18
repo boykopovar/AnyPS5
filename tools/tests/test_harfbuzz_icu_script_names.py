@@ -72,6 +72,23 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse((self.root / "IcuScriptNames.hpp").exists())
 
+class SameInputOutputTests(unittest.TestCase):
+    def test_same_path_and_alternate_spelling_are_the_same_file(self):
+        with tempfile.TemporaryDirectory() as name:
+            header = Path(name) / "h.hh"
+            header.write_text("")
+            self.assertTrue(generator.same_input_output(header, header))
+            self.assertTrue(generator.same_input_output(header, Path(name) / "." / "h.hh"))
+
+    def test_distinct_files_and_missing_outputs_differ(self):
+        with tempfile.TemporaryDirectory() as name:
+            header = Path(name) / "h.hh"
+            other = Path(name) / "o.hh"
+            header.write_text("")
+            other.write_text("")
+            self.assertFalse(generator.same_input_output(header, other))
+            self.assertFalse(generator.same_input_output(header, Path(name) / "new.hh"))
+
 
 if __name__ == "__main__":
     unittest.main()
