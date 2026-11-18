@@ -519,7 +519,9 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
     if (!result) return ERROR_NULL_POINTER;
-    if (option || result->reserved) return ERROR_INVALID_VALUE;
+    void* reserved = nullptr;
+    if (!Http2Guest::CopyIn(&reserved, &result->reserved, sizeof(reserved))) return ERROR_NULL_POINTER;
+    if (option || reserved) return ERROR_INVALID_VALUE;
     std::shared_ptr<Http2AsyncState> state;
     {
         std::lock_guard lock(g_handlesMutex);
@@ -530,24 +532,29 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
     if (!available() && state->InFlight() == 0) return ERROR_NOT_CONNECTED;
-    if (timeout && *timeout == 0) {
+    std::uint32_t wait = 0;
+    if (timeout && !Http2Guest::CopyIn(&wait, timeout, sizeof(wait))) return ERROR_NULL_POINTER;
+    if (timeout && wait == 0) {
         if (!available()) return ERROR_TIMEOUT;
     } else if (timeout) {
         if (!state->retired && state->pending.empty()) {
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(*timeout);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(wait);
             const bool ready = state->changed.wait_until(lock, deadline, available);
             const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now());
-            *timeout = remaining.count() > 0 ? static_cast<std::uint32_t>(remaining.count()) : 0;
+            const std::uint32_t left = remaining.count() > 0 ? static_cast<std::uint32_t>(remaining.count()) : 0;
+            if (!Http2Guest::Store(timeout, left)) return ERROR_NULL_POINTER;
             if (!ready) return ERROR_TIMEOUT;
         }
     } else {
         state->changed.wait(lock, available);
     }
     if (!state->pending.empty()) {
-        auto completion = std::move(state->pending.front());
+        if (const auto failure = state->pending.front().failure) {
+            state->pending.pop_front();
+            std::rethrow_exception(failure);
+        }
+        if (!Http2Guest::Store(result, state->pending.front().result)) return ERROR_NULL_POINTER;
         state->pending.pop_front();
-        if (completion.failure) std::rethrow_exception(completion.failure);
-        *result = completion.result;
         return 0;
     }
     if (!state->retired) throw std::logic_error("sceHttp2WaitAsync: wait returned without a completion");

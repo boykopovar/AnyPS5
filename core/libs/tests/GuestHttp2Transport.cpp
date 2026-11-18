@@ -3,6 +3,7 @@
 #include <ws2tcpip.h>
 #else
 #include <netinet/in.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <csignal>
@@ -1676,6 +1677,27 @@ struct AsyncQueue {
     }
 };
 
+char* GuestTestPages(bool readOnly) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* bytes = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(bytes != nullptr, "allocate guest test pages");
+    DWORD previous = 0;
+    Require(VirtualProtect(bytes + pageSize, pageSize, readOnly ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "protect guest test page");
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0, "get page size");
+    const std::size_t pageSize = static_cast<std::size_t>(size);
+    void* memory = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(memory != MAP_FAILED, "allocate guest test pages");
+    auto* bytes = static_cast<char*>(memory);
+    Require(mprotect(bytes + pageSize, pageSize, readOnly ? PROT_READ : PROT_NONE) == 0, "protect guest test page");
+#endif
+    return bytes + pageSize;
+}
+
 void AsyncOptionalArguments(int ssl) {
     std::fprintf(stderr, "HTTP2 async optional arguments scenario\n");
     Server server(Mode::Normal, "/another", 302, "localhost");
@@ -1690,6 +1712,8 @@ void AsyncOptionalArguments(int ssl) {
     Require(sceHttp2WaitAsync(client.request, &reserved, nullptr, nullptr) == static_cast<int>(0x817B11FE), "async reserved result");
     Http2AsyncResult clean{};
     Require(sceHttp2WaitAsync(client.request, &clean, nullptr, &opaque) == static_cast<int>(0x817B11FE), "async reserved wait argument");
+    auto* unreadableResult = reinterpret_cast<Http2AsyncResult*>(GuestTestPages(false));
+    Require(sceHttp2WaitAsync(client.request, unreadableResult, nullptr, nullptr) == static_cast<int>(0x817B1225), "async unreadable result");
     uint32_t zeroTimeout = 0;
     Http2AsyncResult polled{};
     polled.req_id = -1;
@@ -1707,8 +1731,12 @@ void AsyncOptionalArguments(int ssl) {
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, &opaque) == 0, "async opaque option submission");
     queue.ExpectEvent();
     Http2AsyncResult result{};
+    auto* unreadableTimeout = reinterpret_cast<uint32_t*>(GuestTestPages(false));
+    Require(sceHttp2WaitAsync(client.request, &result, unreadableTimeout, nullptr) == static_cast<int>(0x817B1225), "async unreadable timeout");
+    auto* readOnlyResult = reinterpret_cast<Http2AsyncResult*>(GuestTestPages(true));
+    Require(sceHttp2WaitAsync(client.request, readOnlyResult, nullptr, nullptr) == static_cast<int>(0x817B1225), "async read-only result");
     uint32_t queuedTimeout = 5000000;
-    Require(sceHttp2WaitAsync(client.request, &result, &queuedTimeout, nullptr) == 0, "async opaque option completion");
+    Require(sceHttp2WaitAsync(client.request, &result, &queuedTimeout, nullptr) == 0, "async opaque option completion after failed stores");
     Require(queuedTimeout == 5000000, "queued completion leaves the timeout unchanged");
     Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async opaque option result");
     std::array<char, 64> buffer{};
