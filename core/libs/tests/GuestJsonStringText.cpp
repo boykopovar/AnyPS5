@@ -73,7 +73,7 @@ int main() {
 
     threw = false;
     try {
-        _ZN3sce4Json6String7compareEPKc(&str, unmapped);
+        _ZNK3sce4Json6String7compareEPKc(&str, unmapped);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
