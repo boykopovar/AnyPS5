@@ -439,9 +439,11 @@ void CheckIsQuic() {
     Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "connection without a QUIC method");
     Require(Same(guarded, expected), "QUIC query changed the connection");
     guarded.object.method = nullptr;
-    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "the TLS method is not the QUIC method");
-    guarded.object.method = reinterpret_cast<const LibreSsl3SslMethod*>(&guarded);
     guarded.object.quicMethod = &guarded;
+    expected = Bytes(guarded);
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "the TLS method is not the QUIC method");
+    Require(Same(guarded, expected), "QUIC query changed the connection");
+    guarded.object.method = reinterpret_cast<const LibreSsl3SslMethod*>(&guarded);
     Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "any QUIC method");
     bool threw = false;
     try {
