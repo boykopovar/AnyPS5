@@ -10,8 +10,6 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
 }
@@ -28,7 +26,7 @@ int APS5_VABI sceHmdSetupDialogOpen(const void* param) {
     int status = g_status.load();
     do {
         if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-        if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+        if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
         if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
         std::uint8_t probe = 0;
         const int savedErrno = errno;

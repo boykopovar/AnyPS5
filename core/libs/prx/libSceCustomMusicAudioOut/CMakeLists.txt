@@ -12,4 +12,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_custom_music_audio_out PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicAudioOut>")
     endif()
+
+    add_test_executable(guest_custom_music_volume_rounding_tests ${LIBS_INCLUDE_DIR}/tests/GuestCustomMusicVolumeRounding.cpp)
+    target_include_directories(guest_custom_music_volume_rounding_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_custom_music_volume_rounding_tests PRIVATE libSceCustomMusicAudioOut libc)
+    configure_windows_unwind(guest_custom_music_volume_rounding_tests)
+    add_test(NAME guest_custom_music_volume_rounding COMMAND guest_custom_music_volume_rounding_tests)
+    if(WIN32)
+        set_tests_properties(guest_custom_music_volume_rounding PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicAudioOut>")
+    endif()
 endif()

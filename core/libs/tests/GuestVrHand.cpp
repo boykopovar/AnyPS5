@@ -95,6 +95,20 @@ bool Untouched(const std::array<std::uint8_t, 0x28>& out) {
     return true;
 }
 
+void CheckMeshSize() {
+    constexpr std::array<std::uint8_t, 0x1a> expected{
+        0x1a, 0, 0, 0, 0x65, 0x09, 0, 0, 0x10, 0x32, 0, 0,
+    };
+    std::array<std::uint8_t, 32> buffer;
+    buffer.fill(kFill);
+    errno = 71;
+    Require(sceVrHandGetMeshSize(buffer.data() + 1) == 0);
+    Require(errno == 71);
+    Require(std::memcmp(buffer.data() + 1, expected.data(), expected.size()) == 0);
+    Require(buffer[0] == kFill);
+    for (std::size_t i = 1 + expected.size(); i < buffer.size(); ++i) Require(buffer[i] == kFill);
+}
+
 int Query(const std::array<std::uint8_t, 0x40>& param, std::array<std::uint8_t, 0x28>& out) {
     out.fill(kFill);
     return sceVrHandQueryMemory(param.data(), out.data());
@@ -129,6 +143,7 @@ int main() {
     Require(errno == 71);
 
     auto* const spanningParam = region.memory + region.pageSize - 0x10;
+    spanningParam[0] = 0x20;
     out.fill(kFill);
     errno = 71;
     Require(sceVrHandQueryMemory(spanningParam, out.data()) == kErrInvalidArg && Untouched(out));
@@ -174,7 +189,9 @@ int main() {
     TestStartParam startParam{};
     Require(sceVrHandStart(&startParam) == kErrNotInit);
     Require(sceVrHandGetMesh() == kErrNotInit);
-    Require(sceVrHandGetMeshSize() == kErrNotInit);
+    out.fill(kFill);
+    Require(sceVrHandGetMeshSize(nullptr) == kErrNotInit);
+    Require(sceVrHandGetMeshSize(out.data()) == kErrNotInit && Untouched(out));
     Require(sceVrHandGetResult() == kErrNotInit);
     Require(sceVrHandFinalize() == 0);
 
@@ -185,6 +202,16 @@ int main() {
     initParam.workMemory = dummyMemory;
     Require(sceVrHandInitialize(&initParam) == 0);
     Require(sceVrHandInitialize(&initParam) == kErrAlreadyInit);
+    Require(sceVrHandGetMeshSize(nullptr) == kErrInvalidArg);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    CheckMeshSize();
+    auto* const meshBoundary = region.memory + region.pageSize - 0x1a;
+    std::memset(meshBoundary, kFill, 0x1a);
+    Require(sceVrHandGetMeshSize(meshBoundary) == 0 && meshBoundary[0x19] == 0);
+    errno = 71;
+    Require(sceVrHandGetMeshSize(region.memory + region.pageSize) == kErrInvalidArg);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 
     Require(sceVrHandStop() == 0);
     Require(sceVrHandStart(nullptr) == kErrInvalidArg);
@@ -197,10 +224,14 @@ int main() {
 
     Require(sceVrHandStart(&startParam) == 0);
     Require(sceVrHandStart(&startParam) == 0);
+    CheckMeshSize();
     Require(sceVrHandStop() == 0);
+    CheckMeshSize();
     Require(sceVrHandStop() == 0);
 
     Require(sceVrHandFinalize() == 0);
+    out.fill(kFill);
+    Require(sceVrHandGetMeshSize(out.data()) == kErrNotInit && Untouched(out));
     Require(sceVrHandStop() == kErrNotInit);
 
     return 0;
