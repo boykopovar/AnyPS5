@@ -843,7 +843,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
 class GitFailureAndExitTests(unittest.TestCase):
     def test_git_failure_raises_with_stderr_or_command_fallback(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C"}):
             with self.assertRaisesRegex(RuntimeError, "not a git repository"):
                 performance_bisect.git(directory, "status")
             failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
