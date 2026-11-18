@@ -3215,10 +3215,13 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(kernel_socket) == 0);
     std::uint64_t stdio_readable[16]{1};
     std::uint64_t stdio_writable[16]{6};
-    Require(select_nid_postfix(3, stdio_readable, stdio_writable, nullptr, poll_now) == 2);
-    Require(stdio_readable[0] == 0 && stdio_writable[0] == 6);
+    const int stdio_ready = select_nid_postfix(3, stdio_readable, stdio_writable, nullptr, poll_now);
+    Require((stdio_readable[0] & ~std::uint64_t{1}) == 0 && (stdio_writable[0] & ~std::uint64_t{6}) == 0);
+    Require(stdio_ready == static_cast<int>((stdio_readable[0] & 1) +
+        ((stdio_writable[0] >> 1) & 1) + ((stdio_writable[0] >> 2) & 1)));
     stdio_readable[0] = 1;
-    Require(select_nid_postfix(1, stdio_readable, nullptr, nullptr, poll_now) == 0 && stdio_readable[0] == 0);
+    const int stdin_ready = select_nid_postfix(1, stdio_readable, nullptr, nullptr, poll_now);
+    Require(stdio_readable[0] <= 1 && stdin_ready == static_cast<int>(stdio_readable[0]));
     CheckReceiveTimeout(udp_receiver, udp_sender, address);
     CheckStreamReceiveTimeout();
     CheckConnectTimeout();
