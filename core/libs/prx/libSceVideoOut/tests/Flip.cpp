@@ -33,6 +33,9 @@
 #ifdef _WIN32
 #include <SDL.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
 
 #undef main
 
@@ -1680,11 +1683,9 @@ int runTests(int argc, char** argv) {
 
 int main(int argc, char** argv) {
 #ifdef __APPLE__
-    static int arguments;
-    static char** values;
-    arguments = argc;
-    values = argv;
-    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(arguments, values)); }, nullptr);
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(*_NSGetArgc(), *_NSGetArgv())); }, nullptr);
 #else
     return runTests(argc, argv);
 #endif

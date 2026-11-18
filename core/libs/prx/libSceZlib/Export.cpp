@@ -142,7 +142,13 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
     if (invalidInput) return INVALID_ARGUMENT;
+    const auto idAddress = reinterpret_cast<std::uintptr_t>(requestId);
+    if (sizeof(*requestId) > std::numeric_limits<std::uintptr_t>::max() - idAddress) return INVALID_ARGUMENT;
     const int savedErrno = errno;
+    const GuestArena::HostWrite guardId(requestId, sizeof(*requestId));
+    const bool writableId = guardId.Open() && GuestWritable_nid_no_patch(requestId, sizeof(*requestId));
+    errno = savedErrno;
+    if (!writableId) return INVALID_ARGUMENT;
     const bool copiedOutput = GuestCopyOut_nid_no_patch(destination, outputBuffer.data(), produced);
     errno = savedErrno;
     if (!copiedOutput) return INVALID_ARGUMENT;

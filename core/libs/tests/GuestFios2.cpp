@@ -302,6 +302,16 @@ static void CheckOpWaitUntilDelegation(const std::string& file) {
     REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
     sceFiosOpDelete(op);
     REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_ERROR_BAD_OP);
+
+    sceFiosSuspend();
+    const SceFiosOp pending = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(pending > 0);
+    const auto start = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) REQUIRE(sceFiosOpWaitUntil(pending, sceFiosTimeGetCurrent() + 1000000) == SCE_FIOS_ERROR_TIMEOUT);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+    sceFiosOpDelete(pending);
+    sceFiosResume();
 }
 
 static void CheckOperationLifecycle(const std::string& file) {

@@ -505,5 +505,93 @@ class BenchmarkCompareTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
 
+class BenchmarkHelperTests(unittest.TestCase):
+    def test_benchmark_number_accepts_bounded_finite_numbers(self):
+        self.assertEqual(benchmark_compare.benchmark_number(0, "n"), 0)
+        self.assertEqual(benchmark_compare.benchmark_number(2.5, "n"), 2.5)
+        self.assertEqual(benchmark_compare.benchmark_number(1e15, "n"), 1e15)
+        self.assertEqual(benchmark_compare.benchmark_number(7, "n", 7), 7)
+        for value in (True, "1", None, [1]):
+            with self.assertRaisesRegex(ValueError, "n must be a finite non-negative number"):
+                benchmark_compare.benchmark_number(value, "n")
+        for value in (-1, -0.5, 1e15 + 1e3, math.inf, -math.inf, math.nan, 10**400):
+            with self.assertRaisesRegex(ValueError, "n must be finite and between 0 and 1e\\+15"):
+                benchmark_compare.benchmark_number(value, "n")
+        with self.assertRaisesRegex(ValueError, "n must be finite and between 0 and 7"):
+            benchmark_compare.benchmark_number(7.5, "n", 7)
+
+    def test_benchmark_integer_accepts_unsigned_integers_up_to_the_maximum(self):
+        self.assertEqual(benchmark_compare.benchmark_integer(0, "i"), 0)
+        self.assertEqual(benchmark_compare.benchmark_integer(2**64 - 1, "i"), 2**64 - 1)
+        self.assertEqual(benchmark_compare.benchmark_integer(3, "i", 3), 3)
+        for value, maximum in ((-1, 2**64 - 1), (2**64, 2**64 - 1), (4, 3), (True, 3), (1.0, 3), ("1", 3), (None, 3)):
+            with self.assertRaisesRegex(ValueError, f"i must be an integer between 0 and {maximum}"):
+                benchmark_compare.benchmark_integer(value, "i", maximum)
+
+    def test_benchmark_text_bounds_length_and_optional_nonemptiness(self):
+        self.assertEqual(benchmark_compare.benchmark_text("", "t"), "")
+        self.assertEqual(benchmark_compare.benchmark_text("x" * 4096, "t"), "x" * 4096)
+        self.assertEqual(benchmark_compare.benchmark_text(" x ", "t", True), " x ")
+        for value in ("x" * 4097, 1, None, b"x"):
+            with self.assertRaisesRegex(ValueError, "t must be a string of at most 4096 characters"):
+                benchmark_compare.benchmark_text(value, "t")
+        for value in ("", " \t\n"):
+            with self.assertRaisesRegex(ValueError, "t must be a nonempty string of at most 4096 characters"):
+                benchmark_compare.benchmark_text(value, "t", True)
+
+    def test_reject_benchmark_constant_names_the_constant(self):
+        for value in ("NaN", "Infinity", "-Infinity"):
+            with self.assertRaisesRegex(ValueError, f"non-finite JSON constant: {value}"):
+                benchmark_compare.reject_benchmark_constant(value)
+
+    def test_parse_benchmark_selection_accepts_retained_interval_ranges(self):
+        self.assertEqual(benchmark_compare.parse_benchmark_selection("0:1"), (0, 1))
+        self.assertEqual(benchmark_compare.parse_benchmark_selection("239:240"), (239, 240))
+        for value in ("1", "1:", ":1", "-1:2", "1:2:3", " 1:2", "a:b"):
+            with self.assertRaisesRegex(benchmark_compare.argparse.ArgumentTypeError, "intervals must be START:COUNT with a positive count"):
+                benchmark_compare.parse_benchmark_selection(value)
+        for value in ("240:1", "0:0", "0:241"):
+            with self.assertRaisesRegex(benchmark_compare.argparse.ArgumentTypeError, "interval selection must fit 240 retained intervals"):
+                benchmark_compare.parse_benchmark_selection(value)
+
+    def test_benchmark_display_uses_six_significant_digits(self):
+        self.assertEqual(benchmark_compare.benchmark_display(None), "n/a")
+        self.assertEqual(benchmark_compare.benchmark_display(0), "0")
+        self.assertEqual(benchmark_compare.benchmark_display(16.6666666), "16.6667")
+        self.assertEqual(benchmark_compare.benchmark_display(1234567.0), "1.23457e+06")
+
+    def test_read_benchmark_json_reads_plain_bom_and_gzip_and_rejects_bad_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plain = root / "plain.json"
+            plain.write_bytes(b'\xef\xbb\xbf{"a": 1}')
+            value, info = benchmark_compare.read_benchmark_json(plain)
+            self.assertEqual(value, {"a": 1})
+            self.assertEqual(info["sha256"], info["decoded_sha256"])
+            self.assertEqual(info["bytes"], 11)
+            packed = root / "packed.json.gz"
+            packed.write_bytes(gzip.compress(b'{"b": [1, 2]}'))
+            value, info = benchmark_compare.read_benchmark_json(packed)
+            self.assertEqual(value, {"b": [1, 2]})
+            self.assertEqual(info["decoded_sha256"], hashlib.sha256(b'{"b": [1, 2]}').hexdigest())
+            self.assertNotEqual(info["sha256"], info["decoded_sha256"])
+            with self.assertRaisesRegex(ValueError, "decoded JSON exceeds 4 bytes"):
+                benchmark_compare.read_benchmark_json(packed, decoded_limit=4)
+            with self.assertRaisesRegex(ValueError, "input exceeds 4 bytes"):
+                benchmark_compare.read_benchmark_json(plain, limit=4)
+            broken = root / "broken.json.gz"
+            broken.write_bytes(b"\x1f\x8b" + b"\x00" * 8)
+            with self.assertRaisesRegex(ValueError, "invalid gzip data"):
+                benchmark_compare.read_benchmark_json(broken)
+            constant = root / "constant.json"
+            constant.write_text('{"a": NaN}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-finite JSON constant: NaN"):
+                benchmark_compare.read_benchmark_json(constant)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                benchmark_compare.read_benchmark_json(root)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                benchmark_compare.read_benchmark_json(root / "missing.json")
+
+
 if __name__ == "__main__":
     unittest.main()
