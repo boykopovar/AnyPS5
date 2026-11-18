@@ -101,9 +101,10 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME guest_http2_strip_gzip_headers COMMAND guest_http2_transport_tests --strip-gzip-headers)
     add_test(NAME guest_http2_gzip_content_length COMMAND guest_http2_transport_tests --gzip-content-length)
-    set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_http2_gzip_default COMMAND guest_http2_transport_tests --gzip-default)
+    set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length guest_http2_gzip_default PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length guest_http2_gzip_default PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
     add_test(NAME guest_http2_ssl_callbacks COMMAND guest_http2_transport_tests --ssl-callbacks)

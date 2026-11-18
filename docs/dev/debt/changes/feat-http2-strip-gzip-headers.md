@@ -4,7 +4,7 @@
 
 ## change [libSceHttp2 gzip responses]
 
-- [libSceHttp2 gzip responses](../../../core/libs/prx/libSceHttp2/Transport.cpp) - a new template inflates gzip responses on a retail PS5 on firmware 13.60, measured over HTTP/1.1 in a homebrew payload against the system `libSceHttp2.sprx` (log in the pull request that added `sceHttp2SetStripGZIPHeadersEnabled`), while here inflation starts disabled. Enabled gzip responses wait for END_STREAM before the first byte is read, while that PS5 reports no length for them, and use 64 MiB encoded/decoded host limits; console buffering and error mappings are unverified. A response is gzip when its first `Content-Encoding` value starts with `gzip`, ignoring case, as on that PS5. The guest supplies Accept-Encoding. Other content encodings are not inflated
+- [libSceHttp2 gzip responses](../../../core/libs/prx/libSceHttp2/Transport.cpp) - enabled gzip responses wait for END_STREAM before the first byte is read and use 64 MiB encoded/decoded host limits, while a retail PS5 on firmware 13.60 reports no length for them; console buffering and error mappings are unverified. New templates inflate gzip responses, as on that PS5, measured over HTTP/1.x in a homebrew payload against the system `libSceHttp2.sprx` (logs in the pull requests that added `sceHttp2SetStripGZIPHeadersEnabled` and made templates inflate by default). A response is gzip when its first `Content-Encoding` value starts with `gzip`, ignoring case, as on that PS5. The guest supplies Accept-Encoding; that PS5 sends none of its own. Other content encodings, `deflate` among them, are not inflated, as on that PS5
 
 ## add Functional
 
