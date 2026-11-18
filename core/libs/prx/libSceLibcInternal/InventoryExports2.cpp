@@ -1,6 +1,9 @@
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -46,9 +49,16 @@ int APS5_VABI _Strcollx_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Strerror_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
+    if (const char* text = StrerrorText_nid_no_patch(error)) return const_cast<char*>(text);
+    char local[22];
+    std::snprintf(local, sizeof(local), "error_code=0x%08x", static_cast<unsigned>(error));
+    if (!buffer) {
+        thread_local char ownBuffer[sizeof(local)];
+        buffer = ownBuffer;
+    }
+    if (!GuestCopyOut_nid_no_patch(buffer, local, sizeof(local))) throw std::invalid_argument("_Strerror: an unwritable buffer");
+    return buffer;
 }
 
 int APS5_VABI _Strxfrmx_nid_postfix() {
