@@ -166,17 +166,15 @@ class PublicHeaderPackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
             self.assertEqual(archive.getinfo("LICENSE").date_time, time.localtime(1_600_000_000)[:6])
 
-    @unittest.skipUnless(hasattr(time, "tzset"), "requires changing the process timezone")
     def test_source_date_epoch_archives_are_independent_of_timezone(self):
+        script = "import sys; from pathlib import Path; import package_headers; package_headers.package(Path(sys.argv[1]), Path(sys.argv[2]), 'v1')"
+        tools = str(Path(__file__).resolve().parents[1])
         archives = []
-        try:
-            for zone in ("UTC0", "EST5EDT"):
-                with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000001", "TZ": zone}):
-                    time.tzset()
-                    package_headers.package(self.source, self.output, "v1")
-                    archives.append({path.name: path.read_bytes() for path in self.output.iterdir()})
-        finally:
-            time.tzset()
+        for index, zone in enumerate(("UTC0", "EST5EDT")):
+            output = self.root / ("zone-" + str(index))
+            environment = dict(os.environ, SOURCE_DATE_EPOCH="1700000001", TZ=zone, PYTHONPATH=tools)
+            subprocess.run([sys.executable, "-c", script, str(self.source), str(output)], env=environment, check=True)
+            archives.append({path.name: path.read_bytes() for path in output.iterdir()})
         self.assertEqual(archives[0], archives[1])
 
     def test_source_date_epoch_keeps_internal_symlink_dependencies_and_empty_headers(self):
