@@ -4,6 +4,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <iterator>
@@ -40,6 +41,39 @@ constexpr int NP_ERROR_INVALID_NP_ID = static_cast<int>(0x80550605);
 constexpr std::size_t NP_ID_OPT_OFFSET = 0x14;
 constexpr std::size_t NP_ID_PLATFORM_OFFSET = 0x18;
 constexpr std::size_t NP_ID_TERMINATOR_FLAG_OFFSET = 0x1C;
+
+bool GuestTextLength(const char* text, std::size_t maximum, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < maximum;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = std::min(sizeof(chunk) - address % sizeof(chunk), maximum - offset);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
+        errno = savedErrno;
+        if (!copied) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
+    length = maximum;
+    return true;
+}
+
+char* DuplicateGuestText(NpAllocatorEx* allocator, const char* text, std::size_t length) {
+    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
+    if (copy == nullptr) return nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy, text, length);
+    errno = savedErrno;
+    if (!copied) {
+        _sceNpAllocatorExFree(allocator, copy);
+        return nullptr;
+    }
+    copy[length] = '\0';
+    return copy;
+}
 
 std::uint32_t NpIdWord(const std::uint8_t* npId, std::size_t offset) {
     std::uint32_t value;
@@ -527,6 +561,17 @@ int NpResult(int result) {
     return result < 0 ? result : 0;
 }
 
+bool ClearGuestBytes(void* destination, std::size_t size) {
+    constexpr std::array<std::uint8_t, 256> zeros{};
+    const int savedErrno = errno;
+    bool cleared = true;
+    for (std::size_t offset = 0; cleared && offset < size; offset += zeros.size()) {
+        cleared = GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(destination) + offset, zeros.data(), std::min(zeros.size(), size - offset));
+    }
+    errno = savedErrno;
+    return cleared;
+}
+
 int NpBusyResult(int result, int busy) {
     return result == KERNEL_ERROR_EBUSY ? busy : NpResult(result);
 }
@@ -842,19 +887,15 @@ void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer) {
 }
 
 char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text) {
-    const std::size_t size = std::strlen(text) + 1;
-    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, size));
-    if (copy != nullptr) std::memcpy(copy, text, size);
-    return copy;
+    std::size_t length = 0;
+    if (!GuestTextLength(text, SIZE_MAX - 1, length)) return nullptr;
+    return DuplicateGuestText(allocator, text, length);
 }
 
 char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* text, std::size_t maxLength) {
-    const std::size_t length = strnlen(text, maxLength);
-    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
-    if (copy == nullptr) return nullptr;
-    std::memcpy(copy, text, length);
-    copy[length] = '\0';
-    return copy;
+    std::size_t length = 0;
+    if (!GuestTextLength(text, std::min(maxLength, SIZE_MAX - 1), length)) return nullptr;
+    return DuplicateGuestText(allocator, text, length);
 }
 
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
@@ -1125,10 +1166,15 @@ int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* coun
     std::fill(std::begin(registered.user_id), std::end(registered.user_id), USER_ID_INVALID);
     const int result = sceUserServiceGetRegisteredUserIdList(&registered);
     if (result < 0) return result;
+    std::array<int, std::size(registered.user_id)> ids{};
     int found = 0;
     for (const int user : registered.user_id)
-        if (user != USER_ID_INVALID) users[found++] = user;
-    *count = found;
+        if (user != USER_ID_INVALID) ids[found++] = user;
+    const int savedErrno = errno;
+    const bool copied = (found == 0 || GuestCopyOut_nid_no_patch(users, ids.data(), found * sizeof(int))) &&
+        GuestCopyOut_nid_no_patch(count, &found, sizeof(found));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1308,7 +1354,12 @@ int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
 int APS5_VABI sceNpUtilGetNpLanguageCode2(int language, char* tag) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || tag == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(tag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    char localTag[NP_LANGUAGE_CODE2_SIZE]{};
+    CopyText(localTag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(tag, localTag, NP_LANGUAGE_CODE2_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1681,7 +1732,11 @@ bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObje
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text) {
-    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_CODE_LENGTH);
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    return StoreTitleId(out, copy.c_str(), copy.size(), NP_TITLE_ID_CODE_LENGTH);
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
@@ -1689,7 +1744,11 @@ int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObjec
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKc(NpTitleIdObject* out, const char* text) {
-    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_LENGTH);
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    return StoreTitleId(out, copy.c_str(), copy.size(), NP_TITLE_ID_LENGTH);
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
@@ -1698,8 +1757,11 @@ int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const ch
 
 int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size) {
     if (size <= NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL;
-    std::memset(text, 0, size);
-    std::memcpy(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    if (!ClearGuestBytes(text, size)) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1971,8 +2033,11 @@ bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self) {
     return self->commId.data[0] == '\0' && self->commId.num == 0;
 }
 
-bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* commId) {
-    if (std::strlen(commId) != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* guestCommId) {
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(guestCommId, NP_TITLE_ID_LENGTH + 1, copy) != 0) return false;
+    const char* const commId = copy.c_str();
+    if (copy.size() != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
     const auto num = static_cast<std::uint32_t>(std::strtol(commId + 10, nullptr, 10));
     return self->commId.num == num && std::strncmp(self->commId.data, commId, sizeof(self->commId.data)) == 0;
 }
@@ -1986,8 +2051,12 @@ bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpComm
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text) {
-    if (std::strlen(text) != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
-    return NpResult(sceNpUtilParseTitleId(&out->commId, text));
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (copy.size() != NP_TITLE_ID_LENGTH || !IsCommIdText(copy.c_str())) return NP_ERROR_TITLE_ID_INVALID;
+    return NpResult(sceNpUtilParseTitleId(&out->commId, copy.c_str()));
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
@@ -1998,7 +2067,7 @@ int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, char* text, std::size_t size) {
-    std::memset(text, 0, size);
+    if (!ClearGuestBytes(text, size)) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return NpResult(sceNpUtilBuildTitleId(reinterpret_cast<const NpTitleIdParts*>(&commId->commId), text, size));
 }
 

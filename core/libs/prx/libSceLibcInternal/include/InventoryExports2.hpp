@@ -6,7 +6,7 @@ extern "C" {
 
 int APS5_VABI _WPutfld_nid_postfix();
 int APS5_VABI _Save_state_nid_postfix();
-int APS5_VABI _Strerror_nid_postfix();
+char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer);
 int APS5_VABI _Ttotm_nid_postfix();
 int APS5_VABI _Restore_state_nid_postfix();
 int APS5_VABI _WGenld_nid_postfix();

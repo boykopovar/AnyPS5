@@ -94,15 +94,7 @@ int APS5_VABI u_enumCharNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_flushDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI u_getDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_getFC_NFKC_Closure_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -228,14 +220,6 @@ int APS5_VABI uloc_toLanguageTag() {
 }
 
 int APS5_VABI uloc_toUnicodeLocaleType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFKCInstance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFKDInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
