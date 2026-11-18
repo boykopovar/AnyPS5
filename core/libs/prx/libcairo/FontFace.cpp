@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -71,7 +72,12 @@ extern "C" {
 
 CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
     if (!face) NotImplemented_nid_no_patch(__func__);
-    const CacheKey key{face, face->face_index, static_cast<unsigned>(loadFlags)};
+    std::int64_t faceIndex{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&faceIndex, &face->face_index, sizeof(faceIndex));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    const CacheKey key{face, faceIndex, static_cast<unsigned>(loadFlags)};
     std::lock_guard lock(CacheMutex());
     auto& cache = Cache();
     if (const auto found = cache.find(key); found != cache.end()) {
