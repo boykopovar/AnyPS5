@@ -638,6 +638,34 @@ class ChangeClassification(unittest.TestCase):
     def test_test_owner_of_an_empty_command_is_none(self):
         self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
 
+class CtestResolutionsTests(unittest.TestCase):
+    TARGETS = {"alpha": "alpha", "beta": "beta"}
+
+    def resolve(self, tests, **kwargs):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run:
+            run.return_value.stdout = json.dumps({"tests": tests})
+            result = build_changed_guest_tests.ctest_resolutions(Path("build"), self.TARGETS, **kwargs)
+        self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1"])
+        return result
+
+    def tests(self):
+        return [
+            {"name": "a1", "command": ["bin/alpha.exe"]},
+            {"name": "b1", "command": ["cmake", "-P", "x.cmake", "--", "bin/beta.exe"]},
+            {"name": "unknown", "command": ["bin/other.exe"]},
+            {"name": "c1", "command": ["bin/alpha.exe", "bin/beta.exe"]},
+        ]
+
+    def test_every_test_with_a_known_owner_is_resolved_with_its_position(self):
+        self.assertEqual(self.resolve(self.tests()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
+
+    def test_selection_matches_the_owner_or_a_referenced_target(self):
+        self.assertEqual(self.resolve(self.tests(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
+        self.assertEqual(self.resolve(self.tests(), selected=set()), {})
+
+    def test_document_without_tests_resolves_nothing(self):
+        self.assertEqual(self.resolve([]), {})
+
 
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
