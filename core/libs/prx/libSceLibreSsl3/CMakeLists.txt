@@ -957,3 +957,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_error_printing PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509V3ExtConfNid.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509v3_ext_conf_nid_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509V3ExtConfNid.cpp)
+    target_include_directories(guest_libressl3_x509v3_ext_conf_nid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509v3_ext_conf_nid_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_x509v3_ext_conf_nid_tests)
+    add_test(NAME guest_libressl3_x509v3_ext_conf_nid COMMAND guest_libressl3_x509v3_ext_conf_nid_tests)
+    set_tests_properties(guest_libressl3_x509v3_ext_conf_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509v3_ext_conf_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()

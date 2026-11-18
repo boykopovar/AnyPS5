@@ -404,7 +404,8 @@ int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned 
     std::size_t* signatureLength, const unsigned char* content, std::size_t contentLength);
 int APS5_VABI X509_get_signature_nid_nid_postfix(const LibreSsl3Certificate* certificate);
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context);
-int APS5_VABI X509V3_EXT_conf_nid_nid_postfix();
+LibreSsl3X509Extension* APS5_VABI X509V3_EXT_conf_nid_nid_postfix(void* conf,
+    LibreSsl3X509V3Context* ctx, int ext_nid, const char* value);
 int APS5_VABI X509_sign_nid_postfix();
 int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix();
 void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio);
