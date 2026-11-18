@@ -21785,10 +21785,6 @@ int APS5_VABI _ZN7WebCore28throwRequiredMemberTypeErrorERN3JSC14JSGlobalObjectER
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -28593,10 +28589,6 @@ int APS5_VABI _ZNK7WebCore17SubresourceLoader15originalHeadersEv() {
 }
 
 int APS5_VABI _ZNK7WebCore17TiledBackingStore13mapToContentsERKNS_7IntRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
