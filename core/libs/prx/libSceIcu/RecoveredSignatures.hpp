@@ -70,6 +70,14 @@ enum UColAttributeValue : std::int32_t {
     UCOL_ATTRIBUTE_VALUE_COUNT
 };
 
+using UCollationStrength = UColAttributeValue;
+
+enum UCollationResult : std::int32_t {
+    UCOL_EQUAL = 0,
+    UCOL_GREATER = 1,
+    UCOL_LESS = -1
+};
+
 enum UDateTimePatternMatchOptions : std::int32_t {
     UDATPG_MATCH_NO_OPTIONS = 0,
     UDATPG_MATCH_HOUR_FIELD_LENGTH = 1 << 11,
@@ -104,9 +112,15 @@ void APS5_VABI ucal_setMillis_nid_postfix(UCalendar* cal, UDate dateTime, std::i
 void APS5_VABI ucol_close_nid_postfix(UCollator* coll);
 std::int32_t APS5_VABI ucol_getAttribute_nid_postfix(const UCollator* coll, std::int32_t attr, std::int32_t* status);
 std::int32_t APS5_VABI ucol_getReorderCodes_nid_postfix(const UCollator* coll, std::int32_t* dest, std::int32_t destCapacity, std::int32_t* status);
+UCollationStrength APS5_VABI ucol_getStrength_nid_postfix(const UCollator* coll);
 USet* APS5_VABI ucol_getTailoredSet_nid_postfix(const UCollator* coll, std::int32_t* status);
 UCollator* APS5_VABI ucol_open_nid_postfix(const char* locale, std::int32_t* status);
 void APS5_VABI ucol_setAttribute_nid_postfix(UCollator* coll, UColAttribute attr, UColAttributeValue value, std::int32_t* status);
+void APS5_VABI ucol_setStrength_nid_postfix(UCollator* coll, UCollationStrength strength);
+UCollationResult APS5_VABI ucol_strcoll_nid_postfix(const UCollator* coll, const char16_t* source, std::int32_t sourceLength,
+                                                   const char16_t* target, std::int32_t targetLength);
+UCollationResult APS5_VABI ucol_strcollUTF8_nid_postfix(const UCollator* coll, const char* source, std::int32_t sourceLength,
+                                                       const char* target, std::int32_t targetLength, std::int32_t* status);
 
 void APS5_VABI udat_close_nid_postfix(UDateFormat*);
 std::int32_t APS5_VABI udat_format_nid_postfix(const UDateFormat* format, double dateToFormat, char16_t* result, std::int32_t resultLength, UFieldPosition* position, std::int32_t* status);
