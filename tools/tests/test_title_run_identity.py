@@ -17,6 +17,17 @@ SCRIPT = Path(os.environ.get("TITLE_RUN_SCRIPT", ROOT / "tools/title_run.py"))
 TITLE = "PPSA00001"
 
 
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def copyable_executable():
+    for program in (sys.executable, shutil.which("py")):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return program
+    return None
+
+
 def snapshot(root):
     return {str(path.relative_to(root)): None if path.is_dir() else path.read_bytes() for path in root.rglob("*")}
 
@@ -70,10 +81,14 @@ class TitleRunIdentityTests(unittest.TestCase):
         def stat(path, *arguments, **keywords):
             return original_stat(mapped(path), *arguments, **keywords)
 
+        def path_stat(path, *arguments, **keywords):
+            return original_stat(mapped(path), *arguments, **keywords)
+
         def open_directory(path, *arguments, **keywords):
             return original_open(mapped(path), *arguments, **keywords)
 
-        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(os, "open", side_effect=open_directory):
+        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(Path, "stat", path_stat), \
+                mock.patch.object(os, "open", side_effect=open_directory):
             yield
 
     @contextlib.contextmanager
@@ -454,9 +469,12 @@ class TitleRunIdentityTests(unittest.TestCase):
         self.assertNotEqual((physical.stat().st_dev, physical.stat().st_ino), (self.out.stat().st_dev, self.out.stat().st_ino))
         package = self.package(physical / "work" / TITLE)
         before = snapshot(package)
+        program = copyable_executable()
+        if program is None:
+            self.skipTest("no interpreter to copy as the relinker: sys.executable is an App Execution Alias and py is unavailable")
         relinker = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         relinker.parent.mkdir(parents=True)
-        shutil.copy2(sys.executable, relinker)
+        shutil.copy2(program, relinker)
         (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={ROOT}\n", encoding="utf-8")
         errors, output = io.StringIO(), io.StringIO()
         handles, lock_work = [], self.runner.lock_work

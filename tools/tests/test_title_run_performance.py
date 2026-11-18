@@ -4,6 +4,7 @@ import importlib.util
 import io
 import itertools
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -63,6 +64,11 @@ def run_main(runner, root, extra=(), performance_result=None, smoke_result=None,
 
 class PerformanceFixture:
     def setUp(self):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ("ANYPS5_NO_SHADER_CACHE", "MESA_SHADER_CACHE_DISABLE", "__GL_SHADER_DISK_CACHE"):
+            os.environ.pop(name, None)
         temporary = tempfile.TemporaryDirectory(prefix="anyps5-performance-integration-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
