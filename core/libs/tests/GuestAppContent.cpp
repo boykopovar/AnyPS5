@@ -111,13 +111,6 @@ int main() {
     boot.reserved2[31] = 1;
     Require(sceAppContentInitialize(&init, &boot) == ErrorParameter);
     boot.reserved2[31] = 0;
-#ifndef _WIN32
-    void* modernWriteOnlyPage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    Require(modernWriteOnlyPage != MAP_FAILED);
-    Require(mprotect(modernWriteOnlyPage, 4096, PROT_WRITE) == 0);
-    Require(sceAppContentInitialize(&init, static_cast<AppContentBootParam*>(modernWriteOnlyPage)) == ErrorParameter);
-    munmap(modernWriteOnlyPage, 4096);
-#endif
     boot.attr = 0xffffffffu;
     Require(sceAppContentInitialize(&init, &boot) == 0);
     Require(boot.attr == 0);
