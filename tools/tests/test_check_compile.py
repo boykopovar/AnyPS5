@@ -1333,7 +1333,8 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
-class ResponseQuotingTests(unittest.TestCase):
+
+class CheckCompileResponseQuotingTests(unittest.TestCase):
     def test_defaults_to_posix(self):
         self.assertEqual(check_compile.response_quoting([]), "posix")
         self.assertEqual(check_compile.response_quoting(["cc", "-c"]), "posix")
