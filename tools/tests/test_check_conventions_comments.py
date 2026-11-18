@@ -5,12 +5,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from check_conventions import is_debt
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, links, output
+from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output
 
 CONVENTIONS_TEST_SHARDS = 12
 
@@ -1023,6 +1022,7 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
 
 class IsDebtTests(unittest.TestCase):
     def test_index_and_top_level_markdown_files_are_debt(self):
