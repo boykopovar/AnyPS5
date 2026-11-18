@@ -434,6 +434,8 @@ Set `APS5_TIME_SCALE=<factor>` to scale `sceKernelGetProcessTime`, `sceKernelGet
 
 With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on stderr at most every 10 s. A line either counts the last 10 s (its counters are read and cleared when it is printed; the text says `(10 s)` or `over 10 s`) or counts from the start of the process (the text says `(cumulative)`). A rate is the difference of two cumulative lines divided by the time between them.
 
+With `APS5_PROFILE_DRAW=1`, the `lock wait` row in `[draw] driver phases` can include time spent enqueueing a draw, including waiting for space in the draw pipeline. Draws that acquire the GPU mutex also charge that acquisition to the same row. Use the per-thread `[lock]` counters or `GpuMutex.wait.<site>` trace slices to measure GPU mutex contention. For draw pipeline backpressure, use the `for room` time on the `[draw] pipelined` line. Check the producer's sampled stacks for `DrawPipeline::Enqueue` and the draw committer's trace to see where the time goes.
+
 | Line | Counts |
 |---|---|
 | `[rescache] revalidate` | last 10 s |
@@ -468,6 +470,10 @@ ctest --test-dir build/register-context --output-on-failure
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
 
+
+## Build inspection tools
+
+- `tools/compile_database_inventory.py <database>` groups the raw records of a saved compilation database without invoking a compiler or build tool.
 
 ## Test selection tools
 

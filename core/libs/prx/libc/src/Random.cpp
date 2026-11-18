@@ -162,7 +162,10 @@ std::uint16_t* APS5_VABI seed48_nid_postfix(const std::uint16_t* seed) {
     std::array<std::uint16_t, 3> words{};
     if (!GuestCopyIn_nid_no_patch(words.data(), seed, sizeof(words))) throw std::invalid_argument("seed48: unreadable seed");
     std::lock_guard lock(g_randomLock);
-    for (int index = 0; index < 3; ++index) g_rand48Seed[index] = g_seed48Result[index] = words[index];
+    for (int index = 0; index < 3; ++index) {
+        g_seed48Result[index] = g_rand48Seed[index];
+        g_rand48Seed[index] = words[index];
+    }
     g_rand48Multiplier = DefaultRand48Multiplier;
     g_rand48Addend = DefaultRand48Addend;
     return g_seed48Result;
