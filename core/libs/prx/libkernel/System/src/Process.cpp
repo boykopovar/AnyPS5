@@ -1019,25 +1019,6 @@ static int SysarchFailure(int error) {
     return -1;
 }
 
-static int LocalDescriptorTable(int operation, void* parameters) {
-    constexpr int setLdt = 1;
-    constexpr std::uint32_t maxLdtSegment = 512;
-    unsigned char arguments[16];
-    if (!GuestCopyIn_nid_no_patch(arguments, parameters, sizeof(arguments))) return SysarchFailure(guestFault);
-    std::uint32_t start = 0;
-    std::uint64_t descriptors = 0;
-    std::uint32_t count = 0;
-    std::memcpy(&start, arguments, sizeof(start));
-    std::memcpy(&descriptors, arguments + 4, sizeof(descriptors));
-    std::memcpy(&count, arguments + 12, sizeof(count));
-    if (operation != setLdt) return 0;
-    if (descriptors != 0) {
-        if (count > maxLdtSegment) return SysarchFailure(guestInvalid);
-        NotImplemented_nid_no_patch("sysarch: I386_SET_LDT with descriptors");
-    }
-    return start != 0 && count == 0 ? SysarchFailure(guestInvalid) : 0;
-}
-
 static int IoPermission(int operation, void* parameters) {
     constexpr int setIoperm = 4;
     constexpr int guestPermission = 1;
@@ -1073,7 +1054,7 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
-    if (operation == i386GetLdt || operation == i386SetLdt) return LocalDescriptorTable(operation, parameters);
+    if (operation == i386GetLdt || operation == i386SetLdt) return SysarchFailure(guestInvalid);
     if (operation == i386GetIoperm || operation == i386SetIoperm) return IoPermission(operation, parameters);
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
     if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase && operation != i386SetGsBase)
