@@ -188,7 +188,8 @@ void ResizeKeyIDs(KeyIDVector& keyIDs, unsigned size) {
     } else if (size > keyIDs.size) {
         if (size > keyIDs.capacity) {
             std::size_t grown = std::max<std::size_t>(16, std::size_t(keyIDs.capacity) + keyIDs.capacity / 4 + 1);
-            TryReserveKeyIDs(keyIDs, static_cast<unsigned>(std::max<std::size_t>(size, grown)));
+            if (!TryReserveKeyIDs(keyIDs, static_cast<unsigned>(std::min<std::size_t>(std::max<std::size_t>(size, grown), std::numeric_limits<unsigned>::max()))))
+                throw std::length_error("WebCore::ISOProtectionSystemSpecificHeaderBox: key ID vector capacity overflows");
         }
         std::memset(static_cast<void*>(keyIDs.buffer + keyIDs.size), 0, std::size_t(size - keyIDs.size) * sizeof(ByteVector));
     }
