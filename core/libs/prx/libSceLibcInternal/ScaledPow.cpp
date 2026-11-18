@@ -4,13 +4,11 @@
 
 extern "C" {
 
-double APS5_VABI _Pow_nid_postfix(double x, double y, short* exponent) {
-    if (exponent != nullptr) NotImplemented_nid_no_patch("_Pow: a non-null exponent pointer");
+double APS5_VABI _Pow_nid_postfix(double x, double y, short*) {
     return pow_nid_postfix(x, y);
 }
 
-float APS5_VABI _FPow_nid_postfix(float x, float y, short* exponent) {
-    if (exponent != nullptr) NotImplemented_nid_no_patch("_FPow: a non-null exponent pointer");
+float APS5_VABI _FPow_nid_postfix(float x, float y, short*) {
     return powf_nid_postfix(x, y);
 }
 
