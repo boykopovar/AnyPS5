@@ -20,6 +20,15 @@
 #include <utility>
 #include <vector>
 
+namespace {
+
+template<typename T>
+void fillBytes(std::vector<T>& values, int byte) {
+    if (!values.empty()) std::memset(static_cast<void*>(values.data()), byte, values.size() * sizeof(T));
+}
+
+}
+
 namespace AgcDriver::Graphics {
 
 std::uint64_t& DeviceProcLookups() {
@@ -221,13 +230,13 @@ std::vector<Op> operations(bool chainedBarriers) {
         std::vector<VkViewport> viewports(1 + random() % 3);
         for (auto& viewport : viewports) viewport = VkViewport{static_cast<float>(random() % 50), 0, static_cast<float>(random() % 500), 10, 0, 1};
         t.setViewport(commands, random() % 2, static_cast<std::uint32_t>(viewports.size()), viewports.data());
-        std::memset(viewports.data(), 0x5a, viewports.size() * sizeof(VkViewport));
+        fillBytes(viewports, 0x5a);
     });
     ops.emplace_back([&t](VkCommandBuffer commands, std::mt19937& random) {
         std::vector<VkRect2D> scissors(random() % 3);
         for (auto& scissor : scissors) scissor = VkRect2D{{static_cast<std::int32_t>(random() % 40), 0}, {static_cast<std::uint32_t>(random() % 400), 9}};
         t.setScissorWithCount(commands, static_cast<std::uint32_t>(scissors.size()), scissors.data());
-        std::memset(scissors.data(), 0x5a, scissors.size() * sizeof(VkRect2D));
+        fillBytes(scissors, 0x5a);
     });
     ops.emplace_back([&t](VkCommandBuffer commands, std::mt19937& random) {
         std::string bytes(4 * (1 + random() % 8), 'a');
@@ -241,8 +250,8 @@ std::vector<Op> operations(bool chainedBarriers) {
         std::vector<std::uint32_t> offsets(random() % 3);
         for (auto& offset : offsets) offset = random() % 4096;
         t.bindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, fake<VkPipelineLayout>(5), random() % 2, static_cast<std::uint32_t>(sets.size()), sets.data(), static_cast<std::uint32_t>(offsets.size()), offsets.data());
-        std::memset(sets.data(), 0, sets.size() * sizeof(VkDescriptorSet));
-        std::memset(offsets.data(), 0, offsets.size() * sizeof(std::uint32_t));
+        fillBytes(sets, 0);
+        fillBytes(offsets, 0);
     });
     ops.emplace_back([&t, chainedBarriers](VkCommandBuffer commands, std::mt19937& random) {
         std::vector<VkMemoryBarrier> memory(random() % 2, VkMemoryBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, static_cast<VkAccessFlags>(random() % 64), static_cast<VkAccessFlags>(random() % 64)});
@@ -259,9 +268,9 @@ std::vector<Op> operations(bool chainedBarriers) {
         chain.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
         if (chainedBarriers && !images.empty() && random() % 4 == 0) images.front().pNext = &chain;
         t.pipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, static_cast<std::uint32_t>(memory.size()), memory.data(), static_cast<std::uint32_t>(buffers.size()), buffers.data(), static_cast<std::uint32_t>(images.size()), images.data());
-        std::memset(memory.data(), 0, memory.size() * sizeof(VkMemoryBarrier));
-        std::memset(buffers.data(), 0, buffers.size() * sizeof(VkBufferMemoryBarrier));
-        std::memset(images.data(), 0, images.size() * sizeof(VkImageMemoryBarrier));
+        fillBytes(memory, 0);
+        fillBytes(buffers, 0);
+        fillBytes(images, 0);
     });
     ops.emplace_back([&t](VkCommandBuffer commands, std::mt19937& random) {
         std::string bytes(4 * (1 + random() % 6), 'q');
@@ -277,15 +286,15 @@ std::vector<Op> operations(bool chainedBarriers) {
         }
         std::vector<VkClearRect> rects(1 + random() % 2, VkClearRect{{{0, 0}, {static_cast<std::uint32_t>(random() % 640), static_cast<std::uint32_t>(random() % 480)}}, 0, 1});
         t.clearAttachments(commands, static_cast<std::uint32_t>(clears.size()), clears.data(), static_cast<std::uint32_t>(rects.size()), rects.data());
-        std::memset(clears.data(), 0, clears.size() * sizeof(VkClearAttachment));
-        std::memset(rects.data(), 0, rects.size() * sizeof(VkClearRect));
+        fillBytes(clears, 0);
+        fillBytes(rects, 0);
     });
     ops.emplace_back([&t](VkCommandBuffer commands, std::mt19937& random) {
         std::vector<VkClearValue> values(random() % 3);
         for (auto& value : values) value.color.float32[0] = static_cast<float>(random() % 100);
         VkRenderPassBeginInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr, fake<VkRenderPass>(random() % 9), fake<VkFramebuffer>(1), {{0, 0}, {static_cast<std::uint32_t>(random() % 800), 600}}, static_cast<std::uint32_t>(values.size()), values.data()};
         t.beginRenderPass(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
-        std::memset(values.data(), 0, values.size() * sizeof(VkClearValue));
+        fillBytes(values, 0);
         info = {};
     });
     ops.emplace_back([&t](VkCommandBuffer commands, std::mt19937& random) {
@@ -305,7 +314,7 @@ std::vector<Op> operations(bool chainedBarriers) {
         info.pColorAttachments = colors.data();
         if (random() % 2 == 0) info.pDepthAttachment = &depth;
         t.beginRendering(commands, &info);
-        std::memset(colors.data(), 0, colors.size() * sizeof(VkRenderingAttachmentInfoKHR));
+        fillBytes(colors, 0);
         depth = {};
         info = {};
     });
@@ -317,7 +326,7 @@ std::vector<Op> operations(bool chainedBarriers) {
             region.dstOffsets[1].x = static_cast<std::int32_t>(random() % 128);
         }
         t.blitImage(commands, fake<VkImage>(1), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fake<VkImage>(2), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data(), random() % 2 == 0 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
-        std::memset(regions.data(), 0, regions.size() * sizeof(VkImageBlit));
+        fillBytes(regions, 0);
     });
     return ops;
 }
