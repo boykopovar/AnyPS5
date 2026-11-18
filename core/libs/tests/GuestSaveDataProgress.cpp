@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 
@@ -23,7 +24,9 @@ void Check(bool condition, const char* what) {
 
 int main() {
     float progress = -1.0f;
-    Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "get convert progress null pointer returns parameter error");
-    Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "get convert progress uninitialized returns not initialized error");
+    errno = 71;
+    Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter && errno == 71, "get convert progress null pointer returns parameter error");
+    Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized && errno == 71, "get convert progress uninitialized returns not initialized error");
+    Check(sceSaveDataGetConvertProgress(reinterpret_cast<float*>(static_cast<std::uintptr_t>(0x10))) == SaveDataErrorNotInitialized && errno == 71, "get convert progress unmapped pointer uninitialized returns not initialized error");
     return failures == 0 ? 0 : 1;
 }

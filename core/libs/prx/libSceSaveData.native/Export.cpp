@@ -1234,8 +1234,13 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param, int* traceUser = nu
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
     SaveDataMemoryData localData{};
-    if (localParam.data != nullptr && !GuestCopyIn_nid_no_patch(&localData, localParam.data, sizeof(localData))) {
-        return SAVE_DATA_ERROR_PARAMETER;
+    if (localParam.data != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localData, localParam.data, sizeof(localData));
+        errno = savedErrno;
+        if (!copied) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
     if (localParam.data != nullptr && localData.buf_size != 0) {
         if (localData.buf == nullptr || localData.offset > size || localData.buf_size > size - localData.offset) {
@@ -1258,17 +1263,25 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param, int* traceUser = nu
     if (localParam.param != nullptr) {
         SaveDataParam param{};
         read_param_file(mem_path(localParam.user_id, localParam.slot_id, "param"), &param);
-        if (!GuestCopyOut_nid_no_patch(localParam.param, &param, sizeof(param))) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(localParam.param, &param, sizeof(param));
+        errno = savedErrno;
+        if (!copied) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
     if (localParam.icon != nullptr) {
         SaveDataIcon icon{};
-        if (!GuestCopyIn_nid_no_patch(&icon, localParam.icon, sizeof(icon))) {
+        const int savedErrno = errno;
+        const bool copiedIn = GuestCopyIn_nid_no_patch(&icon, localParam.icon, sizeof(icon));
+        errno = savedErrno;
+        if (!copiedIn) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
         icon.data_size = 0;
-        if (!GuestCopyOut_nid_no_patch(localParam.icon, &icon, sizeof(icon))) {
+        const bool copiedOut = GuestCopyOut_nid_no_patch(localParam.icon, &icon, sizeof(icon));
+        errno = savedErrno;
+        if (!copiedOut) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
@@ -1958,7 +1971,7 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f);
     return rc;
 }
 
@@ -2211,6 +2224,10 @@ int APS5_VABI sceSaveDataGetAllSize(std::int32_t reserved, std::uint64_t* size) 
     static_cast<void>(reserved);
     if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
     if (size == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(size, sizeof(*size));
+    errno = savedErrno;
+    if (!writable) return SAVE_DATA_ERROR_PARAMETER;
     std::uint64_t bytes = 0;
     std::vector<std::filesystem::path> paths;
     if (!save_directory_paths(paths)) return SAVE_DATA_ERROR_INTERNAL;
@@ -2220,7 +2237,6 @@ int APS5_VABI sceSaveDataGetAllSize(std::int32_t reserved, std::uint64_t* size) 
         bytes += entryBytes;
     }
     const std::uint64_t kib = (bytes + 1023) / 1024;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(size, &kib, sizeof(kib));
     errno = savedErrno;
     return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
@@ -2268,6 +2284,10 @@ int APS5_VABI sceSaveDataGetEventInfo() {
 int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uint32_t* count) {
     if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
     if (count == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(count, sizeof(*count));
+    errno = savedErrno;
+    if (!writable) return SAVE_DATA_ERROR_PARAMETER;
     if (reserved != 0) NotImplemented_nid_no_patch(__func__);
     std::uint32_t mounted = 0;
     {
@@ -2276,7 +2296,6 @@ int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uin
             if (slot.used) ++mounted;
         }
     }
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(count, &mounted, sizeof(mounted));
     errno = savedErrno;
     return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
@@ -2309,11 +2328,14 @@ int APS5_VABI sceSaveDataGetSaveDataCount(std::int32_t reserved, std::uint32_t* 
     static_cast<void>(reserved);
     if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
     if (count == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(count, sizeof(*count));
+    errno = savedErrno;
+    if (!writable) return SAVE_DATA_ERROR_PARAMETER;
     std::uint32_t total = 0;
     std::vector<std::filesystem::path> paths;
     if (!save_directory_paths(paths)) return SAVE_DATA_ERROR_INTERNAL;
     total = static_cast<std::uint32_t>(paths.size());
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(count, &total, sizeof(total));
     errno = savedErrno;
     return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
