@@ -11,6 +11,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -393,8 +394,30 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleIsCalledFromSysModule() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSysmoduleIsCalledFromSysModule(const void* address) {
+    ModuleInfoEx info{};
+    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uint64_t>(address), 1, &info) != 0) return 0;
+    const auto value = reinterpret_cast<std::uint64_t>(address);
+    bool executable = false;
+    for (std::uint32_t index = 0; index < info.segment_count; ++index) {
+        const auto& segment = info.segments[index];
+        if ((segment.prot & 4) != 0 && value >= segment.address && value - segment.address < segment.size) {
+            executable = true;
+            break;
+        }
+    }
+    if (!executable) return 0;
+    const std::string_view module(info.name);
+    std::lock_guard lock(gMutex);
+    for (const auto& [id, count] : gLoadCount) {
+        if (count < 1) continue;
+        const char* name = findModuleName(id);
+        if (name == nullptr) continue;
+        const std::string_view expected(name);
+        if (module == expected ||
+            (module.size() == expected.size() + 4 && module.starts_with(expected) && module.ends_with(".prx")) ||
+            (module.size() == expected.size() + 10 && module.starts_with(expected) && module.ends_with(".guest.prx"))) return 1;
+    }
     return 0;
 }
 
