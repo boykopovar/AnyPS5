@@ -28,7 +28,7 @@ int main() {
     Require(sceCustomMusicAudioOutSetVolume(0.5) == kErrNotInit);
     Require(sceCustomMusicAudioOutSetMuted(true) == kErrNotInit);
     Require(sceCustomMusicAudioOutSetAllMusicVolume(0.5) == kErrNotInit);
-    Require(sceCustomMusicAudioOutFinalize() == 0);
+    Require(sceCustomMusicAudioOutFinalize() == kErrNotInit);
 
     Require(sceCustomMusicAudioOutInitialize(0, 2, 1) == kErrInvalidArg);
     Require(sceCustomMusicAudioOutInitialize(0, 0, 2) == kErrInvalidArg);
@@ -65,6 +65,7 @@ int main() {
 
     Require(sceCustomMusicAudioOutFinalize() == 0);
     Require(sceCustomMusicAudioOutGetVolume(&vol) == kErrNotInit);
+    Require(sceCustomMusicAudioOutFinalize() == kErrNotInit);
 
     return 0;
 }

@@ -41,6 +41,9 @@ int APS5_VABI sceCustomMusicAudioOutInitialize(int a1, int a2, int a3) {
 }
 
 int APS5_VABI sceCustomMusicAudioOutFinalize(void) {
+    if (!g_initialized) {
+        return ErrorNotInitialized;
+    }
     g_initialized = false;
     g_portLevel = DefaultLevel;
     g_muted = false;
