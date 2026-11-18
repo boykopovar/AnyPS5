@@ -7,7 +7,6 @@
 extern "C" {
 
 int APS5_VABI module_start_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -17,37 +16,30 @@ int APS5_VABI sceWorkspaceWriteFile(void) {
 }
 
 int APS5_VABI sceWorkspaceFinishWrite(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceApplyUpdateForFiles(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceApplyUpdateForAllFiles(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceIsBlockedByDataTransfer(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceMirrorBarrier(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceGetNumberOfPendingUpdates(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI module_stop_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -57,7 +49,6 @@ int APS5_VABI sceWorkspaceUnmount(void) {
 }
 
 int APS5_VABI sceWorkspaceApplyUpdate(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -82,12 +73,10 @@ int APS5_VABI sceWorkspaceCreateFile(void) {
 }
 
 int APS5_VABI sceWorkspaceApplyUpdateForDirectory(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWorkspaceIsUpdatePending(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
