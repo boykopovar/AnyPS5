@@ -213,9 +213,10 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
     const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
     if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
     GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
-    GuestStore(tagClass, 0, "ASN1_get_object");
-    GuestStore(tag, 0, "ASN1_get_object");
-    GuestStore(length, std::int64_t{0}, "ASN1_get_object");
+    GuestStore(input, start, "ASN1_get_object");
+    GuestStore(tagClass, GuestLoad(tagClass, "ASN1_get_object"), "ASN1_get_object");
+    GuestStore(tag, GuestLoad(tag, "ASN1_get_object"), "ASN1_get_object");
+    GuestStore(length, GuestLoad(length, "ASN1_get_object"), "ASN1_get_object");
     std::uint8_t parsedClass;
     std::uint32_t parsedTag;
     bool constructed;
@@ -224,6 +225,9 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
     if (!ReadIdentifier(remaining, parsedClass, constructed, parsedTag)
         || !ReadLength(remaining, indefinite, parsedLength) || (indefinite && !constructed)
         || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        GuestStore(tagClass, 0, "ASN1_get_object");
+        GuestStore(tag, 0, "ASN1_get_object");
+        GuestStore(length, std::int64_t{0}, "ASN1_get_object");
         PutError(HeaderTooLong);
         return 0x80;
     }

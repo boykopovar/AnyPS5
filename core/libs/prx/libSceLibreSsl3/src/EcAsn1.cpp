@@ -258,6 +258,12 @@ struct Parameters {
     std::size_t consumed = 0;
 };
 
+struct PointDeleter {
+    void operator()(EcPoint* point) const {
+        EC_POINT_free_nid_postfix(point);
+    }
+};
+
 struct KeyDeleter {
     void operator()(EcKey* key) const {
         EC_KEY_free_nid_postfix(key);
@@ -378,7 +384,7 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
 constexpr std::int64_t MaxEncodedBytes = 4096;
 
 bool RangeFits(const unsigned char* start, std::int64_t length) {
-    return reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
+    return length >= 0 && reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
 }
 
 EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
@@ -447,19 +453,30 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
     if (in == nullptr) APS5_INVALID_ARG_EX;
     const unsigned char* cursor = nullptr;
     if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor) || !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
-    if (result->publicKey == nullptr && (result->publicKey = EC_POINT_new_nid_postfix(result->group)) == nullptr) {
-        PutError(MallocFailure);
-        return nullptr;
-    }
     std::vector<unsigned char> bytes;
     if (length > 0 && length <= MaxEncodedBytes) {
         if (!RangeFits(cursor, length)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
-    if (bytes.empty() || !EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, bytes.data(), bytes.size(), nullptr)) {
+    if (bytes.empty()) {
         PutError(EcLibrary);
         return nullptr;
+    }
+    std::unique_ptr<EcPoint, PointDeleter> decoded(EC_POINT_new_nid_postfix(result->group));
+    if (!decoded) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    if (!EC_POINT_oct2point_nid_postfix(result->group, decoded.get(), bytes.data(), bytes.size(), nullptr)) {
+        PutError(EcLibrary);
+        return nullptr;
+    }
+    if (result->publicKey != nullptr && result->publicKey->curve.nid == result->group->curve.nid) {
+        std::swap(result->publicKey->point, decoded->point);
+    } else {
+        EC_POINT_free_nid_postfix(result->publicKey);
+        result->publicKey = decoded.release();
     }
     result->conversionForm = bytes[0] & ~1;
     cursor += length;
