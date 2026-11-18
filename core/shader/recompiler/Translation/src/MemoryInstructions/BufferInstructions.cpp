@@ -68,6 +68,7 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
     if (inst.lds) {
+        if (typedBufferLoads) throw std::runtime_error("TYPE 2 or 3 buffer-load preservation with MUBUF LDS is not implemented");
         if (bufferLdsBytes == 0u) throw std::runtime_error("MUBUF LDS load requires a workgroup LDS allocation");
         RdnaOperand m0{};
         m0.kind = RdnaOperandKind::M0;
