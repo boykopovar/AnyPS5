@@ -551,6 +551,22 @@ class TraceDigestTests(unittest.TestCase):
                     self.assertNotIn("Traceback", result.stderr)
                     self.assertEqual(result.stdout, "")
 
+    def test_cli_rejects_duplicate_trace_fields_without_partial_output(self):
+        cases = (("traceEvents", '{"traceEvents":[{"ph":"X","name":"work","tid":1,"ts":0,"dur":1}],"traceEvents":[]}'),
+                 ("dur", '[{"ph":"X","name":"work","tid":1,"ts":0,"dur":1,"dur":2}]'))
+        for field, document in cases:
+            for compressed in (False, True):
+                with self.subTest(field=field, compressed=compressed):
+                    path = Path(self.directory.name) / ("duplicate.json.gz" if compressed else "duplicate.json")
+                    data = document.encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"FAIL: {path}: duplicate JSON field: {field!r}", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+
     def test_cli_rejects_invalid_event_fields_without_partial_output(self):
         slice_event = complete(1, "Driver.Packet", 0, 10)
         cases = [

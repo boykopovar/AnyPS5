@@ -158,9 +158,11 @@ def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
-            document = json.load(handle)
+            document = json.load(handle, object_pairs_hook=unique_json_object)
         except RecursionError as error:
             raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
         return Trace(document)
 
 
