@@ -1414,6 +1414,7 @@ void TestPrimitiveState() {
     Throws([&] { SixHash("short"); });
     Throws([&] { SixHash("AAAAAAA"); });
     Throws([&] { SixHash("AAAAA!"); });
+    Throws([&] { SixHash(reinterpret_cast<const char*>(std::uintptr_t{0x10})); });
     for (std::uint8_t type = 0; type < 10; ++type) {
         Check(IsReload(type) == (type == 4 || type == 8 || type == 9));
         Check(IsBackForward(type) == (type >= 1 && type <= 3));
