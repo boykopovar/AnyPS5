@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from check_conventions import python_comments
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1022,6 +1023,17 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
+class PythonCommentsTests(unittest.TestCase):
+    def test_returns_the_lines_holding_comments(self):
+        text = "x = 1  # a\n# b\ny = '#no'\n"
+        self.assertEqual(python_comments(text), {1, 2})
+
+    def test_leading_byte_order_mark_is_ignored(self):
+        self.assertEqual(python_comments("\ufeff# a\n"), {1})
+
+    def test_untokenizable_text_gives_none(self):
+        self.assertIsNone(python_comments("x = (\n"))
 
 
 if __name__ == "__main__":
