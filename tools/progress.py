@@ -131,6 +131,8 @@ def body_end(text, start):
 
 
 def stub_calls(text):
+    if STUB not in text:
+        return {STUB}
     helpers = {}
     for match in STUB_WRAPPER.finditer(text):
         body = text[match.end() - 1:body_end(text, match.end() - 1)]
