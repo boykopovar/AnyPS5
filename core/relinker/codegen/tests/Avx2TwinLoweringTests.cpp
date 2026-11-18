@@ -35,6 +35,14 @@ std::vector<Case> cases(std::uint8_t imm) {
         {"VPBROADCASTD", {0xC4, 0xE2, 0x79, 0x58, 0x00}, {0xC4, 0xE2, 0x79, 0x18, 0x00}},
         {"VPBROADCASTQ", {0xC4, 0xE2, 0x7D, 0x59, 0x00}, {0xC4, 0xE2, 0x7D, 0x19, 0x00}},
         {"VPBROADCASTQ", {0xC4, 0xE2, 0x79, 0x59, 0x00}, {0xC4, 0xE1, 0x7B, 0x12, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x75, 0x8C, 0x00}, {0xC4, 0xE2, 0x75, 0x2C, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x71, 0x8C, 0x00}, {0xC4, 0xE2, 0x71, 0x2C, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF5, 0x8C, 0x00}, {0xC4, 0xE2, 0x75, 0x2D, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF1, 0x8C, 0x00}, {0xC4, 0xE2, 0x71, 0x2D, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x75, 0x8E, 0x10}, {0xC4, 0xE2, 0x75, 0x2E, 0x10}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x71, 0x8E, 0x10}, {0xC4, 0xE2, 0x71, 0x2E, 0x10}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF5, 0x8E, 0x10}, {0xC4, 0xE2, 0x75, 0x2F, 0x10}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF1, 0x8E, 0x10}, {0xC4, 0xE2, 0x71, 0x2F, 0x10}},
     };
 }
 
@@ -49,7 +57,14 @@ void decoding() {
     const Bytes extended{0xC4, 0x42, 0x79, 0x59, 0x0C, 0x88};
     const auto movddup = Codegen::DecodeAvx2Twin(extended.data(), extended.size());
     require(movddup && movddup->Replacement == Bytes{0xC4, 0x41, 0x7B, 0x12, 0x0C, 0x88}, "VPBROADCASTQ xmm lost its register extensions in VMOVDDUP");
+    const Bytes maskStore{0x2E, 0xC4, 0x62, 0x8D, 0x8E, 0x3D, 0x10, 0x20, 0x30, 0x40};
+    const auto maskMove = Codegen::DecodeAvx2Twin(maskStore.data(), maskStore.size());
+    require(maskMove && std::string(maskMove->Name) == "VPMASKMOVQ" && maskMove->Replacement == Bytes{0x2E, 0xC4, 0x62, 0x0D, 0x2F, 0x3D, 0x10, 0x20, 0x30, 0x40}, "A prefixed, extended or RIP-relative VPMASKMOVQ lost a byte in VMASKMOVPD");
     for (const Bytes bytes : {
+             Bytes{0xC4, 0xE2, 0x75, 0x8C, 0xC2},
+             Bytes{0xC4, 0xE2, 0xF5, 0x8E, 0xD0},
+             Bytes{0xC4, 0xE2, 0x74, 0x8C, 0x00},
+             Bytes{0xC4, 0xE2, 0x75, 0x8D, 0x00},
              Bytes{0xC4, 0xE2, 0x7D, 0x58, 0xC1},
              Bytes{0xC4, 0xE2, 0x7D, 0x59, 0xC1},
              Bytes{0xC4, 0xE3, 0xFD, 0x00, 0xC1, 0x1B},
@@ -71,7 +86,8 @@ void matching() {
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     for (const auto& item : cases(1)) {
-        require(!intel->Match(item.Site.data(), item.Site.size()) && !rosetta->Match(item.Site.data(), item.Site.size()), std::string("Intel or Rosetta mode rewrote ") + item.Name);
+        const bool rosettaMasked = std::string(item.Name).starts_with("VPMASKMOV") && item.Site[3] == 0x8E;
+        require(!intel->Match(item.Site.data(), item.Site.size()) && (rosettaMasked || !rosetta->Match(item.Site.data(), item.Site.size())), std::string("Intel or Rosetta mode rewrote ") + item.Name);
         const auto match = avx->Match(item.Site.data(), item.Site.size());
         require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace && match->ReplacementBytes == item.Replacement && match->InstructionName == item.Name, std::string("AVX mode did not rewrite ") + item.Name + " in place");
         Codegen::StubBodyBuilder body;
@@ -137,7 +153,19 @@ Vector expected(const std::string& name, const Bytes& site, const Registers& in,
         for (unsigned i = 0; i < (wide ? 8u : 4u); ++i) out[i] = in.Memory[0];
     } else if (name == "VPBROADCASTQ") {
         for (unsigned i = 0; i < (wide ? 8u : 4u); ++i) out[i] = in.Memory[i % 2];
+    } else if (name == "VPMASKMOVD" || name == "VPMASKMOVQ") {
+        if (site[3] == 0x8E) return in.Ymm0;
+        for (unsigned i = 0; i < (wide ? 8u : 4u); ++i)
+            if ((in.Ymm1[name == "VPMASKMOVQ" ? (i | 1u) : i] >> 31) != 0) out[i] = in.Memory[i];
     }
+    return out;
+}
+
+Vector expectedMemory(const std::string& name, const Bytes& site, const Registers& in) {
+    auto out = in.Memory;
+    if ((name != "VPMASKMOVD" && name != "VPMASKMOVQ") || site[3] != 0x8E) return out;
+    for (unsigned i = 0; i < ((site[2] & 4) != 0 ? 8u : 4u); ++i)
+        if ((in.Ymm1[name == "VPMASKMOVQ" ? (i | 1u) : i] >> 31) != 0) out[i] = in.Ymm2[i];
     return out;
 }
 
@@ -150,11 +178,17 @@ void execution() {
         input.Memory[i] = 0x33330000u + i;
     }
     for (const std::uint8_t imm : {0x00, 0x01, 0x02, 0x03, 0x12, 0x20, 0x31, 0x5B, 0x88, 0xA5, 0xFF}) {
+        auto masked = input;
+        for (unsigned i = 0; i < 8; ++i)
+            if (((imm >> i) & 1) != 0) masked.Ymm1[i] |= 0x80000000u;
         for (const auto& item : cases(imm)) {
-            const auto output = run(item.Replacement, input);
-            const auto wanted = expected(item.Name, item.Site, input, imm);
+            const auto output = run(item.Replacement, masked);
+            const auto wanted = expected(item.Name, item.Site, masked, imm);
+            const std::string form = std::string(item.Name) + (((item.Site[2] & 4) != 0) ? " ymm" : " xmm") + " with immediate " + std::to_string(imm);
             if (output.Ymm0 != wanted)
-                throw std::runtime_error(std::string(item.Name) + (((item.Site[2] & 4) != 0) ? " ymm" : " xmm") + " with immediate " + std::to_string(imm) + " does not match the AVX2 instruction's result");
+                throw std::runtime_error(form + " does not match the AVX2 instruction's result");
+            if (output.Memory != expectedMemory(item.Name, item.Site, masked))
+                throw std::runtime_error(form + " does not leave memory as the AVX2 instruction does");
         }
     }
 }
