@@ -162,8 +162,11 @@ def estimate(repo, root):
         except OSError:
             refs = None
         if refs is not None and refs.returncode == 0:
-            for ref in refs.stdout.splitlines():
-                git(root, "update-ref", "-d", ref, check=False)
+            try:
+                for ref in refs.stdout.splitlines():
+                    git(root, "update-ref", "-d", ref, check=False)
+            except OSError:
+                pass
 
 
 def main(argv=None):
