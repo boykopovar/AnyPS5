@@ -355,6 +355,8 @@ void CheckUnsupportedKeys() {
     EC_KEY_free_nid_postfix(ecKey);
     fixture.SetEncoding(parts.tbs, 0);
     fixture.SetAlgorithm(EcdsaWithSha256, EcdsaWithSha256Oid);
+    RequireThrows([&] { X509_sign_nid_postfix(&fixture.certificate, ec, EVP_sha256_nid_postfix()); });
+    Require(fixture.signature.length == 0);
     fixture.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
     RequireThrows([&] { X509_sign_nid_postfix(&fixture.certificate, ec, EVP_sha256_nid_postfix()); });
     Require(fixture.signature.length == 0);

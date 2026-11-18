@@ -121,10 +121,12 @@ bool ApplyAlgorithm(LibreSsl3X509Algor* algor, const void* object, bool nullPara
     if (existing) {
         value = CopyIn<LibreSsl3Asn1Type>(existing, "X509_sign");
         if (value.value) {
+            auto* const replacement =
+                static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
+            if (!replacement) return false;
+            CopyOut(&algor->parameter, replacement, "X509_sign");
             ASN1_TYPE_free_nid_postfix(reinterpret_cast<Asn1Type*>(existing));
-            existing = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
-            if (!existing) return false;
-            CopyOut(&algor->parameter, existing, "X509_sign");
+            existing = replacement;
         }
     } else {
         return true;
