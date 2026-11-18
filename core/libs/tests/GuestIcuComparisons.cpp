@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 
 
@@ -110,6 +118,88 @@ void Boundaries() {
     try { u_memcmp_nid_postfix(nullptr, u"", 1); } catch (const std::invalid_argument&) { ++rejected; }
     try { u_memcmpCodePointOrder_nid_postfix(u"", nullptr, -1); } catch (const std::invalid_argument&) { ++rejected; }
     Require(rejected == 5, "invalid required buffers throw");
+
+    const auto* const unmapped = reinterpret_cast<const char16_t*>(std::uintptr_t{0x10});
+    const auto* const otherUnmapped = reinterpret_cast<const char16_t*>(std::uintptr_t{0x20});
+    errno = 71;
+    Require(u_strncmp_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero strncmp count does not read unmapped pointer");
+    Require(u_memcmp_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero memcmp count does not read unmapped pointer");
+    Require(u_memcmpCodePointOrder_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero code-point count does not read unmapped pointer");
+    Require(u_memcmpCodePointOrder_nid_postfix(unmapped, unmapped, 1) == 0 && errno == 71, "identical code-point unmapped pointers do not fault");
+    int unreadableRejected = 0;
+    try { errno = 71; u_strlen_nid_postfix(unmapped); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strlen preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_strcmp_nid_postfix(unmapped, u""); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strcmp preserves errno on first"); ++unreadableRejected; }
+    try { errno = 71; u_strcmp_nid_postfix(u"", otherUnmapped); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strcmp preserves errno on second"); ++unreadableRejected; }
+    try { errno = 71; u_strncmp_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strncmp preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmp_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmp preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmpCodePointOrder_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmpCodePointOrder positive count preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmpCodePointOrder_nid_postfix(unmapped, u"", -1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmpCodePointOrder negative count preserves errno"); ++unreadableRejected; }
+    Require(unreadableRejected == 7, "unreadable buffers throw invalid_argument");
+}
+
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size_ = info.dwPageSize;
+        base_ = static_cast<unsigned char*>(VirtualAlloc(nullptr, size_ * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base_ != nullptr, "allocate guarded pages");
+        DWORD previous = 0;
+        Require(VirtualProtect(base_ + size_, size_, PAGE_NOACCESS, &previous) != 0, "protect trailing page");
+#else
+        size_ = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, size_ * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "allocate guarded pages");
+        base_ = static_cast<unsigned char*>(mapping);
+        Require(mprotect(base_ + size_, size_, PROT_NONE) == 0, "protect trailing page");
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base_, 0, MEM_RELEASE);
+#else
+        munmap(base_, size_ * 2);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    char16_t* Tail(std::size_t units) const { return reinterpret_cast<char16_t*>(base_ + size_) - units; }
+
+private:
+    unsigned char* base_ = nullptr;
+    std::size_t size_ = 0;
+};
+
+void Chunking() {
+    std::u16string long_(5000, u'x');
+    std::u16string longer = long_;
+    longer.back() = u'y';
+    Require(u_strlen_nid_postfix(long_.c_str()) == 5000, "strlen crosses several chunks");
+    Require(u_strcmp_nid_postfix(long_.c_str(), std::u16string(long_).c_str()) == 0, "strcmp equal across chunks");
+    Require(u_strcmp_nid_postfix(long_.c_str(), longer.c_str()) < 0, "strcmp finds the last differing unit");
+    Require(u_strncmp_nid_postfix(long_.c_str(), longer.c_str(), 4999) == 0, "strncmp stops at the bound");
+    Require(u_memcmp_nid_postfix(longer.c_str(), long_.c_str(), 5000) > 0, "memcmp finds the last differing unit");
+    Require(u_memcmpCodePointOrder_nid_postfix(long_.c_str(), longer.c_str(), 5000) < 0, "code-point order across chunks");
+    Require(u_memcmpCodePointOrder_nid_postfix(long_.c_str(), longer.c_str(), -1) < 0, "code-point order with terminator scan");
+
+    GuardedPages pages;
+    constexpr std::size_t units = 32;
+    char16_t* terminated = pages.Tail(units);
+    std::fill_n(terminated, units - 1, u'a');
+    terminated[units - 1] = 0;
+    Require(u_strlen_nid_postfix(terminated) == static_cast<std::int32_t>(units - 1), "string ending at the last readable unit is read");
+    Require(u_strcmp_nid_postfix(terminated, std::u16string(units - 1, u'a').c_str()) == 0, "strcmp stops before the guarded page");
+    errno = 71;
+    terminated[units - 1] = u'a';
+    int rejected = 0;
+    try { u_strlen_nid_postfix(terminated); } catch (const std::invalid_argument&) { Require(errno == 71, "strlen into a guarded page keeps errno"); ++rejected; }
+    try { u_strcmp_nid_postfix(terminated, std::u16string(units, u'a').c_str()); } catch (const std::invalid_argument&) { Require(errno == 71, "strcmp into a guarded page keeps errno"); ++rejected; }
+    Require(rejected == 2, "unterminated strings fault into the guarded page");
 }
 
 } // namespace
@@ -117,4 +207,5 @@ void Boundaries() {
 int main() {
     Exhaustive();
     Boundaries();
+    Chunking();
 }
