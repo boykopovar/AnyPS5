@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <new>
 #include <stdexcept>
@@ -321,9 +322,9 @@ struct MessageReference {
     ~MessageReference() { NKWebKit::JsonAbi::Deref(object); }
 };
 
-std::int64_t TruncateToLong(double number) {
-    if (number >= -9223372036854775808.0 && number < 9223372036854775808.0) return static_cast<std::int64_t>(number);
-    return INT64_MIN;
+int TruncateToInt(double number) {
+    if (number >= -2147483648.0 && number < 2147483648.0) return static_cast<int>(number);
+    return INT32_MIN;
 }
 
 bool IsNumber(const Value& value) {
@@ -361,7 +362,7 @@ void Dispatch(BackendDispatcher& dispatcher, const String& message) {
             SendPendingErrors(dispatcher);
             return;
         }
-        requestId = TruncateToLong(requestIdValue->data.number);
+        requestId = TruncateToInt(requestIdValue->data.number);
     }
     {
         ScopedRequestId scopedRequestId(dispatcher, true, requestId);

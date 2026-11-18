@@ -461,22 +461,22 @@ void APS5_VABI ScriptedDispatch(SupplementalBackendDispatcher* self, std::int64_
 }
 
 const std::uint64_t ExpectedHashes[] = {
-    0xcb571a56b68d96c4ull,
-    0x9368ede3f6e1d9adull,
-    0x44cbc859963aeb8bull,
-    0x176ea4865a097c54ull,
-    0xa573c89897ba297eull,
-    0x47df07774f088a03ull,
-    0x26a30b2dfb654865ull,
-    0x6aad6fb0691cbf15ull,
-    0x45692b14d7379112ull,
-    0x7d6b38ba771c33f3ull,
-    0x2260e750c80f9e6full,
-    0x67aef6be1e45a7f2ull,
-    0xe942be921b505ff8ull,
-    0x1ba34b624b94b718ull,
-    0x075e5f2c2d23e694ull,
-    0xaad37db8b86329b5ull,
+    0xcef938110c07e172ull,
+    0x41d8581761589035ull,
+    0x29af080c830dc154ull,
+    0xbd876e2121ef68b0ull,
+    0xae3cf4070178d94bull,
+    0xeda399e6ba3503feull,
+    0x1f5bf85609708826ull,
+    0xace036e7a1a4fd9cull,
+    0x7d55e447a0a3f7b0ull,
+    0x6d4b9c95753d4cfeull,
+    0x7c032fc35b357c01ull,
+    0xac2921a7ee0b3915ull,
+    0x1918156302567083ull,
+    0xa7574013967bb5d5ull,
+    0x8c0e83ba5cfb7b9bull,
+    0x5ba555bf4c4ee93cull,
 };
 
 void TestOracleTranscripts() {
@@ -586,11 +586,11 @@ void TestLargeRequestIds() {
     adapter.Dispatch(u"{\"id\":4294967301,\"method\":\"Alpha.e0\"}", true);
     auto lines = adapter.TakeTranscript();
     Require(lines.size() == 2);
-    Require(lines[0].find(u"D:Alpha:4294967301:e0:") == 0);
-    Require(lines[1] == u"S:{\"error\":{\"code\":-32700,\"message\":\"failure e0\",\"data\":[{\"code\":-32700,\"message\":\"failure e0\"}]},\"id\":5}");
+    Require(lines[0].find(u"D:Alpha:-2147483648:e0:") == 0);
+    Require(lines[1] == u"S:{\"error\":{\"code\":-32700,\"message\":\"failure e0\",\"data\":[{\"code\":-32700,\"message\":\"failure e0\"}]},\"id\":-2147483648}");
     adapter.Dispatch(u"{\"id\":1e300,\"method\":\"Nope.x\"}", true);
     lines = adapter.TakeTranscript();
-    Require(lines.size() == 1 && lines[0] == u"S:{\"error\":{\"code\":-32601,\"message\":\"'Nope' domain was not found\",\"data\":[{\"code\":-32601,\"message\":\"'Nope' domain was not found\"}]},\"id\":0}");
+    Require(lines.size() == 1 && lines[0] == u"S:{\"error\":{\"code\":-32601,\"message\":\"'Nope' domain was not found\",\"data\":[{\"code\":-32601,\"message\":\"'Nope' domain was not found\"}]},\"id\":-2147483648}");
 }
 
 void TestNullArguments() {
