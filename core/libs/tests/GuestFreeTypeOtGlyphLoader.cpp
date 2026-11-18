@@ -72,6 +72,10 @@ bool Zero(const void* block, std::size_t size) {
     return true;
 }
 
+GuestSubGlyphRec* Subs(void* block) {
+    return static_cast<GuestSubGlyphRec*>(block);
+}
+
 GuestGlyphLoaderRec* Create(Recorder& recorder) {
     GuestGlyphLoaderRec* loader = nullptr;
     Require(FT_GlyphLoader_New_nid_postfix(&recorder.memory, &loader) == 0 && loader, "New succeeds");
@@ -203,18 +207,18 @@ void Subglyphs() {
     Require(Zero(loader->base.subglyphs, 4 * sizeof(GuestSubGlyphRec)), "CheckSubGlyphs zeroes new records");
     Require(loader->current.subglyphs == loader->base.subglyphs, "CheckSubGlyphs adjusts the current records");
     loader->current.num_subglyphs = 3;
-    loader->current.subglyphs[2].index = 9;
+    Subs(loader->current.subglyphs)[2].index = 9;
     FT_GlyphLoader_Add_nid_postfix(loader);
-    Require(loader->base.num_subglyphs == 3 && loader->current.num_subglyphs == 0 && loader->current.subglyphs == loader->base.subglyphs + 3, "Add moves subglyphs into the base");
+    Require(loader->base.num_subglyphs == 3 && loader->current.num_subglyphs == 0 && Subs(loader->current.subglyphs) == Subs(loader->base.subglyphs) + 3, "Add moves subglyphs into the base");
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 1) == 0 && loader->max_subglyphs == 4, "CheckSubGlyphs within capacity keeps the table");
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 2) == 0 && loader->max_subglyphs == 6 && recorder.lastCurrent == 4 * sizeof(GuestSubGlyphRec), "CheckSubGlyphs grows from the old maximum");
-    Require(loader->base.subglyphs[2].index == 9 && loader->current.subglyphs == loader->base.subglyphs + 3, "CheckSubGlyphs keeps records and readjusts");
+    Require(Subs(loader->base.subglyphs)[2].index == 9 && Subs(loader->current.subglyphs) == Subs(loader->base.subglyphs) + 3, "CheckSubGlyphs keeps records and readjusts");
     recorder.fail = true;
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 4) == 0x40 && loader->max_subglyphs == 6, "a failed subglyph resize reports Out_Of_Memory");
     recorder.fail = false;
     loader->current.num_subglyphs = 2;
     FT_GlyphLoader_Prepare_nid_postfix(loader);
-    Require(loader->current.num_subglyphs == 0 && loader->current.subglyphs == loader->base.subglyphs + 3, "Prepare empties the current glyph");
+    Require(loader->current.num_subglyphs == 0 && Subs(loader->current.subglyphs) == Subs(loader->base.subglyphs) + 3, "Prepare empties the current glyph");
     FT_GlyphLoader_Done_nid_postfix(loader);
     Require(recorder.frees == 2, "Done frees the subglyphs and the record");
 }

@@ -7,7 +7,7 @@
 #pragma once
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
-#include "prx/libSceFreeType/include/GuestList.hpp"
+#include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstddef>
@@ -23,32 +23,8 @@ struct GuestSubGlyphRec {
     GuestMatrix transform;
 };
 
-struct GuestGlyphLoadRec {
-    GuestOutline outline;
-    GuestVector* extra_points;
-    GuestVector* extra_points2;
-    std::uint32_t num_subglyphs;
-    GuestSubGlyphRec* subglyphs;
-};
-
-struct GuestGlyphLoaderRec {
-    GuestMemoryRec* memory;
-    std::uint32_t max_points;
-    std::uint32_t max_contours;
-    std::uint32_t max_subglyphs;
-    std::uint8_t use_extra;
-    GuestGlyphLoadRec base;
-    GuestGlyphLoadRec current;
-    void* other;
-};
-
 static_assert(sizeof(GuestSubGlyphRec) == 48 && offsetof(GuestSubGlyphRec, flags) == 4 && offsetof(GuestSubGlyphRec, arg1) == 8);
 static_assert(offsetof(GuestSubGlyphRec, arg2) == 12 && offsetof(GuestSubGlyphRec, transform) == 16);
-static_assert(sizeof(GuestGlyphLoadRec) == 72 && offsetof(GuestGlyphLoadRec, extra_points) == 40 && offsetof(GuestGlyphLoadRec, extra_points2) == 48);
-static_assert(offsetof(GuestGlyphLoadRec, num_subglyphs) == 56 && offsetof(GuestGlyphLoadRec, subglyphs) == 64);
-static_assert(sizeof(GuestGlyphLoaderRec) == 176 && offsetof(GuestGlyphLoaderRec, max_points) == 8 && offsetof(GuestGlyphLoaderRec, max_contours) == 12);
-static_assert(offsetof(GuestGlyphLoaderRec, max_subglyphs) == 16 && offsetof(GuestGlyphLoaderRec, use_extra) == 20);
-static_assert(offsetof(GuestGlyphLoaderRec, base) == 24 && offsetof(GuestGlyphLoaderRec, current) == 96 && offsetof(GuestGlyphLoaderRec, other) == 168);
 
 }
 

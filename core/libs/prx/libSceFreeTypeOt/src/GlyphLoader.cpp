@@ -58,7 +58,7 @@ void AdjustPoints(GuestGlyphLoaderRec* loader) {
 }
 
 void AdjustSubglyphs(GuestGlyphLoaderRec* loader) {
-    loader->current.subglyphs = loader->base.subglyphs + loader->base.num_subglyphs;
+    loader->current.subglyphs = static_cast<GuestSubGlyphRec*>(loader->base.subglyphs) + loader->base.num_subglyphs;
 }
 
 }
@@ -90,7 +90,8 @@ void APS5_VABI FT_GlyphLoader_Reset_nid_postfix(GuestGlyphLoaderRec* loader) {
     Free(memory, loader->base.outline.tags);
     Free(memory, loader->base.outline.contours);
     Free(memory, loader->base.extra_points);
-    Free(memory, loader->base.subglyphs);
+    ft_mem_free_nid_postfix(memory, loader->base.subglyphs);
+    loader->base.subglyphs = nullptr;
     loader->base.extra_points2 = nullptr;
     loader->max_points = 0;
     loader->max_contours = 0;
@@ -162,7 +163,8 @@ std::int32_t APS5_VABI FT_GlyphLoader_CheckSubGlyphs_nid_postfix(GuestGlyphLoade
     const std::uint32_t oldMax = loader->max_subglyphs;
     if (newMax > oldMax) {
         newMax = PadCeil(newMax, 2);
-        if (Renew(loader->memory, loader->base.subglyphs, oldMax, newMax, error)) return error;
+        loader->base.subglyphs = ft_mem_realloc_nid_postfix(loader->memory, sizeof(GuestSubGlyphRec), oldMax, newMax, loader->base.subglyphs, &error);
+        if (error) return error;
         loader->max_subglyphs = newMax;
         AdjustSubglyphs(loader);
     }
