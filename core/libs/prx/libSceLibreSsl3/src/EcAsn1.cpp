@@ -415,7 +415,7 @@ std::int64_t EncodedBytes(const unsigned char* in, std::int64_t available) {
     return std::min(available, offset + content);
 }
 
-EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
+std::unique_ptr<EcGroup, GroupDeleter> DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
     const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
     if (sized && length > 0) {
@@ -431,12 +431,13 @@ EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
         return nullptr;
     }
     in += parameters->consumed;
-    EcGroup* group = nullptr;
+    std::unique_ptr<EcGroup, GroupDeleter> group;
     if (parameters->namedCurve) {
-        if ((group = NamedCurveGroup(parameters->object)) == nullptr) PutError(GroupNewByNameFailure);
+        group.reset(NamedCurveGroup(parameters->object));
+        if (!group) PutError(GroupNewByNameFailure);
         else group->asn1Flag = NamedCurveFlag;
     }
-    if (group == nullptr) PutError(PkParametersToGroupFailure);
+    if (!group) PutError(PkParametersToGroupFailure);
     return group;
 }
 
@@ -454,7 +455,7 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     if (key != nullptr && (!GuestPtr<EcKey*>(key).CopyIn(current) || !GuestPtr<EcKey*>(key).CopyOut(current))) APS5_INVALID_ARG_EX;
     const unsigned char* const start = cursor;
-    std::unique_ptr<EcGroup, GroupDeleter> group(DecodeGroup(cursor, length));
+    std::unique_ptr<EcGroup, GroupDeleter> group = DecodeGroup(cursor, length);
     std::unique_ptr<EcKey, KeyDeleter> created;
     if (group && current == nullptr) created.reset(EC_KEY_new_nid_postfix());
     if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
@@ -464,7 +465,7 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     }
     EcKey* result = created ? created.get() : current;
     if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) {
-        GuestPtr<const unsigned char*>(in).CopyOut(start);
+        if (cursor != start) GuestPtr<const unsigned char*>(in).CopyOut(start);
         APS5_INVALID_ARG_EX;
     }
     EC_GROUP_free_nid_postfix(result->group);
