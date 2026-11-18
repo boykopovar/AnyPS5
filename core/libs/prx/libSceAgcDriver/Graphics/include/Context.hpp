@@ -6,6 +6,7 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include <algorithm>
 #include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <array>
 #include <atomic>
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -198,6 +200,28 @@ std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
+class AsyncCommandBuffers {
+public:
+    void Insert(VkCommandBuffer command) {
+        std::lock_guard lock(mutex);
+        commands.insert(command);
+    }
+
+    void Remove(VkCommandBuffer command) {
+        std::lock_guard lock(mutex);
+        commands.erase(command);
+    }
+
+    bool Contains(VkCommandBuffer command) const {
+        std::lock_guard lock(mutex);
+        return commands.contains(command);
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::unordered_set<VkCommandBuffer> commands;
+};
+
 struct Context {
     VkDevice device;
     VkPhysicalDevice physical;
@@ -242,6 +266,13 @@ struct Context {
     VkQueue sparseQueue = VK_NULL_HANDLE;
     std::mutex* sparseQueueMutex = nullptr;
     VkQueue settleQueue = VK_NULL_HANDLE;
+    VkQueue asyncQueue = VK_NULL_HANDLE;
+    std::uint32_t asyncFamily = VK_QUEUE_FAMILY_IGNORED;
+    std::uint32_t asyncQueueIndex = 0;
+    std::uint32_t asyncTimestampValidBits = 0;
+    std::array<std::uint32_t, 2> bufferSharingFamilies{};
+    std::uint32_t bufferSharingFamilyCount = 0;
+    std::shared_ptr<AsyncCommandBuffers> asyncCommands;
     VkCommandPool settlePool = VK_NULL_HANDLE;
     std::uint32_t settleFamily = 0;
     std::mutex* settleQueueMutex = nullptr;
@@ -352,6 +383,27 @@ struct Context {
     template<typename TFunction>
     TFunction Function(FunctionName name) const {
         return lookup<TFunction>(name.Value());
+    }
+
+    VkResult CreateBuffer(const VkBufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkBuffer* buffer) const {
+        const auto create = Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer");
+        if (bufferSharingFamilyCount == 0) return create(device, info, allocator, buffer);
+        Require(bufferSharingFamilyCount <= bufferSharingFamilies.size(), "invalid buffer sharing family count");
+        auto shared = *info;
+        std::vector<std::uint32_t> families;
+        const auto append = [&](std::uint32_t family) {
+            if (std::find(families.begin(), families.end(), family) == families.end()) families.push_back(family);
+        };
+        if (info->sharingMode == VK_SHARING_MODE_CONCURRENT) {
+            for (std::uint32_t i = 0; i < info->queueFamilyIndexCount; ++i) append(info->pQueueFamilyIndices[i]);
+        }
+        for (std::uint32_t i = 0; i < bufferSharingFamilyCount; ++i) append(bufferSharingFamilies[i]);
+        if (families.size() > 1) {
+            shared.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            shared.queueFamilyIndexCount = static_cast<std::uint32_t>(families.size());
+            shared.pQueueFamilyIndices = families.data();
+        }
+        return create(device, &shared, allocator, buffer);
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.

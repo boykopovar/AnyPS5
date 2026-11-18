@@ -691,7 +691,7 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
     info.size = size;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    return context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, buffer);
+    return context.CreateBuffer(&info, nullptr, buffer);
 }
 
 std::optional<std::uint32_t> coherentImportType(const Context& context, std::uint32_t types) {
@@ -728,7 +728,7 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) shareDmaBufImport(context, info, families, false);
 #endif
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
     entry.buffer = buffer;
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
@@ -949,7 +949,7 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
     ImportFamilies families;
     shareDmaBufImport(context, info, families, false);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) {
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) {
         failure = result;
         return "vkCreateBuffer";
     }
@@ -1003,7 +1003,7 @@ VkMemoryRequirements dmaBufBufferRequirements(const Context& context, const Host
     ImportFamilies families;
     shareDmaBufImport(context, info, families, (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (kept != nullptr) {
@@ -1279,7 +1279,7 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = VkDeviceSize{settleBatchCount} * settleBatchCopies * 4u;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        if ((result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
+        if ((result = context.CreateBuffer(&info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
             settle.batchTarget = VK_NULL_HANDLE;
             return "vkCreateBuffer (settle batch)";
         }
@@ -4181,8 +4181,12 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         const auto target = state.newestLeaseSerial;
         if (recorder != nullptr && recorder == state.leaseRecorder && target > state.finishedLeaseSerial) {
             Recorder::CountSync(4);
-            recorder->Submit();
-            recorder->FinishUpTo(target);
+            if (recorder->AsyncLaneActive()) {
+                recorder->FinishThroughOpened(target);
+            } else {
+                recorder->Submit();
+                recorder->FinishUpTo(target);
+            }
             state.finishedLeaseSerial = target;
             synced = true;
         } else if (recorder != nullptr && !recorder->Idle()) {
@@ -4263,9 +4267,8 @@ void finishLeaseBatches(std::uint64_t target, const void* site) {
     const auto& state = Leases();
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || recorder != state.leaseRecorder || target <= recorder->CompletedThrough()) return;
-    if (target >= recorder->OpenSerial()) recorder->Submit();
     Recorder::AnnounceSyncSite(site);
-    recorder->FinishUpTo(target);
+    recorder->FinishThroughOpened(target);
 }
 
 }
@@ -4515,7 +4518,7 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if ((probe.result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
+        if ((probe.result = context.CreateBuffer(&info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, destination, &requirements);
         if (requirements.memoryTypeBits == 0) return "the destination memory type";
@@ -7188,8 +7191,16 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     std::vector<Recorder::RunAccess> runAccesses;
     const auto runKey = Recorder::DispatchOverlapEnabled() && recorder->RunOpen() ? Recorder::PeekUnorderedDispatch() : 0u;
     if (runKey != 0) RunAccesses(runAccesses);
-    const auto commands = runKey != 0 ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->Commands(&covered);
-    const auto timing = recorder->BeginGpuTiming(StagingCopyInKey);
+    auto commands = runKey != 0 ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->Commands(&covered);
+    bool prelude = false;
+    if (inRun && Recorder::BatchedStagingEnabled() && !capture && !Recorder::BarrierValidate()) {
+        if (const auto preludeCommands = recorder->PreludeCommands(); preludeCommands != VK_NULL_HANDLE) {
+            commands = preludeCommands;
+            prelude = true;
+        }
+    }
+    const Recorder::CommandBorrow commandBorrow(recorder, commands);
+    const auto timing = prelude ? Recorder::NoTiming : recorder->BeginGpuTiming(StagingCopyInKey);
     if (Recorder::BarrierValidate()) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
         for (const auto* region : copies) reads.emplace_back(region->begin, region->end);
@@ -7311,9 +7322,11 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     // The copied bytes are visible to the shaders bound to the buffers, which may also store into
     // them. Every stage: dispatches and draws share this path, and draws run mesh, task and
     // tessellation shaders too (the batch's own barriers around dispatches are as wide).
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-    Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
-    recorder->MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    if (!prelude) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
+        recorder->MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    }
     recorder->EndGpuTiming(timing, copiedBytes);
 }
 
@@ -7324,6 +7337,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
     bool recording = false;
     VkCommandBuffer commands = VK_NULL_HANDLE;
+    std::optional<Recorder::CommandBorrow> commandBorrow;
     auto timing = Recorder::NoTiming;
     std::uint64_t copiedBytes = 0;
     if (!writes.empty()) {
@@ -7344,6 +7358,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             if (from >= to || std::any_of(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == from; })) continue;
             if (!recording) {
                 commands = recorder.Commands();
+                commandBorrow.emplace(&recorder, commands);
                 timing = recorder.BeginGpuTiming(StagingCopyBackKey);
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
                 Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
@@ -7354,6 +7369,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             copiedBytes += to - from;
         }
     }
+    const bool merging = recorder.AfterRunMerging();
     for (auto& region : regions) {
         if (!region.gpuCopy || region.copiedBack) continue;
         for (const auto& [begin, end] : merged) {
@@ -7363,21 +7379,28 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             if (!recording) {
                 VkAccessFlags covered = 0;
                 commands = recorder.Commands(&covered);
+                commandBorrow.emplace(&recorder, commands);
                 timing = recorder.BeginGpuTiming(StagingCopyBackKey);
                 // The shader's stores into the buffer (whichever stage made them) precede the copy.
                 constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT};
-                if (!Recorder::ElideCovered(Recorder::CommandClass::StagingOut, leading, covered)) {
+                if (!merging && !Recorder::ElideCovered(Recorder::CommandClass::StagingOut, leading, covered)) {
                     RecordMemoryBarrier(context, commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
                     Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
                 }
                 recording = true;
+            }
+            bool laterCopyBack = false;
+            if (merging && recorder.AfterRunWrite(from, to)) {
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+                laterCopyBack = true;
             }
             // Exactly the sub-range the shader may write, in place in the import: what the shader
             // would have stored there itself had the range been bindable.
             auto whole = from;
             auto wholeEnd = to;
             const bool addressed = addressedChangedCopyBacks(context);
-            if (region.shadowCopy != nullptr && (addressed ? region.copySourceAddress != 0 : region.copySource != VK_NULL_HANDLE) && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
+            if (!laterCopyBack && region.shadowCopy != nullptr && (addressed ? region.copySourceAddress != 0 : region.copySource != VK_NULL_HANDLE) && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
                 const auto alignedFrom = (from + 3u) & ~std::uint64_t{3};
                 const auto alignedTo = to & ~std::uint64_t{3};
                 static const bool traceDivergence = std::getenv("APS5_TRACE_COPY_BACK") != nullptr;
@@ -7425,6 +7448,10 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     }
     if (!recording) return;
     if (Recorder::BarrierValidate()) recorder.NoteAccess(Recorder::CommandClass::StagingOut, Recorder::Access{{}, merged, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
+    if (merging) {
+        recorder.EndGpuTiming(timing, copiedBytes);
+        return;
+    }
     // As a GPU label store or fill: visible to everything recorded after (shaders, transfers, an
     // indirect dispatch's arguments) and to the host once the batch completed; the caller's
     // pending-write note makes CPU readers wait for that.
