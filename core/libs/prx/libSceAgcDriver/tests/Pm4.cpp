@@ -629,6 +629,58 @@ void testMemory() {
     expectFailure([&] { execute(state, makePacket(0x40, {0x10105, 0, 0, low(data.data()), high(data.data())})); }, "64-bit immediate");
 }
 
+void testDmaGdsAddressControls() {
+    using namespace AgcDriver::Pm4;
+    AgcDriver::QueueState state;
+    alignas(8) std::array<std::uint32_t, 4> source{0x12345678, 0xabcdef01, 0x87654321, 0x10203040};
+    alignas(8) std::array<std::uint32_t, 4> destination{};
+    const auto packet = [](std::uint32_t selectors, std::uint64_t sourceAddress, std::uint64_t destinationAddress, std::uint32_t controls) {
+        return makePacket(0x50, {selectors, static_cast<std::uint32_t>(sourceAddress), static_cast<std::uint32_t>(sourceAddress >> 32u), static_cast<std::uint32_t>(destinationAddress), static_cast<std::uint32_t>(destinationAddress >> 32u), controls | 16u});
+    };
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source.data());
+    const auto destinationAddress = reinterpret_cast<std::uintptr_t>(destination.data());
+    const auto compareStores = [&](const auto& encoded, const auto& plain) {
+        Validate(encoded, 0);
+        const auto resolved = ResolveStore(encoded, state, 64);
+        const auto baseline = ResolveStore(plain, state, 64);
+        check(resolved.has_value() && baseline.has_value() && resolved->address == baseline->address && resolved->Bytes().size() == 16 && baseline->Bytes().size() == 16 && std::memcmp(resolved->Bytes().data(), baseline->Bytes().data(), 16) == 0, "GDS address controls changed ResolveStore");
+        const auto decoded = DecodeStores(encoded);
+        const auto expected = DecodeStores(plain);
+        check(decoded.size() == expected.size(), "GDS address controls changed DecodeStores count");
+        if (!decoded.empty()) check(decoded[0].address == expected[0].address && decoded[0].bytes == expected[0].bytes && decoded[0].value == expected[0].value, "GDS address controls changed DecodeStores");
+    };
+    const auto toGds = packet(0x60100000, sourceAddress, 0x300, 0x28000000);
+    compareStores(toGds, packet(0x60100000, sourceAddress, 0x300, 0));
+    check(DecodeStores(toGds).empty(), "GDS destination decoded as a guest memory store");
+    execute(state, toGds);
+    const auto fromGds = packet(0x20000000, 0x300, destinationAddress, 0x14000000);
+    compareStores(fromGds, packet(0x20000000, 0x300, destinationAddress, 0));
+    execute(state, fromGds);
+    check(destination == source, "DMA_DATA controlled GDS round trip did not advance every word");
+    const auto betweenGds = packet(0x20100000, 0x300, 0xfff0, 0x3c000000);
+    compareStores(betweenGds, packet(0x20100000, 0x300, 0xfff0, 0));
+    execute(state, betweenGds);
+    destination = {};
+    execute(state, packet(0x20000000, 0xfff0, destinationAddress, 0x14000000));
+    check(destination == source, "DMA_DATA controlled GDS copy did not advance every word");
+    const auto fill = packet(0x40100000, 0x5eed1234, 0x400, 0x28000000);
+    compareStores(fill, packet(0x40100000, 0x5eed1234, 0x400, 0));
+    execute(state, fill);
+    execute(state, packet(0x20000000, 0x400, destinationAddress, 0x14000000));
+    check(std::all_of(destination.begin(), destination.end(), [](auto word) { return word == 0x5eed1234; }), "DMA_DATA controlled GDS immediate fill failed");
+    for (const auto offset : {0xfff4ull, 0x10001ull, 0x100000300ull}) {
+        expectFailure([&] { Validate(packet(0x60100000, sourceAddress, offset, 0x28000000), 0); }, "DMA_DATA GDS destination range exceeds the GDS");
+        expectFailure([&] { Validate(packet(0x20000000, offset, destinationAddress, 0x14000000), 0); }, "DMA_DATA GDS source range exceeds the GDS");
+    }
+    for (std::uint32_t selector = 0; selector < 4; ++selector) {
+        for (const auto controls : {4u, 8u, 12u}) {
+            if (selector == 1 && controls == 12) continue;
+            expectFailure([&] { Validate(packet(selector << 29u, 0x300, destinationAddress, ((controls & 4u) << 24u) | ((controls & 8u) << 25u)), 0); }, "DMA_DATA register source is not implemented");
+            expectFailure([&] { Validate(packet(0x60000000 | (selector << 20u), sourceAddress, 0x300, ((controls & 4u) << 25u) | ((controls & 8u) << 26u)), 0); }, "DMA_DATA register destination is not implemented");
+        }
+    }
+}
+
 void testCopies() {
     AgcDriver::QueueState state;
     alignas(8) std::array<std::uint32_t, 4> source{11, 12, 13, 14};
@@ -3080,6 +3132,52 @@ void checkDriverLockFree() {
     registered.get();
 }
 
+void testOrderHoldWake() {
+    constexpr std::uint32_t rounds = 32;
+    alignas(8) static std::uint32_t label = 0;
+    alignas(8) static std::uint32_t armed = 0;
+    alignas(8) static std::uint32_t started = 0;
+    alignas(8) static std::uint32_t done = 0;
+    alignas(8) static std::uint32_t busy = 0;
+    const auto seen = [](std::uint32_t& word, std::uint32_t value) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::atomic_ref<std::uint32_t>(word).load() != value) {
+            check(std::chrono::steady_clock::now() < deadline, "a queue did not reach its write in time");
+            std::this_thread::yield();
+        }
+        return std::chrono::steady_clock::now();
+    };
+    std::vector<double> latencies;
+    for (std::uint32_t round = 1; round <= rounds; ++round) {
+        std::vector<std::uint32_t> waiting;
+        for (std::uint32_t index = 0; index < 4096; ++index) {
+            const auto write = writeWord(busy, index);
+            waiting.insert(waiting.end(), write.begin(), write.end());
+        }
+        const auto arm = writeWord(armed, round);
+        waiting.insert(waiting.end(), arm.begin(), arm.end());
+        const auto wait = makePacket(0x3c, {0x13, low(&label), high(&label), round, 0xffffffffu, 0x19});
+        waiting.insert(waiting.end(), wait.begin(), wait.end());
+        const auto finish = writeWord(done, round);
+        waiting.insert(waiting.end(), finish.begin(), finish.end());
+        submitWords(waiting);
+        auto release = writeWord(started, round);
+        const auto publish = writeWord(label, round);
+        release.insert(release.end(), publish.begin(), publish.end());
+        submitWords(release, 0x20);
+        const auto waitsAt = seen(armed, round);
+        const auto startedAt = seen(started, round);
+        latencies.push_back(std::chrono::duration<double, std::milli>(startedAt - waitsAt).count());
+        AgcDriverWaitIdle_nid_postfix();
+        check(std::atomic_ref<std::uint32_t>(done).load() == round, "queue 0 did not pass its wait on the label of the held queue");
+    }
+    std::sort(latencies.begin(), latencies.end());
+    static char reason[200];
+    std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; it must start at once", latencies[rounds / 2]);
+    std::printf("order-signal: median %.3f ms, largest %.3f ms\n", latencies[rounds / 2], latencies.back());
+    check(latencies[rounds / 2] < 0.1, reason);
+}
+
 void submitStalledOrderWait(const std::shared_ptr<GatedOutput>& output, std::uint32_t& done) {
     std::vector<std::uint32_t> wait{AgcDriver::RenderingWaitPacketHeader, 7, 0, 0};
     submitWords(wait);
@@ -3383,7 +3481,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}, {"rewind-flip", testRewindFrontFlips}, {"rewind-lists", testRewindRegisterLists},
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}, {"rewind-flip", testRewindFrontFlips}, {"rewind-lists", testRewindRegisterLists},
             {"rewind-kept-tails", testRewindKeptTails}, {"rewind-kept-cpu-write", testRewindKeptCpuWrite}, {"rewind-list-cache", testRewindListCache},
             {"rewind-chain", testRewindChainLoop}, {"rewind-kick", testRewindKick}, {"rewind-labels", testRewindLabels}, {"rewind-presents", testRewindPresents}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
@@ -3426,6 +3524,7 @@ int main(int argc, char** argv) {
         testTagMarkers();
         testUserDataWriters();
         testCopies();
+        testDmaGdsAddressControls();
         testMemoryCopyDecode();
         testMemorySynchronization();
         testConditionalValidation();

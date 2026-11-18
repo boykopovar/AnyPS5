@@ -218,7 +218,7 @@ bool ExactClassKeys() {
     return exact;
 }
 
-bool readsSettled(const AddressRanges& ranges, const DirectStages& resolved, const Graphics::Recorder::WriteRanges* pending, const std::optional<DrawPipeline::Watch>& queued) {
+bool readsSettled(const AddressRanges& ranges, const DirectStages& resolved, const Graphics::Recorder::WriteRanges* pending, std::optional<DrawPipeline::Watch>& queued) {
     const bool fast = Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::FastSettle);
     return RangesSettled(ranges, resolved.before.get(), resolved.generation, fast ? pending : nullptr) && (fast || Graphics::Recorder::ReadsSettled(ranges, pending)) && !(queued.has_value() && DrawPipeline::Queue0().WrittenSince(*queued, ranges));
 }
@@ -264,7 +264,7 @@ void prepareBuffers(const LeanDrawJob& job, const DirectStages& resolved, DrawRe
     prepared.generation = resolved.generation;
     const auto pending = Graphics::Recorder::PendingWriteSnapshot();
     std::optional<DrawPipeline::Watch> queued;
-    if (DrawPipeline::Active()) queued = DrawPipeline::Queue0().WatchWrites();
+    if (DrawPipeline::Active()) queued.emplace(DrawPipeline::Queue0().WatchWrites());
     bool done = false;
     try {
         done = Graphics::ShaderResources::PrepareDirectBuffers(*plan, hit.stages, &job.shape->decode->state.color, prepared);
@@ -339,7 +339,7 @@ void prepareInputs(const LeanDrawJob& job, const LeanAnchor& anchor, const Direc
     auto& prepared = hit.preparedInputs.emplace();
     const auto pending = Graphics::Recorder::PendingWriteSnapshot();
     std::optional<DrawPipeline::Watch> queued;
-    if (DrawPipeline::Active()) queued = DrawPipeline::Queue0().WatchWrites();
+    if (DrawPipeline::Active()) queued.emplace(DrawPipeline::Queue0().WatchWrites());
     bool done = false;
     try {
         done = anchor.device->PrepareDrawInputs(job.shape->decode->state, hit.parameters, hit.stages, std::move(recipe), prepared);
