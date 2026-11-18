@@ -33,6 +33,9 @@ bool APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_(const char* ex
 
     if (!extension)
         NotImplemented_nid_no_patch(__func__);
+    std::string localList;
+    if (CopyGuestString_nid_no_patch(extensionList, 1048576, localList) != 0)
+        throw std::invalid_argument(std::string(__func__) + ": unreadable extension list");
     std::string localExtension;
     if (CopyGuestString_nid_no_patch(extension, 65536, localExtension) != 0)
         throw std::invalid_argument(std::string(__func__) + ": unreadable extension string");
@@ -44,7 +47,7 @@ bool APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_(const char* ex
     if (!extensionText[0]) {
         return true;
     }
-    const char* extensionListPtr = extensionList;
+    const char* extensionListPtr = localList.c_str();
     while ((extensionListPtr = std::strstr(extensionListPtr, extensionText))) {
         if (extensionListPtr[extensionLen] == ' ' || extensionListPtr[extensionLen] == '\0')
             return true;
