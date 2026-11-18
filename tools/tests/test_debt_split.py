@@ -587,6 +587,14 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(debt_split.render_index(index), "# T\n\nnote\n\n### S\n\n- a\n- b\n")
         self.assertEqual(debt_split.render_index([("entry", "- a"), ("entry", "- b")]), "- a\n- b\n")
 
+class IndexNoteTests(unittest.TestCase):
+    def test_note_is_one_text_item_pointing_at_the_debt_directory(self):
+        kind, text = debt_split.index_note()
+        self.assertEqual(kind, "text")
+        self.assertIn("](debt/)", text)
+        self.assertTrue(text.startswith("Entries about one library or component are in"))
+        self.assertNotIn("\n", text)
+
 
 if __name__ == "__main__":
     unittest.main()
