@@ -2636,6 +2636,8 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     HostImportFor(context, address, bytes);
 }
 
+std::atomic<std::uint64_t> multisampleUseWalks{0};
+
 #ifdef _WIN32
 bool deferredSettleTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
@@ -3403,8 +3405,16 @@ bool rewatchUnderImageTests(const Device& device) {
     return true;
 }
 
-bool settleInitialDccTests(const Device& device) {
+bool settleInitialDccTests(const Device& device, bool ordered = false) {
     using namespace AgcDriver::GuestMemory;
+    struct ResetObservationHook {
+        ~ResetObservationHook() { SetObservationHookForTest(nullptr); }
+    } resetObservationHook;
+    if (ordered) {
+        SetObservationHookForTest(+[](int point) {
+            if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
     const auto& base = device.GetContext();
     constexpr std::size_t unit = 65536;
     constexpr std::size_t tail = 0x4000;
@@ -3616,12 +3626,14 @@ bool settleInitialDccTests(const Device& device) {
         }
         const auto before = HostImportSettles();
         Require(!fmaskAlone || before.submitted == quiet.submitted, "(m) a settle read was submitted between the FMASK's import and the target's first use");
+        if (ordered) multisampleUseWalks.store(0, std::memory_order_relaxed);
         std::string refusal;
         try {
             Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "(m) the multisampled DCC target has no view");
         } catch (const std::exception& error) {
             refusal = error.what();
         }
+        const auto firstUseWalks = ordered ? multisampleUseWalks.load(std::memory_order_relaxed) : 0;
         const auto after = HostImportSettles();
         const auto* settled = ExistingHostImportFor(context, address, importBytes);
         const char* name = kind == Case::Pending ? "a pending settle" : kind == Case::PartialBlock ? "an import of whole and partial 64 KiB blocks" : kind == Case::ComparedNeighbour ? "a compared import in its last 64 KiB block" : kind == Case::DeferredOff ? "deferred settles off" : kind == Case::UnwatchedKeys ? "explicitly unwatched DCC keys" : kind == Case::PendingFmask ? "an eight-sample target whose color and FMASK imports both have pending settles" : "an eight-sample target whose FMASK alone has a pending settle";
@@ -3633,6 +3645,12 @@ bool settleInitialDccTests(const Device& device) {
             return;
         }
         Require(refusal.empty(), std::string("(m) an initial multisampled DCC import over ") + name + " was refused: " + refusal);
+        Require(!ordered || firstUseWalks != 0, std::string("(m) the first ordered use over ") + name + " reused another caller's observation");
+        if (ordered) {
+            multisampleUseWalks.store(0, std::memory_order_relaxed);
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, std::string("(m) the repeated multisampled DCC target over ") + name + " has no view");
+            Require(multisampleUseWalks.load(std::memory_order_relaxed) == 0, std::string("(m) the repeated ordered use over ") + name + " walked its own unchanged observations again");
+        }
         Require(!fmaskAlone || (after.submitted - before.submitted == 1 && after.rewatched - before.rewatched == 1), "(m) the first use over a pending FMASK settle alone submitted " + std::to_string(after.submitted - before.submitted) + " settle reads, not the FMASK's alone");
         const bool settledBefore = kind == Case::PartialBlock;
         Require((settledBefore ? after.submitted == before.submitted : after.submitted > before.submitted && after.rewatched > before.rewatched) && Watched(address, importBytes) && settled != nullptr && !settled->unwatched, std::string("(m) the initial DCC import over ") + name + " did not settle the import and return it to the write watch");
@@ -3695,9 +3713,26 @@ bool settleInitialDccTests(const Device& device) {
     std::cout << "initial multisampled DCC over a pending settle tests passed\n";
     return true;
 }
-#endif
 
-std::atomic<std::uint64_t> multisampleUseWalks{0};
+bool settleInitialDccCommitterTests(const Device& device) {
+    bool passed = false;
+    std::exception_ptr failure;
+    auto& committer = AgcDriver::DriverDetail::DrawPipeline::Queue0();
+    committer.Enqueue(AgcDriver::DriverDetail::DrawPipeline::CommitKind::Draw, [&] {
+        try {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::GuestMemory::CollectEpoch() != 0, "the initial DCC committer fixture has no collect epoch");
+            passed = settleInitialDccTests(device, true);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }, {}, 0, {}, {}, true);
+    committer.Drain(AgcDriver::DriverDetail::DrawPipeline::DrainReason::Submission);
+    committer.Stop();
+    if (failure) std::rethrow_exception(failure);
+    return passed;
+}
+#endif
 
 bool multisampleUseCollectTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
@@ -17376,9 +17411,9 @@ int main(int argc, char** argv) {
             importWatchTests(device);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--settle-initial-dcc-only") {
+        if (argc == 2 && (std::string_view(argv[1]) == "--settle-initial-dcc-only" || std::string_view(argv[1]) == "--settle-initial-dcc-committer-only")) {
 #ifdef _WIN32
-            return settleInitialDccTests(device) ? 0 : 77;
+            return (std::string_view(argv[1]) == "--settle-initial-dcc-committer-only" ? settleInitialDccCommitterTests(device) : settleInitialDccTests(device)) ? 0 : 77;
 #else
             std::cout << "skipped, the device has no deferred settle of host imports: imports under 1 MiB wait for one only on Windows\n";
             return 77;
