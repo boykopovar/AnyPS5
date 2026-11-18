@@ -642,6 +642,26 @@ class PatchAdvisorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 suggest_patches.confined(root, "../outside.txt")
 
+class PrintMetadataTests(unittest.TestCase):
+    def render(self, metadata):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            suggest_patches.print_metadata(metadata)
+        return output.getvalue()
+
+    def test_empty_metadata_prints_nothing(self):
+        self.assertEqual(self.render({}), "")
+
+    def test_fields_are_printed_in_a_fixed_order(self):
+        metadata = {"source": "https://example.com", "notes": "n", "revision": 2, "description": "d", "category": "fix", "name": "N", "id": "i"}
+        self.assertEqual(self.render(metadata), "  ID: i\n  Name: N\n  Category: fix\n  Description: d\n  Revision: 2\n  Notes: n\n  Source: https://example.com\n")
+
+    def test_contributors_and_tested_records_get_their_own_lines(self):
+        metadata = {"contributors": ["a", "b"], "tested": [
+            {"stage": "load", "result": "pass", "evidence": "log"},
+            {"stage": "run", "result": "fail", "evidence": "video", "environment": "linux", "date": "2026-01-02"}]}
+        self.assertEqual(self.render(metadata), "  Contributor: a\n  Contributor: b\n  Tested: load pass: log\n  Tested: run fail on linux (2026-01-02): video\n")
+
 
 if __name__ == "__main__":
     unittest.main()
