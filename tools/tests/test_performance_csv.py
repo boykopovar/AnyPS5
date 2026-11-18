@@ -322,6 +322,19 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual((env[3], env[4]), (r"\\<missing>", "<missing>"))
         self.assertEqual((slash[3], slash[4]), ("<missing>", r"\\-dangerous"))
 
+class ConfigurationCellTests(unittest.TestCase):
+    def test_missing_values_are_marked(self):
+        self.assertEqual(performance_csv.configuration_cell(None), "<missing>")
+
+    def test_literal_marker_and_backslash_prefixes_are_escaped(self):
+        self.assertEqual(performance_csv.configuration_cell("<missing>"), "\\<missing>")
+        self.assertEqual(performance_csv.configuration_cell("\\x"), "\\\\x")
+
+    def test_other_values_pass_through(self):
+        for value in ("plain", "", 3, False):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.configuration_cell(value), value)
+
 
 if __name__ == "__main__":
     unittest.main()
