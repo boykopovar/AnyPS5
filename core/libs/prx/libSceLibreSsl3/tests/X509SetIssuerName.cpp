@@ -91,6 +91,8 @@ public:
 
     LibreSslX509Name* Get() { return &name_; }
 
+    void SetCommonNameLength(int length) { values_[1].length = length; }
+
     void MutateCommonName(char value) { commonName_[0] = value; }
 
 private:
@@ -134,6 +136,10 @@ void RejectsBadInput() {
     unsigned char canonical = 0;
     LibreSslX509Name badCanonical{nullptr, 0, nullptr, &canonical, -1};
     Require(X509_set_issuer_name_nid_postfix(&certificate, &badCanonical) == 0);
+    Require(info.issuer == previous);
+    TestName badValue;
+    badValue.SetCommonNameLength(-1);
+    Require(X509_set_issuer_name_nid_postfix(&certificate, badValue.Get()) == 0);
     Require(info.issuer == previous);
     X509_NAME_free_nid_no_patch(previous);
     info.issuer = nullptr;

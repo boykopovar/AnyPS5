@@ -112,6 +112,7 @@ void FreeEntry(LibreSslX509NameEntry* entry) {
 LibreSslX509NameEntry* DuplicateEntry(const LibreSslX509NameEntry* source) {
     auto* copy = static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry)));
     if (!copy) return nullptr;
+    try {
     copy->set = source->set;
     copy->size = source->size;
     if (source->object) {
@@ -129,22 +130,25 @@ LibreSslX509NameEntry* DuplicateEntry(const LibreSslX509NameEntry* source) {
         }
     }
     return copy;
+    } catch (...) {
+        FreeEntry(copy);
+        throw;
+    }
 }
 
 LibreSslStack* DuplicateEntries(const LibreSslStack* source) {
     auto* copy = static_cast<LibreSslStack*>(calloc_nid_postfix(1, sizeof(LibreSslStack)));
     if (!copy) return nullptr;
+    try {
     copy->sorted = source->sorted;
     copy->comp = source->comp;
     if (source->num < 0) {
-        free_nid_postfix(copy);
         throw std::invalid_argument("X509_NAME_dup: negative entry count");
     }
     copy->num = source->num;
     copy->numAlloc = source->num;
     if (source->num == 0) return copy;
     if (!source->data) {
-        free_nid_postfix(copy);
         throw std::invalid_argument("X509_NAME_dup: null entry array");
     }
     copy->data = static_cast<char**>(calloc_nid_postfix(static_cast<std::size_t>(source->num), sizeof(char*)));
@@ -165,6 +169,15 @@ LibreSslStack* DuplicateEntries(const LibreSslStack* source) {
         copy->data[index] = reinterpret_cast<char*>(entry);
     }
     return copy;
+    } catch (...) {
+        if (copy->data) {
+            for (int index = 0; index < copy->num; ++index)
+                if (copy->data[index]) FreeEntry(reinterpret_cast<LibreSslX509NameEntry*>(copy->data[index]));
+            free_nid_postfix(copy->data);
+        }
+        free_nid_postfix(copy);
+        throw;
+    }
 }
 
 Buffer* DuplicateBuffer(const Buffer* source) {
@@ -194,7 +207,6 @@ LibreSslX509Name* DuplicateName(const LibreSslX509Name* source) {
     copy->modified = source->modified;
     if (source->canonEnc) {
         if (source->canonEnclen < 0) {
-            X509_NAME_free_nid_no_patch(copy);
             throw std::invalid_argument("X509_NAME_dup: negative canonical encoding length");
         }
         if (source->canonEnclen != 0) {
