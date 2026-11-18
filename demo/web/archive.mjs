@@ -203,9 +203,9 @@ export class Archive {
       const item = this.files[index];
       report({ phase: translate(locale, "inspectingFiles"), input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
-      const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
-      const unityDir = unityDirs.find(directory => item.name.startsWith(directory + "/")
-        && !item.name.slice(directory.length + 1).includes("/"));
+      const directChild = directory => item.name.startsWith(directory + "/") && !item.name.slice(directory.length + 1).includes("/");
+      const moduleDir = moduleDirs.find(directChild);
+      const unityDir = unityDirs.find(directChild);
       if (!moduleDir && !unityDir && item.name.includes("/")) continue;
       if ((moduleDir || unityDir) && item.name.endsWith(".guest.prx")) continue;
       const header = await headerBytes(item.entry);

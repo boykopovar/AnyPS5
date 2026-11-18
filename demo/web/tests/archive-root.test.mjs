@@ -19,6 +19,8 @@ const { packageArchive } = await import(pathToFileURL(path.join(webRoot, "archiv
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
 for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
   const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
+  const nested = `${moduleDirectories[0]}/assets/model.bin`;
+  entries.push([`title/${nested}`, false, header]);
   const folder = entries.map(([name, , bytes = header]) => ({path: name, file: new Blob([bytes])}));
   for (const selection of [await zipped(entries), folder]) {
     const archive = new Archive(selection);
@@ -30,12 +32,17 @@ for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"]
       const input = await archive.conversionInput("linux", false, () => {});
       assert.deepEqual(input.modules.map(module => module.name).sort(), moduleDirectories.map((name, index) => `${name}/module${index}.prx`).sort());
       const written = [];
+      const asset = [];
       const modules = input.modules.map(module => ({name: `app0/${module.name}.guest.prx`, bytes: header}));
       await packageArchive(archive, {executable: header, modules}, "main", libraryBundle, {
         async directory(name) { written.push(name); },
-        async file(name) { written.push(name); return new WritableStream(); }
+        async file(name) {
+          written.push(name);
+          return new WritableStream({ write(chunk) { if (name === `app0/${nested}`) asset.push(...chunk); } });
+        }
       }, () => {}, true);
       for (const module of modules) assert(written.includes(module.name));
+      assert.deepEqual(asset, [...header]);
     } finally { await archive.close(); }
   }
 }
