@@ -227,6 +227,32 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
     GuestAllocations::Mutation().Remove(Input.data());
 }
 
+void DisabledLdsLoads(AgcDriver::VulkanDevice& device) {
+    alignas(256) constexpr std::array<std::uint32_t, 5> code{0x34020082u, 0xbefc0380u, 0xe0311000u, 0x80000001u, 0xbf810000u};
+    std::array<std::uint32_t, 4> userData{};
+    auto request = Request(userData, device.ComputeTarget(Lanes), {});
+    request.context.compute->ldsSizeDwords = Lanes;
+    request.shader.code = code;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    request.useCache = false;
+    for (const auto word3 : {0x31016facu, 0x91016facu, 0xd1016facu}) {
+        auto source = BufferDescriptor(Input.data(), InputBytes);
+        source[3] = word3;
+        std::copy(source.begin(), source.end(), userData.begin());
+        bool refused = false;
+        try {
+            const auto result = ShaderRecompiler::Recompile(request);
+            Require(word3 == 0x31016facu, "TYPE 2 or 3 MUBUF LDS was accepted");
+            device.Dispatch(result, 1u, 1u, 1u);
+            device.WaitIdle();
+        } catch (const std::runtime_error& error) {
+            Require(word3 != 0x31016facu && std::string(error.what()).find("buffer-load preservation with MUBUF LDS is not implemented") != std::string::npos, "MUBUF LDS failed for another reason: " + std::string(error.what()));
+            refused = true;
+        }
+        Require(refused == (word3 != 0x31016facu), "MUBUF LDS refusal differs from its descriptor type");
+    }
+}
+
 void DisabledMultiwordLoads(AgcDriver::VulkanDevice& device) {
     alignas(256) std::array<std::uint32_t, Lanes * 4u> input{};
     alignas(256) std::array<std::uint32_t, Lanes * 4u> output{};
@@ -386,6 +412,7 @@ int main() {
         ScalarReads(*device);
         DisabledDescriptors(*device);
         DisabledMultiwordLoads(*device);
+        DisabledLdsLoads(*device);
         std::puts("buffer descriptor runtime tests passed");
         return 0;
     } catch (const std::exception& error) {
