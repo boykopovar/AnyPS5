@@ -214,16 +214,27 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     auto* context = AudioOut2FindContext(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    const auto channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
-    const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
+    AudioOut2PortParam local{};
+    const int savedParamErrno = errno;
+    const bool paramRead = GuestCopyIn_nid_no_patch(&local, params, sizeof(local));
+    errno = savedParamErrno;
+    if (!paramRead) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    const auto writePort = [&](AudioOut2PortHandle handle) {
+        const int savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(port, &handle, sizeof(handle));
+        errno = savedErrno;
+        return written;
+    };
+    const auto channels = (local.data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
+    const auto sampleType = local.data_format & FORMAT_TYPE_MASK;
     const auto* fold = StereoFoldFor(channels);
-    if (params->port_type == PORT_TYPE_MAIN) {
-        if ((params->data_format & 0x80u) != 0 && channels != 8) {
-            *port = static_cast<AudioOut2PortHandle>(-1);
+    if (local.port_type == PORT_TYPE_MAIN) {
+        if ((local.data_format & 0x80u) != 0 && channels != 8) {
+            if (!writePort(static_cast<AudioOut2PortHandle>(-1))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
             return PORT_ERROR_FORMAT_FLAG_WITHOUT_8_CHANNELS;
         }
         if (fold == nullptr || channels == 6 || sampleType > 1) {
-            *port = static_cast<AudioOut2PortHandle>(-1);
+            if (!writePort(static_cast<AudioOut2PortHandle>(-1))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
             return PORT_ERROR_UNSUPPORTED_FORMAT;
         }
     }
@@ -236,21 +247,25 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry.used = true;
     entry.generation = ++g_portGeneration;
     entry.context = context;
-    entry.type = params->port_type;
-    entry.dataFormat = params->data_format;
-    entry.samplingFreq = params->sampling_freq;
-    entry.flags = params->flags;
+    entry.type = local.port_type;
+    entry.dataFormat = local.data_format;
+    entry.samplingFreq = local.sampling_freq;
+    entry.flags = local.flags;
     entry.channels = channels;
     entry.fold = fold;
-    if (entry.fold == nullptr || sampleType > 1 || (params->port_type != PORT_TYPE_MAIN && (params->data_format & ~FORMAT_FIELDS_MASK) != 0)) {
+    if (entry.fold == nullptr || sampleType > 1 || (local.port_type != PORT_TYPE_MAIN && (local.data_format & ~FORMAT_FIELDS_MASK) != 0)) {
         entry = AudioOut2Port{};
-        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", params->data_format); return std::string(text); }() + " is not implemented");
+        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", local.data_format); return std::string(text); }() + " is not implemented");
     }
     entry.int16 = sampleType == 1;
-    *port = static_cast<AudioOut2PortHandle>(index) + 1;
+    const auto handle = static_cast<AudioOut2PortHandle>(index) + 1;
+    if (!writePort(handle)) {
+        entry = AudioOut2Port{};
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    }
     AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) sampling_freq=%u flags=0x%x user=%llx\n",
-        AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,
-        entry.channels, params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
+        AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(handle), local.port_type, local.data_format,
+        entry.channels, local.sampling_freq, local.flags, static_cast<unsigned long long>(local.user_handle));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -323,6 +338,10 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) {
+    return sceAudioOut2PortSetAttributes(port, attributes, num);
 }
 
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {

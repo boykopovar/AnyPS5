@@ -6,12 +6,29 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
 #include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+namespace {
+
+[[maybe_unused]] const bool hostRefstringPrepared = [] {
+    const int saved = errno;
+    {
+        const std::runtime_error prepared("");
+    }
+    errno = saved;
+    return true;
+}();
+
+}
 #endif
 
 namespace LibcException {
@@ -392,6 +409,9 @@ int APS5_VABI _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>
 [[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
 
 LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
+#ifdef __APPLE__
+    std::set_terminate(handler ? handler : std::abort);
+#endif
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
 LibcTerminateHandler APS5_VABI _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }

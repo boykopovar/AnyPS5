@@ -7,6 +7,8 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -291,6 +294,18 @@ static void CheckCachedFace(const Api& api, const FreeTypeApi& ft) {
         catch (const std::exception&) { threw = true; }
         Require(threw);
     }
+
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try { call(); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw && errno == 71);
+    };
+    rejectsRuntime([&] { api.cachedFace(reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10})); });
+    FreeType::GuestFaceRec badOwner{};
+    badOwner.internal = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    rejectsRuntime([&] { api.cachedFace(&badOwner); });
 }
 
 static auto OpenModule(const char* path) {
