@@ -4,11 +4,11 @@
 extern "C" {
 
 int APS5_VABI _ZN17SceCloudMessaging19UnregisterMessagingEPKNS_21MessagingRegisterInfoE() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZN17SceCloudMessaging10InitializeEi() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZN17SceCloudMessaging13CreateMessageEPKNS_7MessageEPj() {
@@ -20,11 +20,11 @@ int APS5_VABI _ZN17SceCloudMessaging16SendMessageAsyncEjPKNS_17MessageResultInfo
 }
 
 int APS5_VABI _ZN17SceCloudMessaging9TerminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZN17SceCloudMessaging17RegisterMessagingEPKNS_21MessagingRegisterInfoE() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }
