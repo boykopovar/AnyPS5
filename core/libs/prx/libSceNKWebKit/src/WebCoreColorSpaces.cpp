@@ -77,6 +77,7 @@
  * Derived from Source/WebCore/platform/graphics/ColorMatrix.h@c55364d53f971f63a709976f168d932d558b8909
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -212,6 +213,14 @@ String SerializeCss(WebCore::SRGBA<std::uint8_t> color) {
     }
 }
 
+WebCore::SRGBA<std::uint8_t> InlineColor(const WebCore::Color& color, const char* function) {
+    constexpr std::uint64_t useColorFunctionSerialization = 1ULL << 49;
+    constexpr std::uint64_t outOfLine = 1ULL << 51;
+    const std::uint64_t bits = color.m_colorAndFlags;
+    if (bits & (outOfLine | useColorFunctionSerialization)) NotImplemented_nid_no_patch(function);
+    return {static_cast<std::uint8_t>(bits >> 24), static_cast<std::uint8_t>(bits >> 16), static_cast<std::uint8_t>(bits >> 8), static_cast<std::uint8_t>(bits)};
+}
+
 bool AreEssentiallyEqual(float u, float v) {
     if (u == v) return true;
     constexpr float epsilon = std::numeric_limits<float>::epsilon();
@@ -322,6 +331,14 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore32serializationForRenderTreeAsText
     std::string text = '#' + Hex2(color.red, false) + Hex2(color.green, false) + Hex2(color.blue, false);
     if (color.alpha < 0xFF) text += Hex2(color.alpha, false);
     return MakeString(text);
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19serializationForCSSERKNS_5ColorE(const WebCore::Color& color) {
+    return _ZN7WebCore19serializationForCSSENS_5SRGBAIhEE(InlineColor(color, __func__));
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(const WebCore::Color& color) {
+    return _ZN7WebCore32serializationForRenderTreeAsTextENS_5SRGBAIhEE(InlineColor(color, __func__));
 }
 
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19serializationForCSSERKNS_5SRGBAIfEE(const WebCore::SRGBA<float>& color) {
