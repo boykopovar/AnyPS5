@@ -52,16 +52,21 @@ public:
         const char* requested = std::getenv("ANYPS5_GPU");
         const std::string_view request = requested != nullptr ? requested : "";
         const auto properties = instanceFunction<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+        std::string chosen;
+        bool chosenCpu = false;
         for (const auto candidate : devices) {
             VkPhysicalDeviceProperties described{};
             properties(candidate, &described);
             if (described.apiVersion < VK_API_VERSION_1_2) continue;
-            if (!request.empty() ? std::string_view(described.deviceName).find(request) == std::string_view::npos : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
+            if (!request.empty() && std::string_view(described.deviceName).find(request) == std::string_view::npos) continue;
+            const bool cpu = described.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+            if (physical != VK_NULL_HANDLE && (cpu || !chosenCpu)) continue;
             physical = candidate;
-            std::printf("device: %s\n", described.deviceName);
-            break;
+            chosen = described.deviceName;
+            chosenCpu = cpu;
         }
-        if (physical == VK_NULL_HANDLE) throw Skip(request.empty() ? "no Vulkan 1.2 GPU" : "no Vulkan 1.2 device matches ANYPS5_GPU");
+        if (physical == VK_NULL_HANDLE) throw Skip(request.empty() ? "no usable Vulkan device" : "no usable Vulkan device matches ANYPS5_GPU");
+        std::printf("device: %s\n", chosen.c_str());
         VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
         VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT, &driverProperties};
         VkPhysicalDeviceProperties2 extended{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &hostProperties};
@@ -242,11 +247,11 @@ void HeldTrapKeepsSubmitting(const Gpu& gpu, std::uint8_t* bytes, std::size_t pa
     std::printf("%s: submissions kept working while a page of the import was inaccessible\n", kind);
 }
 
-void HostPointerImport(const Gpu& gpu) {
+bool HostPointerImport(const Gpu& gpu) {
     const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
     const auto alignment = std::max<std::size_t>(page, static_cast<std::size_t>(gpu.hostAlignment));
     const auto bytes = Pages * page;
-    if (bytes % alignment != 0) throw Skip("the host pointer import alignment is larger than the test range");
+    if (bytes % alignment != 0) return false;
     const auto reserved = bytes + alignment;
     void* mapping = ::mmap(nullptr, reserved, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(mapping != MAP_FAILED, "cannot map memory for the host pointer import");
@@ -273,6 +278,7 @@ void HostPointerImport(const Gpu& gpu) {
         throw;
     }
     ::munmap(mapping, reserved);
+    return true;
 }
 
 class Descriptor {
@@ -355,11 +361,12 @@ int main() {
     try {
         Gpu gpu;
         int ran = 0;
-        if (gpu.hostPointer && AgcDriver::ReadTrapsOverHostPointerImportsUsable(gpu.driver)) {
-            HostPointerImport(gpu);
+        if (!gpu.hostPointer || !AgcDriver::ReadTrapsOverHostPointerImportsUsable(gpu.driver)) {
+            std::printf("host pointer import: not run, this driver keeps label read traps off host pointer imports\n");
+        } else if (HostPointerImport(gpu)) {
             ++ran;
         } else {
-            std::printf("host pointer import: not run, this driver keeps label read traps off host pointer imports\n");
+            std::printf("host pointer import: not run, the device reports a host pointer import alignment larger than the test range\n");
         }
         if (gpu.dmaBuf && DmaBufImport(gpu)) {
             ++ran;
@@ -367,12 +374,12 @@ int main() {
             std::printf("dma-buf import: not run, no dma-buf import support, no access to /dev/udmabuf, or the device cannot import a udmabuf\n");
         }
         if (ran == 0) {
-            std::printf("skipped: no import kind that label read traps are set over on this device\n");
+            std::printf("skipped, the device lacks an import kind that label read traps are set over\n");
             return 77;
         }
         return 0;
     } catch (const Skip& skip) {
-        std::printf("%s: %s\n", mustRun ? "failed" : "skipped", skip.what());
+        std::printf("%s, %s\n", mustRun ? "failed" : "skipped", skip.what());
         return mustRun ? 1 : 77;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "read trap import submit: %s\n", error.what());
