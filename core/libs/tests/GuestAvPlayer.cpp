@@ -1024,7 +1024,7 @@ void TestPlayback() {
         return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED, "zero trick speed did not return NOT_SUPPORTED");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
 
     Check(sceAvPlayerPause(player) == 0, "pause failed");
@@ -1054,8 +1054,8 @@ void TestPlayback() {
 
     events.Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Check(sceAvPlayerSetTrickSpeed(player, -400) == 0, "reverse trick speed rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
     const auto rewound = sceAvPlayerCurrentTime(player);
     Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));

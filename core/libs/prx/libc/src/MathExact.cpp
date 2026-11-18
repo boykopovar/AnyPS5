@@ -25,6 +25,7 @@
  */
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cerrno>
 #include <cfenv>
@@ -319,6 +320,31 @@ void StoreExtended(long double* value, const ExtendedBits& bits) {
 
 bool ExtendedNan(const ExtendedBits& bits) {
     return (bits.signExponent & 0x7fff) == 0x7fff && (bits.mantissa & 0x7fffffffffffffffull) != 0;
+}
+
+constexpr std::size_t ExtendedBytes = 10;
+
+long double LoadGuestExtended(const long double* value, const char* message) {
+    long double host = 0.0L;
+    if (!GuestCopyIn_nid_no_patch(&host, value, ExtendedBytes)) throw std::invalid_argument(message);
+    return host;
+}
+
+void StoreGuestExtended(long double* value, const long double& host, const char* message) {
+    if (!GuestCopyOut_nid_no_patch(value, &host, ExtendedBytes)) throw std::invalid_argument(message);
+}
+
+template<typename T, typename Step>
+T EvaluateGuestPolynomial(const T* table, int degree, const char* message, Step step) {
+    std::array<T, 32> chunk;
+    const std::size_t count = static_cast<std::size_t>(std::max(degree, 0)) + 1;
+    T result{};
+    for (std::size_t start = 0; start < count; start += chunk.size()) {
+        const std::size_t size = std::min(chunk.size(), count - start);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), table + start, size * sizeof(T))) throw std::invalid_argument(message);
+        for (std::size_t index = 0; index < size; ++index) result = start + index == 0 ? chunk[0] : step(result, chunk[index]);
+    }
+    return result;
 }
 
 long double ExtendedValue(const ExtendedBits& bits) {
@@ -887,9 +913,15 @@ int APS5_VABI __isnormall_nid_postfix(long double x) {
     return exponent != 0 && exponent != 0x7fff ? 1 : 0;
 }
 
-short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExtended(Bits(*value)); }
-short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offset) {
-    if (value == nullptr) throw std::invalid_argument("_LExp: null value");
+short APS5_VABI _LDtest_nid_postfix(const long double* value) {
+    return TestExtended(Bits(LoadGuestExtended(value, "_LDtest: unreadable value")));
+}
+
+}
+
+namespace {
+
+short ExtendedExp(long double* value, long double y, short offset) {
     const long double x = *value;
     const short xKind = TestExtended(Bits(x));
     const short yKind = (std::isnan(y) ? NotANumber : std::isinf(y) ? Infinite : (y == 0.0L ? Zero : TestExtended(Bits(y))));
@@ -962,6 +994,19 @@ short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offse
     *value = result;
     return resultKind;
 }
+
+}
+
+extern "C" {
+
+short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offset) {
+    if (value == nullptr) throw std::invalid_argument("_LExp: null value");
+    long double host = LoadGuestExtended(value, "_LExp: unreadable value");
+    const bool stores = TestExtended(Bits(host)) != NotANumber;
+    const short kind = ExtendedExp(&host, y, offset);
+    if (stores) StoreGuestExtended(value, host, "_LExp: unwritable value");
+    return kind;
+}
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
@@ -971,20 +1016,23 @@ short APS5_VABI _Dint_nid_postfix(double* value, short scale) { return DropFract
 short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFraction<std::uint32_t, 23, 8>(value, scale); }
 
 short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
-    ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDint: unreadable value");
+    ExtendedBits bits = Bits(host);
     const int field = bits.signExponent & 0x7fff;
     if (field == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
     if (bits.mantissa == 0) return Zero;
     const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
     if (drop <= 0) return Zero;
     if (drop >= 64) {
-        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreExtended(&host, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreGuestExtended(value, host, "_LDint: unwritable value");
         return Finite;
     }
     const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
     const std::uint64_t lost = bits.mantissa & mask;
     bits.mantissa &= ~mask;
-    StoreExtended(value, bits);
+    StoreExtended(&host, bits);
+    StoreGuestExtended(value, host, "_LDint: unwritable value");
     return lost != 0 ? Finite : Zero;
 }
 
@@ -992,15 +1040,18 @@ short APS5_VABI _Dscale_nid_postfix(double* value, std::int64_t exponent) { retu
 short APS5_VABI _FDscale_nid_postfix(float* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
 
 short APS5_VABI _LDscale_nid_postfix(long double* value, std::int64_t exponent) {
-    const ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDscale: unreadable value");
+    const ExtendedBits bits = Bits(host);
     if ((bits.signExponent & 0x7fff) == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
     if (bits.mantissa == 0) {
-        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreExtended(&host, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        StoreGuestExtended(value, host, "_LDscale: unwritable value");
         return Zero;
     }
-    *value = ExtendedValue(bits);
-    const short code = ScaleBinary(value, exponent);
-    if (code == Zero) *value = 0.0L;
+    host = ExtendedValue(bits);
+    const short code = ScaleBinary(&host, exponent);
+    if (code == Zero) host = 0.0L;
+    StoreGuestExtended(value, host, "_LDscale: unwritable value");
     return code;
 }
 
@@ -1008,17 +1059,25 @@ short APS5_VABI _Dunscale_nid_postfix(short* exponent, double* value) { return U
 short APS5_VABI _FDunscale_nid_postfix(short* exponent, float* value) { return UnscaleBinary(exponent, value); }
 
 short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
-    const ExtendedBits bits = Bits(*value);
+    long double host = LoadGuestExtended(value, "_LDunscale: unreadable value");
+    const ExtendedBits bits = Bits(host);
+    short scaled = 0;
+    const auto storeExponent = [&] {
+        if (!GuestCopyOut_nid_no_patch(exponent, &scaled, sizeof(scaled))) throw std::invalid_argument("_LDunscale: unwritable exponent");
+    };
     if ((bits.signExponent & 0x7fff) == 0x7fff) {
-        *exponent = 0;
+        storeExponent();
         return ExtendedNan(bits) ? NotANumber : Infinite;
     }
     if (bits.mantissa == 0) {
-        *exponent = 0;
+        storeExponent();
         return Zero;
     }
-    *value = ExtendedValue(bits);
-    return UnscaleBinary(exponent, value);
+    host = ExtendedValue(bits);
+    const short code = UnscaleBinary(&scaled, &host);
+    storeExponent();
+    StoreGuestExtended(value, host, "_LDunscale: unwritable value");
+    return code;
 }
 
 short APS5_VABI _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
@@ -1039,11 +1098,11 @@ short APS5_VABI _FDnorm_nid_postfix(std::uint16_t* words) { return NormalizeFrac
 
 short APS5_VABI _LDnorm_nid_postfix(std::uint16_t* words) {
     std::uint64_t mantissa;
-    std::memcpy(&mantissa, words, sizeof(mantissa));
+    if (!GuestCopyIn_nid_no_patch(&mantissa, words, sizeof(mantissa))) throw std::invalid_argument("_LDnorm: unreadable significand");
     if (mantissa == 0) throw std::invalid_argument("_LDnorm: a zero significand never returns on the console");
     const int shift = std::countl_zero(mantissa);
     mantissa <<= shift;
-    std::memcpy(words, &mantissa, sizeof(mantissa));
+    if (!GuestCopyOut_nid_no_patch(words, &mantissa, sizeof(mantissa))) throw std::invalid_argument("_LDnorm: unwritable significand");
     return static_cast<short>(-shift);
 }
 
@@ -1067,18 +1126,17 @@ double APS5_VABI _Poly_nid_postfix(double x, const double* table, int degree) { 
 float APS5_VABI _FPoly_nid_postfix(float x, const float* table, int degree) { return FusedPolynomial(x, table, degree); }
 
 long double APS5_VABI _LPoly_nid_postfix(long double x, const long double* table, int degree) {
-    long double result = table[0];
-    for (int index = 1; index <= degree; ++index) {
+    return EvaluateGuestPolynomial(table, degree, "_LPoly: unreadable coefficient table", [x](long double result, long double coefficient) {
         result *= x;
-        result += table[index];
-    }
-    return result;
+        result += coefficient;
+        return result;
+    });
 }
 
 double APS5_VABI _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(double x, const double* table, int degree) {
-    double result = table[0];
-    for (int index = 1; index <= degree; ++index) result = OperandOrderFma(result, x, table[index]);
-    return result;
+    return EvaluateGuestPolynomial(table, degree, "_Poly: unreadable coefficient table", [x](double result, double coefficient) {
+        return OperandOrderFma(result, x, coefficient);
+    });
 }
 float APS5_VABI _ZNSt8__sce_v28_XLgammaEf_nid_postfix(float x) { return LanczosLogGamma<float, float>(x, logf_nid_postfix, 1.0f, 2.5066282746310007f); }
 double APS5_VABI _ZNSt8__sce_v28_XLgammaEd_nid_postfix(double x) { return LanczosLogGamma<double, double>(x, log_nid_postfix, 1.000000000190015, 2.5066282746310007); }
