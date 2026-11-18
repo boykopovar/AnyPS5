@@ -653,32 +653,59 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
 
 int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode) {
     constexpr int GuestEinval = 22;
-    if (!result) {
+    FileStream* nullStream = nullptr;
+    const int savedErrno = errno;
+    const bool probed = result && GuestCopyOut_nid_no_patch(result, &nullStream, sizeof(nullStream));
+    errno = savedErrno;
+    if (!probed) {
         SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = nullptr;
     if (!filename || !mode) {
         SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = fopen_nid_postfix(filename, mode);
-    return *result ? 0 : errno;
+    FileStream* stream = fopen_nid_postfix(filename, mode);
+    if (!stream) {
+        return errno;
+    }
+    const int openErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &stream, sizeof(stream))) {
+        fclose_nid_postfix(stream);
+        errno = openErrno;
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
+    errno = openErrno;
+    return 0;
 }
 
 int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
     constexpr int GuestEinval = 22;
-    if (!result) {
+    FileStream* nullStream = nullptr;
+    const int savedErrno = errno;
+    const bool probed = result && GuestCopyOut_nid_no_patch(result, &nullStream, sizeof(nullStream));
+    errno = savedErrno;
+    if (!probed) {
         SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = nullptr;
     if (!mode || !stream) {
         SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = freopen_nid_postfix(filename, mode, stream);
-    return *result ? 0 : errno;
+    FileStream* reopened = freopen_nid_postfix(filename, mode, stream);
+    if (!reopened) {
+        return errno;
+    }
+    const int reopenErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &reopened, sizeof(reopened))) {
+        errno = reopenErrno;
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
+    errno = reopenErrno;
+    return 0;
 }
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
@@ -866,15 +893,35 @@ std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream) { return ftello_nid
 
 int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
     if (!position) throw std::invalid_argument("fgetpos: null position");
+    const int savedErrno = errno;
+    std::int64_t current = 0;
+    if (!GuestCopyIn_nid_no_patch(&current, position, sizeof(current)) ||
+        !GuestCopyOut_nid_no_patch(position, &current, sizeof(current))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = savedErrno;
     const auto result = ftello_nid_postfix(stream);
     if (result == -1) return -1;
-    *position = result;
+    const int ftellErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(position, &result, sizeof(result))) {
+        errno = ftellErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = ftellErrno;
     return 0;
 }
 
 int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* position) {
     if (!position) throw std::invalid_argument("fsetpos: null position");
-    return fseeko_nid_postfix(stream, *position, SEEK_SET);
+    const int savedErrno = errno;
+    std::int64_t target = 0;
+    if (!GuestCopyIn_nid_no_patch(&target, position, sizeof(target))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fsetpos: unreadable position");
+    }
+    errno = savedErrno;
+    return fseeko_nid_postfix(stream, target, SEEK_SET);
 }
 
 void APS5_VABI rewind_nid_postfix(FileStream* stream) {
@@ -953,6 +1000,13 @@ void APS5_VABI __std_free_crt_nid_postfix(void* ptr) {
 
 void APS5_VABI free_nid_postfix(void* ptr) {
     ApplicationHeapFree_nid_no_patch(ptr);
+}
+
+void APS5_VABI freezero_nid_postfix(void* ptr, size_t size) {
+    if (ptr == nullptr) return;
+    auto* bytes = static_cast<volatile unsigned char*>(ptr);
+    for (size_t index = 0; index < size; ++index) bytes[index] = 0;
+    free_nid_postfix(ptr);
 }
 
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
@@ -1104,13 +1158,18 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
 void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count,
     size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!count) throw std::invalid_argument("lfind: null element count");
-    if (*count == 0) return nullptr;
+    size_t elements = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument("lfind: unreadable element count");
+    if (elements == 0) return nullptr;
     if (!key || !base || !compare || size == 0)
         throw std::invalid_argument("lfind: invalid arguments");
-    if (*count > std::numeric_limits<size_t>::max() / size)
+    if (elements > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lfind: array size overflow");
     const auto* bytes = static_cast<const unsigned char*>(base);
-    for (size_t index = 0; index < *count; ++index) {
+    for (size_t index = 0; index < elements; ++index) {
         const auto* element = bytes + index * size;
         if (compare(key, element) == 0) return const_cast<unsigned char*>(element);
     }
@@ -1122,18 +1181,27 @@ void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     if (!count) throw std::invalid_argument("lsearch: null element count");
     if (!key || !base || !compare || size == 0)
         throw std::invalid_argument("lsearch: invalid arguments");
-    if (*count > std::numeric_limits<size_t>::max() / size)
+    size_t elements = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument("lsearch: unreadable element count");
+    if (elements > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lsearch: array size overflow");
     auto* bytes = static_cast<unsigned char*>(base);
-    for (size_t index = 0; index < *count; ++index) {
+    for (size_t index = 0; index < elements; ++index) {
         auto* element = bytes + index * size;
         if (compare(key, element) == 0) return element;
     }
-    if (*count >= std::numeric_limits<size_t>::max() / size)
+    if (elements >= std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lsearch: append capacity overflow");
-    auto* tail = bytes + *count * size;
+    const size_t appended = elements + 1;
+    const int appendErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(count, &appended, sizeof(appended));
+    errno = appendErrno;
+    if (!writable) throw std::invalid_argument("lsearch: unwritable element count");
+    auto* tail = bytes + elements * size;
     std::memcpy(tail, key, size);
-    ++*count;
     return tail;
 }
 

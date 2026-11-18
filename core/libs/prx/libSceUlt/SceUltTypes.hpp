@@ -34,7 +34,8 @@ inline int InitializeOptParam(UltOptParam* optParam) {
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
     }
-    std::memset(optParam, 0, sizeof(*optParam));
+    const UltOptParam cleared{};
+    if (!GuestCopyOut_nid_no_patch(optParam, &cleared, sizeof(cleared))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -288,6 +289,12 @@ struct UltThreadIdentity {
     std::uint32_t type = 0;
 };
 
+struct UltWaitRecord {
+    void* thread = nullptr;
+    std::uint32_t type = 0;
+    std::int32_t waitValue = 0;
+};
+
 struct UltMutexState {
     std::mutex _mutex;
     std::condition_variable _available;
@@ -301,11 +308,14 @@ struct UltMutexState {
     std::uint32_t _attribute = 0;
     void* _waitingPool = nullptr;
     char _name[32]{};
+    std::vector<UltWaitRecord> _waiterRecords;
 };
 
 struct UltConditionWaiter {
     std::condition_variable _available;
     bool _signaled = false;
+    UltWaitRecord _record;
+    bool _tracked = false;
 };
 
 struct UltConditionState {
@@ -325,6 +335,7 @@ struct UltSemaphoreState {
     bool _alive = true;
     void* _waitingPool = nullptr;
     char _name[32]{};
+    std::vector<UltWaitRecord> _waiterRecords;
 };
 
 struct UltResourcePoolState {
@@ -362,6 +373,8 @@ struct UltQueueState {
     void* _dataPool = nullptr;
     std::uint32_t _queuedItems = 0;
     char _name[32]{};
+    std::vector<UltWaitRecord> _pusherRecords;
+    std::vector<UltWaitRecord> _popperRecords;
 };
 
 struct UltRuntimeState {

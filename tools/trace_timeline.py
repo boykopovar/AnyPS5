@@ -1,5 +1,6 @@
 import argparse
 import html
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -11,7 +12,8 @@ HTML file: one row per thread, one bar per traced slice, placed on the capture's
 duration. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest first, and the page
 says how many were left out.
 
-Slices are only what the capture retained; buffer-full losses (see trace_digest.py) leave gaps that look like idle time."""
+The page reports buffer-full losses for the selected threads over the full capture, including losses outside the
+displayed window. Gaps may contain unrecorded work."""
 
 LABEL_WIDTH = 120
 ROW_HEIGHT = 18
@@ -27,22 +29,22 @@ def window_slices(trace, start_us, end_us, threads=None):
             begin = max(ts, start_us)
             end = min(ts + dur, end_us)
             if end > begin:
-                rows.append({"thread": name, "ts": begin, "dur": end - begin, "name": slice_name})
+                rows.append({"thread": name, "tid": tid, "ts": begin, "dur": end - begin, "name": slice_name})
     return rows
 
 
 def layout(slices, start_us, end_us, width_px, max_slices=5000):
     span = max(end_us - start_us, 1e-9)
-    threads = sorted({slice_["thread"] for slice_ in slices})
-    row_of = {name: row for row, name in enumerate(threads)}
+    rows = sorted({(slice_["thread"], slice_["tid"]) for slice_ in slices})
+    row_of = {thread: row for row, thread in enumerate(rows)}
     kept = sorted(slices, key=lambda slice_: -slice_["dur"])[:max_slices]
     bars = []
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
         w = max(slice_["dur"] / span * width_px, 1.0)
         bars.append({"thread": slice_["thread"], "name": slice_["name"], "ms": slice_["dur"] / 1000.0,
-                     "x": x, "w": w, "y": row_of[slice_["thread"]] * ROW_HEIGHT})
-    return {"threads": threads, "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
+                     "x": x, "w": w, "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
+    return {"threads": [name for name, _ in rows], "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
 
 
 def svg(laid):
@@ -68,9 +70,9 @@ def nonnegative_number(value):
     try:
         number = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("must be a number")
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be a number")
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    if not math.isfinite(number) or not 0 <= number < 1e300:
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
     return number
 
 
@@ -85,6 +87,9 @@ def positive_integer(value):
 
 
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", type=Path, help="aps5-trace-*.json.gz or .json")
     parser.add_argument("-o", "--output", type=Path, help="HTML file to write (default: the trace name with .html)")
@@ -95,17 +100,27 @@ def main(arguments=None):
     parser.add_argument("--width", type=positive_integer, default=1000, help="width of the time axis in pixels (default 1000)")
     options = parser.parse_args(arguments)
     trace = trace_digest.load_trace(options.trace)
+    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     if options.thread:
         trace.select_threads(options.thread)
-    end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     start_us = options.from_ms * 1000.0
     end_us = end_of_trace if options.to_ms is None else options.to_ms * 1000.0
+    if end_us < start_us:
+        raise ValueError("window end must be at or after its start")
     slices = window_slices(trace, start_us, end_us, options.thread)
     laid = layout(slices, start_us, end_us, options.width, options.max_slices)
     notes = [f"window {start_us / 1000.0:.3f} to {end_us / 1000.0:.3f} ms, {len(laid['threads'])} threads, {len(laid['bars'])} bars"]
+    if trace.losses:
+        lost = sum(events_lost for _, _, events_lost in trace.losses)
+        notes.append(f"Incomplete trace: {lost} events lost. Gaps may contain unrecorded work.")
+        for tid, ts, events_lost in trace.losses:
+            thread = f"{trace.name(tid)} (tid {tid})" if tid in trace.threads else trace.name(tid)
+            notes.append(f"{thread}: buffer full at {ts / 1000.0:.3f} ms; {events_lost} events lost across the capture.")
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")
+    if output.absolute() == options.trace.absolute() or (output.exists() and output.samefile(options.trace)):
+        raise ValueError("output must not overwrite the input trace")
     output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
     print(f"wrote {output}")
     return 0

@@ -27,7 +27,7 @@ class Repo:
         self.commit("initial")
 
     def git(self, *args):
-        subprocess.run(["git", "-C", str(self.path), *args], check=True, capture_output=True, env={**os.environ, **IDENTITY})
+        subprocess.run(["git", "-c", "tag.gpgsign=false", "-C", str(self.path), *args], check=True, capture_output=True, env={**os.environ, **IDENTITY})
 
     def write(self, name, text):
         (self.path / name).write_text(text, encoding="utf-8")

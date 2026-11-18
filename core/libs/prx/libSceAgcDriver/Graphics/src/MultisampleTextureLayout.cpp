@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <limits>
@@ -115,6 +116,83 @@ void MultisampleTextureLayout::Detile(std::span<const std::byte> source, std::sp
 
 void MultisampleTextureLayout::Tile(std::span<const std::byte> source, std::span<std::byte> destination) const {
     transfer(source, destination, true);
+}
+
+void MultisampleTextureLayout::TileHoisted(std::span<const std::byte> source, std::span<std::byte> destination) const {
+    const auto sourceBytes = LinearBytes();
+    const auto destinationBytes = Bytes();
+    Require(source.size() >= sourceBytes && destination.size() >= destinationBytes, "multisampled surface transfer buffer is too small");
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source.data());
+    const auto destinationAddress = reinterpret_cast<std::uintptr_t>(destination.data());
+    Require(sourceAddress <= std::numeric_limits<std::uintptr_t>::max() - sourceBytes && destinationAddress <= std::numeric_limits<std::uintptr_t>::max() - destinationBytes, "multisampled surface transfer range overflows");
+    Require(sourceAddress + sourceBytes <= destinationAddress || destinationAddress + destinationBytes <= sourceAddress, "multisampled surface transfer buffers overlap");
+
+    const auto* const xTable = xOffsets.data();
+    const auto* const yTable = yOffsets.data();
+    const auto* const layerTable = layerOffsets.data();
+    std::array<std::uint32_t, 8> fragmentTable{};
+    std::copy(fragmentOffsets.begin(), fragmentOffsets.end(), fragmentTable.begin());
+    const auto columns = width;
+    const auto rows = height;
+    const auto slices = layers;
+    const auto count = fragments;
+    const auto size = static_cast<std::size_t>(elementBytes);
+    const auto rowBlocks = blockHeight;
+    const auto widthShift = static_cast<std::uint32_t>(std::countr_zero(blockWidth));
+    const auto blocksPerRow = static_cast<std::uint64_t>(pitch / blockWidth);
+    const auto slice = sliceBytes;
+    const auto swizzle = pipeBankXor;
+    auto* const out = destination.data();
+    const auto run = [&](const auto& copy) {
+        const auto* in = source.data();
+        for (std::uint32_t layer = 0; layer < slices; ++layer) {
+            const auto layerBase = static_cast<std::uint64_t>(layer) * slice;
+            const auto layerBits = layerTable[layer] ^ swizzle;
+            for (std::uint32_t y = 0; y < rows; ++y) {
+                const auto rowBase = layerBase + static_cast<std::uint64_t>(y / rowBlocks) * blocksPerRow * Alignment;
+                const auto rowBits = yTable[y] ^ layerBits;
+                for (std::uint32_t x = 0; x < columns; ++x) {
+                    auto* const block = out + rowBase + static_cast<std::uint64_t>(x >> widthShift) * Alignment;
+                    const auto pixelBits = xTable[x] ^ rowBits;
+                    for (std::uint32_t fragment = 0; fragment < count; ++fragment) {
+                        copy(block + (pixelBits ^ fragmentTable[fragment]), in);
+                        in += size;
+                    }
+                }
+            }
+        }
+    };
+    switch (size) {
+        case 1u: run([](std::byte* to, const std::byte* from) { *to = *from; }); break;
+        case 2u: run([](std::byte* to, const std::byte* from) { std::memcpy(to, from, 2u); }); break;
+        case 4u: run([](std::byte* to, const std::byte* from) { std::memcpy(to, from, 4u); }); break;
+        case 8u: run([](std::byte* to, const std::byte* from) { std::memcpy(to, from, 8u); }); break;
+        case 16u: run([](std::byte* to, const std::byte* from) { std::memcpy(to, from, 16u); }); break;
+        default: run([size](std::byte* to, const std::byte* from) { std::memcpy(to, from, size); }); break;
+    }
+}
+
+std::vector<std::byte> ExpandPagedSnapshot(std::size_t bytes, std::span<const std::uint32_t> words, std::span<const std::size_t> starts, std::span<const std::byte> stored, std::size_t pageBytes, std::size_t repeated) {
+    Require(pageBytes != 0u && pageBytes % 4u == 0u, "a paged snapshot needs pages of whole words");
+    const auto pages = bytes / pageBytes + (bytes % pageBytes != 0u ? 1u : 0u);
+    Require(words.size() >= pages && starts.size() >= pages, "a paged snapshot has fewer pages than its range");
+    std::vector<std::byte> expanded(bytes);
+    for (std::size_t page = 0; page < pages; ++page) {
+        const auto first = page * pageBytes;
+        const auto length = std::min(pageBytes, bytes - first);
+        auto* const target = expanded.data() + first;
+        if (starts[page] != repeated) {
+            Require(starts[page] <= stored.size() && length <= stored.size() - starts[page], "a paged snapshot page lies outside its stored bytes");
+            std::memcpy(target, stored.data() + starts[page], length);
+            continue;
+        }
+        const auto word = words[page];
+        const std::array<std::byte, 4> pattern{static_cast<std::byte>(word), static_cast<std::byte>(word >> 8u), static_cast<std::byte>(word >> 16u), static_cast<std::byte>(word >> 24u)};
+        std::size_t offset = 0;
+        for (; offset + 4u <= length; offset += 4u) std::memcpy(target + offset, pattern.data(), 4u);
+        for (; offset < length; ++offset) target[offset] = pattern[offset % 4u];
+    }
+    return expanded;
 }
 
 }
