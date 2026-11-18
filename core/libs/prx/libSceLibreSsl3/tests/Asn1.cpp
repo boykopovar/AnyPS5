@@ -195,6 +195,10 @@ void FaultingArguments() {
     old->length = 0;
     old->data = nullptr;
     Release(old);
+    const unsigned char* const top = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    cursor = top;
+    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, 8); });
+    Require(cursor == top);
     Require(allocations.empty());
 }
 

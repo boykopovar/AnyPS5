@@ -62,7 +62,10 @@ void PutHeaderError(int reason) {
 class GuestInput {
 public:
     GuestInput(const unsigned char* start, std::size_t size, const char* function)
-        : start(start), size(size), function(function) {}
+        : start(start), size(size), function(function) {
+        if (reinterpret_cast<std::uintptr_t>(start) > std::numeric_limits<std::uintptr_t>::max() - size)
+            throw std::invalid_argument(std::string(function) + ": guest range wraps the address space");
+    }
 
     std::size_t Remaining() const {
         return size - offset;
@@ -80,6 +83,7 @@ public:
     }
 
     std::span<const unsigned char> Take(std::size_t count) {
+        if (count > Remaining()) throw std::invalid_argument(std::string(function) + ": content exceeds the input");
         taken.clear();
         while (count != 0) {
             const std::size_t step = std::min<std::size_t>(count, chunkSize);
@@ -208,10 +212,10 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
         throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
     const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
     if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
+    GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
     GuestStore(tagClass, 0, "ASN1_get_object");
     GuestStore(tag, 0, "ASN1_get_object");
     GuestStore(length, std::int64_t{0}, "ASN1_get_object");
-    GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
     std::uint8_t parsedClass;
     std::uint32_t parsedTag;
     bool constructed;

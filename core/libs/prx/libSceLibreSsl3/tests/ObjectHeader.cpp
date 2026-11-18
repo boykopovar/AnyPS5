@@ -2,6 +2,8 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <array>
+#include <limits>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -65,9 +67,9 @@ int main() {
     longest[0] = 4;
     longest[1] = 0xfe;
     Check(longest, 0, 128, 0, 4, 0);
-    for (int fault = 0; fault < 6; ++fault) {
+    for (int fault = 0; fault < 7; ++fault) {
         const unsigned char bytes[]{4, 0};
-        const unsigned char* input = fault == 5 ? nullptr : bytes;
+        const unsigned char* input = fault == 5 ? nullptr : fault == 6 ? reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 1) : bytes;
         std::int64_t length = 123;
         int tag = 456;
         int tagClass = 789;
