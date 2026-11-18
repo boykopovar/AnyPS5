@@ -7,7 +7,7 @@
 extern "C" {
 
 int APS5_VABI libSceAvSettingUnknown__plus_QkxEV_plus_rZws_nid_no_patch();
-int APS5_VABI libSceAvSettingUnknown_0BKuKlQG8zE_nid_no_patch();
+int APS5_VABI libSceAvSettingUnknown_0BKuKlQG8zE_nid_no_patch(std::int32_t kind, const void* data);
 int APS5_VABI libSceAvSettingUnknown_0mMgouCMXQ4_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_0vwiTglFTz4_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch(const void* argument1);
@@ -18,7 +18,7 @@ int APS5_VABI libSceAvSettingUnknown_GYAho0we28c_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_JUxonNYB9xk_nid_no_patch(const void* argument1);
 int APS5_VABI libSceAvSettingUnknown_JlZQqZOsTMQ_nid_no_patch();
-int APS5_VABI libSceAvSettingUnknown_MNZaRdvvdU4_nid_no_patch();
+int APS5_VABI libSceAvSettingUnknown_MNZaRdvvdU4_nid_no_patch(std::uint64_t type);
 int APS5_VABI libSceAvSettingUnknown_V_minus_IcK9eokeE_nid_no_patch(std::uint32_t argument1, std::uint32_t argument2);
 int APS5_VABI libSceAvSettingUnknown_bM9VthphLmg_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_bXmd6MGBaNI_nid_no_patch(std::uint32_t argument1);

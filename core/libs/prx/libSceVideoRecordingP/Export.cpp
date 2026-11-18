@@ -303,10 +303,8 @@ int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) 
     return static_cast<int>(duration * 0x278 + extra + (lateOffsets ? 0x45220 : 0x35220));
 }
 
-int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status) {
- (void)status;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void) {
+ return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param) {

@@ -24,14 +24,6 @@ int APS5_VABI X509_STORE_load_locations_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI d2i_SSL_SESSION_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI i2d_SSL_SESSION_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_read_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

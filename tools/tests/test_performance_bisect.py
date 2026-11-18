@@ -154,18 +154,23 @@ class MeasurementStabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
 
-class GitHistoryTests(unittest.TestCase):
+class GitHistoryCase(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.repo = Path(self.directory.name) / "repo"
         self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
-        self.commit("zero")
-        self.good = performance_bisect.git(self.repo, "rev-parse", "HEAD")
-        self.commits = [self.commit(f"step-{index}") for index in range(1, 8)]
+        stream = ""
+        for text in ["zero", *(f"step-{index}" for index in range(1, 8))]:
+            message = f"test: {text}"
+            stream += (f"commit refs/heads/main\ncommitter Test <test@example.invalid> 1700000000 +0000\n"
+                       f"data {len(message)}\n{message}\nM 100644 inline state\ndata {len(text)}\n{text}\n")
+        subprocess.run(["git", "-C", str(self.repo), "fast-import", "--quiet"], input=stream.encode(), check=True)
+        subprocess.run(["git", "-C", str(self.repo), "reset", "-q", "--hard"], check=True)
+        self.good, *self.commits = performance_bisect.git(self.repo, "rev-list", "--reverse", "HEAD").split()
 
     def commit(self, text):
         (self.repo / "state").write_text(text, encoding="utf-8")
@@ -173,6 +178,8 @@ class GitHistoryTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", f"test: {text}"], check=True)
         return performance_bisect.git(self.repo, "rev-parse", "HEAD")
 
+
+class GitHistoryTests(GitHistoryCase):
     def test_resolves_first_parent_range_and_checks_ancestry(self):
         good, bad, commits = performance_bisect.first_parent_commits(self.repo, self.good, self.commits[-1])
         self.assertEqual(good, self.good)
@@ -331,7 +338,7 @@ class BisectReportTests(unittest.TestCase):
         self.assertEqual(report["first_bad"]["median_fps"], 54.0)
 
 
-class EndToEndBisectTests(GitHistoryTests):
+class EndToEndBisectTests(GitHistoryCase):
     def test_bisects_with_real_measurement_directories_and_build_commands(self):
         root = Path(self.directory.name)
         tools = root / "tools"
@@ -514,7 +521,7 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("known-bad commit", result.stdout)
 
 
-class FirstParentMergeTests(GitHistoryTests):
+class FirstParentMergeTests(GitHistoryCase):
     def test_excludes_side_branch_commits_and_keeps_the_merge_commit(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "bisect-side")
@@ -541,7 +548,7 @@ class FirstParentMergeTests(GitHistoryTests):
         self.assertEqual(len(commits), len(set(commits)))
 
 
-class BisectCleanupTests(GitHistoryTests):
+class BisectCleanupTests(GitHistoryCase):
     def test_removes_temporary_worktree_when_a_measurement_fails(self):
         valid = {"median_fps": 60.0, "identity": IDENTITY}
         bad = {"median_fps": 54.0, "identity": IDENTITY}
@@ -570,7 +577,7 @@ class AtomicReportRaceTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
 
-class FirstParentEndpointTests(GitHistoryTests):
+class FirstParentEndpointTests(GitHistoryCase):
     def test_rejects_good_endpoint_reachable_only_through_a_merge_parent(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "endpoint-side")

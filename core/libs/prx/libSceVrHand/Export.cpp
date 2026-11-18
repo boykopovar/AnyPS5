@@ -62,12 +62,13 @@ int APS5_VABI sceVrHandGetMesh(void) {
     return 0;
 }
 
-int APS5_VABI sceVrHandGetMeshSize(void) {
-    if (g_vrHandState == 0) {
-        return ErrorNotInitialized;
-    }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVrHandGetMeshSize(void* size) {
+    if (g_vrHandState == 0) return ErrorNotInitialized;
+    if (size == nullptr) return ErrorInvalidArgument;
+    constexpr std::uint32_t counts[] = {26, 2405, 12816};
+    std::array<std::byte, 0x1a> record{};
+    std::memcpy(record.data(), counts, sizeof(counts));
+    return GuestCopyOut_nid_no_patch(size, record.data(), record.size()) ? 0 : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVrHandGetResult(void) {
