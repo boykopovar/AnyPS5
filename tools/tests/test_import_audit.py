@@ -3958,6 +3958,45 @@ class LocateAndNamesTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
 
+class ElfSectionsTests(unittest.TestCase):
+    @staticmethod
+    def section(size=0, kind=1):
+        return struct.pack("<IIQQQQIIQQ", 0, kind, 0, 0, 0, size, 0, 0, 0, 0)
+
+    @staticmethod
+    def image(sections, elf_class=2, endian=1, ident_version=1, version=1, offset=64, entry_size=64, count=None):
+        ident = b"\x7fELF" + bytes([elf_class, endian, ident_version]) + bytes(9)
+        header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, version, 0, 0, offset, 0, 64, 0, 0, entry_size,
+                             len(sections) if count is None else count, 0)
+        return header + b"".join(sections)
+
+    def test_returns_every_section_header(self):
+        sections = import_audit.elf_sections("m.elf", self.image([self.section(kind=0), self.section(size=7, kind=3)]))
+        self.assertEqual([entry[1] for entry in sections], [0, 3])
+        self.assertEqual(sections[1][5], 7)
+
+    def test_unsupported_class_endianness_or_entry_size_is_refused(self):
+        for kwargs in ({"elf_class": 1}, {"endian": 2}, {"entry_size": 40}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "only little-endian ELF64"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_unsupported_version_is_refused(self):
+        for kwargs in ({"ident_version": 2}, {"version": 2}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "unsupported ELF version"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_missing_section_header_table_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "without a section header table"):
+            import_audit.elf_sections("m.elf", self.image([self.section()], offset=0))
+
+    def test_extended_section_count_is_read_from_the_first_section(self):
+        data = self.image([self.section(size=2), self.section()], count=0)
+        self.assertEqual(len(import_audit.elf_sections("m.elf", data)), 2)
+
+    def test_section_table_past_the_end_of_the_file_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_sections("m.elf", self.image([self.section()], count=3))
+
 
 if __name__ == "__main__":
     unittest.main()
