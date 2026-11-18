@@ -5,6 +5,11 @@
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include "SceTypes.hpp"
 
+struct PosixForWebKitSysinfo {
+    std::uint64_t total;
+    std::uint32_t one;
+};
+
 extern "C" {
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path);
@@ -30,11 +35,11 @@ int APS5_VABI __wrap_symlink(const char* target, const char* created);
 int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp);
 int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size);
 int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name);
-int APS5_VABI mmap_np();
-int APS5_VABI msetname();
-int APS5_VABI pthread_setschedparam_np();
-int APS5_VABI setenv_np();
-int APS5_VABI scePosixForWebKit_sysinfo();
+void* APS5_VABI mmap_np(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset, const char* name);
+int APS5_VABI msetname(void* address, std::size_t length, const char* name);
+int APS5_VABI pthread_setschedparam_np(Pthread thread, int policy, const KernelSchedParam* param);
+int APS5_VABI setenv_np(const char* name, const char* value, int overwrite);
+int APS5_VABI scePosixForWebKit_sysinfo(PosixForWebKitSysinfo* info);
 int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags);
 int APS5_VABI mkstemp_nid_postfix(char* pattern);
 int APS5_VABI isatty_nid_postfix(int descriptor);

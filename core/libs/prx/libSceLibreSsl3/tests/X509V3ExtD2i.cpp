@@ -289,6 +289,80 @@ void TestOcspNonce() {
     FreeOctetString(value);
 }
 
+struct AuthorityKeyId {
+    Asn1String* keyId;
+    void* issuer;
+    Asn1String* serial;
+};
+
+void FreeAuthorityKeyId(AuthorityKeyId* id) {
+    FreeOctetString(id->keyId);
+    FreeInteger(id->serial);
+    free_nid_postfix(id);
+}
+
+void TestAuthorityKeyId() {
+    Fixture keyIdOnly(90, {0x30, 0x06, 0x80, 0x04, 0x01, 0x02, 0x03, 0x04});
+    auto* id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&keyIdOnly.extension));
+    Require(id != nullptr && id->issuer == nullptr && id->serial == nullptr);
+    Require(id->keyId != nullptr && id->keyId->length == 4 && id->keyId->type == 4 && id->keyId->flags == 0);
+    Require(std::memcmp(id->keyId->data, keyIdOnly.der.data() + 4, 4) == 0 && id->keyId->data[4] == 0);
+    FreeAuthorityKeyId(id);
+    Fixture keyIdAndSerial(90, {0x30, 0x09, 0x80, 0x02, 0xaa, 0xbb, 0x82, 0x03, 0x01, 0x00, 0x01});
+    id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&keyIdAndSerial.extension));
+    Require(id != nullptr && id->keyId != nullptr && id->keyId->length == 2 && id->issuer == nullptr);
+    Require(id->serial != nullptr && id->serial->type == 2 && ASN1_INTEGER_get_nid_postfix(id->serial) == 0x10001);
+    FreeAuthorityKeyId(id);
+    Fixture serialOnly(90, {0x30, 0x03, 0x82, 0x01, 0xfb});
+    id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&serialOnly.extension));
+    Require(id != nullptr && id->keyId == nullptr && id->issuer == nullptr);
+    Require(id->serial != nullptr && id->serial->type == 0x102 && ASN1_INTEGER_get_nid_postfix(id->serial) == -5);
+    FreeAuthorityKeyId(id);
+    Fixture empty(90, {0x30, 0x00, 0x05, 0x00});
+    id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&empty.extension));
+    Require(id != nullptr && id->keyId == nullptr && id->issuer == nullptr && id->serial == nullptr);
+    FreeAuthorityKeyId(id);
+    RequireQueue({});
+    for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
+             {0x30, 0x0c, 0x80, 0x01, 0x01, 0xa1, 0x04, 0x82, 0x02, 'a', 'b', 0x82, 0x01, 0x01},
+             {0x30, 0x80, 0x80, 0x01, 0x01, 0x00, 0x00},
+             {0x30, 0x05, 0xa0, 0x03, 0x04, 0x01, 0x01}}) {
+        Fixture unsupported(90, bytes);
+        RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&unsupported.extension); });
+        Require(allocations.empty());
+    }
+    DrainErrors();
+}
+
+void TestMalformedAuthorityKeyId() {
+    struct Case {
+        std::initializer_list<unsigned char> bytes;
+        std::initializer_list<int> queue;
+    };
+    for (const Case& item : std::initializer_list<Case>{
+             {{0x31, 0x00}, {168, 58}},
+             {{0x10, 0x00}, {149}},
+             {{0x30, 0x05, 0x80, 0x01}, {155, 58}},
+             {{0x30, 0x03, 0x80, 0x05, 0x01}, {155, 58}},
+             {{0x30, 0x03, 0x83, 0x01, 0x00}, {168, 58}},
+             {{0x30, 0x03, 0x04, 0x01, 0x00}, {168, 58}},
+             {{0x30, 0x06, 0x82, 0x01, 0x01, 0x80, 0x01, 0x01}, {148}},
+             {{0x30, 0x06, 0x80, 0x01, 0x01, 0x80, 0x01, 0x02}, {168, 58}},
+             {{0x30, 0x05, 0xa2, 0x03, 0x02, 0x01, 0x01}, {231}},
+             {{0x30, 0x02, 0x80, 0x80}, {102, 58}},
+             {{0x30, 0x01, 0x1f}, {102, 58}}}) {
+        Fixture malformed(90, item.bytes);
+        Require(X509V3_EXT_d2i_nid_postfix(&malformed.extension) == nullptr);
+        Require(allocations.empty());
+        RequireQueue(item.queue);
+    }
+    Fixture emptySerial(90, {0x30, 0x05, 0x80, 0x01, 0x01, 0x82, 0x00});
+    Require(X509V3_EXT_d2i_nid_postfix(&emptySerial.extension) == nullptr);
+    Require(allocations.empty());
+    Require(ERR_get_error_nid_postfix() != 0);
+    DrainErrors();
+}
+
 void TestNidResolution() {
     static unsigned char keyUsageOid[] = {0x55, 0x1d, 0x0f};
     Fixture resolved(0, keyUsageOid, 3, {0x03, 0x02, 0x05, 0xa0});
@@ -394,6 +468,19 @@ void TestAllocationFailures() {
     Require(X509V3_EXT_d2i_nid_postfix(&objectSecond.extension) == nullptr);
     Require(allocations.empty());
     RequireQueue({65});
+    Fixture authorityKeyId(90, {0x30, 0x06, 0x80, 0x01, 0x01, 0x82, 0x01, 0x01});
+    allocationsUntilFailure = 0;
+    Require(X509V3_EXT_d2i_nid_postfix(&authorityKeyId.extension) == nullptr);
+    Require(allocations.empty());
+    RequireQueue({65});
+    allocationsUntilFailure = 1;
+    Require(X509V3_EXT_d2i_nid_postfix(&authorityKeyId.extension) == nullptr);
+    Require(allocations.empty());
+    RequireQueue({65, 65});
+    allocationsUntilFailure = 3;
+    Require(X509V3_EXT_d2i_nid_postfix(&authorityKeyId.extension) == nullptr);
+    Require(allocations.empty());
+    DrainErrors();
 }
 
 }
@@ -414,6 +501,8 @@ int main() {
     TestIa5Strings();
     TestObjects();
     TestOcspNonce();
+    TestAuthorityKeyId();
+    TestMalformedAuthorityKeyId();
     TestNidResolution();
     TestUnsupported();
     TestUnknownExtensions();
