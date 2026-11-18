@@ -1061,8 +1061,13 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
             const char* step = nullptr;
             VkResult failure = VK_SUCCESS;
             auto chunk = importChunk(context, file, index, requirements.memoryTypeBits, step, failure);
+            const bool usable = chunk != nullptr && ((requirements.memoryTypeBits >> chunk->memoryType) & 1u) != 0;
+            if (!usable && entry.bytes <= ImportChunkBytes) {
+                context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+                return false;
+            }
             if (chunk == nullptr) fail(step, failure);
-            if (((requirements.memoryTypeBits >> chunk->memoryType) & 1u) == 0) fail("the memory type of a chunk import", VK_ERROR_FORMAT_NOT_SUPPORTED);
+            if (!usable) fail("the memory type of a chunk import", VK_ERROR_FORMAT_NOT_SUPPORTED);
             binds.push_back({piece.resource + done, size, chunk->memory, within, 0});
             chunks->push_back(std::move(chunk));
             done += size;
