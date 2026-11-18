@@ -1075,6 +1075,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Sign.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509_sign_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509Sign.cpp)
+    target_include_directories(guest_libressl3_x509_sign_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_sign_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_x509_sign_tests)
+    add_test(NAME guest_libressl3_x509_sign COMMAND guest_libressl3_x509_sign_tests)
+    set_tests_properties(guest_libressl3_x509_sign PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_sign PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/QuicData.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_quic_data_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/QuicData.cpp)
