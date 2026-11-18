@@ -281,6 +281,16 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
 
+class IsSplitTests(unittest.TestCase):
+    def test_text_containing_the_include_marker_is_split(self):
+        marker = agc_test_split.INCLUDE[0]
+        self.assertTrue(agc_test_split.is_split(marker))
+        self.assertTrue(agc_test_split.is_split("a\n" + marker + "\nb"))
+
+    def test_other_text_is_not_split(self):
+        self.assertFalse(agc_test_split.is_split(""))
+        self.assertFalse(agc_test_split.is_split("add_executable(x x.cpp)"))
+
 
 if __name__ == "__main__":
     unittest.main()
