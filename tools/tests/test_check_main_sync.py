@@ -382,6 +382,26 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
 
 
 class CheckMainSyncJsonTests(CheckMainSyncFixture):
+    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain carriage returns")
+    def test_json_preserves_carriage_returns_in_conflicting_paths(self):
+        import json
+        name = "shared\rpath.txt"
+        self.repo.write(name, "original\n")
+        self.repo.commit("add path with carriage return")
+        self.branch("feature")
+        self.repo.write(name, "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, "main\n")
+        self.repo.commit("main edit (#70004)")
+
+        result = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["conflicts"], [name])
+        self.assertEqual(data["shared"], [name])
+        self.assertEqual(set(data["pulls"]), {"70004"})
+
     def test_json_reports_real_git_state_and_preserves_exit_status(self):
         import json
         self.branch("feature")
