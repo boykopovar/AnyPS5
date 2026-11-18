@@ -1588,4 +1588,8 @@ char16_t CodeUnitAt(const StringView& view, unsigned index) {
     return Unit(view, index);
 }
 
+std::optional<std::uint16_t> PortOf(const URL& url) {
+    return URLPort(url);
+}
+
 }  // namespace NKWebKit::WtfAbi
