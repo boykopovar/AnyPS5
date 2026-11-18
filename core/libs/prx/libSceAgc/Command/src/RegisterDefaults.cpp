@@ -191,6 +191,13 @@ QueueResetState GetQueueResetState(std::uint32_t instance, bool active) {
     return {instance, context.version, context.external, context.resetCommands};
 }
 
+std::span<const ShaderRegister> GetCurrentDefaultCxRegisters() {
+    std::lock_guard lock(defaultStateMutex);
+    Require(activeDefaultAvailable, __func__, "context defaults are not initialized");
+    const auto& context = defaultContexts[activeDefaultInstance];
+    return context.count == 0 ? std::span<const ShaderRegister>{} : std::span<const ShaderRegister>{context.registers.data(), context.count};
+}
+
 int CopyDefaultCxStateRange(void* destination, std::uint32_t first, std::uint32_t last, std::span<const ShaderRegister> registers) {
     if (first >= last || registers.empty()) return 0;
     constexpr int InvalidArgument = static_cast<int>(0x80890001u);

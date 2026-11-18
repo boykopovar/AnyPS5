@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/DcbState/include/ContextState.hpp"
+#include "prx/libSceAgc/DcbState/include/Init.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -60,6 +61,7 @@ void testInvalidOperations() {
 
 int main() {
     try {
+        check(sceAgcInit(13) == 0, "context initialization failed");
         testSizes();
         testInvalidOperations();
         LibcRunShutdown_nid_postfix();
