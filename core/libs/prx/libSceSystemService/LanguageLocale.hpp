@@ -89,6 +89,8 @@ constexpr bool AllOf(std::string_view text, bool (*predicate)(char)) {
 
 constexpr bool IsAlphanumeric(char c) { return IsAlpha(c) || IsDigit(c); }
 
+constexpr bool IsExtlang(std::string_view subtag) { return subtag.size() == 3 && AllOf(subtag, IsAlpha); }
+
 constexpr bool EqualsIgnoringCase(std::string_view left, std::string_view right) {
     if (left.size() != right.size()) return false;
     for (std::size_t i = 0; i < left.size(); ++i) {
@@ -154,6 +156,7 @@ inline constexpr Row ChineseRows[] = {
     {"zh", "", "HK", ChineseTraditional},
     {"zh", "", "MO", ChineseTraditional},
     {"cmn", "", "", ChineseSimplified},
+    {"cmn", "Hans", "", ChineseSimplified},
     {"cmn", "Hant", "", ChineseTraditional},
     {"cmn", "", "TW", ChineseTraditional},
     {"yue", "", "", ChineseTraditional},
@@ -217,6 +220,11 @@ inline bool ParseTag(std::string_view text, Tag& tag) {
         } else if (!tail) {
             if (subtag.size() == 1) {
                 tail = true;
+            } else if (index == 1 && Detail::IsExtlang(subtag)) {
+                if (parsed.language == "zh" && (Detail::EqualsIgnoringCase(subtag, "cmn") || Detail::EqualsIgnoringCase(subtag, "yue"))) {
+                    parsed.language.clear();
+                    for (char c : subtag) parsed.language += Detail::Lower(c);
+                }
             } else if (!seenScript && !seenRegion && subtag.size() == 4 && Detail::AllOf(subtag, Detail::IsAlpha)) {
                 seenScript = true;
                 parsed.script += Detail::Upper(subtag[0]);
@@ -250,10 +258,15 @@ inline std::string NormalizePosixLocale(std::string_view text) {
     if (Detail::EqualsIgnoringCase(modifier, "latin")) script = "Latn";
     if (Detail::EqualsIgnoringCase(modifier, "cyrillic")) script = "Cyrl";
     if (!script.empty()) {
-        const std::size_t dash = name.find('-');
-        const std::string_view second = dash == std::string::npos ? std::string_view{} : std::string_view(name).substr(dash + 1, 4);
-        const bool hasScript = second.size() == 4 && Detail::AllOf(second, Detail::IsAlpha) && (dash + 5 == name.size() || name[dash + 5] == '-');
-        if (!hasScript) name.insert(dash == std::string::npos ? name.size() : dash, std::string("-") + std::string(script));
+        Tag tag;
+        if (ParseTag(name, tag) && !tag.script.empty()) return name;
+        std::size_t position = name.find('-');
+        if (position != std::string::npos) {
+            const std::size_t end = name.find('-', position + 1);
+            const std::string_view subtag = std::string_view(name).substr(position + 1, end == std::string::npos ? std::string::npos : end - position - 1);
+            if (Detail::IsExtlang(subtag)) position = end;
+        }
+        name.insert(position == std::string::npos ? name.size() : position, std::string("-") + std::string(script));
     }
     return name;
 }

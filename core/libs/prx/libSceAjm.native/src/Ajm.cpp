@@ -37,6 +37,7 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_INVALID_PRIORITY = static_cast<int>(0x8093000E);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
 constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
 constexpr int SCE_AJM_ERROR_INVALID_ADDRESS = static_cast<int>(0x80930016);
@@ -1833,14 +1834,53 @@ void* EndConsoleJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance
     return end;
 }
 
+constexpr std::size_t CONSOLE_WORDS_BYTES = 2 * sizeof(std::uint32_t);
+constexpr std::size_t CONSOLE_BUFFER_BYTES = CONSOLE_WORDS_BYTES + sizeof(const void*);
+
+void CopyBatchIn(void* destination, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+void CopyBatchOut(void* destination, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+std::vector<std::uint8_t> LoadConsoleJob(const void* position, std::size_t bytes) {
+    std::vector<std::uint8_t> job(bytes);
+    CopyBatchIn(job.data(), position, bytes, "AJM batch job buffer is unreadable");
+    return job;
+}
+
+void* StoreConsoleJob(void* position, const std::vector<std::uint8_t>& job) {
+    CopyBatchOut(position, job.data(), job.size(), "AJM batch job buffer is unwritable");
+    return static_cast<std::uint8_t*>(position) + job.size();
+}
+
+std::vector<AjmBuffer> LoadBufferList(const AjmBuffer* buffers, std::size_t count, const char* message) {
+    if (count > SIZE_MAX / sizeof(AjmBuffer)) throw std::runtime_error(message);
+    std::vector<AjmBuffer> list(count);
+    CopyBatchIn(list.data(), buffers, count * sizeof(AjmBuffer), message);
+    return list;
+}
+
 void* BuildRunJob(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    auto* job = static_cast<std::uint8_t*>(position);
-    auto* at = BeginConsoleJob(job, return_address);
-    for (std::size_t index = 0; index < input_buffers_num; ++index) at = KeepConsoleBuffer(at, ConsoleChunk::InputRunBuffer, input_buffers[index].ptr, input_buffers[index].size);
+    const std::vector<AjmBuffer> inputs = LoadBufferList(input_buffers, input_buffers_num, "AJM batch input buffer list is unreadable");
+    const std::vector<AjmBuffer> outputs = LoadBufferList(output_buffers, output_buffers_num, "AJM batch output buffer list is unreadable");
+    const std::size_t fixedBytes = 2 * CONSOLE_WORDS_BYTES + (return_address ? CONSOLE_BUFFER_BYTES : 0) + CONSOLE_BUFFER_BYTES;
+    std::vector<std::uint8_t> job = LoadConsoleJob(position, fixedBytes + (inputs.size() + outputs.size()) * CONSOLE_BUFFER_BYTES);
+    auto* at = BeginConsoleJob(job.data(), return_address);
+    for (const AjmBuffer& input : inputs) at = KeepConsoleBuffer(at, ConsoleChunk::InputRunBuffer, input.ptr, input.size);
     at = KeepConsoleFlags(at, ConsoleChunk::RunFlags, flags & CONSOLE_RUN_FLAGS);
-    for (std::size_t index = 0; index < output_buffers_num; ++index) at = KeepConsoleBuffer(at, ConsoleChunk::OutputRunBuffer, output_buffers[index].ptr, output_buffers[index].size);
+    for (const AjmBuffer& output : outputs) at = KeepConsoleBuffer(at, ConsoleChunk::OutputRunBuffer, output.ptr, output.size);
     at = KeepConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
-    return EndConsoleJob(job, at, instance);
+    EndConsoleJob(job.data(), at, instance);
+    return StoreConsoleJob(position, job);
 }
 
 struct ConsoleJob {
@@ -2184,8 +2224,8 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
-    (void)priority;
-    if (!info || !batch || !info->p_buffer || info->offset > info->size) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch || !info->p_buffer || info->offset > info->size || info->offset == 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (priority < SCE_AJM_PRIORITY_MIN || priority > SCE_AJM_PRIORITY_MAX) return SCE_AJM_ERROR_INVALID_PRIORITY;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
     auto remaining = info->offset;
@@ -2240,17 +2280,24 @@ int APS5_VABI sceAjmBatchCancel(uint32_t context, uint32_t batch) {
 
 int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
     (void)info;
-    if (error) std::memset(error, 0, sizeof(*error));
+    if (error) {
+        constexpr AjmBatchError localError{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError));
+        errno = savedErrno;
+        if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
 void* APS5_VABI sceAjmBatchJobControlBufferRa(void* position, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    auto* job = static_cast<std::uint8_t*>(position);
-    auto* at = BeginConsoleJob(job, return_address);
+    std::vector<std::uint8_t> job = LoadConsoleJob(position, 2 * CONSOLE_WORDS_BYTES + (return_address ? CONSOLE_BUFFER_BYTES : 0) + 2 * CONSOLE_BUFFER_BYTES);
+    auto* at = BeginConsoleJob(job.data(), return_address);
     at = KeepConsoleBuffer(at, ConsoleChunk::InputControlBuffer, sideband_input, sideband_input_size);
     at = KeepConsoleFlags(at, ConsoleChunk::ControlFlags, flags & CONSOLE_CONTROL_FLAGS);
     at = KeepConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
-    return EndConsoleJob(job, at, instance);
+    EndConsoleJob(job.data(), at, instance);
+    return StoreConsoleJob(position, job);
 }
 
 void* APS5_VABI sceAjmBatchJobRunSplitBufferRa(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address) {
@@ -2266,15 +2313,20 @@ void* APS5_VABI sceAjmBatchJobRunBufferRa(void* position, uint32_t instance, uin
 
 void* APS5_VABI sceAjmBatchJobInlineBuffer(void* position, const void* data_input, size_t data_input_size, const void** batch_address) {
     const std::size_t size = (data_input_size + 7) & ~std::size_t{7};
-    auto* at = static_cast<std::uint8_t*>(position);
-    std::uint32_t words[2];
-    std::memcpy(words, at, sizeof(words));
-    words[0] = (words[0] & ~0x1Fu) | static_cast<std::uint32_t>(ConsoleChunk::InlineBuffer);
-    words[1] = static_cast<std::uint32_t>(size);
-    std::memcpy(at, words, sizeof(words));
-    at += sizeof(words);
-    if (data_input_size) std::memcpy(at, data_input, data_input_size);
-    if (batch_address) *batch_address = at;
+    std::vector<std::uint8_t> header = LoadConsoleJob(position, CONSOLE_WORDS_BYTES);
+    KeepConsoleWords(header.data(), ~0x1Fu, static_cast<std::uint32_t>(ConsoleChunk::InlineBuffer), static_cast<std::uint32_t>(size));
+    auto* at = static_cast<std::uint8_t*>(StoreConsoleJob(position, header));
+    const auto source = reinterpret_cast<std::uintptr_t>(data_input);
+    const auto destination = reinterpret_cast<std::uintptr_t>(at);
+    std::array<std::uint8_t, 4096> staging;
+    for (std::size_t offset = 0; offset < data_input_size;) {
+        const std::size_t count = std::min(staging.size(), data_input_size - offset);
+        CopyBatchIn(staging.data(), reinterpret_cast<const void*>(source + offset), count, "AJM inline buffer input is unreadable");
+        CopyBatchOut(reinterpret_cast<void*>(destination + offset), staging.data(), count, "AJM inline buffer data is unwritable");
+        offset += count;
+    }
+    const void* address = at;
+    if (batch_address) CopyBatchOut(batch_address, &address, sizeof(address), "AJM inline buffer address output is unwritable");
     return at + size;
 }
 

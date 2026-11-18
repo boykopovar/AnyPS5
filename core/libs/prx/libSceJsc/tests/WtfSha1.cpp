@@ -45,7 +45,7 @@ std::vector<std::uint8_t> Sequence(std::size_t begin, std::size_t end, std::size
 SHA1 Make(const Case& value) {
     SHA1 sha1;
     std::memset(&sha1, 0xA5, sizeof(sha1));
-    std::memcpy(sha1.buffer, value.pending.data(), value.pending.size());
+    if (!value.pending.empty()) std::memcpy(sha1.buffer, value.pending.data(), value.pending.size());
     sha1.cursor = value.pending.size();
     sha1.totalBytes = value.totalBytes;
     for (std::size_t i = 0; i < 5; ++i) sha1.hash[i] = value.hash[i];

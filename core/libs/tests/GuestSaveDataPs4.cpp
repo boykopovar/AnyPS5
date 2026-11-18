@@ -58,6 +58,12 @@ void TestTransferringMountPs4() {
     Check(result.mount_point.data[0] == '\0', "TransferringMount reports no mount point");
     Check(sceSaveDataTransferringMount(nullptr, nullptr) == SaveDataErrorNotFound, "TransferringMount handles null arguments");
     Check(sceSaveDataTransferringMountPs4(nullptr, nullptr) == SaveDataErrorNotFound, "TransferringMountPs4 handles null arguments");
+    errno = 71;
+    Check(sceSaveDataTransferringMount(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "TransferringMount handles unmapped result pointer");
+    Check(errno == 71, "TransferringMount preserves errno");
+    errno = 71;
+    Check(sceSaveDataTransferringMountPs4(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "TransferringMountPs4 handles unmapped result pointer");
+    Check(errno == 71, "TransferringMountPs4 preserves errno");
 }
 
 void TestDirNameSearchPs4() {
@@ -163,8 +169,10 @@ void TestSaveDataMemoryV1() {
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == SaveDataErrorNotInitialized, "v1 SetupSaveDataMemory before v1 Initialize");
     Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 GetSaveDataMemory before v1 Initialize");
     Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 SetSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == SaveDataErrorNotInitialized, "unmapped get_param before Initialize returns NOT_INITIALIZED");
     Check(sceSaveDataInitialize(nullptr) == 0, "v1 Initialize");
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == 0, "v1 SetupSaveDataMemory");
+    Check(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == SaveDataErrorParameter, "unmapped get_param returns PARAMETER");
     char written[16] = "settings-v1";
     Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), 0x100) == 0, "v1 SetSaveDataMemory at an offset");
     char read[16] = {};

@@ -79,8 +79,6 @@ int ValidateVideoOutOutputMode_nid_no_patch(uint64_t mode, const VideoOutOutputO
         break;
     case 0x4: case 0x7: case 0x8: case 0xC: case 0xD: case 0xE: case 0x10: case 0x11: case 0x13:
         return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
-    case 0x12:
-        throw std::runtime_error(std::string(__func__) + ": output mode 0x12 answers differently on two consoles");
     default:
         return VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE;
     }
@@ -256,9 +254,12 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+static bool isFreshHandle(int handle);
+
 int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
     if (status == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (isFreshHandle(handle)) return VIDEO_OUT_ERROR_0x8029001C;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
@@ -458,7 +459,12 @@ int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, 
     if (!std::isfinite(gamma) || gamma < 0.1f || gamma > 2.0f) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
-    settings->gamma = gamma;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(&settings->gamma, &gamma, sizeof(gamma));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 }
 
@@ -466,11 +472,17 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    VideoOutColorSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    // Output gamma is accepted but not yet applied to presentation.
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -494,6 +506,12 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(settings, sizeof(VideoOutColorSpaceConversionSettings));
+    errno = savedErrno;
+    if (!writable) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     (void)lumaScale;
     (void)option;
     return 0;
@@ -501,6 +519,13 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
 
 int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutColorSpaceConversionSettings* settings) try {
     if (settings == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    VideoOutColorSpaceConversionSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);

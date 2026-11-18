@@ -60,9 +60,13 @@ def release_web_files(revision):
 
 def copy_sources(output):
     source = ROOT / "demo/web"
-    for file in source.iterdir():
-        if file.is_file():
-            shutil.copy2(file, output / file.name)
+    files = [file for file in source.iterdir() if file.is_file()]
+    names = {file.name for file in files}
+    for file in output.iterdir():
+        if file.name not in names and not file.is_dir():
+            file.unlink()
+    for file in files:
+        shutil.copy2(file, output / file.name)
     (output / ".nojekyll").touch()
 
 

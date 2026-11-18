@@ -126,6 +126,16 @@ bool IsEmpty(const NpOnlineId* user) {
     return !copied || first == 0;
 }
 
+int TssOptionError(const void* option) {
+    if (!option) return 0;
+    TssGetDataOptParam localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return localOption.size == sizeof(TssGetDataOptParam) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
+}
+
 int StartOffline(int reqId) {
     std::lock_guard lock(tusMutex);
     const auto request = requests.find(reqId);
@@ -479,14 +489,7 @@ int APS5_VABI sceNpTusGetFriendsDataStatusForCrossSave(int reqId, std::int32_t s
 int APS5_VABI sceNpTssGetDataAsync(int reqId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, const void* option) {
     (void)data;
     (void)recvSize;
-    if (option) {
-        TssGetDataOptParam localOption{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        if (localOption.size != sizeof(TssGetDataOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
-    }
+    if (const int error = TssOptionError(option)) return error;
     if (dataStatus && dataStatusSize != 0x18) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
     if (slotId < 0 || slotId > TSS_MAX_SLOT_ID) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
@@ -499,7 +502,7 @@ int APS5_VABI sceNpTssGetData(int reqId, std::int32_t slotId, void* dataStatus, 
 int APS5_VABI sceNpTssGetSmallStorageAsync(int reqId, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, void* option) {
     (void)data;
     (void)contentLength;
-    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (const int error = TssOptionError(option)) return error;
     if (maxSize > TSS_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
