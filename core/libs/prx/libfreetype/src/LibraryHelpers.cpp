@@ -31,10 +31,10 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
-bool ReadLibraryHost(const FreeType::GuestLibrary* library, FT_Library& host) {
-    host = nullptr;
-    if (!library) return false;
-    return CopyIn(&host, &library->host, sizeof(host));
+FT_Library ReadLibraryHost(const FreeType::GuestLibrary* library) {
+    FT_Library host = nullptr;
+    if (!library || !CopyIn(&host, &library->host, sizeof(host))) return nullptr;
+    return host;
 }
 
 }
@@ -42,8 +42,8 @@ bool ReadLibraryHost(const FreeType::GuestLibrary* library, FT_Library& host) {
 extern "C" {
 
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestVector* sub) {
-    FT_Library host = nullptr;
-    if (!ReadLibraryHost(library, host) || !host || !sub) return FT_Library_SetLcdGeometry(host, nullptr);
+    const FT_Library host = ReadLibraryHost(library);
+    if (!host || !sub) return FT_Library_SetLcdGeometry(host, nullptr);
     std::array<FreeType::GuestVector, 3> guest{};
     if (!CopyIn(guest.data(), sub, sizeof(guest))) return FT_Library_SetLcdGeometry(host, nullptr);
     std::array<FT_Vector, 3> native{};
