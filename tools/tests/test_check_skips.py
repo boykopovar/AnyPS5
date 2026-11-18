@@ -648,6 +648,24 @@ class NotRunTests(unittest.TestCase):
 
 
 
+class SymlinkPrivilegeLimitationTests(unittest.TestCase):
+    REASON = "SKIP: Windows symbolic-link privileges unavailable"
+    NAMES = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+
+    def test_exact_reason_for_the_symlink_tests_is_a_limitation(self):
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                self.assertTrue(check_skips.symlink_privilege_limitation(name, "noise\n  " + self.REASON + "  \n"))
+
+    def test_other_tests_are_never_a_limitation(self):
+        self.assertFalse(check_skips.symlink_privilege_limitation("guest_kernel_sys_paths_open", self.REASON))
+
+    def test_any_other_reason_or_no_reason_is_not_a_limitation(self):
+        name = self.NAMES[0]
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "ok\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, self.REASON + "\nSKIP: disk full\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "test skipped, Windows symbolic-link privileges unavailable"))
+
 
 if __name__ == "__main__":
     unittest.main()
