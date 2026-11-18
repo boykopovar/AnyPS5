@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -172,6 +179,85 @@ void Boundaries() {
     }
 }
 
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+void Rejects(TCall call) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected);
+}
+
+void GuestPointers() {
+    std::uint32_t out = 0xdeadbeefu;
+    const auto* badText = reinterpret_cast<const char*>(0x10);
+    auto* badOut = reinterpret_cast<std::uint32_t*>(0x10);
+    ReadOnlyPage page;
+    auto* readOnlyOut = page.Set<std::uint32_t>(0x12345678u);
+    page.Protect();
+
+    const std::size_t beforeAttempts = attempts;
+    Rejects([&] { tls_config_parse_protocols_nid_postfix(&out, badText); });
+    Require(out == 0xdeadbeefu && attempts == beforeAttempts && live == nullptr);
+
+    Rejects([&] { tls_config_parse_protocols_nid_postfix(badOut, nullptr); });
+    Rejects([&] { tls_config_parse_protocols_nid_postfix(badOut, "all"); });
+    Rejects([&] { tls_config_parse_protocols_nid_postfix(readOnlyOut, nullptr); });
+    Rejects([&] { tls_config_parse_protocols_nid_postfix(readOnlyOut, "all"); });
+    Require(tls_config_parse_protocols_nid_postfix(readOnlyOut, "bad") == -1);
+    Require(*readOnlyOut == 0x12345678u && live == nullptr);
+}
+
 }
 
 int main() {
@@ -184,6 +270,7 @@ int main() {
     Combinations();
     CasePermutations();
     Boundaries();
+    GuestPointers();
     Require(live == nullptr);
     std::printf("TLS protocol parser: %zu cases, %zu checks, %zu releases, zero live allocations\n", cases, checks, releases);
 }

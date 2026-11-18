@@ -1,0 +1,5 @@
+# libSceLibreSsl
+
+## change [X509_NAME_get_index_by_NID, X509_NAME_get_text_by_NID]
+
+- [X509_NAME_get_index_by_NID, X509_NAME_get_text_by_NID](../../../core/libs/prx/libSceLibreSsl/src/X509Name.cpp) - no console call is verified. The NID is resolved as `OBJ_nid2obj` of LibreSSL 2.5.4's [obj_dat.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/objects/obj_dat.c#L340-L366) does, over the [object table](../../../core/libs/prx/libSceLibreSsl/src/ObjectTable.cpp) of that version and the objects added by `OBJ_create`, so a NID that a later LibreSSL assigns (956-967 in 2.7) gives -2 or -1 here. A `lastpos` of `INT_MAX` and a matched `len` of `INT_MIN` throw: [x509name.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509/x509name.c#L69-L139) overflows a signed int there. A null entry, a null entry object, null object data behind a matching length and a null entry value throw where LibreSSL faults.

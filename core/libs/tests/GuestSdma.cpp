@@ -1,5 +1,6 @@
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -43,11 +44,22 @@ void RequireOpen() {
     Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, nullptr) == InvalidArgument);
     Require(sceSdmaOpen(&handle, buffer.data(), 0x7fff, &param) == InvalidArgument);
     Require(sceSdmaOpen(&handle, nullptr, 0x8000, &param) == InvalidArgument);
+    Require(sceSdmaOpen(nullptr, buffer.data(), 0x8000, &param) == InvalidArgument);
     for (std::uint32_t engine : {0u, 11u, 20u, 0xffffffffu}) {
         param.engine = engine;
         Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == InvalidArgument);
     }
     Require(handle == nullptr);
+    param.engine = 12;
+    errno = 71;
+    Require(sceSdmaOpen(reinterpret_cast<void**>(0x10), buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, reinterpret_cast<const SdmaOpenParam*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
+    Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == 0 && handle);
+    Require(sceSdmaOpen(nullptr, buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(sceSdmaClose(handle) == 0);
     for (std::uint32_t engine = 12; engine < 20; ++engine) {
         param.engine = engine;
         void* first = nullptr;

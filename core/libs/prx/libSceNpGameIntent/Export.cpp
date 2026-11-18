@@ -66,12 +66,22 @@ int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* inte
 	if (!NpGameIntentInitialized()) {
 		return NpGameIntentErrorNotInitialized;
 	}
-	if (intentData == nullptr || key == nullptr || key[0] == '\0' || valueBuf == nullptr || bufSize == 0) {
+	if (intentData == nullptr || key == nullptr || valueBuf == nullptr || bufSize == 0) {
 		return NpGameIntentErrorInvalidArgument;
 	}
 
-	valueBuf[0] = '\0';
-	return NpGameIntentErrorValueNotFound;
+	const int savedErrno = errno;
+	char firstKeyByte{};
+	const bool keyReadable = GuestCopyIn_nid_no_patch(&firstKeyByte, key, 1);
+	errno = savedErrno;
+	if (!keyReadable || firstKeyByte == '\0') {
+		return NpGameIntentErrorInvalidArgument;
+	}
+
+	const char terminator = '\0';
+	const bool outputWritable = GuestCopyOut_nid_no_patch(valueBuf, &terminator, 1);
+	errno = savedErrno;
+	return outputWritable ? NpGameIntentErrorValueNotFound : NpGameIntentErrorInvalidArgument;
 }
 
 int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {

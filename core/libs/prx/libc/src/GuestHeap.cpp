@@ -65,7 +65,7 @@ void shrink(std::atomic<std::size_t>& current, std::size_t bytes) {
 class ArenaHeap {
 public:
     static ArenaHeap& Get() {
-        static ArenaHeap heap;
+        static ArenaHeap& heap = *new ArenaHeap;
         return heap;
     }
 
@@ -359,6 +359,15 @@ void GuestHeapFree_nid_postfix(void* pointer) {
     GuestAllocations::Mutation mutation;
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);
+    free(mutation, pointer, range.bytes);
+}
+
+void GuestHeapFillAndFree_nid_no_patch(void* pointer, int fill) {
+    if (pointer == nullptr) return;
+    GuestAllocations::Mutation mutation;
+    const auto range = mutation.Find(pointer);
+    mutation.RequireUnpinned(pointer, range.bytes);
+    std::memset(pointer, fill, range.bytes);
     free(mutation, pointer, range.bytes);
 }
 

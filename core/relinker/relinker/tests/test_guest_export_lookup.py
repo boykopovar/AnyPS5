@@ -107,9 +107,9 @@ def main():
                     ('local-first', [('entry', 0x02, 0, 1), ('entry', 0x11, 0, 1)],
                      [('entry', 0x11, 0, 0)], None),
                     ('duplicate-first', [('entry#A#A', 0x12, 0, 1), ('entry#B#A', 0x12, 0, 1)],
-                     [('entry', 0x12, 0, 0)], None if windows else 'Duplicate or empty export after stripping #: entry'),
+                     [('entry', 0x12, 0, 0)], None),
                     ('duplicate-mismatch', [('entry#A#A', 0x12, 0, 1), ('entry#B#A', 0x12, 0, 1)],
-                     [('entry', 0x11, 0, 0)], 'Guest import/export type mismatch: entry' if windows else 'Duplicate or empty export after stripping #: entry'),
+                     [('entry', 0x11, 0, 0)], 'Guest import/export type mismatch: entry'),
                     ('weak', [('entry', 0x22, 0, 1)], [('entry', 0x12, 0, 0)], None),
                     ('protected', [('entry', 0x12, 3, 1)], [('entry', 0x12, 0, 0)], None)):
                 result, _ = convert(relinker, work / f'{label}-{windows}', windows, {
