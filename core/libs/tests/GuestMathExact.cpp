@@ -810,6 +810,45 @@ static void CheckExpOffsetsBeyond16Bits() {
     Require(_FExp_nid_postfix(&single, -1.5f, 40000) == 1 && single == -std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
 }
 
+static void CheckPowlBitsFlagsAndErrno() {
+    struct Case {
+        std::uint16_t baseExponent;
+        std::uint64_t baseMantissa;
+        std::uint16_t powerExponent;
+        std::uint64_t powerMantissa;
+        std::uint16_t resultExponent;
+        std::uint64_t resultMantissa;
+        int flags;
+        int error;
+    };
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    for (const Case& entry : {
+             Case{0x4000, 0x8000000000000000ull, 0x4002, 0xa000000000000000ull, 0x4009, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x4000, 0x8000000000000000ull, 0x3ffe, 0x8000000000000000ull, 0x3fff, 0xb504f333f9de6484ull, FE_INEXACT, 0},
+             Case{0x3fff, 0xc000000000000000ull, 0x4000, 0xa000000000000000ull, 0x4000, 0xb05cfeb4522aa265ull, FE_INEXACT, 0},
+             Case{0x4013, 0xd94b85970a38121dull, 0xc004, 0xe806a6636bc840deull, 0x3b4a, 0xbf8a7d7776971378ull, FE_INEXACT, 0},
+             Case{0x3ffe, 0xc5b5921c65706fc7ull, 0xc009, 0xe540000000000000ull, 0x42aa, 0xc893741921582f7cull, FE_INEXACT, 0},
+             Case{0x3fff, 0xb504f333f9de6484ull, 0x400f, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+             Case{0x4002, 0xa000000000000000ull, 0xc00b, 0x9c40000000000000ull, 0x0000, 0x0000000000000000ull, FE_UNDERFLOW | FE_INEXACT, ERANGE},
+             Case{0xc002, 0x8000000000000000ull, 0x3ffd, 0xaaaaaaaaaaaaaaabull, 0x7fff, 0xc000000000000000ull, FE_INVALID, EDOM},
+             Case{0x0000, 0x0000000000000000ull, 0xbfff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0x8000, 0x0000000000000000ull, 0xc000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0xc000, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xc002, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x3fff, 0x8000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0x7fff, 0xc000000000000000ull, 0x0000, 0x0000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0xffff, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, 0, 0},
+             Case{0x3ffe, 0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0, 0},
+         }) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const long double result = powl_nid_postfix(Extended(entry.baseExponent, entry.baseMantissa), Extended(entry.powerExponent, entry.powerMantissa));
+        Require(SameBits(result, Extended(entry.resultExponent, entry.resultMantissa)));
+        Require((std::fetestexcept(FE_ALL_EXCEPT) & Flags) == entry.flags && errno == entry.error);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    errno = 0;
+}
+
 static void CheckGuestPointers() {
     auto* unmappedValue = reinterpret_cast<long double*>(std::uintptr_t{0x10});
     auto* unmappedExponent = reinterpret_cast<short*>(std::uintptr_t{0x10});
@@ -898,6 +937,7 @@ int main(int argc, char** argv) {
     CheckFmalFarApartDirected();
     CheckExpSpecialValues();
     CheckExpOffsetsBeyond16Bits();
+    CheckPowlBitsFlagsAndErrno();
     CheckLogSpecialValues();
     CheckGuestPointers();
     return 0;

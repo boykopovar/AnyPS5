@@ -5662,7 +5662,6 @@ long double APS5_VABI exp2l_nid_postfix(long double x) {
 }
 long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
-long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
