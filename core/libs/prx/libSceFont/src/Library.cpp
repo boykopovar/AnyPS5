@@ -140,37 +140,41 @@ int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
 int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const void* createParams, std::uint64_t edition, FontLibrary* pLibrary) {
     if (pLibrary && !CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (memory->mem_kind != MEMORY_MAGIC || !memory->iface || !memory->iface->alloc || !memory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemory record{};
+    FontMemoryInterface iface{};
+    if (!CopyInGuest(record, memory) || record.mem_kind != MEMORY_MAGIC || !record.iface || !CopyInGuest(iface, record.iface) || !iface.alloc || !iface.dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (!createParams || !pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    const auto allocFn = memory->iface->alloc;
-    const auto freeFn = memory->iface->dealloc;
-    auto* lib = static_cast<FontLibNative*>(allocFn(memory->mspace_handle, sizeof(FontLibNative)));
+    const auto* driver = static_cast<const SysDriver*>(createParams);
+    decltype(driver->init) initFn = nullptr;
+    if (!CopyInGuest(initFn, &driver->init)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    const auto allocFn = iface.alloc;
+    const auto freeFn = iface.dealloc;
+    auto* lib = static_cast<FontLibNative*>(allocFn(record.mspace_handle, sizeof(FontLibNative)));
     if (!lib) return SCE_FONT_ERROR_ALLOCATION_FAILED;
-    void* workspace = allocFn(memory->mspace_handle, 0x4000);
+    void* workspace = allocFn(record.mspace_handle, 0x4000);
     if (!workspace) {
-        freeFn(memory->mspace_handle, lib);
+        freeFn(record.mspace_handle, lib);
         return SCE_FONT_ERROR_ALLOCATION_FAILED;
     }
     std::memset(lib, 0, sizeof(FontLibNative));
     lib->mem_kind = MEMORY_MAGIC;
-    lib->region_size = memory->region_size;
-    lib->region_base = memory->region_base;
-    lib->alloc_ctx = memory->mspace_handle;
-    lib->iface = memory->iface;
-    lib->alloc_fn = memory->iface->alloc;
-    lib->dealloc_fn = memory->iface->dealloc;
-    lib->realloc_fn = memory->iface->realloc_fn;
-    lib->calloc_fn = memory->iface->calloc_fn;
-    lib->sys_driver = static_cast<const SysDriver*>(createParams);
+    lib->region_size = record.region_size;
+    lib->region_base = record.region_base;
+    lib->alloc_ctx = record.mspace_handle;
+    lib->iface = record.iface;
+    lib->alloc_fn = iface.alloc;
+    lib->dealloc_fn = iface.dealloc;
+    lib->realloc_fn = iface.realloc_fn;
+    lib->calloc_fn = iface.calloc_fn;
+    lib->sys_driver = driver;
     lib->workspace_size = 0x4000;
     lib->workspace = workspace;
     lib->list_head_ptr = &lib->list_head;
     lib->list_head = nullptr;
-    const auto initFn = lib->sys_driver->init;
     const int rc = initFn ? initFn(memory, lib) : SCE_FONT_ERROR_INVALID_PARAMETER;
     if (rc != SCE_FONT_OK) {
-        freeFn(memory->mspace_handle, workspace);
-        freeFn(memory->mspace_handle, lib);
+        freeFn(record.mspace_handle, workspace);
+        freeFn(record.mspace_handle, lib);
         return rc;
     }
     const std::uint32_t version = EffectiveEdition(edition);
@@ -186,8 +190,8 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
     lib->magic = LIBRARY_MAGIC;
     if (!CopyOutGuest(pLibrary, static_cast<FontLibrary>(lib))) {
         if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
-        freeFn(memory->mspace_handle, workspace);
-        freeFn(memory->mspace_handle, lib);
+        freeFn(record.mspace_handle, workspace);
+        freeFn(record.mspace_handle, lib);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     return SCE_FONT_OK;
@@ -218,47 +222,49 @@ int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const v
     if (pRenderer && !CopyOutGuest(pRenderer, FontRenderer{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
     int rc = SCE_FONT_ERROR_INVALID_MEMORY;
-    if (memory->mem_kind == MEMORY_MAGIC && memory->iface && memory->iface->alloc && memory->iface->dealloc) {
+    FontMemory record{};
+    FontMemoryInterface iface{};
+    if (CopyInGuest(record, memory) && record.mem_kind == MEMORY_MAGIC && record.iface && CopyInGuest(iface, record.iface) && iface.alloc && iface.dealloc) {
         rc = SCE_FONT_ERROR_INVALID_PARAMETER;
-        if (createParams && pRenderer) {
-            const auto allocFn = memory->iface->alloc;
-            const auto freeFn = memory->iface->dealloc;
-            const auto* selection = static_cast<const RendererSelection*>(createParams);
-            void* rendererMemory = allocFn(memory->mspace_handle, selection->size);
-            void* workspace = allocFn(memory->mspace_handle, 0x4000);
+        RendererSelection selection{};
+        if (createParams && pRenderer && CopyInGuest(selection, static_cast<const RendererSelection*>(createParams))) {
+            const auto allocFn = iface.alloc;
+            const auto freeFn = iface.dealloc;
+            void* rendererMemory = allocFn(record.mspace_handle, selection.size);
+            void* workspace = allocFn(record.mspace_handle, 0x4000);
             rc = SCE_FONT_ERROR_ALLOCATION_FAILED;
             if (rendererMemory && workspace) {
                 auto* renderer = static_cast<RendererNative*>(rendererMemory);
                 std::memset(renderer, 0, offsetof(RendererNative, mem_kind));
                 renderer->magic = RENDERER_MAGIC;
                 renderer->mem_kind = MEMORY_MAGIC;
-                renderer->region_size = memory->region_size;
-                renderer->region_base = memory->region_base;
-                renderer->alloc_ctx = memory->mspace_handle;
-                renderer->mem_iface = memory->iface;
-                renderer->alloc_fn = memory->iface->alloc;
-                renderer->free_fn = memory->iface->dealloc;
-                renderer->realloc_fn = memory->iface->realloc_fn;
-                renderer->calloc_fn = memory->iface->calloc_fn;
+                renderer->region_size = record.region_size;
+                renderer->region_base = record.region_base;
+                renderer->alloc_ctx = record.mspace_handle;
+                renderer->mem_iface = record.iface;
+                renderer->alloc_fn = iface.alloc;
+                renderer->free_fn = iface.dealloc;
+                renderer->realloc_fn = iface.realloc_fn;
+                renderer->calloc_fn = iface.calloc_fn;
                 renderer->selection = const_cast<void*>(createParams);
                 renderer->outline_magic_0x90 = 0x400000000000ull;
                 renderer->workspace = workspace;
                 renderer->workspace_size = 0x4000;
                 renderer->reserved_a8 = 0;
                 renderer->outline_policy_flag = 0;
-                rc = selection->create_fn ? selection->create_fn(renderer) : SCE_FONT_ERROR_FATAL;
+                rc = selection.create_fn ? selection.create_fn(renderer) : SCE_FONT_ERROR_FATAL;
                 if (rc == SCE_FONT_OK) {
                     if (EffectiveEdition(edition) - 0x930000u < 0x1BD0000u) {
                         renderer->feature_byte_0x0c |= 1u;
                         renderer->outline_policy_flag = 1;
                     }
                     if (CopyOutGuest(pRenderer, static_cast<FontRenderer>(renderer))) return SCE_FONT_OK;
-                    if (selection->destroy_fn) selection->destroy_fn(renderer);
+                    if (selection.destroy_fn) selection.destroy_fn(renderer);
                     rc = SCE_FONT_ERROR_INVALID_PARAMETER;
                 }
             }
-            if (workspace) freeFn(memory->mspace_handle, workspace);
-            if (rendererMemory) freeFn(memory->mspace_handle, rendererMemory);
+            if (workspace) freeFn(record.mspace_handle, workspace);
+            if (rendererMemory) freeFn(record.mspace_handle, rendererMemory);
         }
     }
     return rc;
