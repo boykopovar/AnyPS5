@@ -9,12 +9,12 @@ Status: **in progress**. This is a source-level inventory, **not** a measured pe
 | Register immediates | B8..BF, 66 B8..BF, REX.W B8..BF | 16-bit register writes preserve upper bits; 32-bit writes clear upper half |
 | Data movement | 88/8A byte MOV; 89/8B MOV; 66 89/8B word MOV; C6 /0 byte immediate; C7 /0 word/dword/qword immediate | ModR/M register and bounded memory; REX high-byte semantics |
 | Addressing | 8D LEA; ModR/M with SIB, displacement, RIP-relative | 64-bit addressing subset; no segment or address-size overrides |
-| Extensions | 63 MOVSXD; 0F B6/B7 MOVZX; 0F BE/BF MOVSX; 98 CWDE/CDQE | Operand-size support varies by form |
-| Integer ALU | ADD, SUB, CMP, TEST, AND, OR, XOR register and selected immediate forms; F7 NOT/NEG/TEST; FF INC/DEC | No ADC/SBB; limited 16-bit ALU |
-| Multiplication | 0F AF IMUL; 69/6B immediate IMUL | No DIV/IDIV, MUL or one-operand IMUL |
-| Shifts | C1/D1/D3 SHL/SHR/SAR | No ROL/ROR/SHLD/SHRD |
+| Extensions | 63 MOVSXD; 0F B6/B7 MOVZX; 0F BE/BF MOVSX; 98 CBW/CWDE/CDQE; 99 CWD/CDQ/CQO | Operand-size support varies by form |
+| Integer ALU | ADD, SUB, ADC, SBB, CMP, TEST, AND, OR, XOR register and selected immediate forms; F7 NOT/NEG/TEST; FF INC/DEC | No 16-bit ALU beyond MOV; byte group F6 not implemented |
+| Multiplication | 0F AF two-operand IMUL; 69/6B three-operand IMUL; F7 /4 MUL, /5 IMUL, /6 DIV, /7 IDIV | 32/64-bit forms; no byte F6 multiply or divide |
+| Shifts | C1/D1/D3 ROL/ROR/SHL/SHR/SAR | No SHLD/SHRD, D0/D2 byte counts, or 16-bit forms |
 | Conditions | short and near Jcc, 0F 90..9F SETcc, 0F 40..4F CMOVcc | ZF/CF/SF/OF/PF tracked; AF not tracked |
-| Control flow | E8 CALL, C3 RET, E9/EB JMP, PUSH/POP, C9 LEAVE | No indirect CALL/JMP, syscalls, exceptions |
+| Control flow | E8 CALL, C3 RET, E9/EB JMP, FF /2 CALL and /4 JMP, PUSH/POP, C9 LEAVE | No syscalls, exceptions or far branches |
 | Alignment | 90 NOP, 0F 1F /0 NOP | Some prefix combinations unsupported |
 
 ## Known correctness and completeness limitations
@@ -22,7 +22,7 @@ Status: **in progress**. This is a source-level inventory, **not** a measured pe
 1. **Prefix handling:** legacy 66 and REX ordering improved, but the full x86-64 prefix state machine (segment overrides, address-size 67, LOCK/REP) is not implemented.
 2. **Flags:** parity flag was added in the current batch; auxiliary carry flag and undefined-flag behaviours are not modelled. Differential coverage remains incomplete.
 3. **Memory:** one bounded flat byte vector currently acts as guest memory/stack; no independent code/data mappings or permissions.
-4. **Instruction coverage:** no SIMD/FPU, atomics, system instructions, exception delivery, indirect branches, or comprehensive 8/16-bit arithmetic.
+4. **Instruction coverage:** no SIMD/FPU, atomics, system instructions, exception delivery, or comprehensive 8/16-bit arithmetic.
 5. **Decoder:** instruction length and unsupported combinations need further fuzzing. No production-grade instruction decoder.
 6. **Compiler fixtures:** existing hand-copied byte arrays are not a substitute for reproducible compilation and extraction.
 7. **Platform:** ARM64/iOS is compile-tested; native device runtime and performance have not been established.
@@ -37,7 +37,7 @@ Status: **in progress**. This is a source-level inventory, **not** a measured pe
 
 ## Next high-impact batches
 
-- Implement common compiler-blocking instruction families (ADC/SBB, rotates, division, indirect CALL/JMP) **only with comprehensive edge-case tests**.
-- Extract machine code from reproducible compiled C fixtures; reject unsupported relocations.
+- Implement the 16-bit ALU forms and the byte F6 group with the same edge-case and differential coverage.
 - Expand native differential testing and use sanitizers/fuzzing to find decoder and memory defects.
 - Consolidate duplicated width-specific operand access after tests protect current semantics.
+- Add compiler-generated signed-division fixtures once the loader/ABI fixtures support signed arguments.
