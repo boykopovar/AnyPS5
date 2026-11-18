@@ -465,12 +465,14 @@ std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::u
 
 std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target, std::uint32_t color, std::uint32_t mode) {
     const auto packing = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportPackingBase + target, static_cast<std::uint32_t>(ColorExportPacking::None));
-    const auto unorm = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11));
+    const auto unormTruncated = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11Truncated));
+    const auto unorm = Binary(state, spv::OpLogicalOr, TypeBool(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11)), unormTruncated);
     const auto floating = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Float11_11_10));
     const auto rounded = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4));
     const auto truncated = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4Truncated));
     const auto small = Binary(state, spv::OpLogicalOr, TypeBool(state), rounded, truncated);
-    const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color, false), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color, false));
+    const auto unormWord = Select(state, TypeU32(state), unormTruncated, PackExport(state, IrBufferFormat::Format11_11_10UNorm, color, true), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color, false));
+    const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color, false), unormWord);
     const auto nibbles = Select(state, TypeU32(state), truncated, PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color, true), PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color, false));
     const auto word = Select(state, TypeU32(state), small, nibbles, wide);
     const auto packed = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), unorm, floating), small);

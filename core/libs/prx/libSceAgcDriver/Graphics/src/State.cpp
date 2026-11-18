@@ -1050,7 +1050,7 @@ ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRe
 }
 
 bool WordPacked(ShaderRecompiler::ColorExportPacking packing) {
-    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || NibblePacked(packing);
+    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11Truncated || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || NibblePacked(packing);
 }
 
 // CB_COLOR_INFO FORMAT / NUMBER_TYPE / COMP_SWAP to a Vulkan attachment format. AMD formats list
@@ -2625,7 +2625,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.componentMapping = decoded.componentMapping;
     color.packing = decoded.packing;
     if (WordPacked(color.packing) && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
-    Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 10_11_11 unorm color targets are unsupported");
+    if (color.packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 && (info & 0x00040000u) != 0) color.packing = ShaderRecompiler::ColorExportPacking::Unorm10_11_11Truncated;
     if (color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && (info & 0x00040000u) != 0) color.packing = ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated;
     for (std::uint32_t word = 0; word < 2; ++word) {
         const auto clear = find(cx, 0x323 + word + stride);
