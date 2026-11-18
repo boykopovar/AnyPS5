@@ -565,7 +565,7 @@ class ReportSizeCapTests(unittest.TestCase):
 
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
-        if os.name == "nt" or not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):
+        if not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):
             self.skipTest("the workflow step runs in bash with jq, sed and sha256sum on Linux")
         lines = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-overlap.yml").read_text(encoding="utf-8").splitlines()
         start = next(index for index, line in enumerate(lines) if "tools/pr_overlap.py" in line)
