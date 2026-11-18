@@ -25,7 +25,9 @@
  */
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <mutex>
 #include <new>
@@ -55,6 +57,10 @@ StringVector& PreferredLanguagesOverride() {
 std::vector<ObserverEntry>& ObserverMap() {
     static auto* map = new std::vector<ObserverEntry>;
     return *map;
+}
+
+void StoreExactMatch(bool* exactMatch, bool value) {
+    if (!GuestCopyOut_nid_no_patch(exactMatch, &value, sizeof(value))) throw std::invalid_argument("null WTF language match argument");
 }
 
 void CheckContext(void* context) {
@@ -146,7 +152,21 @@ extern "C" void APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(void* con
 
 extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const String* localeName) {
     if (!localeName) throw std::invalid_argument("null WTF string");
-    return *localeName;
+    const int savedErrno = errno;
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    bool copied = GuestCopyIn_nid_no_patch(&impl, &localeName->impl, sizeof(impl));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::displayNameForLanguageLocale: unreadable string");
+    if (!impl) return String();
+    unsigned refCount = 0;
+    copied = GuestCopyIn_nid_no_patch(&refCount, &impl->refCount, sizeof(refCount));
+    if (copied) {
+        refCount += 2;
+        copied = GuestCopyOut_nid_no_patch(&impl->refCount, &refCount, sizeof(refCount));
+    }
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::displayNameForLanguageLocale: unusable string implementation");
+    return String(impl);
 }
 
 extern "C" void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context) {
@@ -189,7 +209,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         String canonicalizedLanguageFromList = CanonicalLanguageIdentifier(languageList->buffer[i]);
 
         if (_ZN3WTF5equalEPKNS_10StringImplES2_(lowercaseLanguage.impl, canonicalizedLanguageFromList.impl)) {
-            *exactMatch = true;
+            StoreExactMatch(exactMatch, true);
             return i;
         }
 
@@ -208,7 +228,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         }
     }
 
-    *exactMatch = false;
+    StoreExactMatch(exactMatch, false);
 
     if (languageWithoutLocaleMatch) return languageWithoutLocaleMatchIndex;
 

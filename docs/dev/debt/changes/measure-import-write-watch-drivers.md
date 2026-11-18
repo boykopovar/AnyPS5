@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Pages under an import window]
+
+- [Pages under an import window](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) whose protection an import resolves count as stored only when their bytes change: a same-value CPU store in that window cannot be told from driver activity and does not win over pending results. On Windows, NVIDIA 617.42 marks every private MEM_WRITE_WATCH page after import until a GPU use completes; NVIDIA 610.74 and AMD 32.0.21045.16010 mark each page once, at the import, and none after a reset; other drivers are unverified. Imports of at least 1 MiB wait for a 4-byte read on the separate settle queue inside the window. Smaller imports stay compared until a deferred read completes; a later lookup rewatches their pages, stamping their blocks as CPU stores (the block's other pages keep their state). Blocks overlapping a live storage image or of an import retired before rewatching, and imports without a settle queue, stay compared. Shared-memory imports keep separate-alias tracking.
