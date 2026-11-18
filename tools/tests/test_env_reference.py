@@ -634,6 +634,18 @@ class EnvReferenceTests(unittest.TestCase):
         python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
+class KindOfTests(unittest.TestCase):
+    def test_reader_name_decides_when_known(self):
+        self.assertEqual(env_reference.kind_of("IsEnvironmentSet", "atoi("), "presence")
+        self.assertEqual(env_reference.kind_of("EnvInt", ""), "integer")
+        self.assertEqual(env_reference.kind_of("GetEnvironmentVariableW", "!= nullptr"), "string")
+
+    def test_unknown_readers_use_the_surrounding_window(self):
+        self.assertEqual(env_reference.kind_of("getenv", 'getenv("X") != nullptr'), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "!getenv(x)"), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "int v = atoi(p)"), "integer")
+        self.assertEqual(env_reference.kind_of("getenv", "std::string s = p"), "string")
+
 
 if __name__ == "__main__":
     unittest.main()
