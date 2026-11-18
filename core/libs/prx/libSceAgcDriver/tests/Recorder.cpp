@@ -15331,7 +15331,7 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
         check(24);
         vertex.vertexAttributes = {attributeFor(address, 16, fetchIndex)};
         auto indirect = draw;
-        indirect.indirect.emplace();
+        indirect.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{};
         reject([&] { Draw(context, consumer, indirect, shaders); }, "vertex buffer aliases the render target");
         if (fetchIndex == 0) {
             const std::array<std::uint16_t, 3> indices{0, 1, 2};

@@ -334,7 +334,7 @@ int main() {
         try { Draw(*device, alternating, 0x10052u, replace()); } catch (const std::exception& error) { orderedRefused = std::string(error.what()).find("late tests") != std::string::npos; }
         Require(orderedRefused, "ordered fragment execution was not refused");
         bool indirectRefused = false;
-        try { Draw(*device, alternating, exported, replace(), 3u, 1u, false, {}, [](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect.emplace(); }); } catch (const std::exception& error) { indirectRefused = std::string(error.what()).find("direct triangle lists") != std::string::npos; }
+        try { Draw(*device, alternating, exported, replace(), 3u, 1u, false, {}, [](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{}; }); } catch (const std::exception& error) { indirectRefused = std::string(error.what()).find("direct triangle lists") != std::string::npos; }
         Require(indirectRefused, "an indirect replay draw was not refused");
         auto killed = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         killed.insert(std::find(killed.begin(), killed.end(), 0xf800180fu), 0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u);
