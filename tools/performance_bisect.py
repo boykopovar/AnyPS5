@@ -18,9 +18,18 @@ RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", 
                  "regression_pct", "max_spread_pct", "titles", "content"}
 
 
+def unique_recipe_fields(pairs):
+    fields = {}
+    for name, value in pairs:
+        if name in fields:
+            raise ValueError(f"recipe has a duplicate field: {name}")
+        fields[name] = value
+    return fields
+
+
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
@@ -36,7 +45,7 @@ def load_recipe(path):
         if not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command):
             raise ValueError(f"recipe.build_commands[{number - 1}] must be a non-empty argument list")
     build_dir = recipe.get("build_dir", "build")
-    if not isinstance(build_dir, str) or not build_dir or Path(build_dir).is_absolute() or ".." in Path(build_dir).parts or Path(build_dir) == Path("."):
+    if not isinstance(build_dir, str) or not build_dir or Path(build_dir).anchor or ".." in Path(build_dir).parts or Path(build_dir) == Path("."):
         raise ValueError("recipe.build_dir must be a non-root relative path inside the worktree")
     games = recipe.get("games")
     if not isinstance(games, list) or not games:
@@ -144,8 +153,8 @@ def git(repo, *args):
 
 
 def first_parent_commits(repo, good, bad):
-    good_sha = git(repo, "rev-parse", "--verify", f"{good}^{{commit}}")
-    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^{{commit}}")
+    good_sha = git(repo, "rev-parse", "--verify", f"{good}^0")
+    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^0")
     result = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha], capture_output=True)
     if result.returncode:
         raise ValueError("good commit must be an ancestor of bad commit")
@@ -298,6 +307,7 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         root = Path(temporary)
         worktree = root / "source"
         results = root / "results"
+        results.mkdir()
         git(repo, "worktree", "add", "--detach", str(worktree), good_sha)
         try:
             baseline = measure_commit(repo, worktree, results, recipe, good_sha)
@@ -334,6 +344,9 @@ def build_parser():
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

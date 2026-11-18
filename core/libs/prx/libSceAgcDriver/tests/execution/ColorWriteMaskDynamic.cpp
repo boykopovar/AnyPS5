@@ -199,8 +199,8 @@ struct MaskTrace {
     AgcDriver::Graphics::DeviceFunctions* functions;
     explicit MaskTrace(const AgcDriver::Graphics::Context& context) {
         functions = const_cast<AgcDriver::Graphics::DeviceFunctions*>(context.functions);
-        Require(functions != nullptr && functions->cmdSetColorWriteMask != nullptr, "vkCmdSetColorWriteMaskEXT is unavailable");
-        NativeSetMasks = functions->cmdSetColorWriteMask;
+        NativeSetMasks = context.dynamicColorWriteMask ? reinterpret_cast<PFN_vkCmdSetColorWriteMaskEXT>(context.deviceProc(context.device, "vkCmdSetColorWriteMaskEXT")) : nullptr;
+        Require(functions != nullptr && NativeSetMasks != nullptr, "vkCmdSetColorWriteMaskEXT is unavailable");
         functions->cmdSetColorWriteMask = CountMasks;
     }
     ~MaskTrace() { functions->cmdSetColorWriteMask = NativeSetMasks; }
@@ -256,7 +256,7 @@ void RecordedMasks(AgcDriver::VulkanDevice& device, const Shaders& compiled, VkC
     before = MaskSets.load();
     AgcDriver::Graphics::Draw(context, StateFor(redBlue, true, false), FullScreen, shaders);
     Require(continued() == passes + 1u, "the draw with the same color write mask did not continue the open pass; breaks:" + BreaksSince(breaks));
-    ExpectSets(before, 1u, "a continued draw with the same color write mask");
+    ExpectSets(before, std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr ? 0u : 1u, "a continued draw with the same color write mask");
     ExpectMasks({redBlue}, "a continued draw with the same color write mask");
     recorder.Commands();
     before = MaskSets.load();

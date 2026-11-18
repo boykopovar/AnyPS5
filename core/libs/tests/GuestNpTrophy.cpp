@@ -171,6 +171,8 @@ int main() {
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == TrophyNotUnlocked, "icon of a locked trophy");
     Require(sceNpTrophyUnlockTrophy(context, handle, 2, &platinum) == InvalidTrophyId, "unlock a trophy past the count");
+    errno = 71;
+    Require(sceNpTrophyUnlockTrophy(context, handle, 1, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "an unwritable platinum id was taken");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == 0 && platinum == -1, "unlock trophy 1");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == AlreadyUnlocked, "unlock trophy 1 twice");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
@@ -212,10 +214,18 @@ int main() {
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
     Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    errno = 71;
+    Require(sceNpTrophyCreateHandle(reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "unwritable handle creation");
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
     Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, nullptr, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unwritable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable trophy icon size pointer");
     errno = 71;
     Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
     Require(errno == 71, "errno preserved across unmapped game details");
