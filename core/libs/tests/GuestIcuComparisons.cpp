@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -110,6 +111,23 @@ void Boundaries() {
     try { u_memcmp_nid_postfix(nullptr, u"", 1); } catch (const std::invalid_argument&) { ++rejected; }
     try { u_memcmpCodePointOrder_nid_postfix(u"", nullptr, -1); } catch (const std::invalid_argument&) { ++rejected; }
     Require(rejected == 5, "invalid required buffers throw");
+
+    const auto* const unmapped = reinterpret_cast<const char16_t*>(std::uintptr_t{0x10});
+    const auto* const otherUnmapped = reinterpret_cast<const char16_t*>(std::uintptr_t{0x20});
+    errno = 71;
+    Require(u_strncmp_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero strncmp count does not read unmapped pointer");
+    Require(u_memcmp_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero memcmp count does not read unmapped pointer");
+    Require(u_memcmpCodePointOrder_nid_postfix(unmapped, u"", 0) == 0 && errno == 71, "zero code-point count does not read unmapped pointer");
+    Require(u_memcmpCodePointOrder_nid_postfix(unmapped, unmapped, 1) == 0 && errno == 71, "identical code-point unmapped pointers do not fault");
+    int unreadableRejected = 0;
+    try { errno = 71; u_strlen_nid_postfix(unmapped); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strlen preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_strcmp_nid_postfix(unmapped, u""); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strcmp preserves errno on first"); ++unreadableRejected; }
+    try { errno = 71; u_strcmp_nid_postfix(u"", otherUnmapped); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strcmp preserves errno on second"); ++unreadableRejected; }
+    try { errno = 71; u_strncmp_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_strncmp preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmp_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmp preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmpCodePointOrder_nid_postfix(unmapped, u"", 1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmpCodePointOrder positive count preserves errno"); ++unreadableRejected; }
+    try { errno = 71; u_memcmpCodePointOrder_nid_postfix(unmapped, u"", -1); } catch (const std::invalid_argument&) { Require(errno == 71, "u_memcmpCodePointOrder negative count preserves errno"); ++unreadableRejected; }
+    Require(unreadableRejected == 7, "unreadable buffers throw invalid_argument");
 }
 
 } // namespace
