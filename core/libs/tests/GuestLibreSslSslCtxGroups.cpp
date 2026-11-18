@@ -179,6 +179,16 @@ static void TestAlpn() {
     Require(fixture.Alpn() == nullptr && Load<unsigned int>(fixture.internal, AlpnLength) == 12);
     Store<const unsigned char*>(fixture.expected, AlpnList, nullptr);
     Require(std::memcmp(fixture.internal, fixture.expected, InternalSize) == 0);
+    Require(SSL_CTX_set_alpn_protos_nid_postfix(fixture.Context(), shorter, 3) == 0);
+    fixture.RequireAlpn(shorter, 3);
+    const int allocations = liveAllocations;
+    failAllocation = true;
+    Require(SSL_CTX_set_alpn_protos_nid_postfix(fixture.Context(), protocols, 12) == 1);
+    failAllocation = false;
+    Require(fixture.Alpn() == nullptr && Load<unsigned int>(fixture.internal, AlpnLength) == 3);
+    Require(liveAllocations == allocations - 1);
+    Store<const unsigned char*>(fixture.expected, AlpnList, nullptr);
+    Require(std::memcmp(fixture.internal, fixture.expected, InternalSize) == 0);
     Require(SSL_CTX_set_alpn_protos_nid_postfix(fixture.Context(), protocols, 0) == 0);
     fixture.RequireAlpn(protocols, 0);
 
