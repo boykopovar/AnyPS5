@@ -55,10 +55,6 @@ std::streamsize APS5_VABI libSceLibcInternalInventory_047_nid_no_patch(std::basi
 std::streamsize APS5_VABI libSceLibcInternalInventory_050_nid_no_patch(std::basic_streambuf<wchar_t>*);
 int APS5_VABI libSceLibcInternalInventory_058_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_066_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_067_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_068_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_069_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_070_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_071_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_072_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_073_nid_no_patch();
