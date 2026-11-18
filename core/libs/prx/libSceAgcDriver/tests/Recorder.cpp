@@ -5525,7 +5525,14 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
     }
 }
 
+bool SkipOnCpuVulkan(const Device& device, const char* what) {
+    if (device.Properties().deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) return false;
+    std::cout << "skipped, unproven on CPU Vulkan (llvmpipe): " << what << "\n";
+    return true;
+}
+
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
+    if (SkipOnCpuVulkan(device, "an unchanged draw input was copied again (draw snapshot reuse)")) return;
     const auto& context = device.GetContext();
     constexpr std::size_t bytes = 65536;
     void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
@@ -6509,6 +6516,7 @@ VKAPI_ATTR void VKAPI_CALL tightMemoryBudget(VkPhysicalDevice, VkPhysicalDeviceM
 }
 
 void drawInputMirrorTests(const Device& device) {
+    if (Recorder::DrawInputMirrors() && SkipOnCpuVulkan(device, "a reused draw input came back without its device-local mirror")) return;
     if (!DmaBufDeviceOpens()) {
         std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened; draw input mirrors not tested\n";
         return;
@@ -6605,6 +6613,7 @@ void drawInputMirrorTests(const Device& device) {
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
+    if (SkipOnCpuVulkan(device, "an unchanged draw input was copied again (draw input reuse)")) return;
     if (!DmaBufDeviceOpens()) {
         std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened; draw input reuse not tested\n";
         return;
