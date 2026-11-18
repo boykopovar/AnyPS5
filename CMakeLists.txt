@@ -951,6 +951,12 @@ if(BUILD_TESTING)
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
         set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
+        foreach(ctest_bundle_class Prepare Finish Path Cli CMake Repeat)
+            string(TOLOWER "${ctest_bundle_class}" ctest_bundle_group)
+            add_test(NAME ctest_bundle_${ctest_bundle_group} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ctest_bundle.py CTestBundle${ctest_bundle_class}Tests)
+            set_tests_properties(ctest_bundle_${ctest_bundle_group} PROPERTIES TIMEOUT 30)
+        endforeach()
         if(WIN32)
             get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
             list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})
