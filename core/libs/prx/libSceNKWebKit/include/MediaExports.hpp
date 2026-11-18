@@ -6,7 +6,19 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace WebCore {
+
+class MediaSample;
+
+} // namespace WebCore
+
 extern "C" {
+
+bool APS5_VABI _ZNK7WebCore11MediaSample8hasAlphaEv(const WebCore::MediaSample* self);
+bool APS5_VABI _ZNK7WebCore11MediaSample15isNonDisplayingEv(const WebCore::MediaSample* self);
+bool APS5_VABI _ZNK7WebCore11MediaSample6isSyncEv(const WebCore::MediaSample* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore11MediaSample12toJSONStringEv(const WebCore::MediaSample* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv(const WTF::MediaTime* self);
 
 WTF::MediaTime APS5_VABI _ZN3WTF3absERKNS_9MediaTimeE(const WTF::MediaTime& rhs);
 const WTF::MediaTime& APS5_VABI _ZN3WTF9MediaTime11invalidTimeEv();

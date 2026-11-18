@@ -544,10 +544,6 @@ int APS5_VABI _ZN7WebCore9FetchBody12fromFormDataERNS_22ScriptExecutionContextER
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore11MediaSample8hasAlphaEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore20HTMLFrameElementBase6heightEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2220,10 +2216,6 @@ int APS5_VABI _ZN7WebCore13GraphicsLayer15addChildAtIndexEON3WTF3RefIS0_NS1_13Du
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore11MediaSample12toJSONStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_E_plus_sOp_plus_H1I_plus_w_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2768,10 +2760,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_HRCfQVxjVQ4_nid_no_patch() {
 APS5_EXPORT("HRCfQVxjVQ4", libSceNKWebKitLegacyUnknown_HRCfQVxjVQ4_nid_no_patch);
 
 int APS5_VABI _ZN7WebCore26IdentityTransformOperationD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore11MediaSample15isNonDisplayingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5457,10 +5445,6 @@ int APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnly6createEPN3JSC9StructureEPNS_17JSD
 }
 
 int APS5_VABI _ZNK7WebCore37BasicComponentTransferFilterOperation14transformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore11MediaSample6isSyncEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -27303,10 +27287,6 @@ int APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE() {
 }
 
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
