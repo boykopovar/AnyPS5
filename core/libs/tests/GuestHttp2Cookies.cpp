@@ -46,6 +46,41 @@ static bool NoMatch(int box, const char* url) {
            sceHttp2GetCookie(box, url, buffer, &required, sizeof(buffer)) == NotFound && required == 7 && buffer[0] == 'x';
 }
 
+struct GuardedPages {
+    void* base = nullptr;
+    std::size_t pageSize = 4096u;
+    char* end() const { return static_cast<char*>(base) + pageSize; }
+};
+
+static GuardedPages MakeGuardedPages() {
+    GuardedPages pages{};
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    if (info.dwPageSize != 0) pages.pageSize = info.dwPageSize;
+    pages.base = VirtualAlloc(nullptr, pages.pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages.base != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(static_cast<char*>(pages.base) + pages.pageSize, pages.pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    const long sysPage = sysconf(_SC_PAGESIZE);
+    if (sysPage > 0) pages.pageSize = static_cast<std::size_t>(sysPage);
+    pages.base = mmap(nullptr, pages.pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages.base != MAP_FAILED);
+    Require(mprotect(static_cast<char*>(pages.base) + pages.pageSize, pages.pageSize, PROT_NONE) == 0);
+#endif
+    return pages;
+}
+
+static void FreeGuardedPages(GuardedPages& pages) {
+#ifdef _WIN32
+    VirtualFree(pages.base, 0, MEM_RELEASE);
+#else
+    munmap(pages.base, pages.pageSize * 2);
+#endif
+    pages.base = nullptr;
+}
+
 static void CheckUnmappedOutputs(int box) {
     auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
@@ -123,8 +158,37 @@ static void CheckUnmappedOutputs(int box) {
     Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024);
 #endif
     Require(errno == 71);
+
+    GuardedPages guard = MakeGuardedPages();
+    const int edgeBox = sceHttp2CreateCookieBox(0x10000);
+    Require(edgeBox > 0);
+    char* const nulTerminated = guard.end() - 8;
+    std::memcpy(nulTerminated, "edge=ok\0", 8);
+    errno = 71;
+#ifndef _WIN32
+    rusage beforeGuard{};
+    getrusage(RUSAGE_SELF, &beforeGuard);
+#endif
+    Require(sceHttp2AddCookie(edgeBox, url, nulTerminated, 4096) == 0);
+    Require(errno == 71);
+    Require(sceHttp2AddCookie(edgeBox, url, nulTerminated, std::size_t{1} << 40) == 0);
+    Require(errno == 71);
+#ifndef _WIN32
+    rusage afterGuard{};
+    getrusage(RUSAGE_SELF, &afterGuard);
+    Require(afterGuard.ru_maxrss - beforeGuard.ru_maxrss < 64 * 1024);
+#endif
+    char* const unterminated = guard.end() - 7;
+    std::memcpy(unterminated, "edge=ok", 7);
+    Require(sceHttp2AddCookie(edgeBox, url, unterminated, 4096) == InvalidValue);
+    Require(errno == 71);
+    Require(sceHttp2AddCookie(edgeBox, url, unterminated, std::size_t{1} << 40) == InvalidValue);
+    Require(errno == 71);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(Get(edgeBox, url) == "edge=ok");
+    Require(sceHttp2DeleteCookieBox(edgeBox) == 0);
+    FreeGuardedPages(guard);
 }
 
 static Http2CookieStats Stats(int box) {
@@ -215,6 +279,20 @@ static void CheckStoreValidation() {
     Require(Add(box, "http://sub.other.com/", "hostonly=1; Domain=") == 0);
     Require(Get(box, "http://sub.other.com/") == "hostonly=1");
     Require(NoMatch(box, "http://other.com/"));
+
+    GuardedPages guard = MakeGuardedPages();
+    char* const nulTerminated = guard.end() - 8;
+    std::memcpy(nulTerminated, "edge=ok\0", 8);
+    Require(sceHttp2AddCookie(box, "http://edge.example/", nulTerminated, 4096) == 0);
+    Require(Get(box, "http://edge.example/") == "edge=ok");
+    Require(sceHttp2AddCookie(box, "http://edge.example/", nulTerminated, std::size_t{1} << 40) == 0);
+    Require(Get(box, "http://edge.example/") == "edge=ok");
+    char* const unterminated = guard.end() - 7;
+    std::memcpy(unterminated, "edge=ok", 7);
+    Require(sceHttp2AddCookie(box, "http://edge-unterminated.example/", unterminated, 4096) == InvalidValue);
+    Require(sceHttp2AddCookie(box, "http://edge-unterminated.example/", unterminated, std::size_t{1} << 40) == InvalidValue);
+    Require(NoMatch(box, "http://edge-unterminated.example/"));
+    FreeGuardedPages(guard);
 
     Require(sceHttp2DeleteCookieBox(box) == 0);
 }
