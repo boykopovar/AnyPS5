@@ -76,6 +76,24 @@ static void CheckRoundingAndScaling() {
     Require(__isinfl_nid_postfix(1.0L) == 0 && __isinfl_nid_postfix(static_cast<long double>(NAN)) == 0 && __isinfl_nid_postfix(0.0L) == 0);
 }
 
+static void CheckSqrtlNegativeFlags() {
+    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L}) {
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        Require(std::feraiseexcept(FE_INEXACT) == 0);
+        errno = 0;
+        const long double result = sqrtl_nid_postfix(input);
+        Require(std::isnan(result) && errno == EDOM);
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+        if (flags != (FE_INEXACT | FE_INVALID)) std::fprintf(stderr, "sqrtl flags: input=%Lg flags=0x%x expected=0x%x\n", input, flags, FE_INEXACT | FE_INVALID);
+        Require(flags == (FE_INEXACT | FE_INVALID));
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        errno = 0;
+        Require(std::isnan(sqrtl_nid_postfix(input)) && errno == EDOM);
+        Require(std::fetestexcept(FE_ALL_EXCEPT) == FE_INVALID);
+    }
+    Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+}
+
 static void CheckLogblLroundl() {
     Require(logbl_nid_postfix(8.0L) == 3.0L && logbl_nid_postfix(0.75L) == -1.0L && logbl_nid_postfix(-0.75L) == -1.0L);
     Require(logbl_nid_postfix(0x1p-16445L) == -16445.0L);
@@ -816,8 +834,13 @@ static void CheckGuestPointers() {
     Require(*finite == 2.5L && std::memcmp(words, &mantissa, sizeof(mantissa)) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "sqrtl-negative-flags") == 0) {
+        CheckSqrtlNegativeFlags();
+        return 0;
+    }
     CheckRoundingAndScaling();
+    CheckSqrtlNegativeFlags();
     CheckLogblLroundl();
     CheckSignalingNanPassThrough();
     CheckErrno();
