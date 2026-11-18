@@ -474,6 +474,24 @@ int AddPkcs1Type2(unsigned char* to, int size, const unsigned char* from, int le
     return 1;
 }
 
+int AddSslv23(unsigned char* to, int size, const unsigned char* from, int length, const char* function) {
+    if (length > size - 11) return 0;
+    if (length < 0) throw std::invalid_argument(std::string(function) + ": negative input length");
+    RequireBuffer(from, length, function, "input");
+    to[0] = 0;
+    to[1] = 2;
+    unsigned char* padding = to + 2;
+    const int random = size - 3 - 8 - length;
+    HostEntropy_nid_no_patch(padding, static_cast<std::size_t>(random));
+    for (int index = 0; index < random; ++index, ++padding)
+        while (!*padding) HostEntropy_nid_no_patch(padding, 1);
+    std::memset(padding, 3, 8);
+    padding += 8;
+    *padding++ = 0;
+    if (length) std::memcpy(padding, from, static_cast<std::size_t>(length));
+    return 1;
+}
+
 int AddOaep(unsigned char* to, int size, const unsigned char* from, int length, const char* function) {
     const int encoded = size - 1;
     if (length > encoded - 2 * Sha1Bytes - 1) return 0;
@@ -620,7 +638,8 @@ int APS5_VABI DefaultPublicEncrypt(int length, const unsigned char* from, unsign
         padded = AddOaep(block.data(), size, from, length, function);
         break;
     case PaddingSslv23:
-        NotImplemented_nid_no_patch("RSA_padding_add_SSLv23");
+        padded = AddSslv23(block.data(), size, from, length, function);
+        break;
     case PaddingNone:
         padded = AddNone(block.data(), size, from, length, function);
         break;

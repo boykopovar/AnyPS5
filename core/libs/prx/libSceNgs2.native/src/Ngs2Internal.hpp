@@ -139,6 +139,11 @@ struct Ngs2VoiceCustomGain {
     bool lifecycleUnknown = false;
 };
 
+struct Ngs2VoiceCustomChannelMixer {
+    std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> level{};
+    bool configured = false;
+};
+
 struct Ngs2SubmixerCompressor {
     bool configured = false;
     Ngs2SubmixerVoiceCompressorParam param{};
@@ -229,6 +234,7 @@ struct Ngs2Voice {
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
+    std::vector<Ngs2VoiceCustomChannelMixer> customChannelMixer;
     Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
@@ -318,6 +324,9 @@ struct Ngs2System {
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
     std::atomic<std::uint64_t> callbackSequence{0};
+    std::array<std::array<std::uint8_t, 24>, 32> slotData{};
+    std::array<bool, 32> slotSet{};
+    float unnamedParam = 0.0f;
 };
 
 std::string Ngs2Hex(std::uint32_t value);

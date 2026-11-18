@@ -55,6 +55,7 @@ int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
     PthreadSpinlockPrivate* spinlock = nullptr;
     if (!CopyGuestInPreservingErrno(spinlock, lock)) return PosixThread::GUEST_EFAULT;
     if (!spinlock) return PosixThread::GUEST_EINVAL;
+    if (spinlock->owner.load(std::memory_order_acquire) != std::thread::id{}) return GUEST_EBUSY;
     if (!CopyGuestOutPreservingErrno(lock, nullptr)) return PosixThread::GUEST_EFAULT;
     delete spinlock;
     return 0;
