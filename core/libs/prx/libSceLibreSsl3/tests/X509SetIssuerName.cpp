@@ -218,6 +218,49 @@ void AllocationFailuresKeepThePreviousName() {
     Require(allocations.empty());
 }
 
+
+struct DynamicObjectName {
+    Asn1Object_nid_no_patch object{};
+    Asn1String value{2, 12, reinterpret_cast<unsigned char*>(const_cast<char*>("xx")), 0};
+    LibreSslX509NameEntry entry{};
+    char* entryPointers[1]{};
+    LibreSslStack stack{};
+    LibreSslX509Name name{};
+    unsigned char objectBytes[3]{0x55, 0x04, 0x03};
+
+    DynamicObjectName() {
+        object.shortName = const_cast<char*>("CN");
+        object.longName = const_cast<char*>("commonName");
+        object.nid = 13;
+        object.length = 3;
+        object.data = objectBytes;
+        object.flags = 0x04 | 0x08;
+        entry = LibreSslX509NameEntry{&object, &value, 0, 0};
+        entryPointers[0] = reinterpret_cast<char*>(&entry);
+        stack = LibreSslStack{1, entryPointers, 0, 1, nullptr};
+        name = LibreSslX509Name{&stack, 0, nullptr, nullptr, 0};
+    }
+};
+
+void PartialAllocationFailuresReachDynamicObjectFields() {
+    DynamicObjectName source;
+    int completed = 0;
+    for (int budget = 0; budget < 12; ++budget) {
+        remainingAllocations = budget;
+        LibreSslX509Name* copy = X509_NAME_dup_nid_no_patch(&source.name);
+        remainingAllocations = -1;
+        if (!copy) {
+            Require(allocations.empty());
+            continue;
+        }
+        ++completed;
+        const auto* entry = reinterpret_cast<const LibreSslX509NameEntry*>(copy->entries->data[0]);
+        Require(entry != nullptr && entry->object != nullptr);
+        X509_NAME_free_nid_no_patch(copy);
+        Require(allocations.empty());
+    }
+    Require(completed > 0);
+}
 }
 
 int main() {
@@ -230,5 +273,6 @@ int main() {
     DuplicatesAndReplaces();
     DeepCopiesValuesAndObjects();
     AllocationFailuresKeepThePreviousName();
+    PartialAllocationFailuresReachDynamicObjectFields();
     std::puts("libSceLibreSsl3 X509_set_issuer_name tests passed");
 }

@@ -60,6 +60,7 @@ Asn1Object_nid_no_patch* DuplicateObject(const Asn1Object_nid_no_patch* source) 
     copy->data = nullptr;
     copy->length = 0;
     if (source->flags & DynamicStrings) {
+        copy->flags |= DynamicStrings;
         if (source->shortName) {
             const std::size_t length = std::strlen(source->shortName) + 1;
             auto* text = static_cast<char*>(malloc_nid_postfix(length));
@@ -80,7 +81,6 @@ Asn1Object_nid_no_patch* DuplicateObject(const Asn1Object_nid_no_patch* source) 
             std::memcpy(text, source->longName, length);
             copy->longName = text;
         }
-        copy->flags |= DynamicStrings;
     }
     if (source->data) {
         if (source->length < 0) {
