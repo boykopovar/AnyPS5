@@ -258,6 +258,49 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(argv[:2], [str(output / "app.libc.prx.guest.prx.registry.json"), str(output / "app.registry.json")])
         self.assertEqual(argv[2:], ["--libs", "libs-a", "--libs", "libs-b", "--modules", str(work / "source" / "sce_module"), "--json", "report.json"])
 
+    def test_the_modules_beside_eboot_are_audited_without_the_executable(self):
+        self.module("sce_module/libc.prx")
+        self.module("libfmod.prx")
+        self.module("guest.bin", ELF)
+        work = self.root / "work"
+        commands = []
+
+        def relink(command, **options):
+            commands.append(command)
+            (Path(command[-1]).parent / "app.registry.json").write_text("[]")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(subprocess, "run", side_effect=relink), mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit:
+            code, _ = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+        self.assertEqual(code, 0)
+        source = work / "source"
+        self.assertEqual(commands[0][-4:], ["--module-dir", ".", str(source / "eboot.elf"), str(work / "output" / "app.elf")])
+        argv = audit.call_args.args[0]
+        modules = [Path(argv[index + 1]) for index, option in enumerate(argv) if option == "--modules"]
+        self.assertEqual(len(modules), 2)
+        self.assertEqual(modules[0], source / "sce_module")
+        self.assertEqual(modules[1].parent, source)
+        self.assertEqual(sorted(path.name for path in modules[1].iterdir()), ["guest.bin", "libfmod.prx"])
+        for name in ("guest.bin", "libfmod.prx"):
+            self.assertEqual((modules[1] / name).read_bytes(), (source / name).read_bytes())
+        self.assertTrue((source / "eboot.elf").is_file())
+
+    def test_modules_beside_eboot_that_cannot_be_gathered_stop_before_the_audit(self):
+        self.module("libfmod.prx")
+
+        def relink(command, **options):
+            (Path(command[-1]).parent / "app.registry.json").write_text("[]")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(subprocess, "run", side_effect=relink), \
+                mock.patch.object(audit_dump.os, "link", side_effect=OSError("no links")), \
+                mock.patch.object(audit_dump.shutil, "copyfile", side_effect=OSError("no copies")), \
+                mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", self.root / "work")
+        self.assertEqual(code, 2)
+        self.assertIn("cannot gather the modules beside eboot.bin: no copies", errors)
+        audit.assert_not_called()
+
     def test_a_reused_work_directory_does_not_audit_registries_left_by_an_earlier_run(self):
         work = self.root / "work"
         stale = work / "output" / "app.old.prx.guest.prx.registry.json"

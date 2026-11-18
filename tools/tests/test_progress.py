@@ -438,6 +438,17 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(group["done_names"], [])
             self.assertEqual(group["todo_names"], ["sceExampleSupportFormat"])
 
+    def test_noreturn_stub_wrappers_keep_callers_unimplemented(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "static [[noreturn]] void Unsupported() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI Pending() { Unsupported(); }\n")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], [])
+            self.assertEqual(group["todo_names"], ["Pending"])
+
     def test_stub_wrapper_calls_allow_whitespace(self):
         for separator in ("", " ", "\t", "\n", " /* separator */ "):
             with self.subTest(separator=separator), tempfile.TemporaryDirectory() as directory:
