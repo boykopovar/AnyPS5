@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -501,6 +503,17 @@ struct alignas(16) FakeDispatchable {
     const void* key;
 };
 
+std::atomic<std::uint64_t> reusedRight{0};
+std::atomic<std::uint64_t> reusedWrong{0};
+
+VKAPI_ATTR void VKAPI_CALL reusedFirst(VkCommandBuffer, VkStencilFaceFlags, std::uint32_t) {
+    reusedRight.fetch_add(1, std::memory_order_relaxed);
+}
+
+VKAPI_ATTR void VKAPI_CALL reusedSecond(VkCommandBuffer, VkStencilFaceFlags, std::uint32_t) {
+    reusedWrong.fetch_add(1, std::memory_order_relaxed);
+}
+
 VkDevice deviceOf(FakeDispatchable& dispatchable) {
     return reinterpret_cast<VkDevice>(&dispatchable);
 }
@@ -592,6 +605,42 @@ void EntryPointsBeyondTheSlotsAreKeyedByDevice() {
         Require(AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference) == peak, "creating and destroying devices grew the entries to " + std::to_string(AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference)) + " after cycle " + std::to_string(cycle));
     }
     Require(AgcDriver::Graphics::CommandDeviceEntries(CommandId::CmdSetStencilReference) == 0, "forgetting every cycled device left entries");
+    static const int raceKeys[2] = {};
+    FakeDispatchable racedFirst{&raceKeys[0]};
+    FakeDispatchable racedSecond{&raceKeys[1]};
+    FakeDispatchable racedCommands{&raceKeys[0]};
+    const auto firstReal = reinterpret_cast<PFN_vkVoidFunction>(&reusedFirst);
+    const auto secondReal = reinterpret_cast<PFN_vkVoidFunction>(&reusedSecond);
+    Require(CommandThunk(Name, firstReal, deviceOf(racedFirst)) == keyed, "the raced device was not given the keyed thunk");
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> reuses{0};
+    std::thread writer([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            AgcDriver::Graphics::ForgetCommandDevice(deviceOf(racedFirst));
+            CommandThunk(Name, secondReal, deviceOf(racedSecond));
+            AgcDriver::Graphics::ForgetCommandDevice(deviceOf(racedSecond));
+            CommandThunk(Name, firstReal, deviceOf(racedFirst));
+            reuses.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    std::uint64_t missing = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline && reusedWrong.load(std::memory_order_relaxed) == 0) {
+        for (int index = 0; index < 4096; ++index) {
+            try {
+                call(commandsOf(racedCommands), VK_STENCIL_FACE_FRONT_BIT, 1);
+            } catch (const std::logic_error&) {
+                ++missing;
+            }
+        }
+    }
+    stop.store(true);
+    writer.join();
+    Require(reusedWrong.load() == 0, "a lookup racing a forget and reuse of its node called another device's entry point " + std::to_string(reusedWrong.load()) + " times (" + std::to_string(reusedRight.load()) + " right, " + std::to_string(reuses.load()) + " reuses)");
+    Require(reusedRight.load() > 0 && reuses.load() > 0, "the forget and reuse race never ran both sides");
+    Require(AgcDriver::Graphics::CommandDeviceStorage(CommandId::CmdSetStencilReference) == peak, "the forget and reuse race grew the entries");
+    AgcDriver::Graphics::ForgetCommandDevice(deviceOf(racedFirst));
+    std::cout << "keyed race: " << reusedRight.load() << " right, " << missing << " missing, " << reuses.load() << " reuses\n";
 }
 
 void EveryListedCommandStreams() {
@@ -1326,6 +1375,29 @@ void PushDescriptorCost(int calls, int rounds) {
     std::printf("push descriptors (2 writes, 3 descriptors; medians of %d rounds): direct %.2f ns, streamed append %.2f ns, replay %.2f ns per call\n", rounds, median(raw), median(append), median(replay));
 }
 
+VKAPI_ATTR void VKAPI_CALL emptyStencil(VkCommandBuffer, VkStencilFaceFlags, std::uint32_t) {}
+
+void KeyedLookupCost(int calls, int rounds) {
+    using AgcDriver::Graphics::CommandThunk;
+    constexpr const char* Name = "vkCmdSetStencilReference";
+    const auto reals = stencils(std::make_integer_sequence<int, 8>{});
+    for (const auto real : reals) CommandThunk(Name, reinterpret_cast<PFN_vkVoidFunction>(real));
+    static const int keys[4] = {};
+    std::array<FakeDispatchable, 4> devices{FakeDispatchable{&keys[0]}, FakeDispatchable{&keys[1]}, FakeDispatchable{&keys[2]}, FakeDispatchable{&keys[3]}};
+    std::array<FakeDispatchable, 4> buffers = devices;
+    PFN_vkCmdSetStencilReference keyed = nullptr;
+    for (auto& device : devices) keyed = reinterpret_cast<PFN_vkCmdSetStencilReference>(CommandThunk(Name, reinterpret_cast<PFN_vkVoidFunction>(&emptyStencil), deviceOf(device)));
+    volatile PFN_vkCmdSetStencilReference raw = &emptyStencil;
+    std::vector<double> direct, newest, oldest;
+    for (int round = 0; round < rounds; ++round) {
+        direct.push_back(nanosPerCall(calls, [&](std::uint32_t call) { raw(commandsOf(buffers[3]), VK_STENCIL_FACE_FRONT_BIT, call); }));
+        newest.push_back(nanosPerCall(calls, [&](std::uint32_t call) { keyed(commandsOf(buffers[3]), VK_STENCIL_FACE_FRONT_BIT, call); }));
+        oldest.push_back(nanosPerCall(calls, [&](std::uint32_t call) { keyed(commandsOf(buffers[0]), VK_STENCIL_FACE_FRONT_BIT, call); }));
+    }
+    for (auto& device : devices) AgcDriver::Graphics::ForgetCommandDevice(deviceOf(device));
+    std::printf("keyed lookup past the slots, 4 devices (medians of %d rounds): raw %.2f ns, first node %.2f ns, fourth node %.2f ns per call\n", rounds, median(direct), median(newest), median(oldest));
+}
+
 bool InstrumentedBuild() {
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     return true;
@@ -1345,6 +1417,7 @@ int DirectModeCost() {
     constexpr int StreamedCalls = 1'000'000;
     constexpr int Rounds = 21;
     PushDescriptorCost(StreamedCalls / 4, Rounds);
+    KeyedLookupCost(StreamedCalls, Rounds);
     const auto costs = MeasureCommandCosts(DirectCalls, StreamedCalls, Rounds);
     const double thunkOver = costs.thunk - costs.raw;
     const double typedOver = costs.typedDirect - costs.raw;

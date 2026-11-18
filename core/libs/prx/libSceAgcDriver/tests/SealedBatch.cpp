@@ -508,6 +508,9 @@ void TwoThreadsAppendToTwoStreams() {
 
 void TwoThreadsChargeOneBudgetAtOnce() {
     constexpr std::uint64_t Streams = 20000;
+    constexpr std::uint64_t MostStreams = 16 * Streams;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    std::atomic<bool> late{false};
     WorkBudget budget(WorkBudget::Limits{4, 4, std::size_t{1} << 62});
     std::array<std::atomic<std::uint64_t>, 2> done{};
     std::array<std::size_t, 2> charged{};
@@ -518,7 +521,11 @@ void TwoThreadsChargeOneBudgetAtOnce() {
         ready.fetch_add(1);
         while (ready.load() != 2) std::this_thread::yield();
         otherAtStart[which] = done[other].load();
-        while (done[which].load() < Streams || done[other].load() < Streams) {
+        while (done[which].load() < MostStreams && (done[which].load() < Streams || done[other].load() < Streams)) {
+            if (late.load() || std::chrono::steady_clock::now() > deadline) {
+                late.store(true);
+                return;
+            }
             CommandStream stream(Real(), &budget);
             append(stream, static_cast<std::uint32_t>(which));
             charged[which] += stream.Charged();
@@ -529,6 +536,7 @@ void TwoThreadsChargeOneBudgetAtOnce() {
     charge(0);
     second.join();
     takeSeen();
+    Require(!late.load(), "two threads did not charge " + std::to_string(Streams) + " streams each within 60 seconds: " + std::to_string(done[0].load()) + " and " + std::to_string(done[1].load()));
     Require(otherAtStart[0] < Streams && otherAtStart[1] < Streams, "one thread finished charging before the other started");
     Require(budget.OutstandingBytes() == charged[0] + charged[1], "two threads charging one budget at once lost " + std::to_string(charged[0] + charged[1] - budget.OutstandingBytes()) + " bytes");
 }

@@ -35,10 +35,19 @@ std::array<std::array<std::atomic<PFN_vkVoidFunction>, ThunkSlots>, CommandCount
 std::mutex slotMutex;
 
 struct DeviceEntry {
+    std::atomic<std::uint64_t> version{0};
     std::atomic<const void*> key{nullptr};
     std::atomic<PFN_vkVoidFunction> real{nullptr};
     DeviceEntry* next = nullptr;
 };
+
+void rewrite(DeviceEntry& entry, const void* key, PFN_vkVoidFunction real) noexcept {
+    const auto version = entry.version.load(std::memory_order_relaxed);
+    entry.version.store(version + 1, std::memory_order_relaxed);
+    entry.real.store(real, std::memory_order_release);
+    entry.key.store(key, std::memory_order_release);
+    entry.version.store(version + 2, std::memory_order_release);
+}
 
 std::array<std::atomic<DeviceEntry*>, CommandCount> deviceEntries{};
 std::array<std::size_t, CommandCount> deviceEntryStorage{};
@@ -56,7 +65,14 @@ const void* dispatchKey(const void* handle) noexcept {
 
 PFN_vkVoidFunction deviceReal(std::size_t id, const void* key, const char* command) {
     for (auto* entry = deviceEntries[id].load(std::memory_order_acquire); entry != nullptr; entry = entry->next) {
-        if (entry->key.load(std::memory_order_acquire) == key) return entry->real.load(std::memory_order_relaxed);
+        for (;;) {
+            const auto before = entry->version.load(std::memory_order_acquire);
+            const auto held = entry->key.load(std::memory_order_acquire);
+            const auto real = entry->real.load(std::memory_order_acquire);
+            if ((before & 1) != 0 || entry->version.load(std::memory_order_relaxed) != before) continue;
+            if (held == key) return real;
+            break;
+        }
     }
     noDeviceEntry(command);
 }
@@ -696,8 +712,7 @@ PFN_vkVoidFunction deviceThunk(std::size_t id, std::string_view name, PFN_vkVoid
         free->next = deviceEntries[id].load(std::memory_order_relaxed);
         ++deviceEntryStorage[id];
     }
-    free->real.store(real, std::memory_order_relaxed);
-    free->key.store(key, std::memory_order_release);
+    rewrite(*free, key, real);
     if (fresh) deviceEntries[id].store(free, std::memory_order_release);
     keyedDevices.fetch_add(1, std::memory_order_relaxed);
     return keyedThunks()[id];
@@ -776,7 +791,7 @@ void ForgetCommandDevice(VkDevice device) {
     for (std::size_t id = 0; id < CommandCount; ++id) {
         for (auto* entry = deviceEntries[id].load(std::memory_order_relaxed); entry != nullptr; entry = entry->next) {
             if (entry->key.load(std::memory_order_relaxed) != key) continue;
-            entry->key.store(nullptr, std::memory_order_release);
+            rewrite(*entry, nullptr, nullptr);
             keyedDevices.fetch_sub(1, std::memory_order_relaxed);
         }
     }
