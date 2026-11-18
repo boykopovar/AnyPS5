@@ -119,10 +119,19 @@ AgcDriver::Graphics::ResidentStatistics Build(std::uint32_t expected, const std:
     return counts;
 }
 
-void StoreAfterStamp(std::uint64_t begin, std::uint64_t end) {
-    if (begin != reinterpret_cast<std::uintptr_t>(Data) || end != begin + BlockBytes) return;
+void StoreAfterStamp(std::uint64_t begin, std::uint64_t end, bool copied) {
+    if (!copied || begin != reinterpret_cast<std::uintptr_t>(Data) || end != begin + BlockBytes) return;
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) std::atomic_ref<std::uint32_t>(Data[lane]).store(400 + lane, std::memory_order_relaxed);
     RacedStores.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::atomic<std::uint32_t> SkippedStores = 0;
+
+void StoreAfterSkip(std::uint64_t begin, std::uint64_t end, bool copied) {
+    if (copied || begin != reinterpret_cast<std::uintptr_t>(Data) || end != begin + BlockBytes) return;
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) std::atomic_ref<std::uint32_t>(Data[lane]).store(500 + lane, std::memory_order_relaxed);
+    static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(Data), BlockBytes));
+    SkippedStores.fetch_add(1, std::memory_order_relaxed);
 }
 
 }  // namespace
@@ -182,6 +191,21 @@ int main() {
         check(counts.skipped == 1 && counts.copied == 0, "the second build after the raced store reported skipped " + std::to_string(counts.skipped) + ", copied " + std::to_string(counts.copied) + ", expected 1 / 0");
         std::puts("resident ranges: a store landing after the stamp and before the copy executed reached the GPU and never left stale bytes in the resident buffer");
 
+        if (AgcDriver::GuestMemory::WriteWatched() && GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(Data), BlockBytes)) {
+            AgcDriver::Graphics::SetResidentCopyHookForTests(StoreAfterSkip);
+            counts = Build(400, "the build whose skipped copy-in raced a store");
+            AgcDriver::Graphics::SetResidentCopyHookForTests(nullptr);
+            check(SkippedStores.load() == 1, "the resident skip hook ran " + std::to_string(SkippedStores.load()) + " times, expected 1");
+            check(counts.skipped == 1 && counts.copied == 0, "the build whose skipped copy-in raced a store reported skipped " + std::to_string(counts.skipped) + ", copied " + std::to_string(counts.copied) + ", expected 1 / 0");
+            const auto invalidatedByMark = counts.invalidated;
+            counts = Build(500, "the build after the store raced a skipped copy-in");
+            check(counts.copied == 1 && counts.skipped == 0 && invalidatedByMark + counts.invalidated == 1, "the build after the store raced a skipped copy-in reported copied " + std::to_string(counts.copied) + ", skipped " + std::to_string(counts.skipped) + ", invalidated " + std::to_string(invalidatedByMark + counts.invalidated) + " across the two builds, expected 1 / 0 / 1");
+            std::puts("resident ranges: a store landing after a skipped copy-in's check and before the mark invalidated the resident copy");
+        } else {
+            std::puts("resident ranges: the block is not write-watched on this device (imports are compared): a store racing a skipped copy-in not tested");
+        }
+
+        SetInputs(400);
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(Data), BlockBytes);
         counts = Build(400, "the build after the pages were forgotten");
         check(counts.skipped == 0 && counts.promoted == 1 && counts.copied == 1, "the build after ForgetPages reported skipped " + std::to_string(counts.skipped) + ", promoted " + std::to_string(counts.promoted) + ", copied " + std::to_string(counts.copied) + ", expected 0 / 1 / 1");
