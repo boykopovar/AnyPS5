@@ -469,6 +469,15 @@ ctest --test-dir build/register-context --output-on-failure
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
 
 
+## Release and seed tools
+
+- `tools/package_release.py --platform {linux,windows,web,headers} --build <dir> --version <v> --output <dir>` packages a release for one platform from a build directory. `--revision` is required for `web` and rejected for the other platforms, and `headers` takes `--version` but not `--build`. `tools/package_release.py --docs <dir> --output <dir>` collects the docs on its own and cannot be combined with `--platform`, `--build`, `--version` or `--revision`.
+- `tools/prepare_release_notes.py --input <file> --body <file> --full <file>` prepares size-safe GitHub release notes; `--check` is the verification mode.
+- `tools/public_headers_manifest.py [--root <dir>]` inventories the public header package inputs and their content hashes without creating an archive.
+- `tools/relinker_seed_manifest.py <corpus>` describes the files of a flat relinker fuzz corpus as JSON (see the fuzzing section above).
+- `tools/configure_seed.py <cache> [seed] [--include GLOB] [--exclude GLOB] [--stdout]` writes the configure check results of a CMake cache as an initial cache file.
+- `tools/check_configure_seed.py <cache> <seed>` checks an unfiltered configure seed against its source CMake cache without writing anything.
+
 ## Test selection tools
 
 - `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
