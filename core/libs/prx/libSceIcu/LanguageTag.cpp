@@ -11,10 +11,12 @@
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1138,59 +1140,94 @@ std::string ToLanguageTag(const char* localeID, bool strict, std::int32_t& statu
     return sink;
 }
 
+bool GuestRead(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool GuestWrite(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+std::int32_t ReadStatus(const std::int32_t* status) {
+    Icu::RequireStatus(status);
+    std::int32_t value = 0;
+    if (!GuestRead(&value, status, sizeof(value))) throw std::invalid_argument("libSceIcu: unreadable UErrorCode");
+    return value;
+}
+
+bool ReadText(const char* source, std::string& text) {
+    for (;;) {
+        char chunk[0x1000];
+        const auto address = reinterpret_cast<std::uintptr_t>(source + text.size());
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!GuestRead(chunk, source + text.size(), count)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
+        if (end) return true;
+    }
+}
+
+std::int32_t Deliver(const std::string& text, char* destination, std::int32_t capacity, std::int32_t* status,
+                     std::int32_t incoming, std::int32_t error) {
+    const std::int32_t length = Icu::Checked(static_cast<std::int64_t>(text.size()));
+    const std::int32_t room = capacity > 0 ? capacity : 0;
+    const std::int32_t written = std::min(length, room);
+    std::int32_t outgoing = incoming;
+    std::string output(text, 0, static_cast<std::size_t>(written));
+    if (error > 0) {
+        outgoing = error;
+    } else if (length > room) {
+        outgoing = Icu::BufferOverflow;
+    } else if (length < capacity) {
+        output.push_back('\0');
+        if (outgoing == Icu::NotTerminated) outgoing = 0;
+    } else {
+        outgoing = length == capacity ? Icu::NotTerminated : Icu::BufferOverflow;
+    }
+    if (!output.empty() && !GuestWrite(destination, output.data(), output.size()))
+        throw std::invalid_argument("libSceIcu: unwritable buffer");
+    if (outgoing != incoming && !GuestWrite(status, &outgoing, sizeof(outgoing)))
+        throw std::invalid_argument("libSceIcu: unwritable UErrorCode");
+    return length;
+}
+
 }
 
 extern "C" {
 
 std::int32_t APS5_VABI uloc_forLanguageTag(const char* langtag, char* localeID, std::int32_t capacity,
                                            std::int32_t* parsedLength, std::int32_t* status) {
-    if (Icu::Failure(status)) return 0;
+    const std::int32_t incoming = ReadStatus(status);
+    if (incoming > 0) return 0;
     if (!langtag) APS5_INVALID_ARG_EX;
     if (capacity > 0 && !localeID) APS5_INVALID_ARG_EX;
 
-    Output output = Convert(langtag);
-    if (parsedLength) *parsedLength = output.length;
+    std::string input;
+    if (!ReadText(langtag, input)) APS5_INVALID_ARG_EX;
+    Output output = Convert(input);
+    if (parsedLength && !GuestWrite(parsedLength, &output.length, sizeof(output.length))) APS5_INVALID_ARG_EX;
 
-    const std::int32_t length = Icu::Checked(static_cast<std::int64_t>(output.text.size()));
-    const std::int32_t room = capacity > 0 ? capacity : 0;
-    const std::int32_t written = std::min(length, room);
-    if (written > 0) std::copy_n(output.text.data(), written, localeID);
-
-    if (output.status > 0) {
-        *status = output.status;
-        return length;
-    }
-    if (length > room) {
-        *status = Icu::BufferOverflow;
-    } else {
-        Icu::Terminate(localeID, capacity, length, status);
-    }
-    return length;
+    return Deliver(output.text, localeID, capacity, status, incoming, output.status);
 }
 
 std::int32_t APS5_VABI uloc_toLanguageTag(const char* localeID, char* langtag, std::int32_t capacity,
                                           std::int8_t strict, std::int32_t* status) {
-    if (Icu::Failure(status)) return 0;
+    const std::int32_t incoming = ReadStatus(status);
+    if (incoming > 0) return 0;
     if (!localeID) APS5_INVALID_ARG_EX;
     if (capacity > 0 && !langtag) APS5_INVALID_ARG_EX;
 
+    std::string id;
+    if (!ReadText(localeID, id)) APS5_INVALID_ARG_EX;
     std::int32_t error = 0;
-    const std::string text = ToLanguageTag(localeID, strict != 0, error);
-    const std::int32_t length = Icu::Checked(static_cast<std::int64_t>(text.size()));
-    const std::int32_t room = capacity > 0 ? capacity : 0;
-    const std::int32_t written = std::min(length, room);
-    if (written > 0) std::copy_n(text.data(), written, langtag);
-
-    if (error > 0) {
-        *status = error;
-        return length;
-    }
-    if (length > room) {
-        *status = Icu::BufferOverflow;
-    } else {
-        Icu::Terminate(langtag, capacity, length, status);
-    }
-    return length;
+    const std::string text = ToLanguageTag(id.c_str(), strict != 0, error);
+    return Deliver(text, langtag, capacity, status, incoming, error);
 }
 
 }
