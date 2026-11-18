@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libcairo/include/Matrix.hpp"
+#include "prx/libSceFreeType/include/GuestFreeType.hpp"
 
 #include <cstddef>
 
@@ -38,4 +39,6 @@ void APS5_VABI cairo_scaled_font_get_ctm(CairoScaledFont* font, CairoMatrix* ctm
 void APS5_VABI cairo_scaled_font_extents(CairoScaledFont* font, CairoFontExtents* extents);
 void APS5_VABI cairo_scaled_font_text_extents(CairoScaledFont* font, const char* utf8,
                                               CairoTextExtents* extents);
+FreeType::GuestFaceRec* APS5_VABI cairo_ft_scaled_font_lock_face(CairoScaledFont* font);
+void APS5_VABI cairo_ft_scaled_font_unlock_face(CairoScaledFont* font);
 }
