@@ -281,6 +281,22 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
 
+class ExecutionTargetsTests(unittest.TestCase):
+    def test_cpp_files_map_to_sorted_targets(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            directory = root / agc_test_split.EXECUTION
+            directory.mkdir(parents=True)
+            for file in ("ZetaOne.cpp", "AlphaTwo.cpp", "notes.txt"):
+                (directory / file).write_text("")
+            self.assertEqual(agc_test_split.execution_targets(root), ["agc_driver_alpha_two_tests", "agc_driver_zeta_one_tests"])
+
+    def test_empty_directory_has_no_targets(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / agc_test_split.EXECUTION).mkdir(parents=True)
+            self.assertEqual(agc_test_split.execution_targets(root), [])
+
 
 if __name__ == "__main__":
     unittest.main()
