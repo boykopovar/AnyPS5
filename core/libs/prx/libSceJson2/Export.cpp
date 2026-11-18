@@ -2845,21 +2845,21 @@ char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) 
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* needle, std::size_t position) {
     std::size_t count = 0;
-    if (needle && !GuestTextLength(needle, count)) return _ZN3sce4Json6String4nposE;
+    if (needle && !GuestTextLength(needle, count)) return static_cast<std::size_t>(-1);
     return FindText(*self, needle, position, count);
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) {
-    if (needle && count && !GuestBufferReadable(needle, count)) return _ZN3sce4Json6String4nposE;
+    if (needle && count && !GuestBufferReadable(needle, count)) return static_cast<std::size_t>(-1);
     return FindText(*self, needle, position, count);
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* needle, std::size_t position) { return FindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* needle, std::size_t position) {
     std::size_t count = 0;
-    if (needle && !GuestTextLength(needle, count)) return _ZN3sce4Json6String4nposE;
+    if (needle && !GuestTextLength(needle, count)) return static_cast<std::size_t>(-1);
     return ReverseFindText(*self, needle, position, count);
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) {
-    if (needle && count && !GuestBufferReadable(needle, count)) return _ZN3sce4Json6String4nposE;
+    if (needle && count && !GuestBufferReadable(needle, count)) return static_cast<std::size_t>(-1);
     return ReverseFindText(*self, needle, position, count);
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* needle, std::size_t position) { return ReverseFindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
