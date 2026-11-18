@@ -66,6 +66,15 @@ struct Cursor {
     void* platformCursor{nullptr};
 };
 
+struct ImageOrientation {
+    std::int32_t orientation;
+};
+
+struct OptionalIntPoint {
+    bool hasValue{false};
+    WebCore::IntPoint value{};
+};
+
 static_assert(StandardCursorCount == 43);
 static_assert(CursorTypeValueCount == 64);
 static_assert(sizeof(CursorType) == 4);
@@ -76,6 +85,10 @@ static_assert(offsetof(Cursor, image) == 8);
 static_assert(offsetof(Cursor, hotSpot) == 16);
 static_assert(offsetof(Cursor, platformCursor) == 24);
 static_assert(std::is_standard_layout_v<Cursor>);
+static_assert(sizeof(ImageOrientation) == 4);
+static_assert(sizeof(OptionalIntPoint) == 12);
+static_assert(offsetof(OptionalIntPoint, hasValue) == 0);
+static_assert(offsetof(OptionalIntPoint, value) == 4);
 
 const Cursor& StandardCursor(CursorType type);
 
