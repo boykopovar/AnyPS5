@@ -12526,7 +12526,8 @@ void unorm4_4_4_4TargetTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "DCC-compressed 4_4_4_4 unorm color targets");
     changed = queue;
     changed.context[0x31c] |= 0x40000u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets");
+    const auto truncating = AgcDriver::Graphics::DecodeState(changed);
+    Require(truncating.color.format == state.color.format && truncating.color.componentMapping == state.color.componentMapping && truncating.color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated, "a 4_4_4_4 unorm target with ROUND_MODE set did not decode as a truncating packed target");
 
     constexpr std::array<std::uint32_t, 3> code{0xf800180fu, 0x07060504u, 0xbf810000u};
     const auto request = packedExportRequest(queue, state, code);
@@ -12678,7 +12679,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(9);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(static_cast<std::uint8_t>(ColorExportPacking::Unorm4_4_4_4Truncated) + 1u);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 

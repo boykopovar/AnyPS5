@@ -44,6 +44,7 @@ constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u) | (2u << 11u);
+constexpr std::uint32_t RoundModeBit = 0x40000u;
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Float16Export = 4;
@@ -56,12 +57,13 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 32> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 64> Programs{};
 std::size_t programCount = 0;
 
 struct Golden {
     std::array<float, 4> rgba;
     std::uint16_t word;
+    std::uint16_t truncatedWord;
 };
 
 std::uint32_t Half(float value) {
@@ -152,17 +154,17 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool truncate) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Unorm4_4_4_4Info;
+    cx[0x31c] = Unorm4_4_4_4Info | (truncate ? RoundModeBit : 0u);
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.componentMapping == 0x1bu && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.bytes == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
+    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.componentMapping == 0x1bu && color.packing == (truncate ? ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated : ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) && color.bytes == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
     return color;
 }
 
@@ -272,43 +274,44 @@ std::string Describe(std::array<float, 4> rgba) {
     return text;
 }
 
-void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind) {
+void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind, bool truncate) {
     const ColorTargetLayout layout(Width, Height, mode, 2);
     Require(layout.Bytes() == block.bytes, "the test surface size disagrees with its layout");
-    const auto color = DecodeTarget(block, attrib3);
+    const auto color = DecodeTarget(block, attrib3, truncate);
     auto before = Fill(block);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
-    const std::array<Golden, 11> float32Cases{{
-        {{1.0f, 0.0f, 0.0f, 0.0f}, 0xf000u},
-        {{0.0f, 1.0f, 0.0f, 0.0f}, 0x0f00u},
-        {{0.0f, 0.0f, 1.0f, 0.0f}, 0x00f0u},
-        {{0.0f, 0.0f, 0.0f, 1.0f}, 0x000fu},
-        {{1.0f, 1.0f, 1.0f, 1.0f}, 0xffffu},
-        {{1.0f, 0.5f, 0.0f, 0.25f}, 0xf804u},
-        {{0.0f, 1.0f, 0.5f, 0.25f}, 0x0f84u},
-        {{nan, -1.0f, 2.0f, infinity}, 0x00ffu},
-        {{1.0f / 15.0f, 2.0f / 15.0f, 7.0f / 15.0f, 14.0f / 15.0f}, 0x127eu},
-        {{0.1f, 0.7f, 0.9f, 0.3f}, 0x2ad5u},
-        {{-infinity, std::numeric_limits<float>::min(), 0.999999940f, std::numeric_limits<float>::denorm_min()}, 0x00f0u},
+    const std::array<Golden, 12> float32Cases{{
+        {{1.0f, 0.0f, 0.0f, 0.0f}, 0xf000u, 0xf000u},
+        {{0.0f, 1.0f, 0.0f, 0.0f}, 0x0f00u, 0x0f00u},
+        {{0.0f, 0.0f, 1.0f, 0.0f}, 0x00f0u, 0x00f0u},
+        {{0.0f, 0.0f, 0.0f, 1.0f}, 0x000fu, 0x000fu},
+        {{1.0f, 1.0f, 1.0f, 1.0f}, 0xffffu, 0xffffu},
+        {{1.0f, 0.5f, 0.0f, 0.25f}, 0xf804u, 0xf703u},
+        {{0.0f, 1.0f, 0.5f, 0.25f}, 0x0f84u, 0x0f73u},
+        {{nan, -1.0f, 2.0f, infinity}, 0x00ffu, 0x00ffu},
+        {{1.0f / 15.0f, 2.0f / 15.0f, 7.0f / 15.0f, 14.0f / 15.0f}, 0x127eu, 0x127eu},
+        {{0.1f, 0.7f, 0.9f, 0.3f}, 0x2ad5u, 0x1ad4u},
+        {{-infinity, std::numeric_limits<float>::min(), 0.999999940f, std::numeric_limits<float>::denorm_min()}, 0x00f0u, 0x00e0u},
+        {{std::bit_cast<float>(0x3d888888u), std::bit_cast<float>(0x3d888889u), std::bit_cast<float>(0x3f088888u), std::bit_cast<float>(0x3f088889u)}, 0x1188u, 0x0178u},
     }};
     for (const auto& golden : float32Cases) {
         Draw(device, color, Float32Export, Float32Program(golden.rgba));
-        ExpectSurface(device, block, layout, before, golden.word, std::string("a 32_ABGR export of ") + Describe(golden.rgba) + " into a " + kind + " 4_4_4_4 unorm target");
+        ExpectSurface(device, block, layout, before, truncate ? golden.truncatedWord : golden.word, std::string("a 32_ABGR export of ") + Describe(golden.rgba) + " into a " + kind + " 4_4_4_4 unorm target");
         before = ReadBack(device, block);
     }
     const std::array<Golden, 7> float16Cases{{
-        {{1.0f, 0.0f, 0.0f, 0.0f}, 0xf000u},
-        {{0.0f, 1.0f, 0.0f, 0.0f}, 0x0f00u},
-        {{0.0f, 0.0f, 1.0f, 0.0f}, 0x00f0u},
-        {{0.0f, 0.0f, 0.0f, 1.0f}, 0x000fu},
-        {{1.0f, 1.0f, 1.0f, 1.0f}, 0xffffu},
-        {{1.0f, 0.5f, 0.0f, 0.25f}, 0xf804u},
-        {{0.5f, 0.75f, 0.125f, 0.25f}, 0x8b24u},
+        {{1.0f, 0.0f, 0.0f, 0.0f}, 0xf000u, 0xf000u},
+        {{0.0f, 1.0f, 0.0f, 0.0f}, 0x0f00u, 0x0f00u},
+        {{0.0f, 0.0f, 1.0f, 0.0f}, 0x00f0u, 0x00f0u},
+        {{0.0f, 0.0f, 0.0f, 1.0f}, 0x000fu, 0x000fu},
+        {{1.0f, 1.0f, 1.0f, 1.0f}, 0xffffu, 0xffffu},
+        {{1.0f, 0.5f, 0.0f, 0.25f}, 0xf804u, 0xf703u},
+        {{0.5f, 0.75f, 0.125f, 0.25f}, 0x8b24u, 0x7b13u},
     }};
     for (const auto& golden : float16Cases) {
         Draw(device, color, Float16Export, Float16Program(golden.rgba));
-        ExpectSurface(device, block, layout, before, golden.word, std::string("an FP16_ABGR export of ") + Describe(golden.rgba) + " into a " + kind + " 4_4_4_4 unorm target");
+        ExpectSurface(device, block, layout, before, truncate ? golden.truncatedWord : golden.word, std::string("an FP16_ABGR export of ") + Describe(golden.rgba) + " into a " + kind + " 4_4_4_4 unorm target");
         before = ReadBack(device, block);
     }
 }
@@ -320,7 +323,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Block linear(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
-        TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear");
+        TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear", false);
+        TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear ROUND_MODE 1", true);
         std::puts("4_4_4_4 unorm color target tests passed");
         return 0;
     } catch (const std::exception& error) {

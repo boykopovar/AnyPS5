@@ -201,7 +201,7 @@ std::uint32_t F32BitsToSmallFloatRtz(SpirvEmitterState& state, std::uint32_t bit
     return EmitOrU32(state, sign, magnitude);
 }
 
-std::uint32_t NormStoreBits(SpirvEmitterState& state, std::uint32_t bits, std::uint32_t maximum, bool signedFormat) {
+std::uint32_t NormStoreBits(SpirvEmitterState& state, std::uint32_t bits, std::uint32_t maximum, bool signedFormat, bool truncate) {
     const auto value = EmitBitcastU32ToF32(state, bits);
     const auto magnitudeBits = EmitAndConstant(state, bits, 0x7fffffffu);
     const auto magnitude = EmitBitcastU32ToF32(state, magnitudeBits);
@@ -227,7 +227,7 @@ std::uint32_t NormStoreBits(SpirvEmitterState& state, std::uint32_t bits, std::u
     const auto odd = EmitCompareU32Constant(state, spv::OpINotEqual, EmitAndConstant(state, quotient, 1u), 0u);
     const auto tie = EmitLogicalAndBool(state, Binary(state, spv::OpIEqual, TypeBool(state), remainder, half), EmitLogicalOrBool(state, sticky, odd));
     const auto up = EmitLogicalOrBool(state, UnsignedGreater(state, remainder, half), tie);
-    const auto rounded = EmitAddU32(state, quotient, EmitSelectValueU32(state, up, ConstantU32(state, 1u), ConstantU32(state, 0u)));
+    const auto rounded = truncate ? quotient : EmitAddU32(state, quotient, EmitSelectValueU32(state, up, ConstantU32(state, 1u), ConstantU32(state, 0u)));
     auto result = EmitSelectValueU32(state, UnsignedGreater(state, extra, ConstantU32(state, 16u)), ConstantU32(state, 0u), rounded);
     const auto full = Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), magnitude, ConstantF32Value(state, 1.0f));
     result = EmitSelectValueU32(state, full, ConstantU32(state, maximum), result);
@@ -279,6 +279,10 @@ std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBuffer
     }
 }
 
+std::uint32_t EmitTruncatedUnormStoreComponent(SpirvEmitterState& state, std::uint32_t data, std::uint32_t maximum) {
+    return NormStoreBits(state, data, maximum, false, true);
+}
+
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data) {
     const auto bits = info.componentBits[component];
     const std::uint32_t mask = bits >= 32u ? 0xffffffffu : (1u << bits) - 1u;
@@ -294,10 +298,10 @@ std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBuff
     }
     case SpirvFormatComponentType::Unorm:
     case SpirvFormatComponentType::Uscaled:
-        return NormStoreBits(state, data, mask, false);
+        return NormStoreBits(state, data, mask, false, false);
     case SpirvFormatComponentType::Snorm:
     case SpirvFormatComponentType::Sscaled:
-        return EmitAndConstant(state, NormStoreBits(state, data, mask >> 1u, true), mask);
+        return EmitAndConstant(state, NormStoreBits(state, data, mask >> 1u, true, false), mask);
     case SpirvFormatComponentType::Float:
         if (bits == 32u) return data;
         if (bits == 16u) return F32BitsToSmallFloatRtz(state, data, 10u, true);

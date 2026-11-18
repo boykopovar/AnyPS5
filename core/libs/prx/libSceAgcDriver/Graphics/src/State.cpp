@@ -1033,8 +1033,12 @@ bool UintPacked(ShaderRecompiler::ColorExportPacking packing) {
     return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16;
 }
 
+bool NibblePacked(ShaderRecompiler::ColorExportPacking packing) {
+    return packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated;
+}
+
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
-    if (packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) return "4_4_4_4 unorm";
+    if (NibblePacked(packing)) return "4_4_4_4 unorm";
     if (UintPacked(packing)) return "unsigned integer";
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
 }
@@ -1046,7 +1050,7 @@ ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRe
 }
 
 bool WordPacked(ShaderRecompiler::ColorExportPacking packing) {
-    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
+    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || NibblePacked(packing);
 }
 
 // CB_COLOR_INFO FORMAT / NUMBER_TYPE / COMP_SWAP to a Vulkan attachment format. AMD formats list
@@ -2111,7 +2115,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 state.blendEnable = VK_FALSE;
             }
             Require(!state.blendEnable, "blending into " + packed + " color target is unsupported");
-            const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
+            const bool nibbles = NibblePacked(color.packing);
             const std::uint32_t packedMask = nibbles ? 0xfu : 7u;
             Require(nibbles || floating || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask || color.mergeBlend != 0u) {
@@ -2208,8 +2212,8 @@ std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t expor
 std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask) {
     constexpr std::array<std::uint32_t, 4> nibbles{0x000fu, 0x00f0u, 0x0f00u, 0xf000u};
     constexpr std::array<std::uint32_t, 4> floats{0x000003ffu, 0x001ffc00u, 0xffe00000u, 0u};
-    Require(packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10, "a write mask of a packed color target that is neither 4_4_4_4 unorm nor 11_11_10 float");
-    const auto& fields = packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 ? nibbles : floats;
+    Require(NibblePacked(packing) || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10, "a write mask of a packed color target that is neither 4_4_4_4 unorm nor 11_11_10 float");
+    const auto& fields = NibblePacked(packing) ? nibbles : floats;
     std::uint32_t mask = 0;
     for (std::uint32_t component = 0; component < 4; ++component) {
         if (((exportedMask >> ((componentMapping >> (2u * component)) & 3u)) & 1u) != 0) mask |= fields[component];
@@ -2622,7 +2626,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.packing = decoded.packing;
     if (WordPacked(color.packing) && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 10_11_11 unorm color targets are unsupported");
-    Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets are unsupported");
+    if (color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && (info & 0x00040000u) != 0) color.packing = ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated;
     for (std::uint32_t word = 0; word < 2; ++word) {
         const auto clear = find(cx, 0x323 + word + stride);
         color.clearWords[word] = clear == cx.end() ? 0u : clear->second;

@@ -444,7 +444,7 @@ std::uint32_t MrtOutputMode(const SpirvEmitterState& state, const ExportInfo& ex
     return state.inputInfo.pixel->targetOutputMode[exp.index];
 }
 
-std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::uint32_t color) {
+std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::uint32_t color, bool truncate) {
     const auto info = GetFormatInfo(format);
     auto packed = ConstantU32(state, 0u);
     for (std::uint32_t component = 0; component < info.componentCount; component++) {
@@ -452,7 +452,7 @@ std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::u
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), value, color, component);
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
-        auto field = EmitFormatStoreComponent(state, info, component, bits);
+        auto field = truncate ? EmitTruncatedUnormStoreComponent(state, bits, (1u << info.componentBits[component]) - 1u) : EmitFormatStoreComponent(state, info, component, bits);
         if (format == IrBufferFormat::Format10_11_11Float) {
             const auto mantissaBits = info.componentBits[component] - 5u;
             const auto nan = EmitCompareU32Constant(state, spv::OpUGreaterThan, EmitAndConstant(state, bits, 0x7fffffffu), 0x7f800000u);
@@ -467,9 +467,12 @@ std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target
     const auto packing = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportPackingBase + target, static_cast<std::uint32_t>(ColorExportPacking::None));
     const auto unorm = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11));
     const auto floating = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Float11_11_10));
-    const auto small = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4));
-    const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color));
-    const auto word = Select(state, TypeU32(state), small, PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color), wide);
+    const auto rounded = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4));
+    const auto truncated = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4Truncated));
+    const auto small = Binary(state, spv::OpLogicalOr, TypeBool(state), rounded, truncated);
+    const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color, false), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color, false));
+    const auto nibbles = Select(state, TypeU32(state), truncated, PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color, true), PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color, false));
+    const auto word = Select(state, TypeU32(state), small, nibbles, wide);
     const auto packed = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), unorm, floating), small);
     const bool clamp = mode == 2u || mode == 4u || mode == 9u;
     const bool mask = mode == 1u;
@@ -674,10 +677,11 @@ void MergeColorTarget(SpirvEmitterState& state, std::size_t entry, std::uint32_t
     const auto stored = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), stored, EmitStorageImageRead(state, resource, coord, sample), 0u);
     const bool floating = merge.packing == ColorExportPacking::Float11_11_10;
-    if (!floating && merge.packing != ColorExportPacking::Unorm4_4_4_4) FailEmit("a color target merge into an unsupported packing");
+    const bool truncated = merge.packing == ColorExportPacking::Unorm4_4_4_4Truncated;
+    if (!floating && !truncated && merge.packing != ColorExportPacking::Unorm4_4_4_4) FailEmit("a color target merge into an unsupported packing");
     if (merge.blendControl != 0u && !floating) FailEmit("a blending color target merge into a target other than 11_11_10 float");
     const auto format = floating ? IrBufferFormat::Format10_11_11Float : IrBufferFormat::Format4_4_4_4UNorm;
-    const auto word = PackExport(state, format, merge.blendControl != 0u ? BlendPackedColor(state, format, color, stored, merge.blendControl) : color);
+    const auto word = PackExport(state, format, merge.blendControl != 0u ? BlendPackedColor(state, format, color, stored, merge.blendControl) : color, truncated);
     const auto kept = EmitBinaryU32(state, spv::OpBitwiseAnd, stored, ConstantU32(state, ~merge.mask));
     const auto merged = EmitOrU32(state, kept, EmitBinaryU32(state, spv::OpBitwiseAnd, word, ConstantU32(state, merge.mask)));
     state.module.AddFunction(spv::OpStore, state.mergeValueVariables[entry], merged);
