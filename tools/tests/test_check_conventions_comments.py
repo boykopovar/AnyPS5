@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from check_conventions import silent_stub_debt
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1022,6 +1023,20 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
+class SilentStubDebtTests(unittest.TestCase):
+    TEXT = "# Debt\n## Silent stubs\n- a [x](a.md)\n### Sub\n- b\n## Other\n- c\n"
+
+    def test_only_lines_under_the_silent_stubs_heading_are_returned(self):
+        lines = [line for line, _ in silent_stub_debt(self.TEXT)]
+        self.assertEqual(lines, ["## Silent stubs", "- a [x](a.md)", "### Sub", "- b"])
+
+    def test_links_are_resolved_against_the_path(self):
+        by_line = dict(silent_stub_debt(self.TEXT, "docs/dev/TechnicalDebt.md"))
+        self.assertEqual(by_line["- a [x](a.md)"], [("a.md", "docs/dev/a.md")])
+
+    def test_text_without_the_section_has_no_entries(self):
+        self.assertEqual(silent_stub_debt("# Debt\n## Known gaps\n- a\n"), [])
 
 
 if __name__ == "__main__":
