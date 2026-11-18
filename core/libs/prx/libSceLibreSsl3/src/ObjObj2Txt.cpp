@@ -58,12 +58,18 @@ std::string Decimal(Number number) {
 extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength, const Asn1Object_nid_no_patch* object, int noName) {
     if (buffer && bufferLength > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
+    if (object->length < 0) return 0;
     std::string text;
     if (!noName) {
         const char* name = nullptr;
         if (object->length > 0) {
             const auto* const known = reinterpret_cast<const LibreSslAsn1Object*>(object);
-            const int nid = LibreSsl3::ObjectNid(known);
+            int nid = 0;
+            try {
+                nid = LibreSsl3::ObjectNid(known);
+            } catch (...) {
+                nid = 0;
+            }
             if (const auto* const entry = nid != 0 ? LibreSsl3::ObjectByNid(nid) : nullptr)
                 name = entry->longName ? entry->longName : entry->shortName;
         }

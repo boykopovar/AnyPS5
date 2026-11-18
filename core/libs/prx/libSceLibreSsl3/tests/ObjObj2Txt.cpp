@@ -97,5 +97,9 @@ int main() {
     object.length = -1;
     object.data = zero.data();
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 1) == 0);
+    object.shortName = "negative";
+    object.longName = "negative";
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 0);
+    Require(buffer[0] == '\0');
     std::puts("libSceLibreSsl3 OBJ_obj2txt tests passed");
 }
