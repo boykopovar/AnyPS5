@@ -148,11 +148,45 @@ void TestRequestIsSignedOut() {
                 0, nullptr, nullptr) == kNotSignedIn);
 }
 
+void TestGetUsersCopiesTheVectorHandle() {
+    alignas(8) std::array<std::uint8_t, 0x50> response;
+    response.fill(0xa5);
+    alignas(8) std::array<std::uint8_t, 0x40> vector;
+    vector.fill(0);
+    const std::uint32_t before = 7;
+    std::memcpy(vector.data() + 0x30, &before, sizeof(before));
+    IntrusivePtr handle{};
+    handle.object = vector.data();
+    handle.deleter = nullptr;
+    handle.libContext = reinterpret_cast<void*>(0x1234);
+    std::memcpy(response.data() + 0x30, &handle, sizeof(handle));
+    IntrusivePtr out{};
+    Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(&out, response.data()) == &out);
+    Require(out.object == vector.data());
+    Require(out.deleter == nullptr);
+    Require(out.libContext == reinterpret_cast<void*>(0x1234));
+    std::uint32_t after = 0;
+    std::memcpy(&after, vector.data() + 0x30, sizeof(after));
+    Require(after == before + 1);
+    for (std::size_t index = 0; index < 0x30; ++index) Require(response[index] == 0xa5);
+    for (std::size_t index = 0x48; index < response.size(); ++index) Require(response[index] == 0xa5);
+
+    alignas(8) std::array<std::uint8_t, 0x50> empty{};
+    IntrusivePtr none{};
+    none.object = reinterpret_cast<void*>(0x1);
+    none.deleter = nullptr;
+    none.libContext = nullptr;
+    Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(&none, empty.data()) == &none);
+    Require(none.object == nullptr);
+    Require(none.deleter == nullptr);
+}
+
 }
 
 int main() {
     TestParameterLifecycle();
     TestRequestIsSignedOut();
     TestActivityModelAccessors();
+    TestGetUsersCopiesTheVectorHandle();
     return 0;
 }

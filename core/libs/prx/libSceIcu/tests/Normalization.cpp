@@ -1,9 +1,23 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -78,6 +92,54 @@ void TestInstances() {
     ExpectInt(error, IllegalArgument, "unorm2_getInstance(empty name) status");
 }
 
+char* GuardedPage(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Expect(base != nullptr, "guarded page allocation");
+    DWORD previous {};
+    Expect(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+    pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Expect(mapped != MAP_FAILED, "guarded page allocation");
+    auto* base = static_cast<char*>(mapped);
+    Expect(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "guard page protection");
+#endif
+    return base + pageSize;
+}
+
+void ReleasePage(char* end, std::size_t pageSize) {
+#ifdef _WIN32
+    VirtualFree(end - pageSize, 0, MEM_RELEASE);
+#else
+    munmap(end - pageSize, pageSize * 2);
+#endif
+}
+
+void TestGuestName() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t {0x10});
+    errno = 71;
+    ExpectThrow<std::invalid_argument>([&] {
+        std::int32_t status = Success;
+        unorm2_getInstance_nid_postfix(nullptr, unmapped, Compose, &status);
+    }, "unorm2_getInstance(unmapped name)");
+    ExpectInt(errno, 71, "unorm2_getInstance(unmapped name) errno");
+    std::int32_t failing = IllegalArgument;
+    Expect(unorm2_getInstance_nid_postfix(nullptr, unmapped, Compose, &failing) == nullptr, "unorm2_getInstance(failing status, unmapped name)");
+    ExpectInt(failing, IllegalArgument, "unorm2_getInstance(failing status, unmapped name) status");
+
+    std::size_t pageSize = 0;
+    auto* end = GuardedPage(pageSize);
+    std::memcpy(end - 4, "nfc", 4);
+    std::int32_t error = Success;
+    Expect(unorm2_getInstance_nid_postfix(nullptr, end - 4, Decompose, &error) == Nfd(), "unorm2_getInstance(name before a guard page)");
+    ExpectInt(error, Success, "unorm2_getInstance(name before a guard page) status");
+    ReleasePage(end, pageSize);
+}
+
 void TestNormalize() {
     const auto* nfc = Nfc();
     const auto* nfd = Nfd();
@@ -96,6 +158,26 @@ void TestNormalize() {
     char16_t same[4] = u"abc";
     ExpectInt(unorm2_normalize_nid_postfix(nfc, same, -1, same, 4, &error), 0, "unorm2_normalize in place");
     ExpectInt(error, IllegalArgument, "unorm2_normalize in place status");
+}
+
+void TestCompatibilityInstances() {
+    std::int32_t error = Success;
+    const auto* nfkc = unorm2_getNFKCInstance(&error);
+    const auto* nfkd = unorm2_getNFKDInstance(&error);
+    const auto* nfkcCf = unorm2_getNFKCCasefoldInstance_nid_postfix(&error);
+    Expect(nfkc && nfkd && nfkcCf && error == Success, "compatibility normalizers");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc", Compose, &error) == nfkc, "NFKC instance lookup");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc", Decompose, &error) == nfkd, "NFKD instance lookup");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc_cf", Compose, &error) == nfkcCf, "NFKC casefold instance lookup");
+    char16_t output[16]{};
+    ExpectInt(unorm2_normalize_nid_postfix(nfkc, u"\uff21\ufb03\u00e9", -1, output, 16, &error), 5, "NFKC length");
+    Expect(std::u16string(output) == u"Affi\u00e9", "NFKC text");
+    ExpectInt(unorm2_normalize_nid_postfix(nfkd, u"\uff21\ufb03\u00e9", -1, output, 16, &error), 6, "NFKD length");
+    Expect(std::u16string(output) == u"Affie\u0301", "NFKD text");
+    ExpectInt(unorm2_normalize_nid_postfix(nfkcCf, u"\uff21\u00ad\u00df", -1, output, 16, &error), 3, "NFKC casefold length");
+    Expect(std::u16string(output) == u"ass", "NFKC casefold text");
+    ExpectInt(u_getFC_NFKC_Closure_nid_postfix(0x037a, output, 16, &error), 2, "casefold closure length");
+    Expect(std::u16string(output) == u" \u03b9" && error == Success, "casefold closure");
 }
 
 void TestQueries() {
@@ -167,6 +249,30 @@ void TestArguments() {
     ExpectThrow<std::invalid_argument>([] { unorm2_composePair_nid_postfix(nullptr, u'e', 0x0301); }, "unorm2_composePair(null)");
 }
 
+void TestFiltered() {
+    const auto* nfc = Nfc();
+    std::int32_t error = Success;
+    Expect(unorm2_openFiltered_nid_postfix(nfc, nullptr, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer requires a set");
+    auto* set = uset_openEmpty_nid_postfix();
+    Expect(set != nullptr, "allocate normalization set");
+    Expect(unorm2_openFiltered_nid_postfix(nfc, set, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer preserves incoming failure");
+    error = Success;
+    uset_add_nid_postfix(set, u'e');
+    uset_add_nid_postfix(set, 0x0301);
+    auto* filtered = unorm2_openFiltered_nid_postfix(nfc, set, &error);
+    Expect(filtered != nullptr && error == Success, "open filtered NFC");
+    char16_t result[16]{};
+    ExpectInt(unorm2_normalize_nid_postfix(filtered, u"e\u0301a\u0301", -1, result, 16, &error), 3, "filtered output length");
+    Expect(std::u16string(result) == u"\u00e9a\u0301", "only matching runs are normalized");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'e', 0x0301), 0x00e9, "included pair composes");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'a', 0x0301), -1, "excluded pair is unchanged");
+    unorm2_close_nid_postfix(filtered);
+    unorm2_close_nid_postfix(nullptr);
+    uset_close_nid_postfix(set);
+}
+
 std::int32_t Compare(const char16_t* first, std::int32_t firstLength, const char16_t* second, std::int32_t secondLength,
                      std::uint32_t options, const char* what) {
     std::int32_t error = Success;
@@ -209,11 +315,14 @@ void TestCompare() {
 
 int main() {
     TestInstances();
+    TestGuestName();
     TestNormalize();
+    TestCompatibilityInstances();
     TestQueries();
     TestDecompositions();
     TestAppend();
     TestArguments();
+    TestFiltered();
     TestCompare();
     return 0;
 }

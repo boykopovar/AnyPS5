@@ -107,7 +107,7 @@ int APS5_VABI sceAppInstUtilCancelInstallPatch(const void* argument1);
 int APS5_VABI sceAppInstUtilCancelInstallAddcont(const void* argument1);
 int APS5_VABI sceAppInstUtilCancelInstall(const void* argument1);
 int APS5_VABI sceAppInstUtilCancelForMultiInstall(const void* argument1);
-int APS5_VABI sceAppInstUtilInstallByPackage(void);
+int APS5_VABI sceAppInstUtilInstallByPackage(const void* metaInfo, void* pkgInfo, const void* playGoInfo);
 int APS5_VABI sceAppInstUtilIsRestoreState(const void* argument1, const void* argument2);
 int APS5_VABI sceAppInstUtilGetRestoreState(const void* argument1, const void* argument2);
 int APS5_VABI sceAppInstUtilGetAddons(const void* argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, const void* argument5);

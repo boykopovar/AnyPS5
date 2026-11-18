@@ -469,7 +469,7 @@ std::uint32_t ReadPastEnd(const Context& context, AgcDriver::Graphics::Buffer& s
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         AgcDriver::Graphics::CommandBatch batch(context);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(batch.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(batch.Handle(), pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(batch.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(batch.Handle(), 1, 1, 1);
         AgcDriver::Graphics::RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);

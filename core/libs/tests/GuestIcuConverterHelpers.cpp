@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,15 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -174,9 +184,78 @@ void Signatures() {
     }
 }
 
+template<class TCall>
+void RequiresRuntimeErrorKeepingErrno(TCall call, const char* message) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, message);
+}
+
+void SignatureGuestPointers() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr, "allocate guest pointer pages");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "allocate guest pointer pages");
+    auto* pages = static_cast<char*>(mapping);
+#endif
+    const std::int32_t zero = 0;
+    const std::int32_t failing = 1;
+    std::memcpy(pages, &zero, sizeof(zero));
+    std::memcpy(pages + 16, &failing, sizeof(failing));
+    std::memcpy(pages + pageSize - 3, "\xef\xbb", 3);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(pages, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect status page");
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+    Require(mprotect(pages, pageSize, PROT_READ) == 0, "protect status page");
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+    auto* readOnlyZero = reinterpret_cast<std::int32_t*>(pages);
+    auto* readOnlyFailing = reinterpret_cast<std::int32_t*>(pages + 16);
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedSource = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    const char* bom = "\xef\xbb\xbf";
+
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(bom, 3, nullptr, unmappedStatus); },
+                                     "unreadable status throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(nullptr, 0, nullptr, readOnlyZero); },
+                                     "unwritable status throws and keeps errno");
+    Require(!ucnv_detectUnicodeSignature_nid_postfix(nullptr, -2, nullptr, readOnlyFailing), "read-only failing status returns immediately");
+    std::int32_t status = 0;
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(unmappedSource, 4, nullptr, &status); },
+                                     "unreadable source with a length throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(unmappedSource, -1, nullptr, &status); },
+                                     "unreadable terminated source throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(bom, 3, readOnlyZero, &status); },
+                                     "unwritable signature length throws and keeps errno");
+    Require(status == 0, "guest pointer failures leave the status unchanged");
+    std::int32_t length = 123;
+    Require(!ucnv_detectUnicodeSignature_nid_postfix(pages + pageSize - 3, -1, &length, &status), "terminated source stops before the guard page");
+    Require(length == 0 && status == 0, "short terminated source reports no signature");
+
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, pageSize * 2);
+#endif
+}
+
 }
 
 int main() {
+    u_flushDefaultConverter_nid_postfix();
+    u_flushDefaultConverter_nid_postfix();
     NameMatching();
     Signatures();
+    SignatureGuestPointers();
 }

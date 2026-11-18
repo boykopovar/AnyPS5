@@ -1,6 +1,9 @@
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -41,24 +44,21 @@ int APS5_VABI _Skip_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Stoflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Stoxflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Strcollx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Strerror_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
+    if (const char* text = StrerrorText_nid_no_patch(error)) return const_cast<char*>(text);
+    char local[22];
+    std::snprintf(local, sizeof(local), "error_code=0x%08x", static_cast<unsigned>(error));
+    if (!buffer) {
+        thread_local char ownBuffer[sizeof(local)];
+        buffer = ownBuffer;
+    }
+    if (!GuestCopyOut_nid_no_patch(buffer, local, sizeof(local))) throw std::invalid_argument("_Strerror: an unwritable buffer");
+    return buffer;
 }
 
 int APS5_VABI _Strxfrmx_nid_postfix() {
@@ -161,31 +161,6 @@ int APS5_VABI _WScanf_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _WStodx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStofx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoldx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoxflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Wcscollx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -279,31 +254,6 @@ int APS5_VABI sceLibcInternalUnknown_pSQz254t3ug_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("pSQz254t3ug", sceLibcInternalUnknown_pSQz254t3ug_nid_no_patch);
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_toupperEPwPKw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_toupperEw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE11do_scan_notEsPKwS2__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE5do_isEPKwS2_Ps_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE5do_isEsw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

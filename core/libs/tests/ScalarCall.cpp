@@ -3,6 +3,7 @@
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include <array>
 #include <cstdint>
@@ -217,6 +218,22 @@ static IrProgram TranslateCode(std::span<const std::uint32_t> code, const Swappc
     return InstructionTranslator{}.Translate(program, cfg, options);
 }
 
+static void CheckNestedTableCall() {
+    const std::vector<std::uint32_t> caller{0xf4080206u, 0xfa000220u, 0xbf8cc07fu, 0xf4281204u, 0xfa000040u, 0xbf8cc07fu, 0x7e100548u, 0x8f6a8408u, 0xf4280224u, 0xd4000000u, 0xbf8cc07fu,
+        0xbe8e0308u, 0xbe8f0309u, 0xbe90030au, 0xbe91030bu, 0xbe8e210eu, 0xbf810000u};
+    const auto calls = FindTableCalls(RdnaInstructionDecoder{}.Decode(caller), SwappcInfo{false, 0u, 16u});
+    Require(calls.size() == 1u);
+    Require(calls[0].userDataRegister == 12u && calls[0].descriptorOffset == 0x220u && calls[0].nestedDescriptorOffset == std::optional<std::uint32_t>(0x40u));
+    Require(calls[0].entryOffset == 0u && calls[0].entryStride == 16u && calls[0].linkRegister == 14u && calls[0].targetRegister == 14u && !calls[0].constantPointer);
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(caller), SwappcInfo{false, 0u, 12u}).empty());
+    auto registerOffset = caller;
+    registerOffset[4] = 0x04000040u;
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(registerOffset), SwappcInfo{false, 0u, 16u}).empty());
+    auto misaligned = caller;
+    misaligned[4] = 0xfa000042u;
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(misaligned), SwappcInfo{false, 0u, 16u}).empty());
+}
+
 static void CheckConstantTableCall() {
     const std::vector<std::uint32_t> caller{0xbeea03ffu, 0xe0040000u, 0xbeeb038fu, 0xf4080135u, 0xfa000000u, 0xbf8cc07fu, 0xf4240382u, 0xfa000020u, 0xbf8cc07fu, 0xbf130e80u,
         0xbf840004u, 0xf4240402u, 0xfa000028u, 0xbf8cc07fu, 0xbe8e210eu, 0xbf810000u};
@@ -256,6 +273,7 @@ static void CheckUserDataDescriptorTableCall() {
 static void CheckTableCalls() {
     CheckConstantTableCall();
     CheckUserDataDescriptorTableCall();
+    CheckNestedTableCall();
     const SwappcInfo swappc{false, 0u, 16u};
     const auto caller = TableCaller();
     const auto program = RdnaInstructionDecoder{}.Decode(caller);
@@ -539,6 +557,25 @@ static void CheckRejections() {
     });
 }
 
+static RdnaInstruction Image(std::uint32_t pc, std::uint32_t opcode, std::uint32_t sampler) {
+    const std::array<std::uint32_t, 2> code{0xf0000f08u | (opcode << 18u), 0x00020400u | (sampler / 4u) << 21u};
+    return DecodeRdnaMimg(pc, code, 0u);
+}
+
+static void CheckImageSamplerField() {
+    for (const auto link : {0u, 2u}) {
+        for (const auto opcode : {0x00u, 0x01u, 0x08u, 0x0eu}) {
+            const auto cfg = Build({Call(0u, link, 3u), Image(4u, opcode, 0u), Sopp(12u, 1u), Sop1(16u, 0u, 0x20u, link)});
+            Require(cfg.FindBlockByProgramCounter(0u).terminator.kind == TerminatorKind::Branch);
+        }
+        for (const auto opcode : {0x20u, 0x60u}) {
+            ExpectThrow("escapes the constant-offset call/return model", [=] {
+                Build({Call(0u, link, 3u), Image(4u, opcode, 0u), Sopp(12u, 1u), Sop1(16u, 0u, 0x20u, link)});
+            });
+        }
+    }
+}
+
 static void CheckGuards(const std::string& only) {
     bool checked = false;
     const auto check = [&](const char* name, const char* needle, auto fn) {
@@ -597,6 +634,7 @@ int main(int argc, char** argv) {
             CheckTableCalls();
             CheckTableCalleeProgramCounter();
             CheckHoistedTableCalls();
+            CheckImageSamplerField();
             CheckGuards("");
         } else {
             Require(argc == 2);
