@@ -1333,6 +1333,35 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
+class LauncherPrefixTests(unittest.TestCase):
+    def test_non_cmake_commands_have_no_prefix(self):
+        self.assertEqual(check_compile.launcher_prefix(["cc", "-c", "a.c"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-E"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-P", "env", "A=1", "cc"]), [])
+
+    def test_environment_assignments_end_at_the_first_other_word(self):
+        arguments = ["cmake", "-E", "env", "A=1", "B=2", "cc", "-c", "a=b.c"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_double_dash_ends_the_options(self):
+        arguments = ["cmake", "-E", "env", "A=1", "--", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_modify_and_unset_options_are_skipped(self):
+        arguments = ["cmake", "-E", "env", "--modify", "PATH=path_list_prepend:x", "--unset=A", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:6])
+
+    def test_executable_name_ignores_case_and_windows_directory(self):
+        arguments = ["C:\\Tools\\CMake.exe", "-E", "env", "A=1", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:4])
+
+    def test_malformed_launchers_are_refused(self):
+        for arguments in (["cmake", "-E", "env", "--bogus", "cc"], ["cmake", "-E", "env", "--modify"],
+                          ["cmake", "-E", "env", "A=1"], ["cmake", "-E", "env"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
 
 if __name__ == "__main__":
     unittest.main()
