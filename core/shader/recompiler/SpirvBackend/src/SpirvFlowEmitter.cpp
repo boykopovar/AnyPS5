@@ -755,6 +755,41 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
     EmitDirectInstruction(ctx, inst);
 }
 
+bool WritesGuestState(IrOpcode opcode) {
+    if (opcode == IrOpcode::SetAttribute || opcode == IrOpcode::SetTessellationAttribute || opcode == IrOpcode::EmitVertex) return true;
+    const auto shared = SharedAccessOf(opcode);
+    const auto buffer = BufferAccessOf(opcode);
+    const auto address = AddressOpcodeInfoOf(opcode).access;
+    const auto image = ImageOpcodeInfoOf(opcode).access;
+    return (shared != SharedAccess::None && shared != SharedAccess::Read) || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
+}
+
+void EmitUnlessInvocationFaulted(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrValue& inst) {
+    auto& state = ctx.state;
+    const bool returnsValue = inst.Type() != IrType::Void;
+    const auto result = returnsValue ? ctx.Result(inst) : 0u;
+    ctx.definitions.Erase(&inst);
+    const auto faulted = BdaInvocationFaulted(state);
+    const auto body = state.module.AllocateId();
+    const auto skip = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, faulted, skip, body);
+    EmitLabel(state, body);
+    EmitStructuredInstruction(ctx, functionState, inst);
+    const auto value = returnsValue ? ctx.Def(&inst) : 0u;
+    const auto exit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, skip);
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    if (!returnsValue) return;
+    ctx.definitions.Erase(&inst);
+    const auto type = TypeId(state, inst.Type());
+    state.module.AddFunction(spv::OpPhi, type, result, value, exit, state.module.Constant(spv::OpConstantNull, type), skip);
+    ctx.definitions.Emplace(&inst, result);
+}
+
 const IrValue* RegionNanCondition(const IrValue* test) {
     std::vector<const IrValue*> pending{test};
     std::unordered_set<const IrValue*> visited;
@@ -1101,11 +1136,14 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
             SpirvValueEmitContext& lane = half == 0 ? ctx : *ctx.otherHalf;
             state.laneHalf = half;
+            state.laneValueShared = shared;
             if (half == 0 || (inst->Opcode() != IrOpcode::Barrier && inst->Opcode() != IrOpcode::MeshAllocate)) {
-                EmitStructuredInstruction(lane, functionState, *inst);
+                if (state.bdaFaultMasksWrites && WritesGuestState(inst->Opcode())) EmitUnlessInvocationFaulted(lane, functionState, *inst);
+                else EmitStructuredInstruction(lane, functionState, *inst);
             }
         }
         state.laneHalf = 0;
+        state.laneValueShared = false;
     }
 }
 
