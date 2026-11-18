@@ -674,6 +674,14 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(capture.stacks, {stack: 5})
         self.assertEqual(capture.self_counts, {})
 
+    def test_collapsed_stack_rejects_empty_frames(self):
+        samples = self.root / "worker.collapsed.txt"
+        for stack in (";draw", "worker;", "worker;;draw", "worker; \t ;draw"):
+            with self.subTest(stack=stack):
+                samples.write_text(f"# samples=5\n{stack} 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"worker\.collapsed\.txt:2:.*empty frame"):
+                    symbolize_samples.load(samples)
+
     def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
         samples = self.root / "mixed.txt"
         for collapsed_count, address_count in ((3, 7), (0, 7), (3, 0), (0, 0)):
@@ -1251,6 +1259,16 @@ class SymbolizeSamplesTests(unittest.TestCase):
                     {"name": "libSceAgcDriver.prx", "candidate_accepted": timestamp == TIMESTAMP,
                      "identity_recorded": True, "identity_matches": timestamp == TIMESTAMP}])
 
+    def test_hex_and_ascii_digit_predicates(self):
+        for value in ("0", "ff", "0x1F", "0XaB", "DEADbeef"):
+            self.assertTrue(symbolize_samples.is_hex(value), value)
+        for value in ("", "0x", "g1", "-1", "1 2", "1\n", "0x0x1"):
+            self.assertFalse(symbolize_samples.is_hex(value), value)
+        for value in ("0", "0123456789"):
+            self.assertTrue(symbolize_samples.is_ascii_digits(value), value)
+        for value in ("", "1a", "-1", "1.5", "١", "²"):
+            self.assertFalse(symbolize_samples.is_ascii_digits(value), value)
+
 
 class CandidateModuleTests(unittest.TestCase):
     def setUp(self):
@@ -1438,6 +1456,26 @@ class MappedExportTests(unittest.TestCase):
         module = self.module()
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
+
+    def test_export_directory_must_hold_its_header(self):
+        for size in (0, 1, 39):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                with self.assertRaisesRegex(ValueError, "PE export directory is smaller than its header"):
+                    self.module()
+
+    def test_export_directory_cannot_wrap_the_rva_address_space(self):
+        struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, 0xFFFFFFFF)
+        with self.assertRaisesRegex(ValueError, "PE export directory exceeds address space"):
+            self.module()
+
+    def test_export_directory_size_boundaries_remain_valid(self):
+        for size in (40, 0xFFFFE000):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                module = self.module()
+                self.assertEqual(module.name(0x1021), "~first_func")
+                self.assertEqual(module.name(0x1061), "~second_func")
 
     def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
         struct.pack_into("<H", self.data, 0x46, 3)
