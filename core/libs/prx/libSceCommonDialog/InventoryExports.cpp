@@ -1,5 +1,6 @@
 #include "prx/libSceCommonDialog/include/Exports.hpp"
 #include <cerrno>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -59,7 +60,7 @@ int APS5_VABI _ZN3sce16CommonDialogUtil6Client15launchCmnDialogEv(void* self) {
 
 void APS5_VABI _ZN3sce16CommonDialogUtil6ClientD0Ev(void* self) {
     (void)self;
-    NotImplemented_nid_no_patch(__func__);
+    for (;;) std::raise(SIGILL);
 }
 
 void APS5_VABI _ZN3sce16CommonDialogUtil6ClientD1Ev(void* self) {

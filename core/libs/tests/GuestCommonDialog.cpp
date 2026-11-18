@@ -103,7 +103,11 @@ static_assert(COMMON_DIALOG_ERROR_ARG_NULL == static_cast<int>(0x80B8000Du));
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--client-d0") == 0) {
+        _ZN3sce16CommonDialogUtil6ClientD0Ev(reinterpret_cast<void*>(std::uintptr_t{1}));
+        return 1;
+    }
     Require(!sceCommonDialogIsUsed());
     Require(!CommonDialogSystemInitialized_nid_no_patch());
     Require(!CommonDialogAcquire_nid_no_patch());
@@ -212,7 +216,6 @@ int main() {
     Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD2Ev(nullptr); }) && errno == 71);
     errno = 71;
     Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD2Ev(reinterpret_cast<void*>(std::uintptr_t{0x10})); }) && errno == 71);
-    Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD0Ev(client.data()); }));
     client[1] = 1;
     Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD1Ev(client.data()); }));
     Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD2Ev(client.data()); }));
