@@ -67,6 +67,25 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
+    if (inst.lds) {
+        if (bufferLdsBytes == 0u) throw std::runtime_error("MUBUF LDS load requires a workgroup LDS allocation");
+        RdnaOperand m0{};
+        m0.kind = RdnaOperandKind::M0;
+        IrValue& base = ir.BitwiseAnd(readU32(m0).Value(), ir.Constant(0xffffu));
+        IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+        IrValue& ldsAddress = ir.IAdd(base, ir.ShiftLeftLogical(lane, ir.Constant(2u)));
+        IrValue& end = ir.IAdd(ldsAddress, ir.Constant(inst.memoryOffset + 3u));
+        IrValue& active = ir.LogicalAnd(exec, ir.ULessThan(end, ir.Constant(bufferLdsBytes)));
+        IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        MemoryInfo shared;
+        shared.kind = ResourceKind::Lds;
+        shared.offset = inst.memoryOffset;
+        shared.dataDwords = 1u;
+        shared.dataBits = 32u;
+        shared.componentCount = 1u;
+        (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&ldsAddress, &loaded, &active}, addMemoryInfo(shared, inst.programCounter));
+        return true;
+    }
     IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
     if (memory.dataBits != 32u) {
         writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());

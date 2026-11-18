@@ -47,5 +47,17 @@ int main(int argc, char** argv) {
     const auto function = reinterpret_cast<GetResidentFmemCount>(FindSymbol(kernel, name));
     if (!function) std::fprintf(stderr, "libkernel.prx does not export %s\n", name);
     Require(function != nullptr);
+    std::uint64_t resident = 0xdeadbeefULL;
+    std::uint64_t mapped = 0xdeadbeefULL;
+    Require(function(0, nullptr, &mapped) == static_cast<int>(0x8002000e));
+    Require(function(0, &resident, nullptr) == static_cast<int>(0x8002000e));
+    Require(function(0, nullptr, nullptr) == static_cast<int>(0x8002000e));
+    Require(resident == 0xdeadbeefULL);
+    Require(mapped == 0xdeadbeefULL);
+    Require(function(-1, &resident, &mapped) == static_cast<int>(0x80020016));
+    Require(function(-100, &resident, &mapped) == static_cast<int>(0x80020016));
+    Require(function(999999, &resident, &mapped) == static_cast<int>(0x80020003));
+    Require(function(0, &resident, &mapped) == 0);
+    Require(resident == mapped);
     return 0;
 }

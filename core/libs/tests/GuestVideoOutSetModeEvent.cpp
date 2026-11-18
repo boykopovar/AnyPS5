@@ -14,6 +14,8 @@ namespace {
 constexpr int SystemUser = 255;
 constexpr int MainBus = 0;
 constexpr int InvalidHandle = static_cast<int>(0x8029000Bu);
+constexpr int InvalidEventQueue = static_cast<int>(0x8029000Cu);
+constexpr int InvalidEvent = static_cast<int>(0x8029000Du);
 constexpr int SetModeEvent = 8;
 constexpr std::int64_t DefaultOutputMode = 1;
 
@@ -47,6 +49,9 @@ int main() {
     Require(sceKernelCreateEqueue(&queue, "set mode test") == 0, "event queue creation failed");
     Require(sceVideoOutAddSetModeEvent(queue, handle + 1, nullptr) == InvalidHandle, "a set-mode event was added on a port that is not open");
     Require(sceVideoOutDeleteSetModeEvent(queue, handle + 1) == InvalidHandle, "a set-mode event was deleted on a port that is not open");
+    Require(sceVideoOutDeleteSetModeEvent(queue, handle) == InvalidEvent, "deleting a set-mode event that was never added did not return INVALID_EVENT");
+    Require(sceVideoOutAddSetModeEvent(0, handle, nullptr) == InvalidEventQueue, "adding a set-mode event to queue 0 did not return INVALID_EVENT_QUEUE");
+    Require(sceVideoOutDeleteSetModeEvent(0, handle) == InvalidEventQueue, "deleting a set-mode event from queue 0 did not return INVALID_EVENT_QUEUE");
 
     int setMode = 0;
     int outputMode = 0;
@@ -69,6 +74,7 @@ int main() {
     Require(sceVideoOutAddSetModeEvent(queue, handle, &setMode) == 0, "the set-mode event was not added after the output-mode deletion");
     Require(Collect(queue, events) == 1, "deleting the output-mode event left the set-mode registration in place");
     Require(sceVideoOutDeleteSetModeEvent(queue, handle) == 0, "the set-mode event was not deleted at the end");
+    Require(sceVideoOutDeleteSetModeEvent(queue, handle) == InvalidEvent, "deleting the set-mode event a second time did not return INVALID_EVENT");
 
     Require(sceVideoOutClose(handle) == 0, "sceVideoOutClose failed");
     Require(sceVideoOutAddSetModeEvent(queue, handle, nullptr) == InvalidHandle, "a set-mode event was added on a closed port");

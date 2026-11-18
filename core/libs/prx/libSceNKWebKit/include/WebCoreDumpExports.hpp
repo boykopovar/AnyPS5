@@ -87,8 +87,6 @@ enum class ScrollType : bool { User, Programmatic };
 
 enum class ScrollClamping : bool { Unclamped, Clamped };
 
-enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
-
 enum class ScrollingNodeType : std::uint8_t {
     MainFrame,
     Subframe,

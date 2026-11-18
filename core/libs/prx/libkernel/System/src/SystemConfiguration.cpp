@@ -227,6 +227,12 @@ GuestKinfoProc GuestProcessRecord() {
     return process;
 }
 
+bool CallingProcessId(int id) {
+    constexpr int PidMax = 99999;
+    if (id == getpid_nid_postfix()) return true;
+    return id > PidMax && (id == scePthreadGetthreadid() || LiveGuestThreadExists(id));
+}
+
 std::vector<GuestKinfoProc> GuestThreadRecords() {
     const auto threads = LiveGuestThreadNames();
     std::vector<GuestKinfoProc> records;
@@ -485,7 +491,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             return -1;
         }
         const int pid = name[3];
-        if (pid != -1 && pid != getpid_nid_postfix()) {
+        if (pid != -1 && !CallingProcessId(pid)) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -501,6 +507,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
+        if (oldValue == nullptr) {
+            constexpr std::size_t EstimatedExtraProcesses = 5;
+            return CopyOut(nullptr, (EstimatedExtraProcesses + 1) * sizeof(GuestKinfoProc), nullptr, oldLength);
+        }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
@@ -513,7 +523,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -529,7 +539,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -545,7 +555,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -560,7 +570,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }

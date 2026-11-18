@@ -15,7 +15,7 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
 KNOWN_UNRUN = set()
 SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
-EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:->\s*[^;{]+)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
 COMPILE_FLAG = re.compile(r"(?:^|\s)[-/]c(?:\s|$)")
 
@@ -118,6 +118,8 @@ def unbuilt_exports(root, sources, skipped=()):
         try:
             text = source.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            continue
+        if '.cpp"' not in text.replace("\\\n", "").replace("\\\r\n", ""):
             continue
         for name in INCLUDED_SOURCE.findall(cpp_source(text, keep_strings=True)):
             included = (source.parent / name).resolve()
