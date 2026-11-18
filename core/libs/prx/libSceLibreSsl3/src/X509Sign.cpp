@@ -17,7 +17,6 @@ constexpr int NullType = 5;
 constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr std::int64_t BitsLeftMask = BitsLeftFlag | 0x07;
 constexpr int RsaKeyType = 6;
-constexpr int RsaPssKeyType = 912;
 
 struct Encoding {
     const unsigned char* bytes;
@@ -30,6 +29,8 @@ static_assert(sizeof(Encoding) == sizeof(LibreSsl3CertificateInfo::encoding));
 static_assert(sizeof(LibreSsl3X509) <= sizeof(LibreSsl3Certificate));
 static_assert(offsetof(LibreSsl3X509, certInfo) == offsetof(LibreSsl3Certificate, certInfo));
 static_assert(offsetof(LibreSsl3X509, sigAlg) == offsetof(LibreSsl3Certificate, sigAlg));
+static_assert(offsetof(LibreSsl3X509, signature) == 16);
+static_assert(offsetof(Encoding, modified) == 16);
 
 class PreservedErrno {
 public:
@@ -96,9 +97,42 @@ std::vector<unsigned char> SignBytes(const std::vector<unsigned char>& tbs, Libr
     return signature;
 }
 
-void SetAlgorithm(LibreSsl3X509Algor* algor, const void* object, LibreSsl3Asn1Type* parameter) {
+bool PrepareParameter(LibreSsl3X509Algor* algor, bool nullParameter) {
+    if (!nullParameter || algor->parameter) return true;
+    auto* const allocated = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
+    if (!allocated) return false;
+    allocated->type = NullType;
+    allocated->value = nullptr;
+    CopyOut(&algor->parameter, allocated, "X509_sign");
+    return true;
+}
+
+bool ApplyAlgorithm(LibreSsl3X509Algor* algor, const void* object, bool nullParameter) {
     CopyOut(&algor->algorithm, object, "X509_sign");
-    CopyOut(&algor->parameter, parameter, "X509_sign");
+    auto* existing = static_cast<LibreSsl3Asn1Type*>(algor->parameter);
+    if (!nullParameter) {
+        if (existing) {
+            ASN1_TYPE_free_nid_postfix(reinterpret_cast<Asn1Type*>(existing));
+            CopyOut(&algor->parameter, static_cast<LibreSsl3Asn1Type*>(nullptr), "X509_sign");
+        }
+        return true;
+    }
+    LibreSsl3Asn1Type value {};
+    if (existing) {
+        value = CopyIn<LibreSsl3Asn1Type>(existing, "X509_sign");
+        if (value.value) {
+            ASN1_TYPE_free_nid_postfix(reinterpret_cast<Asn1Type*>(existing));
+            existing = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
+            if (!existing) return false;
+            CopyOut(&algor->parameter, existing, "X509_sign");
+        }
+    } else {
+        return true;
+    }
+    value.type = NullType;
+    value.value = nullptr;
+    CopyOut(existing, value, "X509_sign");
+    return true;
 }
 
 bool StoreSignature(const LibreSsl3X509& certificate, LibreSsl3Certificate* guestCertificate,
@@ -153,18 +187,14 @@ extern "C" int APS5_VABI X509_sign_nid_postfix(LibreSsl3Certificate* certificate
     if (LibreSsl3::ObjectNid(static_cast<const LibreSslAsn1Object*>(inner.algorithm)) != signatureNid)
         NotImplemented_nid_no_patch("X509_sign: certificate info signed with another signature algorithm");
 
-    LibreSsl3Asn1Type* parameter = nullptr;
-    if (keyType == RsaKeyType || keyType == RsaPssKeyType) {
-        parameter = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
-        if (!parameter) return 0;
-        parameter->type = NullType;
-        parameter->value = nullptr;
-    }
+    const bool nullParameter = keyType == RsaKeyType;
+    auto* const outer = const_cast<LibreSsl3X509Algor*>(fields.sigAlg);
+    auto* const innerAlgor = static_cast<LibreSsl3X509Algor*>(info.signature);
+    if (!PrepareParameter(outer, nullParameter) || !PrepareParameter(innerAlgor, nullParameter)) return 0;
 
     const auto tbs = CertificateInfoEncoding(encoding);
     const auto signature = SignBytes(tbs, key, digestMethod);
-    SetAlgorithm(const_cast<LibreSsl3X509Algor*>(fields.sigAlg), object, parameter);
-    SetAlgorithm(static_cast<LibreSsl3X509Algor*>(info.signature), object, parameter);
+    if (!ApplyAlgorithm(outer, object, nullParameter) || !ApplyAlgorithm(innerAlgor, object, nullParameter)) return 0;
     if (!StoreSignature(view, certificate, signature)) return 0;
     return static_cast<int>(signature.size());
 }

@@ -35,12 +35,14 @@ using Bytes = std::vector<unsigned char>;
 
 constexpr int P256 = 415;
 constexpr int Sha256WithRsaEncryption = 668;
+constexpr int EcdsaWithSha256 = 794;
 constexpr int Sha1WithRsaEncryption = 65;
 constexpr int BitStringType = 3;
 constexpr int NullType = 5;
 
 const Bytes Sha256WithRsa {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b};
 const Bytes Sha1WithRsa {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x05};
+const Bytes EcdsaWithSha256Oid {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02};
 
 constexpr char RsaPrivateKey[] =
     "-----BEGIN RSA PRIVATE KEY-----\n"
@@ -285,7 +287,8 @@ void CheckSignedCertificate() {
     Require(Bytes(innerObject->data, innerObject->data + innerObject->length) == Sha256WithRsa);
     Require(fixture.inner.parameter != nullptr && fixture.inner.parameter->type == NullType
         && fixture.inner.parameter->value == nullptr);
-    Require(fixture.outer.parameter == fixture.inner.parameter);
+    Require(fixture.outer.parameter != nullptr && fixture.outer.parameter != fixture.inner.parameter);
+    Require(fixture.outer.parameter->type == NullType && fixture.outer.parameter->value == nullptr);
     Require(X509_get_signature_nid_nid_postfix(&fixture.certificate) == Sha256WithRsaEncryption);
 
     Require(Verify(tbs, signature, key));
@@ -351,6 +354,7 @@ void CheckUnsupportedKeys() {
     Require(EVP_PKEY_set1_EC_KEY_nid_postfix(ec, reinterpret_cast<LibreSsl3EcKey*>(ecKey)) == 1);
     EC_KEY_free_nid_postfix(ecKey);
     fixture.SetEncoding(parts.tbs, 0);
+    fixture.SetAlgorithm(EcdsaWithSha256, EcdsaWithSha256Oid);
     fixture.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
     RequireThrows([&] { X509_sign_nid_postfix(&fixture.certificate, ec, EVP_sha256_nid_postfix()); });
     Require(fixture.signature.length == 0);
