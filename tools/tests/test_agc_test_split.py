@@ -281,6 +281,20 @@ class ResolveTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already includes", result.stderr)
 
+class WriteLfTests(unittest.TestCase):
+    def test_creates_parents_and_keeps_line_feeds(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "a" / "b" / "c.txt"
+            agc_test_split.write_lf(path, "x\ny\n")
+            self.assertEqual(path.read_bytes(), b"x\ny\n")
+
+    def test_existing_file_is_replaced(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "c.txt"
+            path.write_bytes(b"old old old")
+            agc_test_split.write_lf(path, "new\n")
+            self.assertEqual(path.read_bytes(), b"new\n")
+
 
 if __name__ == "__main__":
     unittest.main()
