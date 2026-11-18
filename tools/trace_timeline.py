@@ -12,7 +12,8 @@ HTML file: one row per thread, one bar per traced slice, placed on the capture's
 duration. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest first, and the page
 says how many were left out.
 
-Slices are only what the capture retained; buffer-full losses (see trace_digest.py) leave gaps that look like idle time."""
+The page reports buffer-full losses for the selected threads over the full capture, including losses outside the
+displayed window. Gaps may contain unrecorded work."""
 
 LABEL_WIDTH = 120
 ROW_HEIGHT = 18
@@ -106,6 +107,12 @@ def main(arguments=None):
     slices = window_slices(trace, start_us, end_us, options.thread)
     laid = layout(slices, start_us, end_us, options.width, options.max_slices)
     notes = [f"window {start_us / 1000.0:.3f} to {end_us / 1000.0:.3f} ms, {len(laid['threads'])} threads, {len(laid['bars'])} bars"]
+    if trace.losses:
+        lost = sum(events_lost for _, _, events_lost in trace.losses)
+        notes.append(f"Incomplete trace: {lost} events lost. Gaps may contain unrecorded work.")
+        for tid, ts, events_lost in trace.losses:
+            thread = f"{trace.name(tid)} (tid {tid})" if tid in trace.threads else trace.name(tid)
+            notes.append(f"{thread}: buffer full at {ts / 1000.0:.3f} ms; {events_lost} events lost across the capture.")
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")
