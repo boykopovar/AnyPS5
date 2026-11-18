@@ -31,6 +31,10 @@ public:
         armGate.store(gate, std::memory_order_release);
     }
 
+    static void SetArmHook(void (*hook)(std::uintptr_t block)) {
+        armHook.store(hook, std::memory_order_release);
+    }
+
     static WindowsMappings& Get() {
         static auto* mappings = new WindowsMappings;
         return *mappings;
@@ -849,6 +853,7 @@ private:
     static constexpr std::size_t ArmedBlockLimit = std::size_t{1} << 20;
 
     static inline std::atomic<bool (*)()> armGate{nullptr};
+    static inline std::atomic<void (*)(std::uintptr_t)> armHook{nullptr};
 
     static bool armPrivateBlocks() {
         const auto gate = armGate.load(std::memory_order_acquire);
@@ -918,6 +923,7 @@ private:
             entry.faults = ArmFaultLimit;
             return;
         }
+        if (const auto hook = armHook.load(std::memory_order_acquire)) hook(block);
         std::array<void*, ownedBlockBytes / 4096> written{};
         ULONG_PTR reported = written.size();
         DWORD granularity = 0;

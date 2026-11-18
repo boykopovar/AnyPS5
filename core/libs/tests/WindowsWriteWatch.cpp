@@ -2,6 +2,7 @@
 #include "prx/libc/include/WindowsMappings.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <set>
 #include <string>
@@ -1102,6 +1103,58 @@ void CheckArmedPrivateBlocks() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+std::atomic<unsigned char*> armRaceTarget{nullptr};
+std::thread armRaceWriter;
+
+void StoreWhileArming(std::uintptr_t block) {
+    auto* target = armRaceTarget.exchange(nullptr);
+    if (target == nullptr || reinterpret_cast<std::uintptr_t>(target) - block >= 0x10000) {
+        if (target != nullptr) armRaceTarget.store(target);
+        return;
+    }
+    const auto before = faults.load();
+    armRaceWriter = std::thread([target] { *static_cast<volatile unsigned char*>(target) = 0x5a; });
+    for (int wait = 0; wait < 50 && faults.load() == before; ++wait) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(faults.load() == before, "a store into a block being armed was handled before the block was armed");
+}
+
+void CheckStoreWhileArming() {
+    Mappings::SetArmGate([] { return true; });
+    struct Gate {
+        ~Gate() {
+            Mappings::SetArmHook(nullptr);
+            Mappings::SetArmGate(nullptr);
+        }
+    } gate;
+    constexpr std::size_t Block = 0x10000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Block));
+    Require(memory != nullptr, "arming race reservation failed");
+    mappings.Commit(memory, Block, PAGE_READWRITE, Block, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto collect = [&] {
+        std::set<std::size_t> result;
+        std::array<void*, 16> pages{};
+        std::size_t count = pages.size();
+        Require(mappings.Collect(address, Block, pages.data(), &count, true), "arming race collection failed");
+        for (std::size_t i = 0; i < count; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        return result;
+    };
+    armRaceTarget.store(memory + 5 * Small);
+    Mappings::SetArmHook(StoreWhileArming);
+    const auto faultsBefore = faults.load();
+    for (int walk = 0; walk < 4 && armRaceTarget.load() != nullptr; ++walk) Require(collect().empty(), "a clean private block reported writes before the racing store");
+    Mappings::SetArmHook(nullptr);
+    Require(armRaceTarget.load() == nullptr && armRaceWriter.joinable(), "the clean private block was never armed");
+    armRaceWriter.join();
+    Require(faults.load() == faultsBefore + 1, "a store into a block being armed did not fault once");
+    Require(memory[5 * Small] == 0x5a, "a store into a block being armed was lost");
+    Require(RegionAt(memory).Protect == PAGE_READWRITE, "a store into a block being armed left it read-only");
+    Require(collect() == std::set<std::size_t>{5}, "a store into a block being armed was not reported");
+    mappings.Reset(memory, Block);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckArmedResidentRun() {
     Mappings::SetArmGate([] { return true; });
     struct Gate {
@@ -1182,6 +1235,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
         CheckArmedPrivateBlocks();
+        CheckStoreWhileArming();
         CheckArmedResidentRun();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
