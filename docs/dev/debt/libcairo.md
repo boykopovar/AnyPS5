@@ -35,6 +35,8 @@
 
 - [FreeType font faces](../../../core/libs/prx/libcairo/FontFace.cpp) follow Cairo 1.18.0 for lifetime only: `cairo_ft_font_face_create_for_ft_face` returns the cached face for the same guest `FT_Face`, `face_index` and load flags with one more reference, the face does not reference the `FT_Face`, and user data is released in reverse order after the face leaves the cache. Cairo's "zombie" face, kept while a scaled font still holds the unscaled font, is not modelled because scaled fonts throw. A null face or font face throws because Cairo dereferences it, and setting user data on a font face from its own finalizer, or destroying it there without a reference of the finalizer's own, throws because Cairo then modifies or frees what it is finalizing. The PS5 prototypes are unverified.
 
+- [FreeType scaled fonts](../../../core/libs/prx/libcairo/ScaledFont.cpp) - `cairo_ft_scaled_font_lock_face` returns null and `cairo_ft_scaled_font_unlock_face` does nothing, as Cairo 1.18.0 does for a scaled font outside its FreeType backend. The bundled Cairo has no FreeType backend, so this holds for every scaled font here; a font that reports `CAIRO_FONT_TYPE_FT` throws. On the console, toy faces resolve through FreeType, so locking their scaled fonts would return a face. A null font throws because Cairo dereferences it.
+
 ### Functional toy-font text
 
 - [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
@@ -47,7 +49,6 @@
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
-| `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
 | `cairo_pattern_reference` | `6qRL52tLOII` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
@@ -60,7 +61,6 @@
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
 | `cairo_arc` | `R0TePTSHd2k` |
-| `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |

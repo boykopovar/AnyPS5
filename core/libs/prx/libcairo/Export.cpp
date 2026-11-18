@@ -17,10 +17,6 @@ int APS5_VABI cairo_arc_negative() {
 
 
 
-int APS5_VABI cairo_ft_scaled_font_lock_face() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_pattern_reference() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -63,10 +59,6 @@ int APS5_VABI cairo_arc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI cairo_ft_scaled_font_unlock_face() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 

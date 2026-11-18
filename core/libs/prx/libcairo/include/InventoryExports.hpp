@@ -48,7 +48,6 @@ extern "C" {
 
 int APS5_VABI cairo_scaled_font_get_font_face();
 int APS5_VABI cairo_arc_negative();
-int APS5_VABI cairo_ft_scaled_font_lock_face();
 int APS5_VABI cairo_pattern_reference();
 int APS5_VABI cairo_scaled_font_get_font_options();
 int APS5_VABI cairo_pattern_set_extend();
@@ -56,7 +55,6 @@ int APS5_VABI cairo_ft_font_face_create_for_pattern();
 int APS5_VABI cairo_pattern_create_linear();
 int APS5_VABI cairo_set_scaled_font();
 int APS5_VABI cairo_arc();
-int APS5_VABI cairo_ft_scaled_font_unlock_face();
 int APS5_VABI cairo_in_fill();
 int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
