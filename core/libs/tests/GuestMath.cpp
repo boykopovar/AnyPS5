@@ -4838,6 +4838,12 @@ int main() {
     threw = false;
     try { lgamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    auto* const unwritableSign = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    for (const auto call : {+[](int* sign) { lgamma_r_nid_postfix(-0.5, sign); }, +[](int* sign) { lgammaf_r_nid_postfix(-0.5f, sign); }, +[](int* sign) { gamma_r_nid_postfix(-0.5, sign); }, +[](int* sign) { gammaf_r_nid_postfix(-0.5f, sign); }}) {
+        threw = false;
+        try { call(unwritableSign); } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw);
+    }
     threw = false;
     try { lgammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
