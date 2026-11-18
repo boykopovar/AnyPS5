@@ -1600,7 +1600,8 @@ int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
     if (!prio) return SCE_KERNEL_ERROR_EINVAL;
     const auto live = LockLiveGuestThread(thread);
     if (!live) return SCE_KERNEL_ERROR_ESRCH;
-    *prio = thread->priority.load(std::memory_order_relaxed);
+    const int priority = thread->priority.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(prio, &priority, sizeof(priority))) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 

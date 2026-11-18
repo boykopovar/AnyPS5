@@ -420,7 +420,7 @@ void APS5_VABI EC_POINT_clear_free_nid_postfix(EcPoint* point);
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
     LibreSsl3Pkcs8PrivKeyInfo** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI ECDSA_do_sign_nid_postfix();
-int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix();
+int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix(LibreSsl3SslCtx* context, const char* ciphersuites);
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey* key,
     const LibreSsl3EvpCipher* cipher, unsigned char* keyString, int keyLength,
     LibreSslPemPasswordCallback passwordCallback, void* userData);
