@@ -95,6 +95,12 @@ public:
     bool javaScriptGarbageCollectorTimerEnabled = true;
     bool storageAccessAPIEnabled = false;
     std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
+    bool usesTestingNetworkSession = false;
+    std::uint32_t terminateNetworkProcessCount = 0;
+    std::uint32_t syncLocalStorageCount = 0;
+    std::uint32_t clearCachedCredentialsCount = 0;
+    std::uint32_t clearLegacyPrivateBrowsingLocalStorageCount = 0;
+    std::uint32_t clearCurrentModifierStateCount = 0;
     std::vector<std::string> bypassingCSPSchemes;
     std::vector<std::string> cachePartitionedSchemes;
     std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;

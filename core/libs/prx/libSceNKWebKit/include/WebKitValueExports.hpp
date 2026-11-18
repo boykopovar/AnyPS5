@@ -532,6 +532,12 @@ void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextR
 void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
+void APS5_VABI WKContextSyncLocalStorage(const void* contextRef);
+void APS5_VABI WKContextClearCachedCredentials(const void* contextRef);
+void APS5_VABI WKContextClearLegacyPrivateBrowsingLocalStorage(const void* contextRef);
+void APS5_VABI WKContextUseTestingNetworkSession(const void* contextRef);
+void APS5_VABI WKContextClearCurrentModifierStateForTesting(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
