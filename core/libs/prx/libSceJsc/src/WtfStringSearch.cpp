@@ -102,6 +102,7 @@ Derived from Source/WTF/wtf/text/StringView.cpp@c55364d53f971f63a709976f168d932d
 
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceIcu/Properties.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -133,6 +134,10 @@ Text Require(const StringImpl* impl, const char* function) {
 Text Require(const StringView* view, const char* function) {
     if (!view) throw std::invalid_argument(function);
     return {view->characters, view->length, view->is8Bit};
+}
+
+void StoreDirectionality(bool* output, bool value) {
+    if (output && !GuestCopyOut_nid_no_patch(output, &value, sizeof(value))) throw std::invalid_argument("StringImpl::defaultWritingDirection: unwritable output");
 }
 
 template<typename Visitor> auto Visit(const Text& first, const Text& second, Visitor visitor) {
@@ -368,11 +373,11 @@ std::int32_t APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb(StringImp
     for (unsigned index = 0; index < text.length; ++index) {
         const std::int32_t direction = u_charDirection_nid_postfix(text[index]);
         if (direction == LeftToRight || direction == RightToLeft || direction == RightToLeftArabic) {
-            if (hasStrongDirectionality) *hasStrongDirectionality = true;
+            StoreDirectionality(hasStrongDirectionality, true);
             return direction == LeftToRight ? LeftToRight : RightToLeft;
         }
     }
-    if (hasStrongDirectionality) *hasStrongDirectionality = false;
+    StoreDirectionality(hasStrongDirectionality, false);
     return LeftToRight;
 }
 
