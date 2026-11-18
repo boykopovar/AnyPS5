@@ -331,11 +331,11 @@ def run_ps5_probes(probes, digest, output_dir, device_label):
     system = platform.system()
     if system != "Linux":
         raise ValueError("PS5 hardware runs require Linux on the console")
+    if os.environ.get("HSA_OVERRIDE_GFX_VERSION"):
+        raise ValueError("PS5 hardware runs reject HSA_OVERRIDE_GFX_VERSION")
     runtime = hw_oracle.runtime()
     if runtime != "hsa":
         raise ValueError("PS5 hardware runs require the HSA runtime")
-    if os.environ.get("HSA_OVERRIDE_GFX_VERSION"):
-        raise ValueError("PS5 hardware runs reject HSA_OVERRIDE_GFX_VERSION")
     identity = hw_oracle.hsa_identity(hw_oracle.oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
     target = hw_oracle.target()
     verified = require_ps5_identity(identity, target, runtime, system)
