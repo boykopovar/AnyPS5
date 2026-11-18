@@ -23,6 +23,7 @@ public:
         requireRange(header.ProgramHeaderOffset, static_cast<std::uint64_t>(header.ProgramHeaderCount) * 56);
         headers = reader.ReadProgramHeaders();
         for (const auto& segment : headers) {
+            if (segment.Type == Elfpatcher::PT_GNU_STACK) continue;
             requireRange(segment.Offset, segment.FileSize);
             if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
                 throw RelinkerException("Strict filter: segment address overflow", segment.MappedAddress);
@@ -44,8 +45,10 @@ public:
                 }
                 if (tag == 17 || tag == 18 || tag == 19) throw RelinkerException("Strict filter: DT_REL relocations are not supported");
                 if (tag == 1 || (tag >= 0x61000000 && tag != 0x6100002F && tag != 0x61000031 && tag != 0x61000033 && tag != 0x61000039 && tag != 0x6100003B && tag != 0x6100003F)) continue;
-                if (!tags.emplace(tag, read<std::uint64_t>(segment.Offset + offset + 8)).second)
-                    throw RelinkerException("Strict filter: duplicate dynamic tag", segment.Offset + offset);
+                const auto value = read<std::uint64_t>(segment.Offset + offset + 8);
+                const auto [entry, inserted] = tags.emplace(tag, value);
+                if (!inserted && entry->second != value)
+                    throw RelinkerException("Strict filter: conflicting duplicate dynamic tag", segment.Offset + offset);
             }
             if (!terminated) throw RelinkerException("Strict filter: unterminated dynamic segment", segment.Offset);
         }

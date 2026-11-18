@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -9,6 +10,13 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static_assert(sizeof(Asn1String) == 24 && offsetof(Asn1String, data) == 8 && offsetof(Asn1String, flags) == 16);
 
@@ -87,9 +95,58 @@ static void TestIntegerFree() {
     ASN1_INTEGER_free_nid_postfix(empty);
 }
 
+template<typename TAction> static void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && errno == 71, location);
+}
+
+static void TestGuestPointers() {
+    auto* unmapped = reinterpret_cast<Asn1String*>(std::uintptr_t{0x10});
+    RequireRejected([&] { ASN1_STRING_get0_data_nid_postfix(unmapped); });
+    RequireRejected([&] { ASN1_INTEGER_free_nid_postfix(unmapped); });
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+#endif
+    std::memset(memory, 0x5A, 4);
+    auto* readOnly = reinterpret_cast<Asn1String*>(memory + page - sizeof(Asn1String));
+    *readOnly = {4, 2, memory, 0};
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(ASN1_STRING_get0_data_nid_postfix(readOnly) == memory && errno == 71);
+    Asn1String* integer = NewInteger(0, 2, 0);
+    integer->length = 4;
+    integer->data = memory;
+    RequireRejected([&] { ASN1_INTEGER_free_nid_postfix(integer); });
+    Require(memory[0] == 0x5A && memory[3] == 0x5A && integer->data == memory);
+    integer->data = nullptr;
+    ASN1_INTEGER_free_nid_postfix(integer);
+#ifdef _WIN32
+    VirtualFree(memory, 0, MEM_RELEASE);
+#else
+    munmap(memory, page);
+#endif
+}
+
 int main() {
     InitializeHeap();
     TestGet0Data();
     TestIntegerFree();
+    TestGuestPointers();
     std::puts("libSceLibreSsl3 ASN.1 tests passed");
 }

@@ -117,6 +117,18 @@ raise SystemExit(7 if failed else 0)
             self.assertEqual([chunk.get("name", chunk["kind"]) for chunk in minimized["chunks"]], ["range", "trigger"])
             self.assertIn("final predicate confirmed 2 times", stdout.getvalue())
 
+    def test_cli_reports_a_non_ascii_output_path_as_utf8(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments, _, _, output = self.empty_cli(root, output=root / "界" / "result")
+            stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+                stdout.flush()
+            self.assertEqual(result, 0, stderr.getvalue())
+            self.assertIn(f"wrote {output};", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_cli_refuses_to_reduce_when_the_baseline_does_not_match(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -329,6 +341,90 @@ if command == 'inspect':
             self.assertIn("filter failed", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_partial_final_filter_failure_leaves_no_output_and_allows_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = "import json, pathlib, sys\nif sys.argv[1] == 'inspect': print('{\"calls\": [], \"chunks\": []}')\nelse:\n p = pathlib.Path(sys.argv[-1]); p.mkdir(); (p/'partial').write_bytes(b'incomplete')\n print('final apply failed after writing', file=sys.stderr); raise SystemExit(4)\n"
+            arguments, capture_filter, _, output = self.empty_cli(root, filter_source=script)
+            source = root / "capture" / "source.bin"
+            source.write_bytes(b"keep source capture")
+            unrelated = root / "unrelated.asset"
+            unrelated.write_bytes(b"keep unrelated")
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                result = frame_capture_minimize.main(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("final apply failed after writing", stderr.getvalue())
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob("aps5-frame-output-*")), [])
+            self.assertEqual(source.read_bytes(), b"keep source capture")
+            self.assertEqual(unrelated.read_bytes(), b"keep unrelated")
+            capture_filter.write_text(script.replace("print('final apply failed after writing', file=sys.stderr); raise SystemExit(4)", "(p/'complete').write_bytes(b'complete')"), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(frame_capture_minimize.main(arguments), 0)
+            self.assertEqual((output / "complete").read_bytes(), b"complete")
+            self.assertEqual(list(root.glob("aps5-frame-output-*")), [])
+
+    def test_final_filter_cannot_claim_a_foreign_output(self):
+        for kind in ("empty-directory", "directory", "file"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                output = root / "result"
+                foreign = ("foreign.write_bytes(b'owned elsewhere')" if kind == "file" else
+                           "foreign.mkdir(exist_ok=True)" + ("; (foreign/'keep.txt').write_bytes(b'owned elsewhere')" if kind == "directory" else ""))
+                script = ("import json, pathlib, sys\nif sys.argv[1] == 'inspect': print('{\"calls\": [], \"chunks\": []}')\nelse:\n"
+                          " p = pathlib.Path(sys.argv[-1]); p.mkdir(); (p/'filtered').write_bytes(b'new capture')\n"
+                          + " foreign = pathlib.Path(" + repr(str(output)) + "); " + foreign + "\n")
+                arguments, _, _, _ = self.empty_cli(root, filter_source=script, output=output)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(frame_capture_minimize.main(arguments), 2)
+                if kind == "file":
+                    self.assertEqual(output.read_bytes(), b"owned elsewhere")
+                elif kind == "directory":
+                    self.assertEqual({path.name for path in output.iterdir()}, {"keep.txt"})
+                    self.assertEqual((output / "keep.txt").read_bytes(), b"owned elsewhere")
+                else:
+                    self.assertEqual(list(output.iterdir()), [])
+                self.assertEqual(list(root.glob("aps5-frame-output-*")), [])
+
+    def test_failed_final_capture_publication_removes_owned_output(self):
+        real_replace = Path.replace
+        for after_rename in (False, True):
+            with self.subTest(after_rename=after_rename), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = "import json, pathlib, sys\nif sys.argv[1] == 'inspect': print('{\"calls\": [], \"chunks\": []}')\nelse:\n p = pathlib.Path(sys.argv[-1]); p.mkdir(); (p/'complete').write_bytes(b'complete')\n"
+                arguments, _, _, output = self.empty_cli(root, filter_source=script)
+
+                def replace(source, target):
+                    if Path(target) == output / "complete":
+                        if after_rename:
+                            real_replace(source, target)
+                        raise OSError("capture publication blocked")
+                    return real_replace(source, target)
+
+                stderr = io.StringIO()
+                with patch.object(Path, "replace", replace), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(frame_capture_minimize.main(arguments), 2)
+                self.assertIn("capture publication blocked", stderr.getvalue())
+                self.assertFalse(output.exists())
+                self.assertEqual(list(root.glob("aps5-frame-output-*")), [])
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(frame_capture_minimize.main(arguments), 0)
+                self.assertEqual((output / "complete").read_bytes(), b"complete")
+
+    def test_successful_filter_must_materialize_a_capture_directory(self):
+        for body in ("pass", "pathlib.Path(sys.argv[-1]).write_bytes(b'not a capture directory')"):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = ("import json, pathlib, sys\nif sys.argv[1] == 'inspect': print('{\"calls\": [], \"chunks\": []}')\nelse: " + body + "\n")
+                arguments, _, _, output = self.empty_cli(root, filter_source=script)
+                stderr = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(frame_capture_minimize.main(arguments), 2)
+                self.assertIn("did not create a capture directory", stderr.getvalue())
+                self.assertFalse(output.exists())
+                self.assertEqual(list(root.glob("aps5-frame-output-*")), [])
+
     def test_cli_creates_missing_output_parent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -408,6 +504,42 @@ if command == 'inspect':
             arguments.extend(["--replay-timeout", "0"])
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(arguments)
+
+    def test_native_filter_command_is_the_path_alone(self):
+        self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter")), [str(Path("filter"))])
+
+    def test_minimize_without_units_is_complete_and_unchanged(self):
+        minimizer = PredicateMinimizer([], [])
+        result = minimizer.minimize([], set(), set(), True)
+        self.assertEqual(result, ([], set(), set(), True))
+        self.assertEqual(minimizer.trials, 0)
+
+    def test_minimize_reports_incomplete_when_trial_budget_runs_out(self):
+        args = SimpleNamespace(max_trials=0, filter="filter", replay="replay", capture="capture", output="output")
+        minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            current, removed_calls, removed_chunks, complete = minimizer.minimize([0, 1, 2], set(), set(), True)
+        self.assertEqual((current, removed_calls, removed_chunks, complete), ([0, 1, 2], set(), set(), False))
+        self.assertIn("maximum trial count reached", stderr.getvalue())
+
+    def test_reducible_chunks_excludes_ranges_and_keeps_deltas_of_retained_groups(self):
+        description = {
+            "calls": [
+                {"index": 0, "memory_group": 1},
+                {"index": 1, "memory_group": 2},
+                {"index": 2, "memory_group": None},
+            ],
+            "chunks": [
+                {"index": 0, "kind": "range", "group": 1},
+                {"index": 1, "kind": "delta", "group": 1},
+                {"index": 2, "kind": "delta", "group": 2},
+                {"index": 3, "kind": "reference", "group": 2},
+            ],
+        }
+        units, removed_groups = frame_capture_minimize.Minimizer.reducible_chunks(description, {1})
+        self.assertEqual(units, [1, 3])
+        self.assertEqual(removed_groups, {2})
 
 if __name__ == "__main__":
     unittest.main()

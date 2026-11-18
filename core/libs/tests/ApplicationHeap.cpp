@@ -16,10 +16,8 @@
 #endif
 #include <windows.h>
 #elif defined(__linux__)
-#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include "ProcessParametersFixture.hpp"
 #include <dlfcn.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #elif defined(__APPLE__)
 #include "ProcessParametersFixture.hpp"
 #endif
@@ -33,6 +31,7 @@ void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 namespace {
 
 alignas(64) std::array<std::byte, 256> storage{};
+std::array<std::byte, 256> lastFreedBytes{};
 alignas(16) std::array<std::byte, 0x40> process{};
 alignas(16) std::array<std::byte, 0x38> libc{};
 alignas(16) std::array<std::byte, 0x78> replacement{};
@@ -79,30 +78,7 @@ void installProcessParameters(bool present = true) {
     target->Misc.VirtualSize = sizeof(processParameterMetadata);
     DWORD restored = 0;
     VirtualProtect(target, sizeof(*target), oldProtect, &restored);
-#elif defined(__linux__)
-    bool installed = false;
-    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
-        if (image->dlpi_name != nullptr && image->dlpi_name[0] != '\0') return 0;
-        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
-            const auto& header = image->dlpi_phdr[index];
-            if (header.p_type == PT_LOAD || header.p_type == PT_GNU_EH_FRAME || header.p_type < 0x60000000u) continue;
-            auto* mutableHeader = const_cast<Elf64_Phdr*>(&header);
-            const auto pageSize = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
-            const auto pageStart = reinterpret_cast<std::uintptr_t>(mutableHeader) & ~(pageSize - 1);
-            const auto pageEnd = (reinterpret_cast<std::uintptr_t>(mutableHeader + 1) + pageSize - 1) & ~(pageSize - 1);
-            if (mprotect(reinterpret_cast<void*>(pageStart), pageEnd - pageStart, PROT_READ | PROT_WRITE) != 0) return 1;
-            mutableHeader->p_type = 0x61000001;
-            mutableHeader->p_vaddr = reinterpret_cast<std::uintptr_t>(process.data()) - image->dlpi_addr;
-            mutableHeader->p_paddr = mutableHeader->p_vaddr;
-            mutableHeader->p_filesz = process.size();
-            mutableHeader->p_memsz = process.size();
-            *static_cast<bool*>(data) = true;
-            return 1;
-        }
-        return 1;
-    }, &installed);
-    require(installed);
-#elif defined(__APPLE__)
+#elif defined(__linux__) || defined(__APPLE__)
     require(ProcessParametersFixture::Install(process.data(), process.size()));
 #endif
 }
@@ -128,6 +104,7 @@ void* APS5_VABI allocate(std::size_t bytes) {
 
 void APS5_VABI release(void* pointer) {
     require(pointer == storage.data());
+    std::memcpy(lastFreedBytes.data(), storage.data(), storage.size());
     ++frees;
 }
 
@@ -325,6 +302,12 @@ int main(int argc, char** argv) {
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
         ApplicationHeapFree_nid_no_patch(pointer);
+        freezero_nid_postfix(nullptr, 32);
+        pointer = static_cast<unsigned char*>(malloc_nid_postfix(32));
+        require(pointer != nullptr);
+        std::memset(pointer, 0x5a, 32);
+        freezero_nid_postfix(pointer, 32);
+        reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
         pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 24));
         require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 24);
         std::memset(pointer, 0x3c, 24);
@@ -571,4 +554,22 @@ int main(int argc, char** argv) {
 
     fail = false;
     require(frees == beforeScripting && lastSize == sizeBeforeScripting);
+
+    std::memset(storage.data(), 0x7a, storage.size());
+    const auto freesBeforePartial = frees;
+    freezero_nid_postfix(storage.data(), 40);
+    require(frees == freesBeforePartial + 1);
+    for (std::size_t i = 0; i < 40; ++i) require(lastFreedBytes[i] == std::byte{0});
+    for (std::size_t i = 40; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x7a});
+
+    std::memset(storage.data(), 0x33, storage.size());
+    const auto freesBeforeZero = frees;
+    freezero_nid_postfix(storage.data(), 0);
+    require(frees == freesBeforeZero + 1);
+    for (std::size_t i = 0; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x33});
+
+    const auto freesBeforeNull = frees;
+    freezero_nid_postfix(nullptr, 128);
+    freezero_nid_postfix(nullptr, 0);
+    require(frees == freesBeforeNull);
 }

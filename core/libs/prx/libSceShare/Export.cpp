@@ -31,6 +31,13 @@ bool WriteRequestIdInvalid(std::int32_t* requestId) {
     return copied;
 }
 
+bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const auto savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -119,7 +126,7 @@ int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
 
 int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtended* param, std::int32_t* requestId) {
     ShareScreenshotParamExtended copy{};
-    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (param == nullptr || !CopyInPreservingErrno(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
     if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
     if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
@@ -127,7 +134,7 @@ int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtend
 
 int APS5_VABI sceShareCaptureVideoClipExtended(const ShareVideoClipParamExtended* param, std::int32_t* requestId) {
     ShareVideoClipParamExtended copy{};
-    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (param == nullptr || !CopyInPreservingErrno(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
     if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
     if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
     if (copy.reserved != 0 || (copy.mode == 0 && copy.value16 != 0)) return ERROR_INVALID_PARAM;
@@ -151,7 +158,10 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
 int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* applicationTitle) {
     if (applicationTitle == nullptr) return ERROR_INVALID_PARAM;
     std::string title;
-    if (CopyGuestString_nid_no_patch(applicationTitle, 5120, title) != 0 || title.empty()) return ERROR_INVALID_PARAM;
+    const auto savedErrno = errno;
+    const int copied = CopyGuestString_nid_no_patch(applicationTitle, 5120, title);
+    errno = savedErrno;
+    if (copied != 0 || title.empty()) return ERROR_INVALID_PARAM;
     return 0;
 }
 
