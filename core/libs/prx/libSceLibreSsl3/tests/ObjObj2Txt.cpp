@@ -51,6 +51,16 @@ int main() {
     Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 13);
     Require(std::strcmp(buffer.data(), "rsaEncryption") == 0);
 
+    const std::array<unsigned char, 3> commonNameOid{0x55, 0x04, 0x03};
+    object.shortName = "own short";
+    object.longName = "own long";
+    object.length = 3;
+    object.data = commonNameOid.data();
+    Require(OBJ_obj2txt_nid_postfix(buffer.data(), buffer.size(), &object, 0) == 10);
+    Require(std::strcmp(buffer.data(), "commonName") == 0);
+    object.length = 9;
+    object.data = rsaOid.data();
+
     object.shortName = nullptr;
     object.longName = nullptr;
     object.length = 9;

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/Objects.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -59,11 +60,14 @@ extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength,
     if (!object || !object->data) return 0;
     std::string text;
     if (!noName) {
-        const char* name = object->longName ? object->longName : object->shortName;
-        if (!name && object->length > 0) {
-            const int nid = OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(object));
-            if (nid != 0) name = OBJ_nid2sn_nid_postfix(nid);
+        const char* name = nullptr;
+        if (object->length > 0) {
+            const auto* const known = reinterpret_cast<const LibreSslAsn1Object*>(object);
+            const int nid = LibreSsl3::ObjectNid(known);
+            if (const auto* const entry = nid != 0 ? LibreSsl3::ObjectByNid(nid) : nullptr)
+                name = entry->longName ? entry->longName : entry->shortName;
         }
+        if (!name) name = object->longName ? object->longName : object->shortName;
         if (name) text = name;
     }
     if (text.empty() && object->length > 0) {
