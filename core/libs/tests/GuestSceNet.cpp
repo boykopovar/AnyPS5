@@ -1631,6 +1631,66 @@ static void CheckInetPtonRejects(int family, const char* text) {
     Require(std::all_of(address.begin(), address.end(), [](std::uint8_t byte) { return byte == 0xaa; }));
 }
 
+static void CheckInetPtonSourceFaults() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page * 2, 3, 0, physical, 0) == 0);
+    auto* boundary = static_cast<char*>(mapping) + page;
+    Require(sceKernelMprotect(boundary, page, 0) == 0);
+    for (const int family : {2, 28}) {
+        std::array<std::uint8_t, 20> address;
+        address.fill(0xaa);
+        const auto unchanged = address;
+        for (const char* source : {reinterpret_cast<const char*>(std::uintptr_t{0x10}),
+                 static_cast<const char*>(boundary), static_cast<const char*>(boundary - 1),
+                 reinterpret_cast<const char*>(UINTPTR_MAX)}) {
+            boundary[-1] = '1';
+            errno = 71;
+            Require(Failed(sceNetInetPton(family, source, address.data()), 14));
+            Require(address == unchanged && errno == 14);
+        }
+        const char* valid = family == 2 ? "1.2.3.4" : "::ffff:1.2.3.4";
+        const auto size = std::strlen(valid) + 1;
+        std::memcpy(boundary - size, valid, size);
+        *sceNetErrnoLoc() = 123;
+        errno = 71;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1);
+        Require(*sceNetErrnoLoc() == 123 && errno == 71);
+        const auto expected = address;
+        const auto bytes = family == 2 ? 4 : 16;
+        Require(address[bytes - 4] == 1 && address[bytes - 1] == 4);
+        Require(std::all_of(address.begin() + bytes, address.end(), [](auto byte) { return byte == 0xaa; }));
+        boundary[-1] = ' ';
+        address = unchanged;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1 && address == expected);
+        Require(sceKernelMprotect(mapping, page, 1) == 0);
+        address = unchanged;
+        Require(sceNetInetPton(family, boundary - size, address.data()) == 1 && address == expected);
+        Require(sceKernelMprotect(mapping, page, 3) == 0);
+        address = unchanged;
+        boundary[-1] = '\0';
+        Require(sceNetInetPton(family, boundary - 1, address.data()) == 0 && address == unchanged);
+    }
+    std::array<std::uint8_t, 16> address{};
+    const auto* unreadable = static_cast<const char*>(boundary);
+    Require(Failed(sceNetInetPton(99, unreadable, address.data()), 47));
+    Require(Failed(sceNetInetPton(28, unreadable, nullptr), 22));
+    Require(Failed(sceNetInetPton(2, unreadable, nullptr), 14));
+    Require(Failed(sceNetInetPton(2, nullptr, address.data()), 22));
+    std::memcpy(boundary - 4, "::1 ", 4);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(28, boundary - 4, address.data()) == 0 && *sceNetErrnoLoc() == 123);
+    Require(std::all_of(address.begin(), address.end(), [](auto byte) { return byte == 0; }));
+    Require(sceKernelMprotect(boundary, page, 3) == 0);
+    std::memcpy(boundary - 3, "1.2.3.4", 8);
+    Require(sceNetInetPton(2, boundary - 3, address.data()) == 1);
+    Require(address[0] == 1 && address[1] == 2 && address[2] == 3 && address[3] == 4);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0);
+}
+
 static void CheckInetPtonWhitespace() {
     for (const char* text : {"1.2.3.4 ", "1.2.3.4\t", "1.2.3.4\n", "1.2.3.4\v", "1.2.3.4\f", "1.2.3.4\r", "1.2.3.4 5", "1.2.3.4 x"}) {
         std::array<std::uint8_t, 16> address{};
@@ -2838,6 +2898,11 @@ static void CheckDatagramDisconnect() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--inet-pton-source-faults") == 0) {
+        CheckInetPtonSourceFaults();
+        CheckInetPtonWhitespace();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--ether-pointer-faults") == 0) {
         CheckEtherPointerFaults();
         return 0;
@@ -2909,6 +2974,7 @@ int main(int argc, char** argv) {
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckInetNtopGuestPointers();
     CheckInetPtonWhitespace();
+    CheckInetPtonSourceFaults();
     CheckInetPtonExParts();
     CheckInetPtonEx();
     CheckUsleep();

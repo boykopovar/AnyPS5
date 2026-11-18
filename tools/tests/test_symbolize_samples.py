@@ -1259,6 +1259,16 @@ class SymbolizeSamplesTests(unittest.TestCase):
                     {"name": "libSceAgcDriver.prx", "candidate_accepted": timestamp == TIMESTAMP,
                      "identity_recorded": True, "identity_matches": timestamp == TIMESTAMP}])
 
+    def test_hex_and_ascii_digit_predicates(self):
+        for value in ("0", "ff", "0x1F", "0XaB", "DEADbeef"):
+            self.assertTrue(symbolize_samples.is_hex(value), value)
+        for value in ("", "0x", "g1", "-1", "1 2", "1\n", "0x0x1"):
+            self.assertFalse(symbolize_samples.is_hex(value), value)
+        for value in ("0", "0123456789"):
+            self.assertTrue(symbolize_samples.is_ascii_digits(value), value)
+        for value in ("", "1a", "-1", "1.5", "١", "²"):
+            self.assertFalse(symbolize_samples.is_ascii_digits(value), value)
+
 
 class CandidateModuleTests(unittest.TestCase):
     def setUp(self):
