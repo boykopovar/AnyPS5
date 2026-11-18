@@ -902,10 +902,6 @@ int APS5_VABI _ZN7WebCore6JSFile14finishCreationERN3JSC2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore20GraphicsContextStateC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8395,10 +8391,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_wyqfK2JMc3w_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("wyqfK2JMc3w", libSceNKWebKitLegacyUnknown_wyqfK2JMc3w_nid_no_patch);
-
-int APS5_VABI _ZNK7WebCore18SecurityOriginData12isolatedCopyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore5Range32compareBoundaryPointsForBindingsEtRKS0_() {
     NotImplemented_nid_no_patch(__func__);
