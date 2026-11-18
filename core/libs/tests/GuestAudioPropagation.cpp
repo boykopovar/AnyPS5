@@ -13,6 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -285,6 +288,20 @@ int main() {
     Require(sceAudioPropagationSystemSetAttributes(system, nullptr, 0) == 0, "empty system attributes failed");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system, &empty, 1); }, "attribute without value");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system + 16, &attribute, 1); }, "unknown system");
+    const auto* unreadable = reinterpret_cast<const AudioPropagation::Attribute*>(0x10);
+    errno = 71;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system, unreadable, 1); }, "system attributes from an unreadable array");
+    Require(errno == 71, "unreadable system attributes changed errno");
+#ifndef _WIN32
+    rusage before{};
+    getrusage(RUSAGE_SELF, &before);
+#endif
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system, unreadable, 0x10000000u); }, "a huge count from an unreadable array");
+#ifndef _WIN32
+    rusage after{};
+    getrusage(RUSAGE_SELF, &after);
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024, "a huge attribute count sized a buffer before reading");
+#endif
 
     std::uint8_t materialBytes[AudioPropagation::MaterialSize]{};
     auto* material = reinterpret_cast<AudioPropagationStructDescriptor*>(materialBytes);
@@ -311,6 +328,7 @@ int main() {
     const AudioPropagation::Attribute portalAttributes[4]{attribute, attribute, attribute, attribute};
     Require(sceAudioPropagationPortalSetAttributes(portal, portalAttributes, 4) == 0, "portal attributes failed");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPortalSetAttributes(rooms[0], portalAttributes, 4); }, "portal attributes on a room");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPortalSetAttributes(portal, unreadable, 2); }, "portal attributes from an unreadable array");
 
     AudioPropagationHandle source = 0;
     Require(sceAudioPropagationSourceCreate(system, &source) == 0, "source create failed");
@@ -353,6 +371,9 @@ int main() {
     sourceAttributes[0].valueSize = 8;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAttributes(source, sourceAttributes, 1); }, "source attribute with a wrong size");
     Require(sceAudioPropagationSourceQueryInfo(source, &sourceInfo) == 0 && sourceInfo.position[0] == 1.0f, "rejected source attribute changed the stored info");
+    errno = 71;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAttributes(source, unreadable, 1); }, "source attributes from an unreadable array");
+    Require(errno == 71 && sceAudioPropagationSourceQueryInfo(source, &sourceInfo) == 0 && sourceInfo.position[0] == 1.0f, "an unreadable source attribute array changed errno or the stored info");
 
     AudioPropagation::Attribute resets[13]{};
     Require(sceAudioPropagationResetAttributes(nullptr, 1) == AudioPropagation::ErrorNullPointer, "reset on a null array");

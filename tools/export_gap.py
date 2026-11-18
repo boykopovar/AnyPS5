@@ -165,6 +165,8 @@ def strip_disambig(name):
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
+        if any(part.lower() in {"test", "tests"} for part in path.relative_to(module_dir).parts[:-1]):
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in (".cpp", ".c", ".cc", ".h", ".hpp", ".hh"):

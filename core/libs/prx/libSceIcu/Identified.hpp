@@ -21,8 +21,6 @@ int APS5_VABI res_getTableItemByKey_nid_postfix();
 int APS5_VABI res_read_nid_postfix();
 int APS5_VABI u_charDigitValue_nid_postfix(std::int32_t character);
 int APS5_VABI u_digit_nid_postfix(std::int32_t character, std::int8_t radix);
-int APS5_VABI u_flushDefaultConverter_nid_postfix();
 int APS5_VABI u_getDefaultConverter_nid_postfix();
-int APS5_VABI u_getFC_NFKC_Closure_nid_postfix();
 int APS5_VABI u_releaseDefaultConverter_nid_postfix();
 }
