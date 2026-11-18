@@ -351,6 +351,52 @@ void TestLegacySchemeRegistry() {
     Require(Contains(corsSchemes, "custom-cors"));
 }
 
+void TestLegacyLookups() {
+    String png = _ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(MakeString("PNG"));
+    Require(Equals(png, "image/png"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(MakeString("txt")), "text/plain"));
+    String unknown = _ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(MakeString("unknownext"));
+    Require(unknown.impl && unknown.impl->length == 0);
+    String fromNull = _ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(MakeString(nullptr));
+    Require(fromNull.impl && fromNull.impl->length == 0);
+
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("a/b.Jpg")), "image/jpeg"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("archive.tar.HTML")), "text/html"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("noext")), "application/octet-stream"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("x.unknown")), "application/octet-stream"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("x.png.")), "application/octet-stream"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString("")), "application/octet-stream"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(MakeString(nullptr)), "application/octet-stream"));
+
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("ogg")), "audio/ogg"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("MPA")), "audio/mpeg"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("webm")), "video/webm"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("m4a")), "audio/x-m4a"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("m3u8")), "application/vnd.apple.mpegurl"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("wav")), "audio/x-wav"));
+    Require(Equals(_ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("png")), "image/png"));
+    String mediaUnknown = _ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(MakeString("unknownext"));
+    Require(mediaUnknown.impl && mediaUnknown.impl->length == 0);
+
+    Require(_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("application/x-java-applet;version=1.5")));
+    Require(_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-JAVA-VM")));
+    Require(_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("application/x-java-bean")));
+    Require(!_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("application/java")));
+    Require(!_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("application/x-java")));
+    Require(!_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString("")));
+    Require(!_ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(MakeString(nullptr)));
+
+    Require(_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/usd")));
+    Require(_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/vnd.pixar.usd")));
+    Require(_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/vnd.reality")));
+    Require(_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("Model/VND.usdz+zip")));
+    Require(!_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/gltf")));
+    Require(!_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/usdz")));
+    Require(!_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("model/us")));
+    Require(!_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString("")));
+    Require(!_ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(MakeString(nullptr)));
+}
+
 }  // namespace
 
 int main() {
@@ -359,6 +405,7 @@ int main() {
     TestExtensions();
     TestAllowedAndEncoding();
     TestLegacySchemeRegistry();
+    TestLegacyLookups();
     std::printf("All libSceNKWebKit MimeTypeRegistry tests passed!\n");
     return 0;
 }

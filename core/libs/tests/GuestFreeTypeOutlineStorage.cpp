@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 using namespace FreeType;
 
@@ -59,6 +61,22 @@ int main() {
     Require(FT_Outline_New_nid_postfix(&library, 3, 1, unmapped) == FT_Err_Invalid_Argument);
     Require(FT_Outline_Done_nid_postfix(&library, unmapped) == FT_Err_Invalid_Outline);
     Require(errno == 71);
+
+    auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
+    for (const bool done : {false, true}) {
+        GuestOutline kept{1, 2, nullptr, nullptr, nullptr, 3};
+        const char* const name = done ? "FT_Outline_Done_nid_postfix" : "FT_Outline_New_nid_postfix";
+        errno = 71;
+        bool refused = false;
+        try {
+            if (done) FT_Outline_Done_nid_postfix(unreadableLibrary, &kept);
+            else FT_Outline_New_nid_postfix(unreadableLibrary, 3, 1, &kept);
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()) == std::string(name) + " not implemented";
+        }
+        Require(refused && errno == 71);
+        Require(kept.n_points == 2 && kept.n_contours == 1 && kept.flags == 3);
+    }
 
     GuestLibrary uninitialized{};
     GuestOutline untouched{1, 2, nullptr, nullptr, nullptr, 3};
