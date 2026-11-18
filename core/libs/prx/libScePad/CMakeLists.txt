@@ -218,3 +218,17 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_pad_haptics_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadHapticsBounds.cpp)
+    target_include_directories(guest_pad_haptics_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_haptics_bounds_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_haptics_bounds_tests)
+    add_test(NAME guest_pad_haptics_bounds COMMAND guest_pad_haptics_bounds_tests)
+    set_tests_properties(guest_pad_haptics_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pad_haptics_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
+endif()
+
+
