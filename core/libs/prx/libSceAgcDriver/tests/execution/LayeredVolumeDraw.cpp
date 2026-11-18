@@ -239,7 +239,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.blends = {state.blend};
     state.blendConstants = {};
     if (mesh) {
-        Require(DeclaresLayer(geometryResult.spirv), "the mesh program declares no Layer output");
+        Require(DeclaresLayer(geometryResult.spirv.Words()), "the mesh program declares no Layer output");
         if (!executeMesh) return;
     }
     if (mesh) {

@@ -149,8 +149,8 @@ int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
     vertex.spirv = ShaderRecompiler::SharedSpirv(Emitter(target.spirvVersion).Vertex());
     fragment.spirv = ShaderRecompiler::SharedSpirv(Emitter(target.spirvVersion).Fragment());
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(vertex.spirv, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
-    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(fragment.spirv, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
+    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(vertex.spirv.Words(), target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
+    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(fragment.spirv.Words(), target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
 #endif
     vertex.parameterExports = {0u};
     fragment.fragmentParameters = {{0u, 0u, false, false}};

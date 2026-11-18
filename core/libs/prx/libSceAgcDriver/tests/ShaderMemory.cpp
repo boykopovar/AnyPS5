@@ -3850,7 +3850,7 @@ void verifyImageTableKeys() {
         require(mapB[Abi::HeaderTableCount] == 1u && mapB[Abi::TableHeader(0) + Abi::TableKeyCount] == Entries, "image table keys: the large table was not snapshotted whole");
         if (code.size() == TableWholeCode.size()) require(mapB[Abi::HeaderElementCount] > 2000u, "image table keys: the large table's entries were not bound");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(a.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(a.spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
     }
 }
@@ -5322,7 +5322,7 @@ void verifyImageTables() {
     require(uniform.runtimeArray && uniform.dynamicIndexing && uniform.switched, "image tables: the SPIR-V does not index the table");
     require(!uniform.shaderNonUniform && !uniform.nonUniform, "image tables: a single-subgroup workgroup was decorated NonUniform");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(result.spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
 
     const auto split = CompileTable(TableRequest(TableMaterialCode, userData, 64u));
@@ -5381,7 +5381,7 @@ void verifyImageTables() {
     require(queryCodes.size() == 4u && queryCodes[0] == queryCodes[3] && queryCodes[2] == Abi::NullCode && queryCodes[1] != queryCodes[0], "image tables: the queried and sampled table's map is wrong");
     require(!query.result->spirv.empty(), "image tables: a T# both queried and sampled did not compile");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(query.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(query.result->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
 
     heap[0][3] = (heap[0][3] & 0x0fffffffu) | (1u << 28u);
@@ -6363,7 +6363,7 @@ void verifyPointerImageTable() {
     require((invalidFlags & Abi::PoisonFlag) != 0u && compiled.result->imageTablePoison.at(invalidFlags & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotImage), "pointer image table: an invalid entry is not NotImage poison");
     require(compiled.result->imageTableRanges == tables.ranges && map[Abi::TableHeader(0) + Abi::TableBaseLow] == static_cast<std::uint32_t>(base) && map[Abi::TableHeader(0) + Abi::TableBaseHigh] == static_cast<std::uint32_t>(base >> 32u), "pointer image table: the compiled table is wrong");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, masked.target.vulkanVersion, masked.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv.Words(), masked.target.vulkanVersion, masked.target.spirvVersion));
 #endif
 
     const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4040500u, 0xfa000030u,
@@ -6857,7 +6857,7 @@ void verifyPointerChainImageTable() {
     const auto& changed = relinked.capture->snapshot.tables.tables.at(0);
     require(changed.codes[1] == changed.codes[2] && changed.codes[1] != changed.codes[0], "pointer chain image table: changing the second pointer of a record did not change its T#");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
     store(links[1].data() + 4u, address(descriptors[1].data()));
 
@@ -7136,7 +7136,7 @@ void verifyDescriptorPhis() {
         const auto compiled = Recompile(request, *capture);
         require(countOps(compiled->spirv.Words(), OpImageSampleExplicitLod) == 2u, "descriptor Phi: the specialized SPIR-V does not sample once per edge");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
         return capture;
     };
@@ -7176,7 +7176,7 @@ void verifyDescriptorPhis() {
     dynamic.context.memory = dynamicRegions;
     const auto dynamicCompiled = Recompile(dynamic, *dynamicCapture);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv, dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv.Words(), dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
 #endif
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
@@ -11797,7 +11797,7 @@ void verifyGuardedDirectRoot() {
     const auto validResult = Recompile(branch.request, *valid);
     require(validResult->poisonedSrtReads == 0u, "guarded direct root: the mapped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(validResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(validResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: mapped taken load passed\n";
     root[4] = 0u;
@@ -11809,7 +11809,7 @@ void verifyGuardedDirectRoot() {
     const auto mappedSkippedResult = Recompile(branch.request, *mappedSkipped);
     require(mappedSkippedResult->poisonedSrtReads == 0u, "guarded direct root: the mapped skipped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(mappedSkippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(mappedSkippedResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: mapped skipped load passed\n";
     root[4] = 1u;
@@ -11895,7 +11895,7 @@ void verifyGuardedDirectRoot() {
     const auto skippedResult = Recompile(branch.request, *skipped);
     require(skippedResult->poisonedSrtReads == 0u, "guarded direct root: the skipped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(skippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(skippedResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: inaccessible skipped load passed\n";
 #ifdef _WIN32
@@ -12003,7 +12003,7 @@ void verifyGuardedNullPointers() {
             require(replay.poisonedSrtReads == condition && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
             verifyResult(*result, replay);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-            static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+            static_cast<void>(ValidateAndOptimizeSpirv(result->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
         }
     }
@@ -12138,7 +12138,7 @@ void verifyGuardedNullPointers() {
         const auto result = Recompile(vertex.request, *capture);
         require(result->poisonedSrtReads == guard * 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture has the wrong poison count or no fault buffer");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(result->spirv.Words(), vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
 #endif
     }
     NestedRequest rootless(branchCode, nullptr);
@@ -13932,8 +13932,8 @@ int main(int argc, char** argv) {
         auto invalidSpirv = first.spirv;
         invalidSpirv[0] = 0;
         expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(invalidSpirv, request.target.vulkanVersion, request.target.spirvVersion)); }, "SPIR-V validation before optimization failed", "invalid SPIR-V passed validation");
-        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00400000u, 0x00010600u)); }, "unsupported Vulkan/SPIR-V target", "incompatible target accepted");
-        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00405000u, 0x00010600u)); }, "unsupported Vulkan target", "unknown Vulkan target accepted");
+        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv.Words(), 0x00400000u, 0x00010600u)); }, "unsupported Vulkan/SPIR-V target", "incompatible target accepted");
+        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv.Words(), 0x00405000u, 0x00010600u)); }, "unsupported Vulkan target", "unknown Vulkan target accepted");
 #endif
         const auto readOnly = [&](const char* name) {
             const auto words = first.spirv.Words();
