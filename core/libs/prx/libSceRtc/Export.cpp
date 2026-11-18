@@ -160,11 +160,14 @@ int setCurrentTick(std::size_t clock, const RtcTick* tick) {
 }
 
 bool hostLocalTime(std::time_t seconds, std::tm& local) {
+    const int savedErrno = errno;
 #ifdef _WIN32
-    return localtime_s(&local, &seconds) == 0;
+    const bool converted = localtime_s(&local, &seconds) == 0;
 #else
-    return localtime_r(&seconds, &local) != nullptr;
+    const bool converted = localtime_r(&seconds, &local) != nullptr;
 #endif
+    errno = savedErrno;
+    return converted;
 }
 
 std::int64_t localOffsetSeconds(std::uint64_t utcTick) {

@@ -1059,3 +1059,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslSessionDer.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_ssl_session_der_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SslSessionDer.cpp)
+    target_include_directories(guest_libressl3_ssl_session_der_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ssl_session_der_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_ssl_session_der_tests)
+    add_test(NAME guest_libressl3_ssl_session_der COMMAND guest_libressl3_ssl_session_der_tests)
+    set_tests_properties(guest_libressl3_ssl_session_der PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ssl_session_der PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
