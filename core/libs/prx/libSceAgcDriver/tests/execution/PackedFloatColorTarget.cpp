@@ -32,6 +32,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -282,28 +283,37 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const Co
     }
 }
 
-void ResolveTests(AgcDriver::VulkanDevice& device) {
+void ResolveCase(AgcDriver::VulkanDevice& device, std::uint32_t sampleShift, const std::vector<std::array<float, 3>>& samples, std::uint32_t word, const std::string& what) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
-    Block source(layout.Bytes() * 4u);
+    Block source(layout.Bytes() << sampleShift);
     Block resolved(layout.Bytes());
     std::memset(source.data, 0, source.bytes);
     std::memset(resolved.data, 0x5a, resolved.bytes);
-    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, 2u);
-    const std::array<std::array<float, 3>, 2> samples{{
-        {1.0f + 1.0f / 32.0f, 3.0f, std::ldexp(1.0f, -15)},
-        {1.0f + 1.0f / 16.0f, 0.5f, std::ldexp(1.0f, -16)},
-    }};
-    for (std::uint32_t sample = 0; sample < 4u; ++sample) Draw(device, multisampled, Float32Export, Float32Program(samples[sample % 2u]), static_cast<std::uint16_t>(1u << sample));
+    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, sampleShift);
+    for (std::uint32_t sample = 0; sample < (1u << sampleShift); ++sample) Draw(device, multisampled, Float32Export, Float32Program(samples[sample % samples.size()]), static_cast<std::uint16_t>(1u << sample));
     AgcDriver::Graphics::ColorMetadataPass pass{};
     pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
     pass.source = multisampled;
     pass.targets = {DecodeTarget(resolved, TiledAttrib3, true)};
     device.ColorMetadataPass(pass);
-    const std::array<float, 3> average{(samples[0][0] + samples[1][0]) / 2.0f, (samples[0][1] + samples[1][1]) / 2.0f, (samples[0][2] + samples[1][2]) / 2.0f};
-    const auto word = Packed(average, true);
-    Require(word == ((SmallFloat(1.0f, 5) + 1u) | (SmallFloat(1.75f, 6) << 10u) | (24u << 21u)), "the expected resolve does not truncate the halfway red average or keep the subnormal blue average");
-    ExpectSurface(device, resolved, layout, std::vector<std::uint32_t>(resolved.bytes / 4u, 0u), word, "a CB resolve of a four-sample 11_11_10 float target");
+    ExpectSurface(device, resolved, layout, std::vector<std::uint32_t>(resolved.bytes / 4u, 0u), word, what);
     AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
+void ResolveTests(AgcDriver::VulkanDevice& device) {
+    const float infinity = std::numeric_limits<float>::infinity();
+    const float nan = std::bit_cast<float>(0x7fa00000u);
+    ResolveCase(device, 2u, {{1.0f + 1.0f / 32.0f, 3.0f, std::ldexp(1.0f, -15)}, {1.0f + 1.0f / 16.0f, 0.5f, std::ldexp(1.0f, -16)}},
+        (SmallFloat(1.0f, 5) + 1u) | (SmallFloat(1.75f, 6) << 10u) | (24u << 21u), "a CB resolve of a four-sample 11_11_10 float target");
+    ResolveCase(device, 2u, {{infinity, infinity, nan}, {1.0f, 1.0f, 2.0f}, {nan, 1.0f, 2.0f}, {1.0f, 1.0f, 2.0f}},
+        0x3f0u | (0x7c0u << 10u) | (0x7e0u << 21u), "a CB resolve of a four-sample 11_11_10 float target with NaN and infinite samples");
+    try {
+        ResolveCase(device, 3u, {{1.0f, 7.4375f, 7.4375f}, {1.0f, 49152.0f, 49152.0f}, {1.0f, 24.5f, 24.5f}, {1.0f, 10240.0f, 10240.0f}, {1.0f, 3424.0f, 3424.0f}, {1.0f, 13440.0f, 13440.0f}, {1.0f, 0.06201171875f, 0.06201171875f}, {1.0f, 38400.0f, 38400.0f}},
+            SmallFloat(1.0f, 5) | (0x72fu << 10u) | (0x72fu << 21u), "a CB resolve of an eight-sample 11_11_10 float target whose float32 sum rounds up");
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+        std::puts("eight-sample 11_11_10 float resolve skipped, the device lacks eight-sample color attachments");
+    }
 }
 
 std::vector<std::uint32_t> Fill(Block& block) {
