@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/include/Bitmap.hpp"
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -340,6 +341,44 @@ void NewSlotFailures() {
     Require(rejected.recorder.lastFreed == calls.initSlot, "a rejected slot is freed last");
 }
 
+void GuestPointers() {
+    DriverFixture fixture;
+    GuestGlyphSlotRec* slot = reinterpret_cast<GuestGlyphSlotRec*>(0x1234);
+    static Recorder roRecorder{};
+    roRecorder.memory = {&roRecorder, RecordAlloc, RecordFree, RecordRealloc};
+    static GuestModuleClass roModuleClass{};
+    static GuestDriverClassPrefix roClazz{.slot_object_size = sizeof(GuestGlyphSlotRec)};
+    static int roLibrary = 0;
+    static GuestDriverRec roDriver{.root_clazz = &roModuleClass, .root_library = &roLibrary, .root_memory = &roRecorder.memory, .clazz = &roClazz};
+    static GuestSlotInternalRec roInternal{};
+    static const GuestFaceRec readOnlyFace{.driver = &roDriver, .memory = &roRecorder.memory};
+    static const GuestGlyphSlotRec readOnlySlot{.face = const_cast<GuestFaceRec*>(&readOnlyFace), .internal = &roInternal};
+    unsigned char buffer[4]{};
+
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(reinterpret_cast<GuestFaceRec*>(0x10), &slot) == 0x06 && errno == 71 && slot == reinterpret_cast<GuestGlyphSlotRec*>(0x1234),
+        "New_GlyphSlot refuses an unreadable face without changing errno or output");
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, reinterpret_cast<GuestGlyphSlotRec**>(0x10)) == 0x06 && errno == 71 && !fixture.face.glyph && fixture.recorder.allocs == fixture.recorder.frees,
+        "New_GlyphSlot rolls back when the output slot pointer is unwritable");
+    Require(FT_New_GlyphSlot_nid_postfix(const_cast<GuestFaceRec*>(&readOnlyFace), &slot) == 0x06 && errno == 71 && !readOnlyFace.glyph && roRecorder.allocs == roRecorder.frees,
+        "New_GlyphSlot refuses a read-only face without leaking or changing errno");
+
+    fixture.face.driver = reinterpret_cast<void*>(0x10);
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06 && errno == 71,
+        "New_GlyphSlot refuses an unreadable driver pointer without changing errno");
+
+    ft_glyphslot_free_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10));
+    Require(errno == 71, "free_bitmap ignores an unreadable slot without changing errno");
+    ft_glyphslot_set_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10), buffer);
+    Require(errno == 71, "set_bitmap ignores an unreadable slot without changing errno");
+    ft_glyphslot_set_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlySlot), buffer);
+    Require(errno == 71 && !readOnlySlot.bitmap.buffer, "set_bitmap ignores a read-only slot without changing errno");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10), 8) == 0x06 && errno == 71,
+        "alloc_bitmap refuses an unreadable slot without changing errno");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlySlot), 8) == 0x06 && errno == 71 && !readOnlySlot.bitmap.buffer && roRecorder.allocs == roRecorder.frees,
+        "alloc_bitmap refuses a read-only slot without leaking or changing errno");
+}
+
 }
 
 int main() {
@@ -354,6 +393,7 @@ int main() {
     NewSlotWithoutOutlines();
     NewSlotArguments();
     NewSlotFailures();
+    GuestPointers();
     std::puts("Guest FreeType Ot glyph slot tests passed");
     return 0;
 }
