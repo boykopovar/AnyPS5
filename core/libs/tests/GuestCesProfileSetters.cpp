@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -160,11 +161,21 @@ void CheckReplacement() {
     Require(Convert(context, "\x82\xA0", out, sizeof(out), produced) == 0 && produced == 3);
 }
 
+void CheckIso2022GuestPointers() {
+    static const Sheet readOnlyIso2022{{'I', 'S', 'O', '2', '0', '2', '2', 'R'}};
+    const auto* ascii = sceCesRefersUcsProfileAscii();
+    errno = 71;
+    Require(sceCesIso2022JpUcsProfileSetSbcs(reinterpret_cast<void*>(0x10), ascii) == invalidProfile && errno == 71);
+    Require(sceCesIso2022JpUcsProfileSetSbcs(const_cast<std::uint8_t*>(readOnlyIso2022.bytes), ascii) == invalidProfile && errno == 71);
+    Require(readOnlyIso2022.bytes[8] == 0);
+}
+
 }
 
 int main() {
     CheckShiftJis();
     CheckEucFamilies();
     CheckReplacement();
+    CheckIso2022GuestPointers();
     return 0;
 }
