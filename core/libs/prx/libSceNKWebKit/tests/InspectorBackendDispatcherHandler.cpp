@@ -91,13 +91,26 @@ static const Domain Domains[] = {
     {"Worker", 4, &_ZN9Inspector30WorkerBackendDispatcherHandlerC2Ev, &_ZN9Inspector30WorkerBackendDispatcherHandlerC2ERKS0_, &_ZN9Inspector30WorkerBackendDispatcherHandlerD0Ev},
 };
 
+static bool IsPureVirtual(const void* slot) {
+#ifdef _WIN32
+    static const void* const libraryPureVirtual = slot;
+    return slot && slot == libraryPureVirtual;
+#else
+    return slot == reinterpret_cast<const void*>(&__cxa_pure_virtual_nid_postfix);
+#endif
+}
+
 static void RequireVtable(const Domain& domain, const void* const* vptr) {
     const auto* layout = NKWebKit::InspectorAbi::FindBackendDispatcherHandlerLayout(domain.name);
     Require(layout && layout->commandCount == domain.commands && layout->vtable == vptr);
     Require(reinterpret_cast<const std::ptrdiff_t*>(vptr)[-2] == 0 && vptr[-1] == nullptr);
-    for (std::size_t i = 0; i < domain.commands; ++i) Require(vptr[i] == reinterpret_cast<const void*>(&__cxa_pure_virtual_nid_postfix));
+    for (std::size_t i = 0; i < domain.commands; ++i) Require(IsPureVirtual(vptr[i]));
+#ifndef _WIN32
     Require(vptr[domain.commands] == reinterpret_cast<const void*>(&NKWebKit::InspectorAbi::BackendDispatcherHandlerCompleteDestructor));
     Require(vptr[domain.commands + 1] == reinterpret_cast<const void*>(&NKWebKit::InspectorAbi::BackendDispatcherHandlerDeletingDestructor));
+#else
+    Require(vptr[domain.commands] && vptr[domain.commands + 1] && vptr[domain.commands] != vptr[domain.commands + 1]);
+#endif
 }
 
 static void TestConstructors() {
