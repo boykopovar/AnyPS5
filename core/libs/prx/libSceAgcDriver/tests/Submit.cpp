@@ -160,7 +160,7 @@ void testChainedIndirectBuffers() {
     std::copy(self.begin(), self.end(), loop.begin());
     Packet loopPacket{loop.data(), static_cast<std::uint32_t>(loop.size()), 0, {}};
     const auto message = expectFailure([&] { sceAgcDriverSubmitDcb(&loopPacket); });
-    check(message.find("copy limit") != std::string::npos, "a chained indirect buffer that links to itself was not stopped by the copy limit");
+    check(message.find("leads back to a buffer of its own chain") != std::string::npos, "a chained indirect buffer that links to itself was not rejected as a jump loop");
 
     std::vector<std::uint32_t> first(4);
     std::vector<std::uint32_t> second(4);
@@ -170,7 +170,7 @@ void testChainedIndirectBuffers() {
     std::copy(toFirst.begin(), toFirst.end(), second.begin());
     Packet pairPacket{first.data(), static_cast<std::uint32_t>(first.size()), 0, {}};
     const auto pairMessage = expectFailure([&] { sceAgcDriverSubmitDcb(&pairPacket); });
-    check(pairMessage.find("copy limit") != std::string::npos, "two chained indirect buffers that link to each other were not stopped by the copy limit");
+    check(pairMessage.find("leads back to a buffer of its own chain") != std::string::npos, "two chained indirect buffers that link to each other were not rejected as a jump loop");
 
     std::vector<std::vector<std::uint32_t>> chain(2000);
     chain.back() = {0xffff1000u};

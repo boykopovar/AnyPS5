@@ -198,7 +198,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
         if (chained == nullptr) return false;
         guest = chained;
         words = chainedWords;
-        require(guest != markGuest || words != markWords, "command buffer jumps exceed the copy limit (a jump loop?)");
+        require(guest != markGuest || words != markWords, "a chained indirect buffer leads back to a buffer of its own chain (a jump loop)");
         if (++sinceMark == markSpan) {
             markGuest = guest;
             markWords = words;
