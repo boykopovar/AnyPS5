@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <list>
 #include <map>
@@ -320,6 +321,15 @@ int APS5_VABI _Cnd_init_nid_postfix(void** handle) {
 }
 
 int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, const char*) {
+    return _Cnd_init_nid_postfix(handle);
+}
+
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
+    constexpr std::size_t objectNameLimit = 32;
+    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
+        errno = 63;
+        return threadError;
+    }
     return _Cnd_init_nid_postfix(handle);
 }
 
