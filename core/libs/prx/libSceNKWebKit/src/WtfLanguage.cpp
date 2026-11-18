@@ -115,6 +115,25 @@ StringVector Copy(const StringVector& source) {
     return result;
 }
 
+StringVector CopyGuest(const StringVector* guestSource) {
+    struct Header {
+        String* buffer;
+        unsigned capacity;
+        unsigned size;
+    } source;
+    if (!GuestCopyIn_nid_no_patch(&source, guestSource, sizeof(source))) throw std::invalid_argument("null WTF string vector");
+    StringVector result;
+    if (!source.size) return result;
+    result.buffer = static_cast<String*>(_ZN3WTF10fastMallocEm(std::size_t{source.size} * sizeof(String)));
+    result.capacity = source.size;
+    for (; result.size < source.size; ++result.size) {
+        String element;
+        if (!GuestCopyIn_nid_no_patch(&element, &source.buffer[result.size], sizeof(element))) throw std::invalid_argument("null WTF string vector");
+        new (&result.buffer[result.size]) String(element);
+    }
+    return result;
+}
+
 void Swap(StringVector& a, StringVector& b) {
     std::swap(a.buffer, b.buffer);
     std::swap(a.capacity, b.capacity);
@@ -150,8 +169,9 @@ extern "C" void APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(void* con
 }
 
 extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const String* localeName) {
-    if (!localeName) throw std::invalid_argument("null WTF string");
-    return *localeName;
+    String name;
+    if (!GuestCopyIn_nid_no_patch(&name, localeName, sizeof(name))) throw std::invalid_argument("null WTF string");
+    return name;
 }
 
 extern "C" void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context) {
@@ -166,10 +186,9 @@ extern "C" void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context
 }
 
 extern "C" void APS5_VABI _ZN3WTF30overrideUserPreferredLanguagesERKNS_6VectorINS_6StringELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(const StringVector* languages) {
-    if (!languages) throw std::invalid_argument("null WTF string vector");
+    StringVector copy = CopyGuest(languages);
     {
         std::lock_guard<std::mutex> locker(languagesLock);
-        StringVector copy = Copy(*languages);
         Swap(copy, PreferredLanguagesOverride());
     }
     _ZN3WTF17languageDidChangeEv();
