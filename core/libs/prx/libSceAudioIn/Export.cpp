@@ -182,6 +182,14 @@ std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t by
     return delivered;
 }
 
+struct ErrnoGuard {
+    int saved = errno;
+    ErrnoGuard() = default;
+    ErrnoGuard(const ErrnoGuard&) = delete;
+    ErrnoGuard& operator=(const ErrnoGuard&) = delete;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 }
 
 extern "C" {
@@ -198,7 +206,7 @@ int APS5_VABI sceAudioInGetSilentState(int handle) {
 }
 
 int APS5_VABI sceAudioInInput(int handle, void* dest) {
-    const int savedErrno = errno;
+    ErrnoGuard errnoGuard;
     std::unique_lock lock(g_mutex);
     Port* port;
     if (const int error = findPort(handle, &port)) return error;
@@ -230,10 +238,7 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
     const bool copied = GuestCopyOut_nid_no_patch(dest, block.data(), bytes);
     lock.lock();
     port->busy = false;
-    if (!copied) {
-        errno = savedErrno;
-        return AUDIO_IN_ERROR_INVALID_POINTER;
-    }
+    if (!copied) return AUDIO_IN_ERROR_INVALID_POINTER;
     return samples;
 }
 
@@ -281,9 +286,8 @@ int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
     if (!gain) return AUDIO_IN_ERROR_INVALID_POINTER;
     constexpr float defaultGain = 1.0f;
-    const int savedErrno = errno;
+    ErrnoGuard errnoGuard;
     if (!GuestCopyOut_nid_no_patch(gain, &defaultGain, sizeof(defaultGain))) {
-        errno = savedErrno;
         return AUDIO_IN_ERROR_INVALID_POINTER;
     }
     std::lock_guard lock(g_mutex);
@@ -354,8 +358,12 @@ int APS5_VABI sceAudioInSetPortStatuses(void) {
 
 int APS5_VABI sceAudioInGetHandleStatusInfo(int handle, void* info) {
     (void)info;
-    Port* port;
-    if (const int error = findPort(handle, &port)) return error;
+    ErrnoGuard errnoGuard;
+    {
+        std::lock_guard lock(g_mutex);
+        Port* port;
+        if (const int error = findPort(handle, &port)) return error;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

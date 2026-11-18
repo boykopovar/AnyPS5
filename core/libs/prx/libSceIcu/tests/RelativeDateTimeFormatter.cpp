@@ -2,13 +2,24 @@
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <source_location>
 #include <stdexcept>
 #include <type_traits>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace UreldatefmtClose {
 
@@ -143,8 +154,68 @@ void Run() {
 
 } // namespace UreldatefmtOpen
 
+namespace RelativeDateTimeFormatterGuestPointers {
+
+void Run() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        IcuRecoveredTest::Require(threw && errno == 71);
+    };
+
+    const std::size_t pageSize =
+#ifdef _WIN32
+        4096;
+#else
+        static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+#endif
+    void* roPage = nullptr;
+#ifdef _WIN32
+    roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    IcuRecoveredTest::Require(roPage != nullptr);
+#else
+    roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    IcuRecoveredTest::Require(roPage != MAP_FAILED);
+#endif
+    const std::int32_t zero = 0;
+    const std::int32_t failing = 1;
+    std::memcpy(roPage, &zero, sizeof(zero));
+    std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+#endif
+    auto* roZero = static_cast<std::int32_t*>(roPage);
+    auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
+    auto* badStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    char16_t buffer[2] = {u'a', u'b'};
+
+    rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, badStatus); });
+    rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, roZero); });
+    IcuRecoveredTest::Require(ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, buffer, 2, roFailing) == 0);
+
+    rejectsRuntime([&] { ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, badStatus); });
+    IcuRecoveredTest::Require(ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, roFailing) == nullptr);
+
+#ifdef _WIN32
+    VirtualFree(roPage, 0, MEM_RELEASE);
+#else
+    munmap(roPage, pageSize);
+#endif
+}
+
+}
+
 void CheckIcuRelativeDateTimeFormatter() {
     UreldatefmtClose::Run();
     UreldatefmtFormat::Run();
     UreldatefmtOpen::Run();
+    RelativeDateTimeFormatterGuestPointers::Run();
 }

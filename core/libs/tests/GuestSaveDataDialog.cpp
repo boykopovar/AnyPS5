@@ -1,9 +1,11 @@
 #include "prx/libSceSaveDataDialog/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cerrno>
+#include <cstddef>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -16,6 +18,19 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
+
+static std::uintptr_t g_trackedResultStart = 0;
+static std::uintptr_t g_trackedResultEnd = 0;
+static int g_trackedResultWrites = 0;
+
+static void ClobberErrnoAndCountResultWrites(std::uintptr_t address, std::size_t size) {
+    errno = 99;
+    if (g_trackedResultStart != 0 && address < g_trackedResultEnd && address + size > g_trackedResultStart) {
+        ++g_trackedResultWrites;
+    }
+}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -109,17 +124,37 @@ int main() {
         Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc when finished");
         Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value when finished");
         SaveDataDirName selected{};
+        int callerParamSentinel = 7;
         SaveDataDialogResult result{};
+        std::memset(&result, 0xA5, sizeof(result));
+        result.pad0 = 0x12345678u;
         result.dir_name = &selected;
+        result.param = &callerParamSentinel;
+        g_trackedResultStart = reinterpret_cast<std::uintptr_t>(&result);
+        g_trackedResultEnd = g_trackedResultStart + sizeof(result);
+        g_trackedResultWrites = 0;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrnoAndCountResultWrites);
+        errno = 71;
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
+        Require(errno == 71, "get result preserved errno");
+        Require(g_trackedResultWrites == 1, "get result must write caller result struct in a single guest write");
+        g_trackedResultStart = 0;
+        g_trackedResultEnd = 0;
         Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with null result pointer");
+        errno = 71;
         Require(sceSaveDataDialogGetResult(reinterpret_cast<SaveDataDialogResult*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with invalid pointer");
+        Require(errno == 71, "get result with invalid pointer preserved errno");
         SaveDataDialogResult invalidDirResult{};
         invalidDirResult.dir_name = reinterpret_cast<void*>(0x10);
+        errno = 71;
         Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with invalid directory name pointer");
+        Require(errno == 71, "get result with invalid dir pointer preserved errno");
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
         SaveDataDialogResult nullDirResult{};
         nullDirResult.dir_name = nullptr;
         Require(sceSaveDataDialogGetResult(&nullDirResult) == 0, "get result with null directory name pointer");
@@ -129,6 +164,12 @@ int main() {
         Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
                 result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
                 "save result must preserve its mode, directory and caller context");
+        Require(result.pad0 == 0x12345678u && result.param == &callerParamSentinel,
+                "save result must preserve caller pad0 and param");
+        const auto* resultReserved = reinterpret_cast<const unsigned char*>(result.reserved);
+        bool reservedPreserved = true;
+        for (std::size_t ri = 0; ri < sizeof(result.reserved); ++ri) reservedPreserved = reservedPreserved && resultReserved[ri] == 0xA5;
+        Require(reservedPreserved, "save result must preserve caller reserved bytes");
     }
 
     Require(sceSaveDataDialogOpen(&param) == 0, "open save progress for terminate test");

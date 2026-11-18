@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -34,72 +36,117 @@ const char* Characters(const char* characters, const char* function) {
     if (!characters) throw std::invalid_argument(std::string(function) + ": null boolean characters");
     return characters;
 }
+
+template <typename T>
+bool ReadField(const T* field, T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool WriteField(T* field, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(field, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+std::string GuestText(const char* result, const char* function, const char* what) {
+    constexpr std::uintptr_t Page = 4096;
+    std::string text;
+    auto address = reinterpret_cast<std::uintptr_t>(result);
+    char chunk[Page];
+    for (;;) {
+        const std::size_t size = Page - address % Page;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return text;
+        address += size;
+    }
+}
+
+void WriteResult(char* buffer, const char* bytes, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(buffer, bytes, size);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable result buffer");
+}
 }
 
 extern "C" {
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
+    const std::string text = name ? GuestText(name, __func__, "name") : std::string();
     auto* method = static_cast<LibreSslUiMethod*>(malloc_nid_postfix(sizeof(LibreSslUiMethod)));
     if (!method) return nullptr;
     std::memset(method, 0, sizeof(LibreSslUiMethod));
     if (name) {
-        const std::size_t size = std::strlen(name) + 1;
+        const std::size_t size = text.size() + 1;
         method->name = static_cast<char*>(malloc_nid_postfix(size));
-        if (method->name) std::memcpy(method->name, name, size);
+        if (method->name) std::memcpy(method->name, text.c_str(), size);
     }
     return method;
 }
 
 void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method) {
     if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
-    free_nid_postfix(method->name);
-    method->name = nullptr;
+    char* name = nullptr;
+    if (!ReadField(&method->name, name) || !WriteField(&method->name, static_cast<char*>(nullptr)))
+        throw std::invalid_argument(std::string(__func__) + ": unreadable method");
+    free_nid_postfix(name);
     free_nid_postfix(method);
 }
 
 int APS5_VABI UI_method_set_opener_nid_postfix(LibreSslUiMethod* method, UiSessionFunction opener) {
-    if (!method) return -1;
-    method->openSession = opener;
+    if (!method || !WriteField(&method->openSession, opener)) return -1;
     return 0;
 }
 
 UiSessionFunction APS5_VABI UI_method_get_opener_nid_postfix(const LibreSslUiMethod* method) {
-    return method ? method->openSession : nullptr;
+    UiSessionFunction value = nullptr;
+    return method && ReadField(&method->openSession, value) ? value : nullptr;
 }
 
 int APS5_VABI UI_method_set_writer_nid_postfix(LibreSslUiMethod* method, UiStringFunction writer) {
-    if (!method) return -1;
-    method->writeString = writer;
+    if (!method || !WriteField(&method->writeString, writer)) return -1;
     return 0;
 }
 
 UiStringFunction APS5_VABI UI_method_get_writer_nid_postfix(const LibreSslUiMethod* method) {
-    return method ? method->writeString : nullptr;
+    UiStringFunction value = nullptr;
+    return method && ReadField(&method->writeString, value) ? value : nullptr;
 }
 
 int APS5_VABI UI_method_set_reader_nid_postfix(LibreSslUiMethod* method, UiStringFunction reader) {
-    if (!method) return -1;
-    method->readString = reader;
+    if (!method || !WriteField(&method->readString, reader)) return -1;
     return 0;
 }
 
 UiStringFunction APS5_VABI UI_method_get_reader_nid_postfix(const LibreSslUiMethod* method) {
-    return method ? method->readString : nullptr;
+    UiStringFunction value = nullptr;
+    return method && ReadField(&method->readString, value) ? value : nullptr;
 }
 
 int APS5_VABI UI_method_set_closer_nid_postfix(LibreSslUiMethod* method, UiSessionFunction closer) {
-    if (!method) return -1;
-    method->closeSession = closer;
+    if (!method || !WriteField(&method->closeSession, closer)) return -1;
     return 0;
 }
 
 UiSessionFunction APS5_VABI UI_method_get_closer_nid_postfix(const LibreSslUiMethod* method) {
-    return method ? method->closeSession : nullptr;
+    UiSessionFunction value = nullptr;
+    return method && ReadField(&method->closeSession, value) ? value : nullptr;
 }
 
 int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string, const char* result) {
     if (!result) throw std::invalid_argument(std::string(__func__) + ": null result");
     if (!ui) throw std::invalid_argument(std::string(__func__) + ": null UI");
-    const auto length = static_cast<int>(std::strlen(result));
+    const std::string text = GuestText(result, __func__, "result");
+    const auto length = static_cast<int>(text.size());
     ui->flags &= ~Redoable;
     if (!string) return -1;
     switch (string->type) {
@@ -119,26 +166,27 @@ int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string
             PutError(NoResultBuffer);
             return -1;
         }
-        std::memcpy(string->resultBuffer, result, static_cast<std::size_t>(length) + 1);
+        WriteResult(string->resultBuffer, text.c_str(), text.size() + 1, __func__);
         break;
     case BooleanString: {
         if (!string->resultBuffer) {
             PutError(NoResultBuffer);
             return -1;
         }
-        string->resultBuffer[0] = '\0';
-        for (const char* character = result; *character; ++character) {
+        char answer = '\0';
+        for (const char character : text) {
             const char* const accepted = Characters(string->data.booleanData.okCharacters, __func__);
-            if (std::strchr(accepted, *character)) {
-                string->resultBuffer[0] = accepted[0];
+            if (std::strchr(accepted, character)) {
+                answer = accepted[0];
                 break;
             }
             const char* const cancelled = Characters(string->data.booleanData.cancelCharacters, __func__);
-            if (std::strchr(cancelled, *character)) {
-                string->resultBuffer[0] = cancelled[0];
+            if (std::strchr(cancelled, character)) {
+                answer = cancelled[0];
                 break;
             }
         }
+        WriteResult(string->resultBuffer, &answer, 1, __func__);
         break;
     }
     default:

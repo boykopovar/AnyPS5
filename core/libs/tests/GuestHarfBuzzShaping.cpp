@@ -140,7 +140,8 @@ static void Check(const Api& api) {
     try { api.shape(font, nullptr, nullptr, 0); } catch (const std::exception&) { ++throws; }
     try { api.shape(nullptr, buffer, nullptr, 0); } catch (const std::exception&) { ++throws; }
     try { api.shape(font, buffer, nullptr, 1); } catch (const std::exception&) { ++throws; }
-    Require(throws == 3 && hb_buffer_get_length(buffer) == 1);
+    try { api.shape(font, buffer, reinterpret_cast<const HarfBuzz::Feature*>(0x10), 1); } catch (const std::exception&) { ++throws; }
+    Require(throws == 4 && hb_buffer_get_length(buffer) == 1);
     api.destroyBuffer(buffer);
     api.destroyFont(font);
     api.destroyFace(face);

@@ -68,6 +68,41 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertEqual([row for row in partial if row.endswith(" f")], ["sceKernelUsleep 0x100b f"])
         self.assertEqual(len(partial), 3)
 
+    def test_ifunc_resolvers_are_function_entries_in_offline_maps(self):
+        symbols = [("selected_probe", 1, 0x1A, EXPORT_ADDRESS)]
+        source = self.root / "ifunc.prx"
+        for kind in ("sysv", "gnu"):
+            with self.subTest(kind=kind):
+                tags = tuple(GNU_HASH if tag == 4 and kind == "gnu" else tag for tag in DEFAULT_TAGS)
+                self.assertEqual(self.format_symbols(symbols, relocations=(), kind=kind, tags=tags), [
+                    "selected_probe 0x100b f"])
+                source.write_bytes(build_module(symbols=symbols, relocations=(), kind=kind, tags=tags))
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0].split()[1:], ["0x100b", "f"])
+                self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_ifunc_function_entries_require_executable_file_bytes(self):
+        for address, flags, distance, marker in (
+                (CODE_ADDRESS, 5, None, "f"), (EXPORT_ADDRESS, 5, None, "f"),
+                (CODE_ADDRESS + len(code_bytes()), 5, None, "l"), (DATA_ADDRESS, 5, None, "l"),
+                (0x9000, 5, None, "l"), (EXPORT_ADDRESS, 4, None, "l"),
+                (EXPORT_ADDRESS, 5, 11, "l"), (EXPORT_ADDRESS, 5, 12, "f")):
+            with self.subTest(address=address, flags=flags, distance=distance):
+                image = bytearray(build_module(symbols=[("resolver", 1, 0x1A, address)], relocations=(), code_flags=flags))
+                if distance is not None:
+                    struct.pack_into("<Q", image, 64 + 8, len(image) - distance)
+                rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid("resolver"): "resolver"}))
+                self.assertEqual(rows, ["resolver %#x %s" % (address, marker)])
+
+    def test_ifunc_and_function_aliases_create_only_one_function(self):
+        symbols = [("a_ifunc", 1, 0x1A, EXPORT_ADDRESS), ("z_function", 1, 0x12, EXPORT_ADDRESS),
+                   ("a_ifunc", 1, 0x1A, EXPORT_ADDRESS), ("object", 1, 0x11, EXPORT_ADDRESS)]
+        self.assertEqual(self.format_symbols(symbols, relocations=()), [
+            "a_ifunc 0x100b f", "z_function 0x100b l", "object 0x100b l"])
+
     def test_function_entries_must_have_actual_file_backing(self):
         for distance, marker in ((0, "l"), (11, "l"), (12, "f")):
             with self.subTest(distance=distance):
