@@ -96,6 +96,19 @@ void ConnectSendsEachPlayersPatternOnceAfterTheQuietWindow() {
     }
 }
 
+void LateTickKeepsPulsesDistinct() {
+    Pad::IdentifyScheduler scheduler;
+    const auto start = Clock::now();
+    scheduler.Bind(start, 3, Pad::IdentifyMode::Connect);
+    const auto tick = [&](int ms) {
+        return scheduler.Tick(start + std::chrono::milliseconds(ms), false, 100, [](auto, auto, auto) {});
+    };
+    Require(tick(500), "the first identify pulse starts after the quiet window");
+    Require(tick(1500), "a late tick sends the second pulse");
+    Require(!tick(1501) && !tick(1899), "the third pulse waits a full period after the delayed second pulse");
+    Require(tick(1900), "the third pulse starts when its period has elapsed");
+}
+
 void TitleRumbleDelaysTheStartAndCancelsThePattern() {
     Pad::IdentifyScheduler delayed;
     const auto start = Clock::now();
@@ -194,6 +207,7 @@ int main() {
     OutOfRangePlayersGetNoPattern();
     ModeParserAcceptsOnlyTheThreeNames();
     ConnectSendsEachPlayersPatternOnceAfterTheQuietWindow();
+    LateTickKeepsPulsesDistinct();
     TitleRumbleDelaysTheStartAndCancelsThePattern();
     TitleRumbleIsNeverOverlapped();
     FocusedWindowKeepsTheIdentifyPattern();
