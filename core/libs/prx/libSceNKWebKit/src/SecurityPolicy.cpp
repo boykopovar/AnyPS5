@@ -56,6 +56,10 @@
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include "prx/libc/include/General.hpp"
+
+#include <cstddef>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -65,13 +69,32 @@ using NKWebKit::WtfAbi::String;
 
 LocalLoadPolicy localLoadPolicy = NKWebKit::WebCoreAbi::AllowLocalLoadsForLocalOnly;
 
-bool ProtocolIs(const String& string, const char* protocol) {
+bool ProtocolIs(const String* guestString, const char* protocol) {
+    String string;
+    if (!GuestCopyIn_nid_no_patch(&string, guestString, sizeof(string))) throw std::invalid_argument("unreadable WTF::String");
     if (!string.impl) return false;
-    const auto& impl = *string.impl;
+    NKWebKit::WtfAbi::StringImpl impl;
+    if (!GuestCopyIn_nid_no_patch(&impl, string.impl, sizeof(impl))) throw std::invalid_argument("unreadable WTF::StringImpl");
+    const bool is8Bit = impl.hashAndFlags & 4;
+    const std::size_t width = is8Bit ? sizeof(unsigned char) : sizeof(char16_t);
+    constexpr unsigned ChunkLength = 64;
+    unsigned char chunk[ChunkLength * sizeof(char16_t)];
+    unsigned chunkStart = 0;
+    unsigned chunkEnd = 0;
     bool isLeading = true;
     for (unsigned i = 0; i < impl.length; ++i) {
         if (!impl.data) throw std::invalid_argument("null WTF character buffer");
-        auto codeUnit = impl.hashAndFlags & 4 ? static_cast<const unsigned char*>(impl.data)[i] : static_cast<const char16_t*>(impl.data)[i];
+        if (i >= chunkEnd) {
+            chunkStart = i;
+            chunkEnd = i + (impl.length - i < ChunkLength ? impl.length - i : ChunkLength);
+            if (!GuestCopyIn_nid_no_patch(chunk, static_cast<const unsigned char*>(impl.data) + static_cast<std::size_t>(i) * width, (chunkEnd - chunkStart) * width)) throw std::invalid_argument("unreadable WTF character buffer");
+        }
+        char16_t codeUnit;
+        if (is8Bit) {
+            codeUnit = chunk[i - chunkStart];
+        } else {
+            std::memcpy(&codeUnit, chunk + static_cast<std::size_t>(i - chunkStart) * sizeof(char16_t), sizeof(codeUnit));
+        }
         if (isLeading) {
             if (codeUnit <= ' ') continue;
             isLeading = false;
@@ -107,8 +130,8 @@ void APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPo
 
 bool APS5_VABI _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(const NKWebKit::WtfAbi::URL* url, const String* referrer) {
     if (!referrer) throw std::invalid_argument("null WTF::String reference");
-    bool referrerIsSecureURL = ProtocolIs(*referrer, "https");
-    bool referrerIsWebURL = referrerIsSecureURL || ProtocolIs(*referrer, "http");
+    bool referrerIsSecureURL = ProtocolIs(referrer, "https");
+    bool referrerIsWebURL = referrerIsSecureURL || ProtocolIs(referrer, "http");
     if (!referrerIsWebURL) return true;
     if (!referrerIsSecureURL) return false;
     bool urlIsSecureURL = _ZNK3WTF3URL10protocolIsENS_10StringViewE(url, {"https", 5, true});
