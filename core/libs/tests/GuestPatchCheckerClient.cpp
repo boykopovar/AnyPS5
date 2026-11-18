@@ -21,6 +21,7 @@ int main() {
         Require(scePatchCheckerGetPackageInfo() == notInitialized);
         Require(scePatchCheckerRequestCheckPatch() == notInitialized);
         Require(scePatchCheckerRequestCheckPatchByType() == notInitialized);
+        Require(scePatchCheckerTerminate() == 0);
     }
     return 0;
 }

@@ -37,6 +37,8 @@ GCC_GLOBAL_ALIAS(_Unwind_RaiseException, _Unwind_RaiseException_nid_postfix);
 GCC_GLOBAL_ALIAS(_Unwind_Resume_or_Rethrow, _Unwind_Resume_or_Rethrow_nid_postfix);
 GCC_GLOBAL_ALIAS(_Unwind_DeleteException, _Unwind_DeleteException_nid_postfix);
 
+[[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* exception) { __cxa_call_terminate_nid_postfix(exception); }
+
 #ifdef _WIN32
 extern "C" {
 void* NativeAllocateException(std::size_t size) asm("__cxa_allocate_exception");

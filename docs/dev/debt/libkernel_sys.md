@@ -1,5 +1,8 @@
 # libkernel_sys technical debt
 
+### Functional
+- [pthread_getstack_np](../../../core/libs/prx/libkernel_sys/ThreadQueries.cpp) (libkernel_sys) writes the calling thread's stack address and size, following firmware 13.42 `libkernel.sprx` (SHA-256 `4be40bf838a46e1ff83a1809960672526139b09dda6c4a6592cfeb485d29f243`) export `ruZ9hhQ8oUk` at `0xdb70`, read from disassembly and not measured on a console. The module leaves the stack size in `rax`; whether callers use that unspecified return value is unmeasured. Null or unwritable outputs return `EFAULT` here as a host-safety fallback, where the module faults, and the first output remains written when the second faults.
+
 ### Silent stubs
 - [sceKernelCallIndirectBuffer2](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - always writes a zero result, as `sceAmprAmmSubmitCommandBuffer2` does here; in firmware 13.42 the library passes the result pointer to a kernel ioctl, and what the kernel writes there is not known
 
