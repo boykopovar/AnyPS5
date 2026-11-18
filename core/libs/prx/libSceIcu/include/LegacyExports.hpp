@@ -8,6 +8,7 @@ struct Converter;
 } // namespace Icu
 
 struct UEnumeration;
+struct UResourceBundle;
 
 extern "C" {
 
@@ -43,7 +44,7 @@ int APS5_VABI sceIcuLegacyUnknown__plus_tN1MNhj0w0_nid_no_patch();
 int APS5_VABI uhash_igeti_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown__plus_wZj5WL3zfo_nid_no_patch();
 int APS5_VABI _ZN6icu_686UStackC1ER10UErrorCode_nid_postfix();
-int APS5_VABI ures_hasNext_nid_postfix();
+std::int8_t APS5_VABI ures_hasNext_nid_postfix(const UResourceBundle* resourceBundle);
 int APS5_VABI sceIcuLegacyUnknown__plus_ydVYIaYo6w_nid_no_patch();
 int APS5_VABI _ZN6icu_6814ResourceBundle13getNextStringEPPKcR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKDsi_nid_postfix();
