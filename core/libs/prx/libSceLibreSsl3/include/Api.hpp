@@ -472,7 +472,7 @@ int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(const LibreSsl3Pkcs8PrivKeyInf
 int APS5_VABI BN_div_nid_postfix(Bignum* quotient, Bignum* remainder, const Bignum* numerator,
                                  const Bignum* divisor, BignumContext* context);
 void* APS5_VABI X509_CRL_get_ext_d2i_nid_postfix(const LibreSsl3X509Crl* crl, int nid, int* crit, int* idx);
-int APS5_VABI X509_digest_nid_postfix();
+int APS5_VABI X509_digest_nid_postfix(const LibreSsl3Certificate* certificate, const EvpMd* type, unsigned char* digest, std::uint32_t* size);
 void APS5_VABI X509V3_set_ctx_nid_postfix(LibreSsl3X509V3Context* context, LibreSslX509* issuer, LibreSslX509* subject, void* request, void* crl, int flags);
 int APS5_VABI BIO_meth_set_destroy_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::destroy) destroy);
 int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix(LibreSsl3PkeyContext* context, int operationType, int command,
