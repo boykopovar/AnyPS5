@@ -217,7 +217,7 @@ int Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
     const std::uint32_t countBits = lockWord & COUNT_MASK;
     if (openFlag != 0 && countBits != 0 && match) {
         const std::uint32_t refcount = match->refcount;
-        if (refcount == 1) {
+        if (refcount != 0) {
             FontObj* next = match->next;
             FontObj* prev = match->prev;
             const int rc = library->sys_driver->close(match, 0);
@@ -225,9 +225,7 @@ int Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
                 ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
                 return rc;
             }
-            if (!prev) *EntryObjectSlot(entry, modeLow) = next;
-        } else if (refcount != 0) {
-            match->refcount = refcount - 1;
+            if (refcount == 1 && !prev) *EntryObjectSlot(entry, modeLow) = next;
         }
         const std::uint32_t decremented = lockWord - 1;
         lockWord = decremented;
