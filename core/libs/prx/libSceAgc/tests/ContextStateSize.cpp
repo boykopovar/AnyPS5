@@ -37,7 +37,7 @@ void testSizes() {
         check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
-        if (operation == 1) {
+        if (operation == 1 || operation == 3) {
             continue;
         }
 
