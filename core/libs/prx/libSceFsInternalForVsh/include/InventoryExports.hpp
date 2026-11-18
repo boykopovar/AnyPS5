@@ -187,4 +187,19 @@ int APS5_VABI sceFsNTBInvalidateBlockRange();
 int APS5_VABI sceFsNTBCronosUserPersonalizedKey();
 int APS5_VABI sceFsNTBCreateSavedataSnapshot();
 
+int APS5_VABI sceFsTransactionPprSaveDataMountEx();
+int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx();
+int APS5_VABI sceFsTransactionSaveDataReadParamEx();
+int APS5_VABI sceFsTransactionSaveDataReadParamEx2();
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx();
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx2();
+int APS5_VABI sceFsSaveDataTrimDeviceFile();
+int APS5_VABI sceFsPprSaveDataGetBlkBitmap();
+int APS5_VABI sceFsPs4SaveDataGetBlkBitmap();
+int APS5_VABI sceFsPprSaveDataConvertToCoW();
+int APS5_VABI sceFsPprSaveDataConvertSize();
+int APS5_VABI sceFsSaveDataGetImageType();
+int APS5_VABI sceFsSaveDataGetBlockNumber();
+int APS5_VABI sceFsSaveDataDisableWriteThrottling();
+
 }

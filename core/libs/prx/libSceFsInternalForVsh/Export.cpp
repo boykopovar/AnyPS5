@@ -1726,4 +1726,60 @@ int APS5_VABI sceFsNTBCreateSavedataSnapshot() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceFsTransactionPprSaveDataMountEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataReadParamEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataReadParamEx2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataTrimDeviceFile() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataGetBlkBitmap() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPs4SaveDataGetBlkBitmap() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataConvertToCoW() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataConvertSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataGetImageType() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataGetBlockNumber() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataDisableWriteThrottling() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
