@@ -229,7 +229,8 @@ int APS5_VABI sceDebugGetProcessCoredumpHandlerResult() {
 }
 
 int APS5_VABI sceDebugGetProcessEventCntlFlag() {
-    return 1;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceDebugGetProcessInfo() {
@@ -653,7 +654,8 @@ int APS5_VABI sceDebugResumeThread() {
 }
 
 int APS5_VABI sceDebugSetProcessEventCntlFlag() {
-    return 1;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceDebugSetStepThread() {
