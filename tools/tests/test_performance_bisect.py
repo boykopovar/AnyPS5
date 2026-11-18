@@ -90,6 +90,17 @@ class RecipeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
 
+    def test_rejects_duplicate_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            text = json.dumps(self.make_recipe(root))
+            for name, value in (("regression_pct", "50"), ("title_id", '"PPSA00001"')):
+                with self.subTest(name=name):
+                    path = root / f"duplicate-{name}.json"
+                    path.write_text(text[:-1] + f', "{name}": {value}}}', encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, f"recipe has a duplicate field: {name}"):
+                        performance_bisect.load_recipe(path)
+
 
 class SummaryValidationTests(unittest.TestCase):
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
@@ -321,6 +332,43 @@ class BisectReportTests(unittest.TestCase):
 
 
 class EndToEndBisectTests(GitHistoryTests):
+    def test_bisects_with_real_measurement_directories_and_build_commands(self):
+        root = Path(self.directory.name)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "title_run.py").write_text("""import json, pathlib, sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index('--out') + 1])
+build = pathlib.Path(args[args.index('--build') + 1])
+commit = (build / 'commit').read_text(encoding='utf-8')
+state = (build.parent / 'state').read_text(encoding='utf-8')
+fps = 54.0 if state in ('step-5', 'step-6', 'step-7') else 60.0
+target = out / 'run' / 'summary.json'
+target.parent.mkdir(parents=True)
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps}]}}}), encoding='utf-8')
+""", encoding="utf-8")
+        recipe = {"title_id": "PPSA00000", "games": [], "titles": str(root / "titles.json"),
+                  "seconds": 20, "content": None, "build_dir": "build", "repetitions": 3,
+                  "regression_pct": 5.0, "max_spread_pct": 3.0,
+                  "build_commands": [[sys.executable, "-c",
+                      "from pathlib import Path; import sys; "
+                      "build = Path(sys.argv[1]); build.mkdir(); "
+                      "(build / 'commit').write_text(sys.argv[3], encoding='utf-8'); "
+                      "(Path(sys.argv[2]) / 'built').write_text(sys.argv[3], encoding='utf-8')",
+                      "{build_dir}", "{result_dir}", "{commit}"]]}
+        output = root / "report.json"
+        original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        with patch.object(performance_bisect, "TOOLS_DIR", tools):
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+        self.assertEqual(report["first_bad"]["commit"], self.commits[4])
+        self.assertEqual(report["previous_good"]["commit"], self.commits[3])
+        self.assertEqual(report["tested_commits"], 5)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), report)
+        for endpoint in ("good", "bad", "first_bad", "previous_good"):
+            self.assertEqual(len(report[endpoint]["samples"]), recipe["repetitions"])
+        self.assertEqual(performance_bisect.git(self.repo, "worktree", "list", "--porcelain"), original_worktrees)
+        self.assertEqual(list(root.glob("anyps5-performance-bisect-*")), [])
+
     def test_bisects_to_first_commit_over_threshold_and_removes_worktree(self):
         values = {commit: 60.0 for commit in [self.good, *self.commits]}
         values.update({commit: 54.0 for commit in self.commits[4:]})
@@ -585,7 +633,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_rejects_absolute_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            path = self.recipe_path(Path(directory), build_dir=str(Path(directory) / "unsafe-build"))
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
@@ -791,3 +839,33 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
+
+class GitFailureAndExitTests(unittest.TestCase):
+    def test_git_failure_raises_with_stderr_or_command_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "not a git repository"):
+                performance_bisect.git(directory, "status")
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            with patch.object(performance_bisect.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "git log -1 failed"):
+                    performance_bisect.git(directory, "log", "-1")
+
+    def test_regression_is_inclusive_at_the_exact_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(54, 60, 10))
+        self.assertFalse(performance_bisect.is_regression(54.01, 60, 10))
+
+    def test_main_exits_with_status_2_for_a_missing_recipe_file(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        with tempfile.TemporaryDirectory() as directory:
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                performance_bisect.main(["--good", "good", "--bad", "bad",
+                                         "--recipe", str(Path(directory) / "missing.json")])
+        self.assertEqual(error.exception.code, 2)
+        self.assertTrue(stderr.getvalue().strip())
+
+
+if __name__ == "__main__":
+    unittest.main()

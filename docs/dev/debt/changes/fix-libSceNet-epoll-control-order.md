@@ -1,0 +1,5 @@
+# libSceNet
+
+## change an `op` other than 1 (add), 2 (modify) and 3 (delete) fails with `EINVAL`
+
+- [sceNetEpollControl](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - an `op` other than 1 (add), 2 (modify) and 3 (delete) fails with `EINVAL`, and an add or modify needs a non-null event whose events mask is not 0 (`EINVAL`); both are checked before the epoll id (`EBADF`), as [prosper's reading of the libSceNet module](https://github.com/mattias800/prosper/blob/6c09a34a092a00898fcead5f855200ca7c368cd2/prosper/src/hle/net/hle_net.cpp#L471-L491) gives. That reading is module disassembly, not measured on a console: here the events mask is read as the first 4 bytes of the event before the epoll id, and the full event is read again for the registration after the `EADDRINUSE` and `ENOENT` checks, while nothing shows how many reads the module makes of the event or how far each one reaches. Every direct call in the titles checked whose `op` is a constant passes 1, 2 or 3; the `op` of the calls where it is not a constant is not known. Closes when: compared with the console.

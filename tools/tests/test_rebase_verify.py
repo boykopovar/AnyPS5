@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import io
 import os
@@ -67,6 +68,40 @@ class RebaseVerifyTests(unittest.TestCase):
 
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
+
+    def test_relative_diff_cannot_hide_lost_lines_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        for text, message in (("a\nb\nc\ntail\n", "an added line is missing (1x): NEW"),
+                              ("a\nNEW\nc\ntail\n", "a line is deleted that the branch did not delete (1x): b")):
+            with self.subTest(text=text):
+                self.write("f.txt", text)
+                self.git("commit", "-q", "-a", "--amend", "--no-edit")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(nested)])
+                self.assertEqual(status, 1)
+                self.assertIn("error: f.txt: " + message, output.getvalue())
+
+    def test_changed_lines_keep_repository_paths_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.write("nested/inside.txt", "inside\n")
+        self.git("add", "nested/inside.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        expected = rebase_verify.changed_lines(self.root, "main", "new")
+        self.assertEqual(set(expected[0]), {"f.txt", "nested/inside.txt"})
+        for relative in ("false", "true"):
+            with self.subTest(relative=relative):
+                self.git("config", "diff.relative", relative)
+                self.assertEqual(rebase_verify.changed_lines(nested, "main", "new"), expected)
+
+    def test_relative_diff_keeps_a_clean_rebase_clean_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        self.assertEqual(rebase_verify.verify(nested, "old", "new", "main")[3], [])
 
     def test_an_executable_mode_change_must_survive_rebase(self):
         self.git("checkout", "-q", "old")
@@ -258,6 +293,55 @@ class RebaseDiffTextTests(unittest.TestCase):
         old, _ = self.changes("before")
         new, _ = self.changes("after")
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+
+class CountHelperTests(unittest.TestCase):
+    def test_default_onto_returns_an_explicit_name_without_asking_git(self):
+        self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+    def test_commits_and_people_count_the_commits_between_two_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "base")
+            base = run_git(root, "rev-parse", "HEAD").strip()
+            for name, email in (("Alice", "alice@example.invalid"), ("Bob", "bob@example.invalid"),
+                                ("Alice", "alice@example.invalid")):
+                run_git(root, "-c", f"user.name={name}", "-c", f"user.email={email}",
+                        "commit", "-q", "--allow-empty", "-m", f"change by {name}")
+            tip = run_git(root, "rev-parse", "HEAD").strip()
+            self.assertEqual(rebase_verify.commits(root, base, tip), 3)
+            self.assertEqual(rebase_verify.people(root, base, tip), collections.Counter({
+                "Alice <alice@example.invalid>\x1fchange by Alice": 2,
+                "Bob <bob@example.invalid>\x1fchange by Bob": 1}))
+class ChangedModeTests(unittest.TestCase):
+    def commit(self, root, message):
+        run_git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", message)
+        return run_git(root, "rev-parse", "HEAD")
+
+    def test_changed_modes_reports_a_file_whose_executable_bit_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            run_git(root, "update-index", "--chmod=+x", "--", "f.txt")
+            tip = self.commit(root, "make executable")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
+
+    def test_changed_modes_is_empty_for_a_content_only_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            (root / "f.txt").write_text("y\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            tip = self.commit(root, "edit")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {})
 
 
 if __name__ == "__main__":
