@@ -34,8 +34,6 @@
 
 namespace ShaderRecompiler {
 
-static_assert(ShaderInfo::MaxSamplers <= std::numeric_limits<std::uint64_t>::digits);
-
 namespace {
 
 using ImageTableAbi::PoisonReason;
@@ -2034,9 +2032,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
     HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
-    std::vector<std::uint64_t> directSamplers(info.images.size(), 0u);
+    std::vector<SamplerMask> directSamplers(info.images.size());
     for (const auto& pair : info.sampledPairs) {
-        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= std::uint64_t{1} << pair.sampler;
+        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image).Set(pair.sampler);
     }
     const auto reducingSampler = reducingSamplers(info, snapshot);
     const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
@@ -2083,7 +2081,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 } else {
                     if (!index.has_value()) {
                         index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic, image.atomic64});
+                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, SamplerMask{}, image.atomic, image.atomic64});
                         elementIndex.Insert(hash, *index);
                     }
                     out.elements[*index].samplers |= directSamplers[resource];
