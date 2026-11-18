@@ -22,6 +22,9 @@ extern "C" const char* NanSubjectEnd_nid_no_patch(const char* text);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
 extern "C" int KeepHostStandardError_nid_no_patch();
 extern "C" int KeepHostStandardOutput_nid_no_patch();
+extern "C" int WideToMultibyteChecked_nid_no_patch(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
+extern "C" void* AlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
+extern "C" void AlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
 #ifndef _WIN32
 extern "C" int HostStandardError_nid_no_patch();
 #else
@@ -41,6 +44,7 @@ extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes)
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t destinationPitch, const void* source, std::size_t sourcePitch, std::size_t rowBytes, std::size_t rows);
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" void GuestFaultCopyReinstall_nid_no_patch();
 extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);

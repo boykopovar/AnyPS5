@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -239,7 +240,13 @@ int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result
     if (!arena) return 22;
     void* pointer = Allocate(arena, size, alignment);
     if (!pointer) return 12;
-    *result = pointer;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(result, &pointer, sizeof(pointer));
+    errno = savedErrno;
+    if (!writable) {
+        Release(*arena, arena->chunks.find(reinterpret_cast<std::uintptr_t>(pointer)));
+        throw std::invalid_argument("sceLibcMspacePosixMemalign: unwritable result");
+    }
     return 0;
 }
 

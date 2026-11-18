@@ -47,6 +47,22 @@ std::uint64_t Address(const void* pointer) {
     return reinterpret_cast<std::uintptr_t>(pointer);
 }
 
+template <typename T>
+bool loadGuest(T& value, const void* address) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(const_cast<void*>(static_cast<const void*>(&value)), address, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool storeGuest(void* address, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(address, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 int AppendReverbJob(AcmBatchInfo& batch, std::uint32_t blockSize, const ReverbEntry& input, const ReverbEntry* entries, std::uint32_t count) {
     const auto offset = batch.offset;
     const auto capacity = batch.buffer_size;
@@ -289,30 +305,40 @@ int APS5_VABI sceAcmContextDestroy(AcmContextId context) {
 
 int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t mode, AcmReverbInput* input, std::uint32_t outputCount, const AcmReverbFilter* const* filters, const float* gains, const AcmReverbOutput* const* outputs) {
     if (!batch || mode != 1 || !input || !filters) return SCE_ACM_ERROR_BAD_POINTER;
-    const auto blockSize = input->blockSize;
+    AcmReverbInput source{};
+    if (!loadGuest(source, input)) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto blockSize = source.blockSize;
     if (blockSize != 128 && blockSize != 256 && blockSize != 512 && blockSize != 1024) return SCE_ACM_ERROR_BAD_POINTER;
     for (std::uint32_t index = 0; index < outputCount; ++index) {
-        if (!filters[index] || filters[index]->blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+        const AcmReverbFilter* filterPointer = nullptr;
+        AcmReverbFilter filter{};
+        if (!loadGuest(filterPointer, filters + index) || !filterPointer || !loadGuest(filter, filterPointer) || filter.blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
     }
-    const auto blockCount = input->blockCount;
-    if (!input->history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
-    if (input->availableBlocks != 0 && input->currentBlock != 0 && input->currentBlock > blockCount) return SCE_ACM_ERROR_BAD_POINTER;
-    if (std::uint64_t{blockCount} * blockSize * (input->sampleFormat == 0 ? 8 : 4) > 0xFFFFFFFFu) return SCE_ACM_ERROR_BAD_POINTER;
-    input->currentBlock = (input->availableBlocks == 0 || input->currentBlock == 0 ? blockCount : input->currentBlock) - 1;
-    input->availableBlocks = std::min(input->availableBlocks + 1, blockCount);
-    const auto channelCount = input->channelCount;
-    if (channelCount == 0 || channelCount > 256 || !input->inputChannels || input->sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
-    const bool wideSamples = input->sampleFormat == 0;
+    const auto blockCount = source.blockCount;
+    if (!source.history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    if (source.availableBlocks != 0 && source.currentBlock != 0 && source.currentBlock > blockCount) return SCE_ACM_ERROR_BAD_POINTER;
+    if (std::uint64_t{blockCount} * blockSize * (source.sampleFormat == 0 ? 8 : 4) > 0xFFFFFFFFu) return SCE_ACM_ERROR_BAD_POINTER;
+    const std::uint32_t nextCurrentBlock = (source.availableBlocks == 0 || source.currentBlock == 0 ? blockCount : source.currentBlock) - 1;
+    const std::uint32_t nextAvailableBlocks = std::min(source.availableBlocks + 1, blockCount);
+    source.currentBlock = nextCurrentBlock;
+    source.availableBlocks = nextAvailableBlocks;
+    if (!storeGuest(input, source)) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto channelCount = source.channelCount;
+    if (channelCount == 0 || channelCount > 256 || !source.inputChannels || source.sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
+    const bool wideSamples = source.sampleFormat == 0;
     const std::uint32_t slotBytes = blockSize * (wideSamples ? 8 : 4);
-    const std::uint32_t current = input->currentBlock;
+    const std::uint32_t current = nextCurrentBlock;
     std::vector<const void*> sources(channelCount);
     std::vector<void*> destinations(channelCount);
     for (std::uint32_t channel = 0; channel < channelCount; ++channel) {
-        const auto* history = input->history[channel];
-        if (!history || history->blockMetadata || !history->samples || !input->inputChannels[channel]) return SCE_ACM_ERROR_BAD_POINTER;
+        const AcmReverbBuffer* historyPointer = nullptr;
+        AcmReverbBuffer history{};
+        const void* inputChannel = nullptr;
+        if (!loadGuest(historyPointer, source.history + channel) || !historyPointer || !loadGuest(history, historyPointer) || !loadGuest(inputChannel, source.inputChannels + channel)) return SCE_ACM_ERROR_BAD_POINTER;
+        if (history.blockMetadata || !history.samples || !inputChannel) return SCE_ACM_ERROR_BAD_POINTER;
         const auto position = wideSamples ? channel : channelCount - 1 - channel;
-        sources[position] = input->inputChannels[channel];
-        destinations[position] = static_cast<std::byte*>(history->samples) + current * slotBytes;
+        sources[position] = inputChannel;
+        destinations[position] = static_cast<std::byte*>(history.samples) + current * slotBytes;
     }
     AcmBatchInfo work{};
     const int readErrno = errno;
@@ -324,36 +350,47 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
     const auto headerOffset = work.offset;
     if (headerOffset > work.buffer_size || work.buffer_size - headerOffset < 8) return SCE_ACM_ERROR_BATCH_FULL;
     work.offset += 8;
-    const auto available = input->availableBlocks;
+    const auto available = nextAvailableBlocks;
     const auto start = current >= blockCount ? current - blockCount : current;
     std::uint64_t flags = 0;
     std::uint32_t smallestBlockCount = blockCount;
     for (std::uint32_t channel = 0; channel < channelCount; ++channel) {
-        const ReverbEntry inputEntry{input->history[channel]->samples, available, start * slotBytes, blockCount * slotBytes, nullptr, nullptr, nullptr, nullptr, 0.0f, wideSamples};
+        const AcmReverbBuffer* historyPointer = nullptr;
+        AcmReverbBuffer history{};
+        if (!loadGuest(historyPointer, source.history + channel) || !loadGuest(history, historyPointer)) return SCE_ACM_ERROR_BAD_POINTER;
+        const ReverbEntry inputEntry{history.samples, available, start * slotBytes, blockCount * slotBytes, nullptr, nullptr, nullptr, nullptr, 0.0f, wideSamples};
         flags |= std::uint64_t{1} << (wideSamples ? 21 : 20);
         std::array<ReverbEntry, 8> entries{};
         std::uint32_t entryCount = 0;
         for (std::uint32_t outputIndex = 0; outputIndex < outputCount; ++outputIndex) {
-            const auto* filter = filters[outputIndex];
-            const auto* output = outputs[outputIndex];
-            const auto filterChannels = filter->channelCount;
-            if (!filter->channels || !output || !output->workspace || !output->samples || filter->blockSize != blockSize || output->blockSize != blockSize || filterChannels == 0 || output->channelCount != std::max(channelCount, filterChannels)) return SCE_ACM_ERROR_BAD_POINTER;
+            const AcmReverbFilter* filterPointer = nullptr;
+            const AcmReverbOutput* outputPointer = nullptr;
+            AcmReverbFilter filter{};
+            AcmReverbOutput output{};
+            float gain = 1.0f;
+            if (!loadGuest(filterPointer, filters + outputIndex) || !loadGuest(outputPointer, outputs + outputIndex) || !filterPointer || !outputPointer || !loadGuest(filter, filterPointer) || !loadGuest(output, outputPointer) || (gains && !loadGuest(gain, gains + outputIndex))) return SCE_ACM_ERROR_BAD_POINTER;
+            const auto filterChannels = filter.channelCount;
+            if (!filter.channels || !output.workspace || !output.samples || filter.blockSize != blockSize || output.blockSize != blockSize || filterChannels == 0 || output.channelCount != std::max(channelCount, filterChannels)) return SCE_ACM_ERROR_BAD_POINTER;
             if (filterChannels != channelCount && channelCount != 1 && filterChannels != 1) return SCE_ACM_ERROR_BAD_POINTER;
-            if (Address(filter->blockMetadata) & 3) return SCE_ACM_ERROR_ALIGNMENT;
-            if (filter->sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
-            const bool wideFilter = filter->sampleFormat == 0;
-            flags |= (filterChannels != 1 && channelCount == 1 ? std::uint64_t{1} << 17 : 0) | (filterChannels == 1 && channelCount != 1 ? std::uint64_t{1} << 18 : 0) | (filterChannels == channelCount ? std::uint64_t{1} << 19 : 0) | (std::uint64_t{1} << (wideFilter ? 23 : 22)) | (filter->blockMetadata ? std::uint64_t{1} << 27 : 0) | (std::uint64_t{1} << (filterChannels == 1 ? 39 : (0x47 - std::countl_zero(filterChannels - 1)) & 63));
-            smallestBlockCount = std::min(smallestBlockCount, filter->blockCount);
+            if (Address(filter.blockMetadata) & 3) return SCE_ACM_ERROR_ALIGNMENT;
+            if (filter.sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
+            const bool wideFilter = filter.sampleFormat == 0;
+            flags |= (filterChannels != 1 && channelCount == 1 ? std::uint64_t{1} << 17 : 0) | (filterChannels == 1 && channelCount != 1 ? std::uint64_t{1} << 18 : 0) | (filterChannels == channelCount ? std::uint64_t{1} << 19 : 0) | (std::uint64_t{1} << (wideFilter ? 23 : 22)) | (filter.blockMetadata ? std::uint64_t{1} << 27 : 0) | (std::uint64_t{1} << (filterChannels == 1 ? 39 : (0x47 - std::countl_zero(filterChannels - 1)) & 63));
+            smallestBlockCount = std::min(smallestBlockCount, filter.blockCount);
             const auto first = filterChannels == channelCount ? channel : 0;
             const auto last = filterChannels == channelCount ? channel + 1 : channelCount == 1 ? filterChannels : 1;
-            const auto length = std::min(available, filter->blockCount);
+            const auto length = std::min(available, filter.blockCount);
             for (auto filterChannel = first; filterChannel < last; ++filterChannel) {
                 const auto outputChannel = channel - first + filterChannel;
-                const auto* block = filter->channels[filterChannel];
-                if (!block || !block->samples || !output->workspace[outputChannel] || !output->samples[outputChannel]) return SCE_ACM_ERROR_BAD_POINTER;
-                if ((Address(block->blockMetadata) & 3) || ((Address(block->samples) | Address(output->workspace[outputChannel]) | Address(output->samples[outputChannel])) & 127)) return SCE_ACM_ERROR_ALIGNMENT;
-                if (block->blockMetadata) flags |= std::uint64_t{1} << 26;
-                entries[entryCount++] = {block->samples, length, 0, 0xFFFFFFFF, block->blockMetadata, filter->blockMetadata, output->workspace[outputChannel], output->samples[outputChannel], gains ? gains[outputIndex] : 1.0f, wideFilter};
+                const AcmReverbBuffer* blockPointer = nullptr;
+                void* workspaceChannel = nullptr;
+                void* samplesChannel = nullptr;
+                AcmReverbBuffer block{};
+                if (!loadGuest(blockPointer, filter.channels + filterChannel) || !loadGuest(workspaceChannel, output.workspace + outputChannel) || !loadGuest(samplesChannel, output.samples + outputChannel)) return SCE_ACM_ERROR_BAD_POINTER;
+                if (!blockPointer || !loadGuest(block, blockPointer) || !block.samples || !workspaceChannel || !samplesChannel) return SCE_ACM_ERROR_BAD_POINTER;
+                if ((Address(block.blockMetadata) & 3) || ((Address(block.samples) | Address(workspaceChannel) | Address(samplesChannel)) & 127)) return SCE_ACM_ERROR_ALIGNMENT;
+                if (block.blockMetadata) flags |= std::uint64_t{1} << 26;
+                entries[entryCount++] = {block.samples, length, 0, 0xFFFFFFFF, block.blockMetadata, filter.blockMetadata, workspaceChannel, samplesChannel, gain, wideFilter};
                 if (entryCount == entries.size()) {
                     if (const auto result = AppendReverbJob(work, blockSize, inputEntry, entries.data(), entryCount)) return result;
                     entryCount = 0;
@@ -381,42 +418,50 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
     if (!batch || sourceCount == 0 || sourceCount > 65535 || sourceMode > 2 || outputMode > 1 || channelCount == 0 || channelCount > 36 || !sources || !sourceParameters || !sourceMatrices || !outputChannels) return SCE_ACM_ERROR_BAD_POINTER;
     std::uintptr_t alignment = reinterpret_cast<std::uintptr_t>(sources) | reinterpret_cast<std::uintptr_t>(sourceParameters) | reinterpret_cast<std::uintptr_t>(sourceMatrices) | reinterpret_cast<std::uintptr_t>(inputChannels) | reinterpret_cast<std::uintptr_t>(outputChannels);
     for (std::uint32_t index = 0; index < sourceCount; ++index) {
-        if (!sources[index] || !sourceParameters[index] || !sourceMatrices[index]) return SCE_ACM_ERROR_BAD_POINTER;
-        std::uint32_t parameterMode;
-        std::memcpy(&parameterMode, sourceParameters[index], sizeof(parameterMode));
+        const void* source = nullptr;
+        const void* parameters = nullptr;
+        const void* matrix = nullptr;
+        std::uint32_t parameterMode = 0;
+        if (!loadGuest(source, sources + index) || !loadGuest(parameters, sourceParameters + index) || !loadGuest(matrix, sourceMatrices + index)) return SCE_ACM_ERROR_BAD_POINTER;
+        if (!source || !parameters || !matrix) return SCE_ACM_ERROR_BAD_POINTER;
+        if (!loadGuest(parameterMode, parameters)) return SCE_ACM_ERROR_BAD_POINTER;
         if (parameterMode > 1) return SCE_ACM_ERROR_BAD_POINTER;
-        alignment |= reinterpret_cast<std::uintptr_t>(sources[index]) | reinterpret_cast<std::uintptr_t>(sourceParameters[index]) | reinterpret_cast<std::uintptr_t>(sourceMatrices[index]);
+        alignment |= reinterpret_cast<std::uintptr_t>(source) | reinterpret_cast<std::uintptr_t>(parameters) | reinterpret_cast<std::uintptr_t>(matrix);
     }
     for (std::uint32_t index = 0; index < channelCount; ++index) {
-        if (!outputChannels[index]) return SCE_ACM_ERROR_BAD_POINTER;
-        alignment |= reinterpret_cast<std::uintptr_t>(outputChannels[index]);
-        if (inputChannels) alignment |= reinterpret_cast<std::uintptr_t>(inputChannels[index]);
+        const void* inputChannel = nullptr;
+        void* outputChannel = nullptr;
+        if (!loadGuest(outputChannel, outputChannels + index)) return SCE_ACM_ERROR_BAD_POINTER;
+        if (!outputChannel) return SCE_ACM_ERROR_BAD_POINTER;
+        alignment |= reinterpret_cast<std::uintptr_t>(outputChannel);
+        if (inputChannels) {
+            if (!loadGuest(inputChannel, inputChannels + index)) return SCE_ACM_ERROR_BAD_POINTER;
+            alignment |= reinterpret_cast<std::uintptr_t>(inputChannel);
+        }
     }
     if (alignment & 127) return static_cast<int>(0x8194000A);
-    const auto offset = batch->offset;
-    const auto capacity = batch->buffer_size;
-    if (offset > capacity || capacity - offset < 8) return static_cast<int>(0x81940009);
-    auto* buffer = static_cast<std::byte*>(batch->buffer);
-    const auto writeWord = [buffer](std::size_t position, std::uint64_t value) { std::memcpy(buffer + position, &value, sizeof(value)); };
+    AcmBatchInfo work{};
+    if (!loadGuest(work, batch)) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto offset = work.offset;
+    const auto capacity = work.buffer_size;
+    if (offset > capacity || capacity - offset < 160) return static_cast<int>(0x81940009);
+    auto* buffer = static_cast<std::byte*>(work.buffer);
     const auto encodedCount = sourceCount < 255 ? sourceCount : 255;
-    writeWord(offset, (static_cast<std::uint64_t>(channelCount) << 24) | (static_cast<std::uint64_t>(encodedCount) << 16) | (std::uint64_t{1} << (sourceMode + 32)) | (std::uint64_t{1} << (outputMode + 35)) | 0x300);
-    if (capacity < 128 || capacity - offset < 152) return static_cast<int>(0x81940009);
-    const auto descriptorOffset = capacity - 128;
-    std::memset(buffer + descriptorOffset, 0, 128);
-    writeWord(descriptorOffset, sourceCount);
-    writeWord(descriptorOffset + 8, reinterpret_cast<std::uintptr_t>(inputChannels));
-    writeWord(descriptorOffset + 16, reinterpret_cast<std::uintptr_t>(outputChannels));
-    writeWord(descriptorOffset + 24, reinterpret_cast<std::uintptr_t>(sources));
-    writeWord(descriptorOffset + 32, sourceMode | (static_cast<std::uint64_t>(outputMode) << 32));
-    writeWord(descriptorOffset + 40, channelCount);
-    writeWord(descriptorOffset + 48, reinterpret_cast<std::uintptr_t>(sourceParameters));
-    writeWord(descriptorOffset + 56, reinterpret_cast<std::uintptr_t>(sourceMatrices));
-    writeWord(offset + 8, 0x8000000000000D);
-    writeWord(offset + 16, reinterpret_cast<std::uintptr_t>(buffer + descriptorOffset));
-    if (capacity - offset < 160) return static_cast<int>(0x81940009);
-    writeWord(offset + 24, 10);
-    batch->offset = offset + 32;
-    batch->buffer_size = descriptorOffset;
+    const std::size_t descriptorOffset = capacity - 128;
+    const std::array<std::uint64_t, 4> command{(static_cast<std::uint64_t>(channelCount) << 24) | (static_cast<std::uint64_t>(encodedCount) << 16) | (std::uint64_t{1} << (sourceMode + 32)) | (std::uint64_t{1} << (outputMode + 35)) | 0x300, 0x8000000000000D, reinterpret_cast<std::uintptr_t>(buffer + descriptorOffset), 10};
+    std::array<std::uint64_t, 16> descriptor{};
+    descriptor[0] = sourceCount;
+    descriptor[1] = reinterpret_cast<std::uintptr_t>(inputChannels);
+    descriptor[2] = reinterpret_cast<std::uintptr_t>(outputChannels);
+    descriptor[3] = reinterpret_cast<std::uintptr_t>(sources);
+    descriptor[4] = sourceMode | (static_cast<std::uint64_t>(outputMode) << 32);
+    descriptor[5] = channelCount;
+    descriptor[6] = reinterpret_cast<std::uintptr_t>(sourceParameters);
+    descriptor[7] = reinterpret_cast<std::uintptr_t>(sourceMatrices);
+    if (!storeGuest(buffer + offset, command) || !storeGuest(buffer + descriptorOffset, descriptor)) return SCE_ACM_ERROR_BAD_POINTER;
+    work.offset = offset + 32;
+    work.buffer_size = descriptorOffset;
+    if (!storeGuest(batch, work)) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
