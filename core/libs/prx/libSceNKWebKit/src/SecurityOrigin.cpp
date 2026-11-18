@@ -607,11 +607,12 @@ String APS5_VABI _ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(const S
 
 bool APS5_VABI _ZNK7WebCore14SecurityOrigin33isMatchingRegistrableDomainSuffixERKN3WTF6StringEb(const SecurityOrigin* self, const String* domainSuffix, bool treatIPAddressAsDomain) {
     const auto& origin = Checked(self);
-    if (!domainSuffix) throw std::invalid_argument("null WTF::String");
-    if (IsEmpty(*domainSuffix)) return false;
-    if (!MatchesOriginAccessEntry(origin, *domainSuffix, treatIPAddressAsDomain)) return false;
-    if (domainSuffix->impl->length == ViewOf(Host(origin.data)).length) return true;
-    return !_ZN7WebCore14isPublicSuffixERKN3WTF6StringE(domainSuffix);
+    String suffix;
+    if (!domainSuffix || !GuestCopyIn_nid_no_patch(&suffix, domainSuffix, sizeof(suffix))) throw std::invalid_argument("null WTF::String");
+    if (IsEmpty(suffix)) return false;
+    if (!MatchesOriginAccessEntry(origin, suffix, treatIPAddressAsDomain)) return false;
+    if (suffix.impl->length == ViewOf(Host(origin.data)).length) return true;
+    return !_ZN7WebCore14isPublicSuffixERKN3WTF6StringE(&suffix);
 }
 
 String APS5_VABI _ZNK7WebCore18SecurityOriginData8toStringEv(const SecurityOriginData* self) {
