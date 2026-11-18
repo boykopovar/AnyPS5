@@ -42,6 +42,7 @@ SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
 DYNAMIC_VALUE_TAGS = {
+    12: "DT_INIT", 13: "DT_FINI",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
     DT_RELA: "DT_RELA", DT_RELASZ: "DT_RELASZ", DT_RELAENT: "DT_RELAENT",
     DT_STRSZ: "DT_STRSZ", DT_SYMENT: "DT_SYMENT", DT_JMPREL: "DT_JMPREL",
@@ -262,6 +263,15 @@ class Namer:
 
 def ghidra_symbols(module, namer):
     rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
+    exported_functions = {address for _, section, address, kind in module.exported_symbols()
+                          if kind in (STT_FUNC, STT_GNU_IFUNC) and section != SHN_COMMON}
+    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+        address = module.tags.get(tag)
+        if address is None or address in exported_functions:
+            continue
+        if any(flags & PF_X and start <= address < start + size and offset + address - start < len(module.data)
+               for start, offset, size, flags in module.loads):
+            rows.add((address, True, name, name))
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue

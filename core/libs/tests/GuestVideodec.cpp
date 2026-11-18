@@ -389,6 +389,34 @@ void testQueryResourceInfo() {
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after a refused read-only control block");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder created after a refused read-only control block was not deleted");
 }
+void testMapMemory() {
+    unsigned char memory[0x48]{};
+    const auto setSize = [&](std::uint64_t size) { std::memcpy(memory, &size, sizeof(size)); };
+    const auto setFlags = [&](std::uint32_t flags) { std::memcpy(memory + 0x20, &flags, sizeof(flags)); };
+    Ctrl ctrl{sizeof(Ctrl), memory, 0};
+    Ctrl noHandle{sizeof(Ctrl), nullptr, 0};
+    Ctrl wrongSize{sizeof(Ctrl) + 8, nullptr, 0};
+    setSize(0x20);
+    check(sceVideodecMapMemory(nullptr, memory) == ErrorArgumentPointer, "map memory accepted a null control block");
+    check(sceVideodecMapMemory(&ctrl, nullptr) == ErrorArgumentPointer, "map memory accepted a null memory block");
+    check(sceVideodecMapMemory(&wrongSize, memory) == ErrorStructSize, "map memory accepted a control block size other than 24");
+    for (const std::uint64_t size : {0ull, 0x18ull, 0x1full, 0x21ull, 0x30ull, 0x40ull, 0x47ull, 0x49ull, 0x50ull}) {
+        setSize(size);
+        check(sceVideodecMapMemory(&noHandle, memory) == ErrorStructSize, "map memory did not check the memory block size before the handle");
+    }
+    for (const std::uint64_t size : {0x20ull, 0x28ull, 0x48ull}) {
+        setSize(size);
+        setFlags(1);
+        check(sceVideodecMapMemory(&noHandle, memory) == ErrorHandle, "map memory accepted a control block without a handle");
+    }
+    for (const std::uint64_t size : {0x28ull, 0x48ull}) {
+        setSize(size);
+        for (const std::uint32_t flags : {1u, 0x80000000u, 0xffffffffu}) {
+            setFlags(flags);
+            check(sceVideodecMapMemory(&ctrl, memory) == ErrorApiFail, "map memory accepted a non-zero field at 0x20");
+        }
+    }
+}
 
 }
 
@@ -401,6 +429,7 @@ int main() {
         testDeepPicture();
         testDeepReorderedPicture();
         testQueryResourceInfo();
+        testMapMemory();
         std::puts("Videodec tests passed");
         return 0;
     } catch (const std::exception& error) {
