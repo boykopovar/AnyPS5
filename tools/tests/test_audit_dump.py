@@ -921,6 +921,19 @@ class ModuleListTests(unittest.TestCase):
             (root / 'notes.txt').write_text('x', encoding='utf-8')
             (root / 'folder.prx').mkdir()
             self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+
+    def test_report_overlaps_dump_flags_paths_inside_or_aliasing_the_dump(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dump = root / 'dump'
+            (dump / 'sce_module').mkdir(parents=True)
+            (dump / 'eboot.bin').write_bytes(b'x')
+            outside = root / 'report.json'
+            self.assertFalse(audit_dump.report_overlaps_dump(outside, dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'report.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module' / 'r.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'eboot.bin', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module', dump))
 class StageRefusalTests(unittest.TestCase):
     def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
         import unwrap_self

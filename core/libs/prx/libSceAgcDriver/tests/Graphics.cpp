@@ -5894,8 +5894,26 @@ void InitialContextTests() {
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "sparse guest setup lost its render target");
-    Require(state.viewport.x == 0.0f && state.viewport.y == 0.0f && state.viewport.width == static_cast<float>(state.renderExtent.width) && state.viewport.height == static_cast<float>(state.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
+    const auto scaleX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x10f)));
+    const auto offsetX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x110)));
+    const auto scaleY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x111)));
+    const auto offsetY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x112)));
+    Require(state.viewport.x == offsetX - scaleX && state.viewport.y == offsetY - scaleY && state.viewport.width == 2 * scaleX && state.viewport.height == 2 * scaleY, "a draw that programmed its viewport transform but never wrote the viewport control lost the transform");
     Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the reset viewport control was rejected for its viewport control");
+    {
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-scaleY);
+        const auto flipped = AgcDriver::Graphics::DecodeState(queue);
+        Require(flipped.viewport.y == offsetY + scaleY && flipped.viewport.height == -2 * scaleY, "a negative Y scale was dropped for a draw that never wrote the viewport control");
+        std::array<std::uint32_t, 6> words{};
+        for (std::uint32_t word = 0; word < 6; ++word) {
+            words[word] = queue.context.at(0x10f + word);
+            queue.context[0x10f + word] = word % 2 == 0 ? 0x3f800000u : 0u;
+        }
+        const auto untouched = AgcDriver::Graphics::DecodeState(queue);
+        Require(untouched.viewport.x == 0.0f && untouched.viewport.y == 0.0f && untouched.viewport.width == static_cast<float>(untouched.renderExtent.width) && untouched.viewport.height == static_cast<float>(untouched.renderExtent.height), "a draw that never programmed a viewport did not get a viewport covering its render target");
+        for (std::uint32_t word = 0; word < 6; ++word) queue.context[0x10f + word] = words[word];
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(scaleY);
+    }
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_VTE_CNTL=0x");
