@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -63,10 +64,32 @@ void TestNullBuffer() {
     Require(false);
 }
 
+void TestUnwritableGuestBuffer() {
+    errno = 71;
+    try {
+        _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(123, reinterpret_cast<char*>(0x10));
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71);
+        return;
+    }
+    Require(false);
+}
+
+void TestPreservedErrno() {
+    for (const int number : {0, -7, 12, -12345, 1234567890}) {
+        auto buffer = Filled();
+        errno = 72;
+        _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(number, buffer.data());
+        Require(errno == 72);
+    }
+}
+
 }
 
 int main() {
     TestDigits();
     TestNullBuffer();
+    TestUnwritableGuestBuffer();
+    TestPreservedErrno();
     std::puts("libwebrtc FastIntToBuffer tests passed");
 }

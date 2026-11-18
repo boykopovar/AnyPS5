@@ -4,14 +4,17 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <istream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
-#include "SDL_scancode.h"
+#include "SDL_gamecontroller.h"
 #include "SDL_mouse.h"
+#include "SDL_scancode.h"
 
 #include "PadInputTypes.hpp"
 
@@ -42,6 +45,7 @@ struct InputSettings {
 struct InputConfiguration {
     std::vector<InputBinding> bindings;
     InputSettings settings;
+    std::array<std::optional<PadButton>, SDL_CONTROLLER_BUTTON_MAX> controllerButtons{};
 };
 
 inline constexpr std::array InputMapping{
@@ -95,6 +99,31 @@ InputConfiguration LoadInputMapping(std::string_view titleId = {});
 void ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source);
 std::string InputProfileName(std::string_view titleId);
 bool TryLoadInputMapping(std::string_view titleId, InputConfiguration& configuration, std::string& error);
+struct InputFileStamp {
+    bool present = false;
+    std::filesystem::file_time_type modified{};
+    std::uintmax_t size = 0;
+    bool operator==(const InputFileStamp& other) const = default;
+};
+
+struct InputMappingStamp {
+    InputFileStamp shared;
+    InputFileStamp profile;
+    bool operator==(const InputMappingStamp& other) const = default;
+};
+
+InputMappingStamp InputMappingFileStamp(std::string_view titleId);
+
+class InputMappingWatch {
+public:
+    explicit InputMappingWatch(InputMappingStamp applied);
+    bool Poll(const InputMappingStamp& current);
+
+private:
+    InputMappingStamp applied;
+    InputMappingStamp candidate;
+};
+
 class InputMappingStore {
 public:
     explicit InputMappingStore(InputConfiguration initial);

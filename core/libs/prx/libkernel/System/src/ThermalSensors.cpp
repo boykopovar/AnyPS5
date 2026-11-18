@@ -106,10 +106,10 @@ extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]
     int gpu = -1;
     int board = -1;
     for (const auto& path : SortedEntries(base / "hwmon")) {
-        const auto value = ReadCelsius(path / "temp1_input");
-        if (!value) continue;
         const std::string name = Lowercase(ReadName(path / "name"));
         if (IsPowerOrNetwork(name)) continue;
+        const auto value = ReadCelsius(path / "temp1_input");
+        if (!value) continue;
         if (ContainsAny(name, {"coretemp", "k10temp", "zenpower", "cpu"})) {
             if (celsius[0] < 0) celsius[0] = *value;
         } else if (ContainsAny(name, {"amdgpu", "i915", "radeon", "nvidia", "gpu"}) || name == "xe") {
@@ -299,7 +299,6 @@ int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius) {
         if (!GuestCopyOut_nid_no_patch(outCelsius, &value, sizeof(value))) return Fail(14);
         return 0;
     }
-    if (sensorId > 3 && sensorId < 62) throw std::runtime_error("sceKernelGetSocSensorTemperature: channels 4 to 61 have no host sensor and were not measured");
     int celsius[3];
     ReadHostSensors(celsius);
     const int host = sensorId >= 3 ? 0 : sensorId;

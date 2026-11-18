@@ -222,14 +222,19 @@ std::int32_t APS5_VABI sceVrTracker2UnregisterDevice(std::int32_t deviceHandle) 
 
 std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter* parameter, VrTracker2MemoryRequirement* requirement) {
     if (parameter == nullptr || requirement == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    if (parameter->size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    if (parameter->mode == SystemTrackingMode || parameter->mode == SystemClientMode) {
+    VrTracker2MemoryParameter localParam{};
+    const int savedErrnoParam = errno;
+    const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam));
+    errno = savedErrnoParam;
+    if (!copiedParam) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (localParam.size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (localParam.mode == SystemTrackingMode || localParam.mode == SystemClientMode) {
         if (CompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    } else if (parameter->mode != TrackerMode) {
+    } else if (localParam.mode != TrackerMode) {
         return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     }
-    const std::uint32_t memorySize = WorkMemorySize(parameter->mode);
-    for (const auto value : parameter->reserved)
+    const std::uint32_t memorySize = WorkMemorySize(localParam.mode);
+    for (const auto value : localParam.reserved)
         if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     const VrTracker2MemoryRequirement req{sizeof(VrTracker2MemoryRequirement), memorySize, 64u << 10, {}};
     const int savedErrno = errno;
@@ -240,24 +245,29 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
 }
 
 std::int32_t APS5_VABI sceVrTracker2Initialize(const VrTracker2InitializeParameter* parameter) {
-    if (parameter == nullptr || parameter->size != sizeof(VrTracker2InitializeParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    const std::uint32_t mode = parameter->mode;
+    if (parameter == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    VrTracker2InitializeParameter localParam{};
+    const int savedErrnoParam = errno;
+    const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam));
+    errno = savedErrnoParam;
+    if (!copiedParam || localParam.size != sizeof(VrTracker2InitializeParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    const std::uint32_t mode = localParam.mode;
     if (const std::int32_t result = ValidateMode(mode); result != SCE_OK) return result;
-    if (parameter->workMemory == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    if (parameter->workMemorySize < WorkMemorySize(mode)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    if (parameter->workMemoryAlignment < MinimumWorkMemoryAlignment) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    for (const auto value : parameter->reserved)
+    if (localParam.workMemory == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (localParam.workMemorySize < WorkMemorySize(mode)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (localParam.workMemoryAlignment < MinimumWorkMemoryAlignment) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto value : localParam.reserved)
         if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    for (const auto priority : parameter->threadPriorities)
+    for (const auto priority : localParam.threadPriorities)
         if (!PriorityAllowed(priority)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    for (const auto mask : parameter->threadAffinityMasks)
+    for (const auto mask : localParam.threadAffinityMasks)
         if (!AffinityAllowed(mode, mask)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     std::uint32_t expected = 0;
     if (!state.compare_exchange_strong(expected, 1)) return VR_TRACKER2_ERROR_ALREADY_INITIALIZED;
     InitializeSession session;
-    if (mode == TrackerMode) std::memset(parameter->workMemory, 0, WorkMemorySize(mode));
+    if (mode == TrackerMode) std::memset(localParam.workMemory, 0, WorkMemorySize(mode));
     if (mode != SystemClientMode) {
-        if (!OptionModeAllowed(parameter->optionMode)) return session.Abort(VR_TRACKER2_ERROR_INVALID_ARGUMENT);
+        if (!OptionModeAllowed(localParam.optionMode)) return session.Abort(VR_TRACKER2_ERROR_INVALID_ARGUMENT);
         if (const std::int32_t result = session.OpenTracking(); result != SCE_OK) return session.Abort(result);
         if (const std::int32_t result = session.StartTracking(); result != SCE_OK) return session.Abort(result);
         if (const std::int32_t result = session.OpenLedDetector(); result != SCE_OK) return session.Abort(result);
@@ -607,22 +617,31 @@ std::int32_t APS5_VABI VrTracker2Accept() {
 }
 
 std::int32_t APS5_VABI SceVrTracker2DepthCubeMapInit(void* output) {
-    if (output == nullptr) APS5_INVALID_ARG_EX;
-    auto* bytes = static_cast<std::uint8_t*>(output);
+    const auto address = reinterpret_cast<std::uintptr_t>(output);
+    if (output == nullptr || address > UINTPTR_MAX - 4) APS5_INVALID_ARG_EX;
+    std::array<std::uint8_t, 12> bytes{};
     const std::uint32_t first = 0xC000;
     const std::uint32_t second = 0;
     const std::uint16_t third = 0x40;
-    std::memcpy(bytes + 4, &first, sizeof first);
-    std::memcpy(bytes + 8, &second, sizeof second);
-    std::memcpy(bytes + 12, &third, sizeof third);
-    std::memcpy(bytes + 14, &third, sizeof third);
+    std::memcpy(bytes.data(), &first, sizeof first);
+    std::memcpy(bytes.data() + 4, &second, sizeof second);
+    std::memcpy(bytes.data() + 8, &third, sizeof third);
+    std::memcpy(bytes.data() + 10, &third, sizeof third);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + 4), bytes.data(), bytes.size());
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
     return SCE_OK;
 }
 
 APS5_EXPORT("IB0qcDVu8vU", VrTracker2ClearWord);
 std::int32_t APS5_VABI VrTracker2ClearWord(void* output) {
     if (output == nullptr) APS5_INVALID_ARG_EX;
-    std::memset(output, 0, sizeof(std::uint32_t));
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
     return SCE_OK;
 }
 

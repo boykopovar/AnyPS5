@@ -8,6 +8,14 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
+#ifdef __linux__
+#include <link.h>
+#include <stdexcept>
+#include <string_view>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <vector>
+#endif
 
 namespace {
 
@@ -42,9 +50,119 @@ unsigned char* Map(std::size_t pages) {
     return static_cast<unsigned char*>(raw);
 }
 
+#ifdef __linux__
+constexpr int Skipped = 77;
+constexpr int GuestInvalid = 22;
+
+struct Segment {
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    bool hostImage = false;
+};
+
+struct LoadedSegments {
+    bool main = true;
+    std::uintptr_t hostPage = 0;
+    std::vector<Segment> segments;
+};
+
+int CollectLoadedSegments(dl_phdr_info* image, std::size_t, void* data) {
+    auto& images = *static_cast<LoadedSegments*>(data);
+    const bool main = images.main;
+    images.main = false;
+    const bool guestModule = image->dlpi_name != nullptr && std::string_view(image->dlpi_name).ends_with(".guest.prx");
+    for (int index = 0; index < image->dlpi_phnum; ++index) {
+        const auto& header = image->dlpi_phdr[index];
+        if (header.p_type != PT_LOAD) continue;
+        const auto start = (image->dlpi_addr + header.p_vaddr) & ~(images.hostPage - 1);
+        const auto end = (image->dlpi_addr + header.p_vaddr + header.p_memsz + images.hostPage - 1) & ~(images.hostPage - 1);
+        images.segments.push_back({start, end, !main && !guestModule});
+    }
+    return 0;
 }
 
-int main() {
+LoadedSegments CollectLoadedSegments() {
+    LoadedSegments images;
+    images.hostPage = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    dl_iterate_phdr(CollectLoadedSegments, &images);
+    return images;
+}
+
+int ProtectHostPagesAboveLoadedImages() {
+    const auto images = CollectLoadedSegments();
+    int checked = 0;
+    for (const auto& segment : images.segments) {
+        if (!segment.hostImage || segment.end % Page == 0) continue;
+        void* const wanted = reinterpret_cast<void*>(segment.end);
+        void* const host = mmap(wanted, Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (host == MAP_FAILED) continue;
+        if (host != wanted) {
+            Require(munmap(host, Page) == 0, "munmap of a misplaced host page failed");
+            continue;
+        }
+        auto* const bytes = static_cast<volatile unsigned char*>(host);
+        Require(mprotect_nid_postfix(host, Page, ProtectRead) == 0, "mprotect of host pages whose 16 KiB page starts in a host image must succeed");
+        Require(Protect(host, Page, ProtectRead) == 0, "sceKernelMprotect of host pages whose 16 KiB page starts in a host image must succeed");
+        bytes[0] = 0x5a;
+        bytes[Page - 1] = 0xa5;
+        Require(bytes[0] == 0x5a && bytes[Page - 1] == 0xa5, "host pages above a host image must stay writable");
+        Require(munmap(host, Page) == 0, "munmap of the host page failed");
+        ++checked;
+    }
+    if (checked != 0) return 0;
+    std::puts("no host image ends inside a 16 KiB page with free memory above it");
+    return Skipped;
+}
+
+bool OverlapsLoadedSegment(const LoadedSegments& images, std::uintptr_t start, std::uintptr_t end) {
+    for (const auto& segment : images.segments) {
+        if (segment.start < end && start < segment.end) return true;
+    }
+    return false;
+}
+
+int ProtectFromInsideHostImages() {
+    const auto images = CollectLoadedSegments();
+    int checked = 0;
+    for (const auto& segment : images.segments) {
+        if (!segment.hostImage || segment.start % Page == 0) continue;
+        if (OverlapsLoadedSegment(images, segment.start & ~(Page - 1), segment.start)) continue;
+        auto* const inside = reinterpret_cast<void*>(segment.start + 0x800);
+        *__error_nid_postfix() = 0;
+        Require(mprotect_nid_postfix(inside, 16, ProtectRead) == -1 && *__error_nid_postfix() == GuestInvalid, "mprotect starting inside a host image must fail with EINVAL even when its 16 KiB page starts below the image");
+        bool refused = false;
+        try {
+            sceKernelMprotect(inside, 16, ProtectRead);
+        } catch (const std::invalid_argument&) {
+            refused = true;
+        }
+        Require(refused, "sceKernelMprotect starting inside a host image must be refused even when its 16 KiB page starts below the image");
+        ++checked;
+    }
+    if (checked != 0) return 0;
+    std::puts("no host image segment starts inside a 16 KiB page that holds no other loaded segment below it");
+    return Skipped;
+}
+
+int CheckHostImages(std::string_view mode) {
+    if (mode == "above") return ProtectHostPagesAboveLoadedImages();
+    if (mode == "inside") return ProtectFromInsideHostImages();
+    Require(false, "unknown host image check");
+    return 1;
+}
+#endif
+
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1) {
+#ifdef __linux__
+        return CheckHostImages(argv[1]);
+#else
+        std::fprintf(stderr, "host image check %s is Linux-only\n", argv[1]);
+        return 1;
+#endif
+    }
     unsigned char* memory = Map(3);
     Require(munmap_nid_postfix(memory + Page, Page) == 0, "munmap of the middle page failed");
 

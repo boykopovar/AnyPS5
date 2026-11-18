@@ -17,12 +17,18 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 constexpr std::uint64_t ReadableRequest = 0x4004667f;
 constexpr std::uint64_t MalformedRequest = 0;
 constexpr std::uint64_t UnknownRequest = 0x12345678;
 constexpr std::uint64_t TerminalGroupRequest = 0x20007401;
+constexpr std::uint64_t WriteQueueRequest = 0x40046677;
+constexpr std::uint64_t WriteSpaceRequest = 0x40046676;
+constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
+constexpr std::uint64_t ForeignGroupRequest = 0x80047801;
+constexpr std::uint64_t ForeignIntegerRequest = 0xa0047801;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -210,6 +216,24 @@ void AuditInvalidRequestCodes() {
     Require(pipeTerminalErr == ErrorNotTerminal || pipeTerminalErr == ErrorInvalid,
         "terminal request on pipe must yield ENOTTY (25) or EINVAL (22)");
 
+    for (const int end : pipeFds) {
+        for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+            for (const std::uint64_t request : {WriteQueueRequest, WriteSpaceRequest, DeviceTypeRequest, ForeignGroupRequest}) {
+                int argument = 0x5a5a5a5a;
+                Require(call(end, request, &argument) == -1 && *__error_nid_postfix() == ErrorNotTerminal && argument == 0x5a5a5a5a,
+                    "a request pipe_ioctl does not handle must fail with ENOTTY (25) and leave its argument alone");
+            }
+            Require(call(end, ForeignGroupRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == ErrorFault,
+                "an unreadable input argument must fail with EFAULT (14), as sys_ioctl copies it in before pipe_ioctl");
+            Require(call(end, WriteQueueRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                "an output request pipe_ioctl does not handle must fail with ENOTTY (25) without touching its argument");
+            for (void* integer : {static_cast<void*>(nullptr), reinterpret_cast<void*>(std::uintptr_t{0x10})}) {
+                Require(call(end, ForeignIntegerRequest, integer) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                    "an IOC_VOID request passes its argument by value, so nothing is copied in before ENOTTY (25), as in sys_ioctl");
+            }
+        }
+    }
+
     Require(close_nid_postfix(pipeFds[0]) == 0, "close pipe read-end failed");
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
@@ -242,6 +266,9 @@ void AuditEmptySocketReadableQuery() {
     const char payload[] = "12345678";
     constexpr std::int64_t payloadSize = 8;
     Require(send_nid_postfix(client, payload, payloadSize, 0) == payloadSize, "send payload failed");
+
+    GuestPollDescriptor arrival{server, PollIn, 0};
+    Require(poll_nid_postfix(&arrival, 1, 5000) == 1, "the payload did not arrive at the server socket");
 
     int queuedBytes = -1;
     Require(ioctl_nid_postfix(server, ReadableRequest, &queuedBytes) == 0 && queuedBytes == payloadSize,
