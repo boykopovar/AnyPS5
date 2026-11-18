@@ -4,9 +4,13 @@
 
 #include FT_OUTLINE_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <stdexcept>
+#include <string>
 
 using namespace FreeType;
 
@@ -33,6 +37,7 @@ static void Compare(GuestLibrary& library, FT_Library native, std::uint32_t poin
     }
     for (std::int32_t index = 0; nativeError == 0 && index < contours; ++index) Require(guest.contours[index] == 0);
     Require(FT_Outline_Done_nid_postfix(&library, &guest) == FT_Outline_Done(native, &expected));
+    Require(FT_Outline_Done_nid_postfix(&library, &guest) == FT_Outline_Done(native, &expected));
     Require(guest.n_points == 0 && guest.n_contours == 0 && guest.flags == 0);
     Require(!guest.points && !guest.tags && !guest.contours);
 }
@@ -42,13 +47,36 @@ int main() {
     FT_Library native = nullptr;
     Require(FT_Init_FreeType(&library.host) == 0 && FT_Init_FreeType(&native) == 0);
     for (const std::uint32_t points : {0u, 1u, 7u, 65535u, 65536u, 0xFFFFFFFFu}) {
-        for (const std::int32_t contours : {-1, 0, 1, 3, 7, 8, 65535}) Compare(library, native, points, contours);
+        for (const std::int32_t contours : {std::numeric_limits<std::int32_t>::min(), -2, -1, 0, 1, 3, 7, 8, 65535}) {
+            Compare(library, native, points, contours);
+        }
     }
     GuestOutline outline{};
     Require(FT_Outline_New_nid_postfix(nullptr, 3, 1, &outline) == FT_Err_Invalid_Library_Handle);
     Require(FT_Outline_New_nid_postfix(&library, 3, 1, nullptr) == FT_Err_Invalid_Argument);
     Require(FT_Outline_Done_nid_postfix(nullptr, &outline) == FT_Err_Invalid_Library_Handle);
     Require(FT_Outline_Done_nid_postfix(&library, nullptr) == FT_Err_Invalid_Outline);
+    auto* const unmapped = reinterpret_cast<GuestOutline*>(0x10);
+    errno = 71;
+    Require(FT_Outline_New_nid_postfix(&library, 3, 1, unmapped) == FT_Err_Invalid_Argument);
+    Require(FT_Outline_Done_nid_postfix(&library, unmapped) == FT_Err_Invalid_Outline);
+    Require(errno == 71);
+
+    auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
+    for (const bool done : {false, true}) {
+        GuestOutline kept{1, 2, nullptr, nullptr, nullptr, 3};
+        const char* const name = done ? "FT_Outline_Done_nid_postfix" : "FT_Outline_New_nid_postfix";
+        errno = 71;
+        bool refused = false;
+        try {
+            if (done) FT_Outline_Done_nid_postfix(unreadableLibrary, &kept);
+            else FT_Outline_New_nid_postfix(unreadableLibrary, 3, 1, &kept);
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()) == std::string(name) + " not implemented";
+        }
+        Require(refused && errno == 71);
+        Require(kept.n_points == 2 && kept.n_contours == 1 && kept.flags == 3);
+    }
 
     GuestLibrary uninitialized{};
     GuestOutline untouched{1, 2, nullptr, nullptr, nullptr, 3};

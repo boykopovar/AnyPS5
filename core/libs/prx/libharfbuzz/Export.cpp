@@ -1,14 +1,76 @@
+#include <cerrno>
 #include <cstdint>
+#include <type_traits>
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "IcuScriptNames.hpp"
 
-#include <hb.h>
+#include <hb-ft.h>
+
+namespace {
+
+template <typename T>
+bool GuestCopyInPreservingErrno(T& out, const void* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&out, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool GuestCopyOutPreservingErrno(void* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+void APS5_VABI FinalizeCachedFace(void* object) {
+    auto* face = static_cast<FreeType::GuestFaceRec*>(object);
+    std::remove_reference_t<decltype(face->generic)> generic{};
+    if (!GuestCopyInPreservingErrno(generic, &face->generic)) return;
+    hb_face_destroy(static_cast<hb_face_t*>(generic.data));
+}
+
+}
 
 extern "C" {
 
-int APS5_VABI hb_ft_face_create_cached_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec* face) {
+    if (!face) NotImplemented_nid_no_patch(__func__);
+    FreeType::GuestFaceRec guestFace{};
+    if (!GuestCopyInPreservingErrno(guestFace, face)) NotImplemented_nid_no_patch(__func__);
+    const auto* owner = static_cast<const FreeType::GuestFace*>(guestFace.internal);
+    if (!owner || &owner->rec != face) NotImplemented_nid_no_patch(__func__);
+    FT_Face host = nullptr;
+    bool finalized = true;
+    if (!GuestCopyInPreservingErrno(host, &owner->host) ||
+        !GuestCopyInPreservingErrno(finalized, &owner->finalized) ||
+        !host || finalized) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+
+    auto generic = guestFace.generic;
+    if (!generic.data || generic.finalizer != FinalizeCachedFace) {
+        if (!GuestWritablePreservingErrno(&face->generic, sizeof(face->generic))) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if (generic.finalizer) generic.finalizer(face);
+        generic = {hb_ft_face_create(host, nullptr), FinalizeCachedFace};
+        if (!GuestCopyOutPreservingErrno(&face->generic, generic)) {
+            hb_face_destroy(static_cast<hb_face_t*>(generic.data));
+            NotImplemented_nid_no_patch(__func__);
+        }
+    }
+    return hb_face_reference(static_cast<hb_face_t*>(generic.data));
 }
 
 std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode) {

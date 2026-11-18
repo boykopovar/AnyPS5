@@ -4,16 +4,24 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <iterator>
 #include <initializer_list>
+#include <limits>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
+constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
+constexpr int GUEST_ERANGE = 34;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
 constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 constexpr unsigned SCE_KERNEL_ERROR_BASE = 0x80020000u;
@@ -146,6 +154,104 @@ void TestAttr() {
         if (pthread_attr_setsolosched_np_nid_postfix(&attr, 16) != 0) return false;
         if (pthread_attr_getsolosched_np_nid_postfix(&attr, &solosched) != 0 || solosched != 16) return false;
         return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_affinity_np", [] {
+        PthreadAttr attr = nullptr;
+        KernelCpumask mask = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(nullptr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 0, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, 7, &mask) != GUEST_ERANGE) return false;
+        unsigned char buffer[32] = {0xFF};
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(buffer), buffer) != 0) return false;
+        for (std::size_t i = 8; i < sizeof(buffer); ++i) {
+            if (buffer[i] != 0) return false;
+        }
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 0, nullptr) != 0) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, 4, &mask) != GUEST_ERANGE) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), nullptr) != GUEST_EFAULT) return false;
+        unsigned char badBuffer[16] = {0};
+        badBuffer[8] = 1;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(badBuffer), badBuffer) != GUEST_EINVAL) return false;
+        KernelCpumask targetMask = 0x3;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(targetMask), &targetMask) != 0) return false;
+        KernelCpumask readBack = 0;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(readBack), &readBack) != 0 || readBack != targetMask) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_np unmapped pointers", [] {
+        auto* unmappedAttr = reinterpret_cast<PthreadAttr*>(0x10);
+        auto* unmappedBytes = reinterpret_cast<void*>(0x10);
+        KernelCpumask mask = 0x3;
+        int solosched = -1;
+        errno = 71;
+        if (pthread_attr_getaffinity_np_nid_postfix(unmappedAttr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(unmappedAttr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(unmappedAttr, &solosched) != GUEST_EINVAL || solosched != -1) return false;
+        PthreadAttr attr = nullptr;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), unmappedBytes) != GUEST_EFAULT) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), unmappedBytes) != GUEST_EFAULT) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, reinterpret_cast<int*>(0x10)) != GUEST_EINVAL) return false;
+        unsigned char wide[256] = {};
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != 0) return false;
+        wide[200] = 1;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != GUEST_EINVAL) return false;
+        std::fill(std::begin(wide), std::end(wide), static_cast<unsigned char>(0xFF));
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != 0) return false;
+        for (std::size_t i = sizeof(KernelCpumask); i < sizeof(wide); ++i) {
+            if (wide[i] != 0) return false;
+        }
+        if (errno != 71) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_get_specificarray_np", [] {
+        void* array[4] = {nullptr};
+        if (pthread_get_specificarray_np_nid_postfix(0, 1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(1, 0, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(1, -1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(513, 1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(512, 2, array) != GUEST_EINVAL) return false;
+        constexpr int IntMax = std::numeric_limits<int>::max();
+        for (const PthreadKey key : {2, 512, IntMax}) {
+            if (pthread_get_specificarray_np_nid_postfix(key, IntMax, nullptr) != GUEST_EINVAL) return false;
+        }
+        if (pthread_get_specificarray_np_nid_postfix(1, 1, nullptr) != GUEST_EFAULT) return false;
+        PthreadKey key1 = 0;
+        PthreadKey key2 = 0;
+        std::vector<PthreadKey> createdKeys;
+        if (scePthreadKeyCreate(&key1, nullptr) != 0) return false;
+        createdKeys.push_back(key1);
+        while (true) {
+            if (scePthreadKeyCreate(&key2, nullptr) != 0) {
+                for (auto k : createdKeys) scePthreadKeyDelete(k);
+                return false;
+            }
+            createdKeys.push_back(key2);
+            if (key2 == key1 + 1) break;
+            key1 = key2;
+        }
+        int val1 = 111, val2 = 222;
+        if (scePthreadSetspecific(key1, &val1) != 0) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        if (scePthreadSetspecific(key2, &val2) != 0) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        void* pair[2] = {nullptr};
+        if (pthread_get_specificarray_np_nid_postfix(key1, 2, pair) != 0 || pair[0] != &val1 || pair[1] != &val2) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        for (auto k : createdKeys) scePthreadKeyDelete(k);
+        return true;
     });
 }
 

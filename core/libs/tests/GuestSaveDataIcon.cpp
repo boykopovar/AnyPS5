@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <limits>
 #include <random>
@@ -98,9 +99,18 @@ static void CheckRoundTrip() {
     Save(second, other.data(), other.size(), other.size());
     Load(first, payload.data(), payload.size() - 3);
     Load(second, other.data(), other.size());
+    Require(std::filesystem::create_directory("app0"));
+    {
+        std::ofstream source("app0/source-icon.png", std::ios::binary);
+        Require(static_cast<bool>(source.write(reinterpret_cast<const char*>(other.data()), other.size())));
+    }
+    Require(sceSaveDataSaveIconByPath(&first, "/app0/source-icon.png") == 0);
+    Load(first, other.data(), other.size());
+    Require(sceSaveDataSaveIconByPath(&first, "/app0/missing.png") == NotFound);
+    Load(first, other.data(), other.size());
     Unmount(first);
     const auto remounted = Mount("first", ReadWrite);
-    Load(remounted, payload.data(), payload.size() - 3);
+    Load(remounted, other.data(), other.size());
     Unmount(remounted);
     Unmount(second);
 }
@@ -216,6 +226,14 @@ static void CheckArguments() {
     Require(sceSaveDataLoadIcon(&point, &empty) == Parameter);
     Require(sceSaveDataSaveIcon(&point, &empty) == Parameter);
     Require(empty.data_size == 0x123456);
+    SaveDataMountPoint unterminated{};
+    std::memset(unterminated.data, 'X', sizeof(unterminated.data));
+    Require(sceSaveDataLoadIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIcon(&unterminated, &icon) == Parameter);
+    Require(sceSaveDataSaveIconByPath(nullptr, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&unterminated, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&point, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&point, "icon.png") == NotFound);
     Require(sceSaveDataLoadIcon(&point, &icon) == NotFound);
     Require(icon.data_size == 0x123456);
     SaveDataMountPoint absent{};
