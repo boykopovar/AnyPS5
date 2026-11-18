@@ -50,6 +50,13 @@ test('translated diagnostics retain action tokens and unknown technical details'
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
 });
 
+test('translated controller diagnostics preserve button names and None', () => {
+    assert.equal(diagnostic('sv', "Unknown SDL controller button 'leftx'."), "Okänd SDL-handkontrollknapp 'leftx'.");
+    assert.equal(diagnostic('sv', 'SDLButton:a is set more than once.'), 'SDLButton:a anges mer än en gång.');
+    assert.equal(diagnostic('pt-BR', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: O valor deve ser um botão do PlayStation ou None.');
+    assert.equal(diagnostic('ar-EG', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: القيمة لازم تكون زرار PlayStation أو None.');
+});
+
 test('capture diagnostics are fully translated', () => {
     const message = captureKey({key: 'Dead', code: 'BracketRight'}).error;
     assert.equal(diagnostic('sv', message), 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.');
