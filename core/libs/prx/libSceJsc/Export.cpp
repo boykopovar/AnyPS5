@@ -1053,38 +1053,6 @@ int APS5_VABI _ZN3JSC17weakClearSlowCaseERPNS_8WeakImplE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC19ArrayBufferContents5clearEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC1EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC2EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC19ArrayBufferContentsaSEOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC19JSSymbolTableObject14deletePropertyEPNS_6JSCellEPNS_14JSGlobalObjectENS_12PropertyNameERNS_18DeletePropertySlotE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1533,10 +1501,6 @@ int APS5_VABI _ZN3WTF11emptyStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDs() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1550,10 +1514,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl17openTemporaryFileERKNS_6StringERiS3_() {
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl24pathByAppendingComponentERKNS_6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15FilePrintStream4openEPKcS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
