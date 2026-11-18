@@ -634,6 +634,17 @@ class EnvReferenceTests(unittest.TestCase):
         python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
+class CppReadsTests(unittest.TestCase):
+    def test_comments_and_character_literals_are_blanked(self):
+        text = "a /* x */ b 'c' d // e"
+        result = env_reference.cpp_reads(text)
+        self.assertEqual(len(result), len(text))
+        self.assertEqual(result.split(), ["a", "b", "d"])
+
+    def test_string_literals_are_kept_for_scanning(self):
+        text = 'getenv("APS5_X") // gone'
+        self.assertEqual(env_reference.cpp_reads(text).split(), ['getenv("APS5_X")'])
+
 
 if __name__ == "__main__":
     unittest.main()
