@@ -127,6 +127,22 @@ void packedChannelTests() {
             Require(channelLowBit(ResolveTextureFormat(format), channel) == lowBits[component], "format " + std::to_string(format) + " component " + std::to_string(component) + " is not read from bit " + std::to_string(lowBits[component]));
         }
     }
+    constexpr std::array<std::pair<std::uint32_t, std::array<VkComponentSwizzle, 4>>, 5> repeated{{
+        {1u, {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R}},
+        {22u, {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R}},
+        {14u, {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G}},
+        {29u, {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G}},
+        {56u, {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A}},
+    }};
+    for (const auto& [format, expected] : repeated) {
+        for (std::size_t component = 0; component < components.size(); ++component) {
+            Require(TextureComponentChannel(format, components[component]) == expected[component], "format " + std::to_string(format) + " component " + std::to_string(component) + " does not repeat the format's channels");
+        }
+        Require(TextureComponentChannel(format, VK_COMPONENT_SWIZZLE_ZERO) == VK_COMPONENT_SWIZZLE_ZERO && TextureComponentChannel(format, VK_COMPONENT_SWIZZLE_ONE) == VK_COMPONENT_SWIZZLE_ONE, "format " + std::to_string(format) + " changed a constant selector");
+    }
+    for (std::size_t component = 0; component < components.size(); ++component) {
+        Require(TextureComponentChannel(36u, components[component]) == components[component], "converted format 36 component " + std::to_string(component) + " was remapped");
+    }
     Require(TextureComponentChannel(133, VK_COMPONENT_SWIZZLE_ONE) == VK_COMPONENT_SWIZZLE_ONE && TextureComponentChannel(56, VK_COMPONENT_SWIZZLE_R) == VK_COMPONENT_SWIZZLE_R, "constant selectors and other formats must keep their channels");
 }
 
