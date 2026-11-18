@@ -51,6 +51,16 @@ int main() {
     Require(eglQuerySurface_nid_postfix(display, surface, 0x3057, unmapped) == 0);
     Require(eglGetError_nid_postfix() == 0x300c);
 
+    EGLint major = -1;
+    EGLint minor = -1;
+    Require(eglInitialize_nid_postfix(display, &major, &minor) == 1);
+    Require(major == 1 && minor == 4);
+    Require(eglGetError_nid_postfix() == 0x3000);
+    Require(eglInitialize_nid_postfix(display, unmapped, &minor) == 0);
+    Require(eglGetError_nid_postfix() == 0x300c);
+    Require(eglInitialize_nid_postfix(display, &major, static_cast<EGLint*>(page)) == 0);
+    Require(eglGetError_nid_postfix() == 0x300c);
+
 #ifdef _WIN32
     VirtualFree(page, 0, MEM_RELEASE);
 #else

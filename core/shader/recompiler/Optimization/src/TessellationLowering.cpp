@@ -139,6 +139,26 @@ std::optional<LaneWords> LaneBitWords(IrValue* value, std::uint32_t waveSize) {
     return LaneWords{word->Argument(1)->Resolve(), word->Argument(2)->Resolve()};
 }
 
+IrValue* AnyLaneBallot(IrValue* value, std::uint32_t waveSize) {
+    if (value->Opcode() != IrOpcode::INotEqual32) return nullptr;
+    IrValue* words = VariableOperand(value, 0u);
+    if (words == nullptr) return nullptr;
+    if (waveSize != 64u) {
+        IrValue* ballot = words->Opcode() == IrOpcode::CompositeExtractU32x4 && IsImmediate(words->Argument(1), 0u) ? words->Argument(0)->Resolve() : nullptr;
+        return ballot != nullptr && ballot->Opcode() == IrOpcode::Ballot ? ballot : nullptr;
+    }
+    if (words->Opcode() != IrOpcode::BitwiseOr32) return nullptr;
+    IrValue* lhs = words->Argument(0)->Resolve();
+    IrValue* rhs = words->Argument(1)->Resolve();
+    for (const auto& [low, high] : {std::pair{lhs, rhs}, std::pair{rhs, lhs}}) {
+        if (low->Opcode() != IrOpcode::CompositeExtractU32x4 || high->Opcode() != IrOpcode::CompositeExtractU32x4) continue;
+        IrValue* ballot = low->Argument(0)->Resolve();
+        if (ballot->Opcode() != IrOpcode::Ballot || high->Argument(0)->Resolve() != ballot) continue;
+        if (IsImmediate(low->Argument(1), 0u) && IsImmediate(high->Argument(1), 1u)) return ballot;
+    }
+    return nullptr;
+}
+
 class LaneBits {
 public:
     explicit LaneBits(IrProgram& program) : program(program) {}
@@ -347,6 +367,7 @@ bool CarriesRelativeBits(IrOpcode opcode) {
     case IrOpcode::FPAdd32:
     case IrOpcode::FPSub32:
     case IrOpcode::FPMul32:
+    case IrOpcode::NanPropagateF32:
     case IrOpcode::FPMad32:
     case IrOpcode::FPFma32:
     case IrOpcode::FFma32:
@@ -384,8 +405,8 @@ public:
         return evaluate(value, allowDynamic);
     }
 
-    bool IsInvocation(IrValue* value) {
-        const auto address = Evaluate(value, nullptr);
+    bool IsInvocation(IrValue* value, IrValue* predicate = nullptr) {
+        const auto address = Evaluate(value, predicate);
         return address && *address == Affine{1, 0, 0};
     }
 
@@ -623,16 +644,16 @@ private:
     std::unordered_map<IrValue*, bool> independence;
 };
 
-bool FirstInvocationOnly(IrValue* raw, AddressEvaluator& evaluator, std::unordered_set<IrValue*>& path) {
+bool FirstInvocationOnly(IrValue* raw, AddressEvaluator& evaluator, std::unordered_set<IrValue*>& path, IrValue* holding = nullptr) {
     IrValue* value = raw->Resolve();
     if (value->HasImmediate()) return value->Type() == IrType::Bool && !value->ImmediateBool();
     if (!path.insert(value).second) return true;
-    const auto invocation = [&](std::size_t index) { return evaluator.IsInvocation(value->Argument(index)); };
+    const auto invocation = [&](std::size_t index) { return evaluator.IsInvocation(value->Argument(index), holding); };
     const auto immediate = [&](std::size_t index, std::uint32_t expected) { return IsImmediate(value->Argument(index), expected); };
     const bool result = [&] {
         switch (value->Opcode()) {
         case IrOpcode::LogicalAnd:
-            return FirstInvocationOnly(value->Argument(0), evaluator, path) || FirstInvocationOnly(value->Argument(1), evaluator, path);
+            return FirstInvocationOnly(value->Argument(0), evaluator, path, value) || FirstInvocationOnly(value->Argument(1), evaluator, path, value);
         case IrOpcode::ULessThan32:
             return invocation(0) && immediate(1, 1u);
         case IrOpcode::UGreaterThan32:
@@ -789,6 +810,7 @@ public:
         }
         if (stage == IrShaderStage::TessellationControl || capture) lowerOwnLaneBits();
         if (stage == IrShaderStage::TessellationControl) lowerQuadOwnLaneBits();
+        if (stage == IrShaderStage::TessellationControl) lowerWaterfallTests();
         collect();
         derive();
         orderControlOutputReads();
@@ -873,6 +895,32 @@ private:
         ResolveControlFlowIdentities(program);
         constexpr DeadCodeEliminator identities;
         identities.RemoveIdentities(program);
+    }
+
+    void lowerWaterfallTests() {
+        std::unordered_set<const IrValue*> carried;
+        for (IrBlock* block : program.BlockOrder()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (!inst->IsPhi() || inst->Type() != IrType::Bool) continue;
+                for (IrValue* argument : inst->Arguments()) {
+                    if (argument != nullptr) carried.insert(argument->Resolve());
+                }
+            }
+        }
+        for (IrBlock* block : program.BlockOrder()) {
+            for (IrValue* inst : block->Instructions()) {
+                IrValue* ballot = AnyLaneBallot(inst, program.WaveSize());
+                if (ballot == nullptr) continue;
+                IrValue* predicate = ballot->Argument(0)->Resolve();
+                if (!carried.contains(predicate)) continue;
+                const auto uses = inst->Uses();
+                if (!std::all_of(uses.begin(), uses.end(), [](const IrValue* user) { return user->Opcode() == IrOpcode::Reference; })) continue;
+                for (auto& info : program.Metadata().blockInfo) {
+                    if (info.condition != nullptr && info.condition->Resolve() == inst) info.condition = predicate;
+                }
+                inst->ReplaceAllUsesWith(predicate);
+            }
+        }
     }
 
     void lowerQuadOwnLaneBits() {

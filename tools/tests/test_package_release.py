@@ -1,14 +1,18 @@
 import contextlib
 import io
+import gzip
+import hashlib
 import json
 import os
 import ctypes
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import zipfile
 from contextlib import contextmanager
@@ -33,6 +37,10 @@ def working_directory(path):
 
 class PublicHeaderPackageTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("SOURCE_DATE_EPOCH", None)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
@@ -58,6 +66,178 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(archive.namelist()), len(expected))
         with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
             self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_source_date_epoch_archives_ignore_source_root_mtime_and_permissions(self):
+        nested = self.umbrella.with_name("é" * 60 + ".hpp")
+        nested.write_bytes(b"")
+        self.api.write_text('#include "' + nested.name + '"\n', encoding="utf-8")
+        other = self.root / "different-source-root"
+        shutil.copytree(self.source, other)
+        expected = {"include/anyps5/prx/libExample/libExample.hpp": self.umbrella.read_bytes(),
+                    "include/anyps5/prx/libExample/Api.hpp": self.api.read_bytes(),
+                    "include/anyps5/prx/libExample/" + nested.name: b"",
+                    "include/anyps5/Common.hpp": (self.libs / "Common.hpp").read_bytes(),
+                    "LICENSE": b"project license"}
+        snapshots = []
+        for index, source in enumerate((self.source, other)):
+            files = [path for path in source.rglob("*") if path.is_file()]
+            for path in files:
+                os.utime(path, (1_500_000_000 + index * 100_000, 1_500_000_000 + index * 100_000))
+                path.chmod(0o640 if index else 0o600)
+            before = {path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns) for path in files}
+            output = self.root / ("output-" + str(index))
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000001"}):
+                package_headers.package(source, output, "v1")
+            self.assertEqual({path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns) for path in files}, before)
+            archives = {path.name: path.read_bytes() for path in output.iterdir()}
+            snapshots.append({name: hashlib.sha256(data).hexdigest() for name, data in archives.items()})
+            with zipfile.ZipFile(output / "prx-headers-v1.zip") as archive:
+                self.assertEqual({info.filename: archive.read(info) for info in archive.infolist()}, expected)
+                self.assertEqual(archive.comment, b"")
+                for info in archive.infolist():
+                    self.assertEqual(info.date_time, (2023, 11, 14, 22, 13, 20))
+                    self.assertEqual(info.create_system, 3)
+                    self.assertEqual(info.external_attr >> 16, stat.S_IFREG | 0o644)
+                    self.assertEqual(info.extra, b"")
+                    self.assertEqual(info.comment, b"")
+                    self.assertEqual(info.compress_type, zipfile.ZIP_DEFLATED)
+            raw = archives["prx-headers-v1.tar.gz"]
+            self.assertEqual(raw[:4], b"\x1f\x8b\x08\x00")
+            self.assertEqual(struct.unpack("<I", raw[4:8])[0], 1_700_000_001)
+            self.assertEqual(raw[8:10], b"\x02\xff")
+            with tarfile.open(fileobj=io.BytesIO(gzip.decompress(raw)), mode="r:") as archive:
+                self.assertEqual({info.name: archive.extractfile(info).read() for info in archive.getmembers()}, expected)
+                for info in archive.getmembers():
+                    self.assertTrue(info.isfile())
+                    self.assertEqual((info.uid, info.gid, info.uname, info.gname), (0, 0, "", ""))
+                    self.assertEqual(info.mtime, 1_700_000_001)
+                    self.assertEqual(info.mode, 0o644)
+                    self.assertLessEqual(set(info.pax_headers), {"path"})
+        self.assertEqual(snapshots[0], snapshots[1])
+
+    def test_source_date_epoch_boundaries_are_exact_except_zip_precision_and_minimum(self):
+        for epoch, zip_date in ((0, (1980, 1, 1, 0, 0, 0)), (1, (1980, 1, 1, 0, 0, 0)),
+                                (315532799, (1980, 1, 1, 0, 0, 0)), (315532800, (1980, 1, 1, 0, 0, 0)),
+                                (1700000001, (2023, 11, 14, 22, 13, 20)), (4294967295, (2106, 2, 7, 6, 28, 14))):
+            with self.subTest(epoch=epoch), patch.dict(os.environ, {"SOURCE_DATE_EPOCH": str(epoch)}):
+                package_headers.package(self.source, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+                    self.assertTrue(all(info.date_time == zip_date for info in archive.infolist()))
+                raw = (self.output / "prx-headers-v1.tar.gz").read_bytes()
+                self.assertEqual(struct.unpack("<I", raw[4:8])[0], epoch)
+                with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+                    self.assertTrue(all(info.mtime == epoch for info in archive.getmembers()))
+
+    def test_invalid_source_date_epoch_preserves_existing_or_absent_output(self):
+        invalid = ("", "-1", "+1", " 1", "1 ", "1\n", "1.0", "1e3", "0x10", "١", "4294967296", "9" * 5000)
+        for existing in (False, True):
+            for index, epoch in enumerate(invalid):
+                with self.subTest(existing=existing, epoch=epoch[:20]):
+                    output = self.root / ("invalid-" + str(existing) + "-" + str(index))
+                    before = {}
+                    if existing:
+                        output.mkdir()
+                        for name in ("prx-headers-v1.zip", "prx-headers-v1.tar.gz", "unrelated.asset"):
+                            path = output / name
+                            path.write_bytes(("previous " + name).encode())
+                            before[name] = (path.read_bytes(), path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode))
+                    with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": epoch}), self.assertRaisesRegex(ValueError, "SOURCE_DATE_EPOCH"):
+                        package_headers.package(self.source, output, "v1")
+                    if existing:
+                        self.assertEqual({path.name: (path.read_bytes(), path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode)) for path in output.iterdir()}, before)
+                    else:
+                        self.assertFalse(output.exists())
+
+    def test_source_date_epoch_leading_zeroes_remain_decimal(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0" * 5000 + "1700000001"}):
+            package_headers.package(self.source, self.output, "v1")
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertTrue(all(info.mtime == 1700000001 for info in archive.getmembers()))
+
+    def test_unset_source_date_epoch_keeps_source_metadata(self):
+        for path in (self.umbrella, self.source / "LICENSE"):
+            os.utime(path, (1_600_000_000, 1_600_000_000))
+            path.chmod(0o640)
+        package_headers.package(self.source, self.output, "v1")
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            info = archive.getmember("LICENSE")
+            self.assertEqual(info.mtime, 1_600_000_000)
+            self.assertEqual(info.mode, stat.S_IMODE((self.source / "LICENSE").stat().st_mode))
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual(archive.getinfo("LICENSE").date_time, time.localtime(1_600_000_000)[:6])
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "requires changing the process timezone")
+    def test_source_date_epoch_archives_are_independent_of_timezone(self):
+        archives = []
+        try:
+            for zone in ("UTC0", "EST5EDT"):
+                with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000001", "TZ": zone}):
+                    time.tzset()
+                    package_headers.package(self.source, self.output, "v1")
+                    archives.append({path.name: path.read_bytes() for path in self.output.iterdir()})
+        finally:
+            time.tzset()
+        self.assertEqual(archives[0], archives[1])
+
+    def test_source_date_epoch_keeps_internal_symlink_dependencies_and_empty_headers(self):
+        target = self.umbrella.with_name("Target.hpp")
+        target.write_bytes(b"")
+        link = self.umbrella.with_name("Alias.hpp")
+        try:
+            link.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
+            self.assert_archive_bytes((self.umbrella, self.api, target, self.libs / "Common.hpp"))
+        self.assertTrue(link.is_symlink())
+
+    def test_source_date_epoch_rejects_empty_header_set_and_missing_license(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
+            for empty_license in (False, True):
+                with self.subTest(empty_license=empty_license):
+                    license_file = self.source / "LICENSE"
+                    license_file.write_bytes(b"") if empty_license else license_file.unlink()
+                    with self.assertRaisesRegex(RuntimeError, "Missing project license"):
+                        package_headers.package(self.source, self.output, "v1")
+                    self.assertFalse(self.output.exists())
+            license_file.write_bytes(b"license")
+            shutil.rmtree(self.libs / "prx/libExample")
+            with self.assertRaisesRegex(RuntimeError, "No public library headers"):
+                package_headers.package(self.source, self.output, "v1")
+            self.assertFalse(self.output.exists())
+
+    def test_invalid_source_date_epoch_cli_reports_error_without_staging(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "4294967296"}), patch.object(package_release, "ROOT", self.source), \
+                contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as caught:
+            package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("SOURCE_DATE_EPOCH", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertFalse(self.output.exists())
+
+    def test_source_date_epoch_retains_destination_checks_and_transactional_restore(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        self.output.mkdir()
+        (self.output / names[1]).mkdir()
+        (self.output / names[0]).write_bytes(b"previous zip")
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}), self.assertRaisesRegex(RuntimeError, "not a file"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertEqual((self.output / names[0]).read_bytes(), b"previous zip")
+        self.assertEqual({path.name for path in self.output.iterdir()}, set(names))
+        (self.output / names[1]).rmdir()
+        (self.output / names[1]).write_bytes(b"previous tar")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        real_replace = Path.replace
+
+        def replace(source, target):
+            if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                raise OSError("second promotion failed")
+            return real_replace(source, target)
+
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}), patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
         self.assert_archive_bytes((self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp"))
@@ -435,6 +615,16 @@ class ReleasePackageTests(unittest.TestCase):
         binary = self.build / "core/relinker/relinker"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"relinker bytes")
+        self.freetype_notices = {
+            "LICENSE.TXT": ("freetype-licenses.txt", b"FreeType license options"),
+            "docs/FTL.TXT": ("freetype-ftl.txt", b"FreeType project license"),
+            "src/bdf/README": ("freetype-bdf.txt", b"FreeType BDF notice"),
+            "src/pcf/README": ("freetype-pcf.txt", b"FreeType PCF notice"),
+        }
+        for source, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / source
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -771,6 +961,55 @@ class ReleasePackageTests(unittest.TestCase):
                     package_release.package("linux", self.build, self.output, "v1")
                 self.assertFalse(self.output.exists())
 
+    def test_freetype_notices_follow_every_font_backend(self):
+        for library in ("libSceFreeType", "libSceFreeTypeOt", "libSceFontFt", "libharfbuzz"):
+            with self.subTest(library=library):
+                (self.source / "core/libs/prx" / library).mkdir()
+                (self.library.parent / (library + ".prx")).write_bytes(b"patched font backend")
+                (self.unpatched.parent / (library + ".prx")).write_bytes(b"unpatched font backend")
+                if library == "libharfbuzz":
+                    for path in ("COPYING", "src/ms-use/COPYING"):
+                        file = self.source / "3rdparty/harfbuzz" / path
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        file.write_bytes(b"HarfBuzz notice")
+                package_release.package("linux", self.build, self.output, "v1")
+                expected = {"libs/licenses/" + name: content for name, content in self.freetype_notices.values()}
+                expected["libs/licenses/freetype-attribution.txt"] = b"This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n"
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.namelist())
+                            self.assertEqual(archive.read(name), content)
+                    with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.getnames())
+                            self.assertEqual(archive.extractfile(name).read(), content)
+                self.assertEqual({file.name for file in self.output.iterdir()}, {"prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"})
+                (self.source / "core/libs/prx" / library).rmdir()
+                (self.library.parent / (library + ".prx")).unlink()
+                (self.unpatched.parent / (library + ".prx")).unlink()
+
+    def test_missing_or_empty_freetype_notices_preserve_existing_assets(self):
+        (self.source / "core/libs/prx/libSceFreeType").mkdir()
+        (self.library.parent / "libSceFreeType.prx").write_bytes(b"patched font backend")
+        (self.unpatched.parent / "libSceFreeType.prx").write_bytes(b"unpatched font backend")
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for path, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / path
+            for missing in (True, False):
+                with self.subTest(path=path, missing=missing):
+                    if missing:
+                        file.unlink()
+                    else:
+                        file.write_bytes(b"")
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+            file.write_bytes(content)
+
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
         (self.unpatched.parent / "libSceOpusDec.prx").write_bytes(b"unpatched library")
@@ -867,6 +1106,14 @@ class ReleasePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
                     self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
+    def test_linux_sanitizer_packages_omit_stale_allocator_runtimes(self):
+        for option in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=option):
+                (self.build / "CMakeCache.txt").write_text(f"{option}:BOOL=ON\n", encoding="utf-8")
+                package_release.package("linux", self.build, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/licenses/mimalloc.txt"])
+
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
         previous = {"prx-linux-v1.zip": b"old zip", "prx-linux-v1.tar.gz": b"old tar", "relinker-v1": b"old binary"}
@@ -887,6 +1134,53 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual((self.output / "relinker-v1.0").read_bytes(), b"relinker bytes")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
+
+    def test_tracy_file_validation_preserves_existing_release_assets(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        self.output.mkdir()
+        previous = self.output / "previous.asset"
+        previous.write_bytes(b"previous release")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            with self.subTest(kind=kind):
+                if kind == "dangling-symlink":
+                    try:
+                        client.symlink_to(self.root / "missing-client")
+                    except (OSError, NotImplementedError) as error:
+                        self.skipTest(f"symlinks unavailable: {error}")
+                elif kind == "directory":
+                    client.mkdir()
+                else:
+                    client.touch()
+                with self.assertRaisesRegex(RuntimeError, "Tracy"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous release")
+                if kind == "directory":
+                    client.rmdir()
+                else:
+                    client.unlink()
+
+    def test_tracy_symlink_contents_are_packaged_and_extra_entries_are_ambiguous(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/" + client.name), b"linked Tracy client")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/" + client.name).read(), b"linked Tracy client")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        extra = client.with_name("libTracyClient.so.0.13.1")
+        extra.symlink_to(self.root / "missing-client")
+        with self.assertRaisesRegex(RuntimeError, "ambiguous Tracy"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_hidden_cache_directory_is_not_a_required_library(self):
         (self.source / "core/libs/prx/.cache").mkdir()
