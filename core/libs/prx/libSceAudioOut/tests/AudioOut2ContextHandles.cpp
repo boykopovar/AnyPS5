@@ -259,6 +259,10 @@ void FirmwareExSignatures() {
 
     Require(sceAudioOut2LoContextGetAttributes(context, &badAttribute, 0) == 0, "an empty context attribute read was refused");
     Require(sceAudioOut2LoContextGetAttributes(context, &badAttribute, 1) == errorInvalidParam, "an unknown context attribute was accepted");
+    errno = 73;
+    Require(sceAudioOut2LoContextGetAttributes(context, unreadableAttributes, 1) == errorInvalidParam, "an unreadable context attribute was accepted");
+    Require(errno == 73, "an unreadable context attribute changed host errno");
+    Require(sceAudioOut2LoContextGetAttributes(context, unreadableAttributes, 0) == 0, "an empty context attribute read touched an unreadable pointer");
     badAttribute.attribute_id = 0x1e;
     Require(sceAudioOut2LoContextGetAttributes(context + 8, &badAttribute, 1) == errorInvalidParam, "a context attribute read on a dead context was not refused");
 
