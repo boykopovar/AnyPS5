@@ -84,6 +84,15 @@ class GuestTestTargets(unittest.TestCase):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
 
+    def test_changed_static_fixture_selects_its_guest_consumer(self):
+        guest = self.target("guest_jxr_tests", source="core/libs/tests/GuestJxr.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_pad_tests", fragment="libc.prx")
+        fixture_source = "core/libs/tests/JxrTileInfoFixture.c"
+        fixture = self.target("jxr_tile_info_fixture", target_type="STATIC_LIBRARY", source=fixture_source)
+        guest["dependencies"] = [{"id": fixture["id"]}]
+        build = self.fixture([guest, unrelated, fixture])
+        self.assertEqual(self.selections(build, [fixture_source]), ["guest_jxr_tests"])
+
     def test_a_header_change_selects_every_guest_test(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
@@ -406,6 +415,14 @@ class Main(unittest.TestCase):
         for path in ("core/libs/prx/libSceXml/src/Xml.cpp", "core/libs/tests/Guest.cpp", "core/relinker/R.cpp", "README.md"):
             with self.subTest(path=path):
                 self.assertFalse(build_changed_guest_tests.checks_nid([path]))
+
+    def test_script_test_indices_are_one_based_sorted_and_unmatched_pattern_raises(self):
+        listing = json.dumps({"tests": [{"name": "nid_b"}, {"name": "guest"}, {"name": "public_headers"}, {"name": "nid_a"}]})
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)):
+            self.assertEqual(build_changed_guest_tests.script_test_indices(
+                "build", [build_changed_guest_tests.NID_TESTS, build_changed_guest_tests.PUBLIC_HEADER_TESTS]), [1, 3, 4])
+            with self.assertRaises(ValueError):
+                build_changed_guest_tests.script_test_indices("build", [build_changed_guest_tests.re.compile("^absent$")])
 
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",

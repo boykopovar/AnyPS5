@@ -170,6 +170,17 @@ class RecipeTests(ReplayFixture):
         self.assertEqual(env["ANYPS5_HOST_REPORT"], "1")
         self.assertEqual(env["ANYPS5_SHADER_CACHE_DIR"], str(self.root / "cache"))
 
+    def test_stage_replay_runtime_copies_files_and_rejects_changed_bytes(self):
+        source = self.root / "baseline"
+        manifest = runner.evidence.replay_tree_manifest(source)
+        staged = runner.stage_replay_runtime(source, self.root / "staged", manifest)
+        self.assertEqual(staged, self.root / "staged")
+        self.assertEqual((staged / "replay.exe").read_bytes(), b"replay baseline")
+        self.assertEqual(runner.evidence.replay_tree_manifest(staged), manifest)
+        (source / "replay.exe").write_bytes(b"replay changed")
+        with self.assertRaises(ValueError):
+            runner.stage_replay_runtime(source, self.root / "second", manifest)
+
 
 class RunnerTests(ReplayFixture):
     def setUp(self):

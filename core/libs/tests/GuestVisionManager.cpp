@@ -62,5 +62,15 @@ int main() {
     Require(sceVisionManagerSetCallbackForUpdateCalibrateTrackingLedResult(nullptr) == invalidArg);
     Require(sceVisionManagerSetCallbackForUpdateRunningStatus(nullptr, block) == invalidArg);
     Require(sceVisionManagerSetCallbackForUpdateRunningStatus(block, nullptr) == invalidArg);
+    std::uint32_t first = 0xdeadbeef;
+    std::uint32_t second = 0;
+    std::uint32_t third = 0;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, &second, &third) == 0);
+    Require(first == 0 && second == 0x1600000 && third == 0x4200000);
+    first = 0x12345678;
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, &second, reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == invalidArg);
+    Require(errno == 71);
+    Require(first == 0x12345678);
     return 0;
 }
