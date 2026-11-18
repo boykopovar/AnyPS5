@@ -36,6 +36,7 @@ static_assert(StreambufUflowSlot * sizeof(std::uintptr_t) == 0x40);
 
 constexpr std::int32_t IosEofBit = 0x1;
 constexpr std::int32_t IosFailBit = 0x2;
+constexpr short CtypeDigitMask = 0x20;
 constexpr short CtypeSpaceMask = 0x44;
 
 GuestLocale::Streambuf* IteratorBuffer(const GuestLocale::InputIterator& it) {
@@ -57,7 +58,7 @@ TChar IteratorValue(const GuestLocale::InputIterator& it) {
 
 void SetIteratorEof(GuestLocale::InputIterator& it) {
     it.words[0] = 0;
-    it.words[1] = 1;
+    it.words[1] = 0;
 }
 
 template<typename TChar>
@@ -201,7 +202,7 @@ struct CtypeTraits<char> {
                 const auto* vt = reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable);
                 if (vt->caseMethods[0] != nullptr) {
                     using DoToLower = char (APS5_VABI*)(const GuestLocale::Facet*, char);
-                    return reinterpret_cast<DoToLower>(vt->caseMethods[0])(ctype, ch);
+                    return reinterpret_cast<DoToLower>(const_cast<void*>(vt->caseMethods[0]))(ctype, ch);
                 }
             }
             const auto* ct = reinterpret_cast<const GuestLocale::CtypeFacet*>(ctype);
@@ -226,7 +227,7 @@ struct CtypeTraits<std::uint16_t> {
             const auto* vt = reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
             if (vt->classificationMethods[0] != nullptr) {
                 using DoIs = bool (APS5_VABI*)(const GuestLocale::Facet*, short, std::uint16_t);
-                return reinterpret_cast<DoIs>(vt->classificationMethods[0])(ctype, mask, ch);
+                return reinterpret_cast<DoIs>(const_cast<void*>(vt->classificationMethods[0]))(ctype, mask, ch);
             }
         }
         const int narrowed = _Wctob_nid_postfix(ch);
@@ -247,7 +248,7 @@ struct CtypeTraits<std::uint16_t> {
             const auto* vt = reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
             if (vt->caseMethods[0] != nullptr) {
                 using DoToLower = std::uint16_t (APS5_VABI*)(const GuestLocale::Facet*, std::uint16_t);
-                return reinterpret_cast<DoToLower>(vt->caseMethods[0])(ctype, ch);
+                return reinterpret_cast<DoToLower>(const_cast<void*>(vt->caseMethods[0]))(ctype, ch);
             }
         }
         return static_cast<std::uint16_t>(_Towlower_nid_postfix(ch, nullptr));
@@ -310,37 +311,103 @@ std::int32_t GetIntV2(GuestLocale::InputIterator& first, GuestLocale::InputItera
     return state;
 }
 
+inline constexpr char kCharDays[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
 inline constexpr char kCharMonths[] = ":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August:Sep:September:Oct:October:Nov:November:Dec:December";
+inline constexpr char kCharAmPm[] = ":AM:am:PM:pm";
 
 template<typename TChar>
-int GetLocaleText(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, std::size_t numFields, const TChar* ptr) {
-    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
-        if (ptr[off] == ptr[0]) ++numFields;
+inline TChar FoldAscii(TChar ch) {
+    if constexpr (sizeof(TChar) == 1) {
+        const auto u = static_cast<unsigned char>(ch);
+        if (u >= 'A' && u <= 'Z') {
+            return static_cast<TChar>(u + ('a' - 'A'));
+        }
+        return ch;
+    } else {
+        if (ch >= u'A' && ch <= u'Z') {
+            return static_cast<TChar>(ch + (u'a' - u'A'));
+        }
+        return ch;
     }
-    std::vector<std::size_t> skip(numFields, 0);
-    const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromGlobal();
+}
 
+template<typename TChar>
+bool IsAtEnd(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last) {
+    if (IteratorBuffer(first) == nullptr) {
+        return true;
+    }
+    if (last == nullptr || IteratorBuffer(*last) == nullptr) {
+        if (!IteratorGot(first)) {
+            Peek<TChar>(first);
+        }
+        return IteratorBuffer(first) == nullptr;
+    }
+    return Equal<TChar>(first, const_cast<GuestLocale::InputIterator&>(*last));
+}
+
+template<typename TChar>
+int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TChar* ptr) {
+    if (IteratorBuffer(first) == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    const TChar sep = ptr[0];
+    if (sep == TChar{}) {
+        return -2;
+    }
+    std::vector<std::size_t> fieldStarts;
+    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
+        if (ptr[off] == sep) {
+            if (numFields == SIZE_MAX) {
+                throw std::length_error("string too long");
+            }
+            ++numFields;
+            fieldStarts.push_back(off);
+        }
+    }
+    if (numFields == 0) {
+        return -2;
+    }
+    std::size_t nulOff = 0;
+    while (ptr[nulOff] != TChar{}) {
+        ++nulOff;
+    }
+    while (fieldStarts.size() < numFields) {
+        fieldStarts.push_back(nulOff);
+    }
+
+    std::string skip(numFields, '\0');
     int ans = -2;
-    for (std::size_t col = 1;; ++col, Inc<TChar>(first), ans = -1) {
+
+    for (std::size_t col = 1; col < 128; ++col) {
         bool prefix = false;
-        std::size_t off = 0;
         for (std::size_t field = 0; field < numFields; ++field) {
-            while (ptr[off] != TChar{} && ptr[off] != ptr[0]) ++off;
-            if (skip[field] != 0) {
-                off += skip[field];
-            } else if (ptr[off += col] == ptr[0] || ptr[off] == TChar{}) {
-                skip[field] = col;
+            if (skip[field] != '\0') {
+                continue;
+            }
+            const std::size_t charOff = fieldStarts[field] + col;
+            const TChar tableChar = (charOff >= nulOff) ? TChar{} : ptr[charOff];
+            if (tableChar == sep || tableChar == TChar{}) {
+                skip[field] = static_cast<char>(col);
                 ans = static_cast<int>(field);
-            } else if (Equal<TChar>(first, last) ||
-                       CtypeTraits<TChar>::ToLower(ctype, ptr[off]) != CtypeTraits<TChar>::ToLower(ctype, Peek<TChar>(first))) {
-                skip[field] = col;
+            } else if (IsAtEnd<TChar>(first, last) ||
+                       FoldAscii(tableChar) != FoldAscii(Peek<TChar>(first))) {
+                skip[field] = static_cast<char>(col);
             } else {
                 prefix = true;
             }
         }
-        if (!prefix || Equal<TChar>(first, last)) break;
+        if (!prefix || IsAtEnd<TChar>(first, last)) {
+            break;
+        }
+        Inc<TChar>(first);
+        ans = -1;
     }
     return ans;
+}
+
+template<typename TChar>
+int GetLocaleText(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, std::size_t numFields, const TChar* ptr) {
+    return GetLocaleText<TChar>(first, &last, numFields, ptr);
 }
 
 template<typename TChar>
@@ -386,16 +453,22 @@ GuestLocale::InputIterator DoGetYearImpl(const GuestLocale::Facet* self, GuestLo
 }
 
 template<typename TChar>
-GuestLocale::InputIterator DoGetMonthnameImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, std::int32_t* state, GuestTm* time, const TChar* table, const char* caller) {
+GuestLocale::InputIterator DoGetNameFieldImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, std::int32_t* state, GuestTm* time, std::int32_t GuestTm::*field, const TChar* table, const char* caller) {
     RequireArgument(self != nullptr && state != nullptr && time != nullptr && table != nullptr, caller);
     const int num = GetLocaleText<TChar>(first, last, 0, table);
     if (num < 0) {
         *state |= IosFailBit;
     } else {
-        time->tm_mon = num >> 1;
+        time->*field = num >> 1;
     }
     return first;
 }
+
+inline constexpr std::int32_t DateOrderNoOrder = 0;
+inline constexpr std::int32_t DateOrderDmy = 1;
+inline constexpr std::int32_t DateOrderMdy = 2;
+inline constexpr std::int32_t DateOrderYmd = 3;
+inline constexpr std::int32_t DateOrderYdm = 4;
 
 struct GuestTimeGetWideFacet {
     GuestLocale::Facet base;
@@ -420,11 +493,241 @@ struct GuestTimePutCharFacet {
 static_assert(offsetof(GuestTimePutCharFacet, names) == 0x10);
 static_assert(sizeof(GuestTimePutCharFacet) == 0xb8);
 
-inline constexpr std::int32_t DateOrderMdy = 2;
-
 inline constexpr char16_t kWideDays[] = u":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
 inline constexpr char16_t kWideMonths[] = u":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August:Sep:September:Oct:October:Nov:November:Dec:December";
 inline constexpr char16_t kWideAmPm[] = u":AM:am:PM:pm";
+
+template<typename TChar>
+std::int32_t GetIntImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype, const char* caller) {
+    RequireArgument(self != nullptr && first != nullptr && last != nullptr && val != nullptr && ctype != nullptr, caller);
+    int digitsRead = 0;
+    return GetIntV2<TChar>(*first, *last, lo, hi, *val, digitsRead, ctype);
+}
+
+template<typename TChar>
+void SkipDateSeparator(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, const GuestLocale::Facet* ctype) {
+    while (!Equal<TChar>(first, last) && CtypeTraits<TChar>::Is(ctype, CtypeSpaceMask, Peek<TChar>(first))) {
+        Inc<TChar>(first);
+    }
+    if (!Equal<TChar>(first, last)) {
+        const char ch = CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0');
+        if (ch == ':' || ch == ',' || ch == '/') Inc<TChar>(first);
+    }
+    while (!Equal<TChar>(first, last) && CtypeTraits<TChar>::Is(ctype, CtypeSpaceMask, Peek<TChar>(first))) {
+        Inc<TChar>(first);
+    }
+}
+
+template<typename TChar>
+void ParseDateMonth(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, std::int32_t* state, GuestTm* time, const GuestLocale::Facet* ctype) {
+    int dummyDigits = 0;
+    *state |= GetIntV2<TChar>(first, last, 1, 12, time->tm_mon, dummyDigits, ctype);
+    --time->tm_mon;
+}
+
+template<typename TChar>
+GuestLocale::InputIterator DoGetDateImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* caller) {
+    RequireArgument(self != nullptr && state != nullptr && time != nullptr, caller);
+    const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromStream(stream);
+    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
+    RequireArgument(vtable != nullptr && vtable->dateOrder != nullptr && vtable->getMonthname != nullptr && vtable->getYear != nullptr, caller);
+    int dummyDigits = 0;
+    std::int32_t dorder = vtable->dateOrder(self);
+    if (dorder == DateOrderNoOrder) dorder = DateOrderMdy;
+
+    if (!Equal<TChar>(first, last)) {
+        if (!CtypeTraits<TChar>::Is(ctype, CtypeDigitMask, Peek<TChar>(first))) {
+            first = vtable->getMonthname(self, first, last, stream, state, time);
+            dorder = DateOrderMdy;
+        } else if (dorder == DateOrderMdy) {
+            ParseDateMonth<TChar>(first, last, state, time, ctype);
+        } else if (dorder == DateOrderDmy) {
+            *state |= GetIntV2<TChar>(first, last, 1, 31, time->tm_mday, dummyDigits, ctype);
+        } else {
+            first = vtable->getYear(self, first, last, stream, state, time);
+        }
+    }
+
+    SkipDateSeparator<TChar>(first, last, ctype);
+
+    if (!Equal<TChar>(first, last)) {
+        if (!CtypeTraits<TChar>::Is(ctype, CtypeDigitMask, Peek<TChar>(first))) {
+            if (dorder == DateOrderMdy) {
+                *state |= IosFailBit;
+            } else {
+                first = vtable->getMonthname(self, first, last, stream, state, time);
+                if (dorder == DateOrderYdm) dorder = DateOrderYmd;
+            }
+        } else if (dorder == DateOrderDmy || dorder == DateOrderYmd) {
+            ParseDateMonth<TChar>(first, last, state, time, ctype);
+        } else {
+            *state |= GetIntV2<TChar>(first, last, 1, 31, time->tm_mday, dummyDigits, ctype);
+        }
+    }
+
+    SkipDateSeparator<TChar>(first, last, ctype);
+
+    if (Equal<TChar>(first, last)) {
+        *state |= IosFailBit;
+    } else if (!CtypeTraits<TChar>::Is(ctype, CtypeDigitMask, Peek<TChar>(first))) {
+        if (dorder != DateOrderYdm) {
+            *state |= IosFailBit;
+        } else {
+            first = vtable->getMonthname(self, first, last, stream, state, time);
+        }
+    } else if (dorder == DateOrderYdm) {
+        ParseDateMonth<TChar>(first, last, state, time, ctype);
+    } else if (dorder == DateOrderYmd) {
+        *state |= GetIntV2<TChar>(first, last, 1, 31, time->tm_mday, dummyDigits, ctype);
+    } else {
+        first = vtable->getYear(self, first, last, stream, state, time);
+    }
+
+    if (Equal<TChar>(first, last)) *state |= IosEofBit;
+    return first;
+}
+
+template<typename TChar>
+GuestLocale::InputIterator DoGetFmtImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst, const char* caller) {
+    RequireArgument(self != nullptr && state != nullptr && time != nullptr && fmtfirst != nullptr, caller);
+    const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromStream(stream);
+    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
+
+    for (; *fmtfirst != '\0'; ++fmtfirst) {
+        if (Equal<TChar>(first, last)) {
+            *state |= IosFailBit;
+            break;
+        }
+        if (*fmtfirst == '%') {
+            if (*++fmtfirst == '\0') {
+                *state |= IosFailBit;
+                break;
+            }
+            RequireArgument(vtable != nullptr && vtable->get != nullptr, caller);
+            first = vtable->get(self, first, last, stream, state, time, *fmtfirst, '\0');
+        } else if (*fmtfirst == ' ') {
+            while (!Equal<TChar>(first, last) && CtypeTraits<TChar>::Is(ctype, CtypeSpaceMask, Peek<TChar>(first))) {
+                Inc<TChar>(first);
+            }
+        } else if (CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != *fmtfirst) {
+            *state |= IosFailBit;
+            break;
+        } else {
+            Inc<TChar>(first);
+        }
+    }
+    if (Equal<TChar>(first, last)) *state |= IosEofBit;
+    return first;
+}
+
+template<typename TChar>
+GuestLocale::InputIterator DoGetImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, const TChar* amPmTable, const char* caller) {
+    RequireArgument(self != nullptr && state != nullptr && time != nullptr && amPmTable != nullptr, caller);
+    const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromStream(stream);
+    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
+    int ans = 0;
+    int dummyDigits = 0;
+    *state = 0;
+
+    switch (specifier) {
+    case 'a':
+    case 'A':
+        RequireArgument(vtable != nullptr && vtable->getWeekday != nullptr, caller);
+        first = vtable->getWeekday(self, first, last, stream, state, time);
+        break;
+    case 'b':
+    case 'B':
+    case 'h':
+        RequireArgument(vtable != nullptr && vtable->getMonthname != nullptr, caller);
+        first = vtable->getMonthname(self, first, last, stream, state, time);
+        break;
+    case 'c':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, "%a %b %e %T %Y", caller);
+        break;
+    case 'C':
+        *state |= GetIntV2<TChar>(first, last, 0, 99, ans, dummyDigits, ctype);
+        if ((*state & IosFailBit) == 0) time->tm_year = ans * 100 - 1900;
+        break;
+    case 'd':
+    case 'e':
+        *state |= GetIntV2<TChar>(first, last, 1, 31, time->tm_mday, dummyDigits, ctype);
+        break;
+    case 'D':
+    case 'x':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, "%m / %d / %y", caller);
+        break;
+    case 'H':
+        *state |= GetIntV2<TChar>(first, last, 0, 23, time->tm_hour, dummyDigits, ctype);
+        break;
+    case 'I':
+        *state |= GetIntV2<TChar>(first, last, 1, 12, ans, dummyDigits, ctype);
+        if ((*state & IosFailBit) == 0) time->tm_hour = ans == 12 ? 0 : ans;
+        break;
+    case 'j':
+        *state |= GetIntV2<TChar>(first, last, 1, 366, time->tm_yday, dummyDigits, ctype);
+        break;
+    case 'm':
+        *state |= GetIntV2<TChar>(first, last, 1, 12, ans, dummyDigits, ctype);
+        if ((*state & IosFailBit) == 0) time->tm_mon = ans - 1;
+        break;
+    case 'M':
+        *state |= GetIntV2<TChar>(first, last, 0, 59, time->tm_min, dummyDigits, ctype);
+        break;
+    case 'n':
+    case 't':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, " ", caller);
+        break;
+    case 'p':
+        ans = GetLocaleText<TChar>(first, last, 0, amPmTable);
+        if (ans < 0) {
+            *state |= IosFailBit;
+        } else if (ans > 1) {
+            time->tm_hour += 12;
+        }
+        break;
+    case 'r':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, "%I : %M : %S %p", caller);
+        break;
+    case 'R':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, "%H : %M", caller);
+        break;
+    case 'S':
+        *state |= GetIntV2<TChar>(first, last, 0, 60, time->tm_sec, dummyDigits, ctype);
+        break;
+    case 'T':
+    case 'X':
+        first = DoGetFmtImpl<TChar>(self, first, last, stream, state, time, "%H : %M : %S", caller);
+        break;
+    case 'U':
+    case 'W':
+        *state |= GetIntV2<TChar>(first, last, 0, 53, time->tm_yday, dummyDigits, ctype);
+        break;
+    case 'w':
+        *state |= GetIntV2<TChar>(first, last, 0, 6, time->tm_wday, dummyDigits, ctype);
+        break;
+    case 'y':
+        *state |= GetIntV2<TChar>(first, last, 0, 99, ans, dummyDigits, ctype);
+        if ((*state & IosFailBit) == 0) time->tm_year = ans < 69 ? ans + 100 : ans;
+        break;
+    case 'Y':
+        *state |= GetIntV2<TChar>(first, last, 0, 9999, ans, dummyDigits, ctype);
+        if ((*state & IosFailBit) == 0) time->tm_year = ans - 1900;
+        break;
+    case '%':
+        if (Equal<TChar>(first, last) || CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != '%') {
+            *state |= IosFailBit;
+        } else {
+            Inc<TChar>(first);
+        }
+        break;
+    default:
+        *state |= IosFailBit;
+        break;
+    }
+
+    if (Equal<TChar>(first, last)) *state |= IosEofBit;
+    return first;
+}
 
 void APS5_VABI TimeFieldsDestroyFacet_nid_no_patch(GuestLocale::Facet*) {}
 
@@ -457,14 +760,6 @@ std::int32_t APS5_VABI TimeFieldsWideDateOrder_nid_no_patch(const GuestLocale::F
     return reinterpret_cast<const GuestTimeGetWideFacet*>(self)->dateOrder;
 }
 
-GuestLocale::InputIterator APS5_VABI TimeFieldsWideUnsupported_nid_no_patch(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-GuestLocale::InputIterator APS5_VABI TimeFieldsWideFieldUnsupported_nid_no_patch(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*, char, char) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 GuestLocale::OutputIterator APS5_VABI TimeFieldsCharDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
     return LibcTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
 }
@@ -477,12 +772,19 @@ const GuestLocale::TimeGetVtable g_wideTimeGetVtable{
     {TimeFieldsDestroyWideTimeGet_nid_no_patch, TimeFieldsDeleteWideTimeGet_nid_no_patch, TimeFieldsRetainFacet_nid_no_patch, TimeFieldsReleaseFacet_nid_no_patch},
     TimeFieldsWideDateOrder_nid_no_patch,
     _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
-    TimeFieldsWideUnsupported_nid_no_patch,
-    TimeFieldsWideUnsupported_nid_no_patch,
+    _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
+    _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
     _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
     _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix,
-    TimeFieldsWideFieldUnsupported_nid_no_patch,
+    _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix,
 };
+
+const std::uint16_t* WideFieldTable(const GuestLocale::Facet* self, const char16_t* GuestTimeGetWideFacet::*field, const char16_t* fallback) {
+    if (self != nullptr && self->vtable == &g_wideTimeGetVtable.facet) {
+        return reinterpret_cast<const std::uint16_t*>(reinterpret_cast<const GuestTimeGetWideFacet*>(self)->*field);
+    }
+    return reinterpret_cast<const std::uint16_t*>(fallback);
+}
 
 const GuestLocale::TimePutVtable g_timePutCharVtable{
     {TimeFieldsDestroyFacet_nid_no_patch, TimeFieldsDeleteFacet_nid_no_patch, TimeFieldsRetainFacet_nid_no_patch, TimeFieldsReleaseFacet_nid_no_patch},
@@ -566,14 +868,24 @@ void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_In
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype) {
+    return GetIntImpl<char>(self, first, last, lo, hi, val, ctype, __func__);
+}
+
 std::int32_t APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetintERS3_S5_iiRiRKSt5ctypeIwE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype) {
-    RequireArgument(self != nullptr && first != nullptr && last != nullptr && val != nullptr && ctype != nullptr, __func__);
-    int digitsRead = 0;
-    return GetIntV2<std::uint16_t>(*first, *last, lo, hi, *val, digitsRead, ctype);
+    return GetIntImpl<std::uint16_t>(self, first, last, lo, hi, val, ctype, __func__);
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
     return DoGetTimeImpl<char>(self, first, last, stream, state, time, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
+    return DoGetDateImpl<char>(self, first, last, stream, state, time, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase*, std::int32_t* state, GuestTm* time) {
+    return DoGetNameFieldImpl<char>(self, first, last, state, time, &GuestTm::tm_wday, kCharDays, __func__);
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
@@ -581,11 +893,27 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcS
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase*, std::int32_t* state, GuestTm* time) {
-    return DoGetMonthnameImpl<char>(self, first, last, state, time, kCharMonths, __func__);
+    return DoGetNameFieldImpl<char>(self, first, last, state, time, &GuestTm::tm_mon, kCharMonths, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char) {
+    return DoGetImpl<char>(self, first, last, stream, state, time, specifier, kCharAmPm, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst) {
+    return DoGetFmtImpl<char>(self, first, last, stream, state, time, fmtfirst, __func__);
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
     return DoGetTimeImpl<std::uint16_t>(self, first, last, stream, state, time, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
+    return DoGetDateImpl<std::uint16_t>(self, first, last, stream, state, time, __func__);
+}
+
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase*, std::int32_t* state, GuestTm* time) {
+    return DoGetNameFieldImpl<std::uint16_t>(self, first, last, state, time, &GuestTm::tm_wday, WideFieldTable(self, &GuestTimeGetWideFacet::days, kWideDays), __func__);
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
@@ -593,13 +921,7 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase*, std::int32_t* state, GuestTm* time) {
-    const std::uint16_t* table = nullptr;
-    if (self != nullptr && self->vtable == &g_wideTimeGetVtable.facet) {
-        table = reinterpret_cast<const std::uint16_t*>(reinterpret_cast<const GuestTimeGetWideFacet*>(self)->months);
-    } else {
-        table = reinterpret_cast<const std::uint16_t*>(kWideMonths);
-    }
-    return DoGetMonthnameImpl<std::uint16_t>(self, first, last, state, time, table, __func__);
+    return DoGetNameFieldImpl<std::uint16_t>(self, first, last, state, time, &GuestTm::tm_mon, WideFieldTable(self, &GuestTimeGetWideFacet::months, kWideMonths), __func__);
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE__nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const std::uint16_t* fmtfirst, const std::uint16_t* fmtlast) {
@@ -650,39 +972,19 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
     return first;
 }
 
-GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst) {
-    RequireArgument(self != nullptr && state != nullptr && time != nullptr && fmtfirst != nullptr, __func__);
-    const GuestLocale::Facet* ctype = CtypeTraits<std::uint16_t>::FromStream(stream);
-    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char) {
+    return DoGetImpl<std::uint16_t>(self, first, last, stream, state, time, specifier, WideFieldTable(self, &GuestTimeGetWideFacet::amPm, kWideAmPm), __func__);
+}
 
-    for (; *fmtfirst != '\0'; ++fmtfirst) {
-        if (Equal<std::uint16_t>(first, last)) {
-            *state |= IosFailBit;
-            break;
-        }
-        if (*fmtfirst == '%') {
-            if (*++fmtfirst == '\0') {
-                *state |= IosFailBit;
-                break;
-            }
-            RequireArgument(vtable != nullptr && vtable->get != nullptr, __func__);
-            first = vtable->get(self, first, last, stream, state, time, *fmtfirst, '\0');
-        } else if (*fmtfirst == ' ') {
-            while (!Equal<std::uint16_t>(first, last) &&
-                   CtypeTraits<std::uint16_t>::Is(ctype, CtypeSpaceMask, Peek<std::uint16_t>(first))) {
-                Inc<std::uint16_t>(first);
-            }
-        } else if (CtypeTraits<std::uint16_t>::Narrow(ctype, Peek<std::uint16_t>(first), '\0') != *fmtfirst) {
-            *state |= IosFailBit;
-            break;
-        } else {
-            Inc<std::uint16_t>(first);
-        }
+GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst) {
+    return DoGetFmtImpl<std::uint16_t>(self, first, last, stream, state, time, fmtfirst, __func__);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || ptr == nullptr) {
+        return -2;
     }
-    if (Equal<std::uint16_t>(first, last)) {
-        *state |= IosEofBit;
-    }
-    return first;
+    return GetLocaleText<char>(*first, &last, numFields, ptr);
 }
 
 }

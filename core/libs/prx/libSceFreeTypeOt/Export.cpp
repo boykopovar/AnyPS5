@@ -154,10 +154,6 @@ int APS5_VABI sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch() {
 }
 APS5_EXPORT("GiuNQjoj4fs", sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch);
 
-int APS5_VABI FT_New_GlyphSlot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceFreeTypeOtUnknown_C_PpdS5zris_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -201,8 +197,9 @@ int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch(FreeType::GuestFa
 }
 APS5_EXPORT("DAmwG6U7YIc", sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count,
+                                                   const FreeType::GuestParameter* parameters) {
+    return FreeTypeSetRenderer_nid_no_patch(library, renderer, count, parameters);
 }
 APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
 

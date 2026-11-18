@@ -915,6 +915,16 @@ int main(int argc, char** argv) {
     }
     SetTimeZone("UTC0");
 
+    for (const std::uint64_t value : {unixEpochTick - 1, maxTick, unixEpochTick}) {
+        const RtcTick input{value};
+        RtcTick output{};
+        errno = 71;
+        Require(sceRtcConvertUtcToLocalTime(&input, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+        Require(sceRtcConvertLocalTimeToUtc(&output, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+    }
+
 #ifndef _WIN32
     SetTimeZone("STD0DST,J1/0,J2/0");
     const std::time_t beforeTransition = -1;
