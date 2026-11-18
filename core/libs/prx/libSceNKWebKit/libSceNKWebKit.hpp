@@ -38,6 +38,7 @@
 #include "prx/libSceNKWebKit/include/PalCryptoDigestExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreLayoutExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreTransformExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/VPCodecExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreValueHelpersExports.hpp"
