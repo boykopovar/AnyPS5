@@ -238,6 +238,16 @@ void CheckIntegers() {
 
     Require(X509_add1_ext_i2d_nid_postfix(&certificate.x509, InhibitAnyPolicyNid, &zero, 0, DefaultFlag) == 1);
     Require(ValueBytes(ExtensionAt(certificate, 3)) == Expected({0x02, 0x01, 0x00}));
+
+    const unsigned char trailing[] = {0x01, 0x00};
+    const unsigned char padded[] = {0x80, 0x00};
+    Certificate negatives;
+    Asn1String trailingZero = StringValue(0x102, trailing, 2);
+    Require(X509_add1_ext_i2d_nid_postfix(&negatives.x509, DeltaCrlNid, &trailingZero, 0, DefaultFlag) == 1);
+    Require(ValueBytes(ExtensionAt(negatives, 0)) == Expected({0x02, 0x02, 0xFF, 0x00}));
+    Asn1String paddedZero = StringValue(0x102, padded, 2);
+    Require(X509_add1_ext_i2d_nid_postfix(&negatives.x509, DeltaCrlNid, &paddedZero, 0, AppendFlag) == 1);
+    Require(ValueBytes(ExtensionAt(negatives, 1)) == Expected({0x02, 0x02, 0x80, 0x00}));
 }
 
 void CheckObject() {
