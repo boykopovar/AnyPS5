@@ -3,6 +3,7 @@
 #include "prx/libSceUlt/SceUltTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -227,6 +228,10 @@ int APS5_VABI _sceUltReaderWriterLockCreate(void* rwlock, const char* name, void
 }
 
 int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
+    struct RestoreErrno {
+        int value = errno;
+        ~RestoreErrno() { errno = value; }
+    } restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
     std::shared_ptr<UltReaderWriterLockState> state;
@@ -245,8 +250,18 @@ int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInf
     localInfo.lockType = state->_writing ? 2 : (state->_readers > 0 ? 1 : 0);
     localInfo.owner = state->_ownerIdentity.thread;
     localInfo.ownerType = state->_ownerIdentity.type;
+    const std::size_t count = std::min<std::size_t>(capacity, state->_waiterRecords.size());
+    UltReaderWriterLockInfo previousInfo{};
+    if (count > 0 && !GuestCopyIn_nid_no_patch(&previousInfo, info, sizeof(previousInfo))) return ULT_ERROR_NULL;
     if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
+    if (count > 0) {
+        const int writeStatus = WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
+        if (writeStatus != ULT_OK) {
+            GuestCopyOut_nid_no_patch(info, &previousInfo, sizeof(previousInfo));
+            return writeStatus;
+        }
+    }
+    return ULT_OK;
 }
 
 }

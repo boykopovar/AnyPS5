@@ -37,6 +37,13 @@ int APS5_VABI sceConnectAccountDialogOpen(const void* param) {
         if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
         if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
         if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+        std::uint8_t probe = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
+            errno = savedErrno;
+            return COMMON_DIALOG_ERROR_ARG_NULL;
+        }
+        errno = savedErrno;
     } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return 0;
