@@ -18,6 +18,7 @@ inline constexpr Opcode Opcodes[] = {
     {0x13, "INDEX_BUFFER_SIZE"},
     {0x15, "DISPATCH_DIRECT"},
     {0x16, "DISPATCH_INDIRECT"},
+    {0x1e, "ATOMIC_MEM"},
     {0x20, "SET_PREDICATION"},
     {0x22, "COND_EXEC"},
     {0x24, "DRAW_INDIRECT"},

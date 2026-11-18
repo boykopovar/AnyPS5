@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/AtomicMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -298,7 +299,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
             return "graphics draw, shader stages and guest render-target materialization are not implemented";
         case 0x33: case 0x3f: return "nested command buffers, branching and nested flip reservation are not implemented";
         case 0x3c: case 0x93: return {};
-        case 0x39: return {};
+        case 0x39: case 0x1e: return {};
         case 0x59: return {};
         case 0x84: case 0x85: case 0x86: case 0x88:
             return "separate CE/DE execution and counter synchronization are not implemented";
@@ -370,6 +371,9 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     if (queue != 0 && ShaderRecompiler::GcnGuestShaders()) allowedFlags |= 2u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {
+        case 0x1e:
+            static_cast<void>(DecodeAtomicMem(packet));
+            break;
         case 0x11:
             size(4);
             require(packet[1] == 1 && (packet[2] & 3u) == 0 && packet[3] <= 0xffffu, "unsupported indirect base index, alignment or address bits");
@@ -841,6 +845,10 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
     const auto runTime = [](std::uint64_t destination, std::uint64_t bytes) { return PacketStore{destination, bytes, PacketStore::Value::RunTime, {}, false}; };
     if (FillerPacket(packet[0])) return {};
     switch ((packet[0] >> 8u) & 0xffu) {
+        case 0x1e: {
+            const auto command = DecodeAtomicMem(packet);
+            return {runTime(command.address, command.bytes)};
+        }
         case 0x49: {
             const auto label = DecodeLabelWrite(packet);
             if (!label.has_value()) return {};
@@ -911,6 +919,7 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet) {
 
 bool AccessesMemory(std::uint32_t header) {
     switch ((header >> 8u) & 0xffu) {
+        case 0x1e: return true;
         case 0x22: case 0x27: case 0x39: case 0x3c: case 0x93: case 0x49: case 0x16: case 0x2d: case 0x35: case 0x24: case 0x25: case 0x2c: case 0x38: case 0x37: case 0x40: case 0x45: case 0x50: case 0x63: case 0x64: case 0x83: case 0x91: case 0x9f: return true;
         default: return false;
     }
@@ -1233,6 +1242,9 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             }
             return;
         }
+        case 0x1e:
+            ExecuteAtomicMem(packet);
+            return;
         case 0x39: {
             const auto semaphore = address(packet[1], packet[2]);
             auto* word = reinterpret_cast<std::uint64_t*>(semaphore);

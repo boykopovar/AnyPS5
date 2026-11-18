@@ -418,6 +418,10 @@ void Driver::execute(Submission& submission) {
         };
         if (profilePackets) packetProfile.flushMs += std::chrono::duration<double, std::milli>(packetTimer.start - flushStart).count();
 
+        if (opcode == 0x1e) {
+            landPendingWaits(submission.queue);
+            recordQueuedLabelsBeforeRead(submission.queue);
+        }
         bool wroteOnGpu = false, endOfPipeInterrupt = false, interruptDeferred = false, drawPacket = false, sampleDump = false;
         const bool drains = preparePacketMemory(submission, queue, packet, header, opcode, releaseInterrupt(packet, opcode, submission.flips.contains(cursor)), wroteOnGpu, endOfPipeInterrupt, interruptDeferred, drawPacket, sampleDump);
         traceLabel(packet, submission.queue);
