@@ -5,8 +5,8 @@
 
 extern "C" {
 
-int APS5_VABI sceNgs2FftInit();
-int APS5_VABI sceNgs2FftProcess();
+int APS5_VABI sceNgs2FftInit(void* work, std::size_t size, int length, std::uint32_t flags, void** handle);
+int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float* work, std::uintptr_t unused, std::uint32_t mode);
 int APS5_VABI sceNgs2FftQuerySize(std::uint32_t length, std::uint32_t flags, std::uint64_t* size);
 int APS5_VABI sceNgs2ParseWaveformData(const void* data, std::size_t dataSize, Ngs2WaveformInfo* outInfo);
 int APS5_VABI sceNgs2ParseWaveformUser(std::uintptr_t handler, std::uintptr_t userData, Ngs2WaveformInfo* outInfo);

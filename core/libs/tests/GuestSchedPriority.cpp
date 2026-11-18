@@ -106,7 +106,8 @@ int main() {
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     *__error_nid_postfix() = 0;
-    Require(rtprio_thread_nid_postfix(1, 0, &rtprio) == -1 && *__error_nid_postfix() == 1);
+    GuestRtPrio lowRealtime{2, 0};
+    Require(rtprio_thread_nid_postfix(1, 0, &lowRealtime) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(rtprio_thread_nid_postfix(2, 0, &rtprio) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;

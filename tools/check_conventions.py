@@ -263,7 +263,7 @@ class Check:
         self.read(paths)
         for path in paths:
             text = self.show(path)
-            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
+            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text or exports.keys().isdisjoint(re.findall(r"\w+", text)):
                 continue
             source = expand_abi_aliases(cpp_text(text)).split("\n")
             assembly = asm_exports(text)
@@ -791,6 +791,8 @@ def symbol_nid(name):
 
 
 def asm_exports(text):
+    if "ASM_FUNCTION" not in text:
+        return {}
     tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     exports = defaultdict(list)
     for index, match in enumerate(tokens[:-2]):

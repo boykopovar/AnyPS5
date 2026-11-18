@@ -355,6 +355,10 @@ void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double millisecon
     if (h) ToPlayer(h)->SetClockTimeForTest(milliseconds);
 }
 
+std::int32_t GetAvPlayerTrickSpeedForTest_nid_no_patch(AvPlayerInternal* h) {
+    return h ? ToPlayer(h)->TrickSpeedForTest() : 0;
+}
+
 void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold) {
     if (h) ToPlayer(h)->SetHoldAudioEofForTest(hold);
 }

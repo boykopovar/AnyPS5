@@ -198,6 +198,13 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -207,18 +214,14 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
     bool mediaIsInFullscreen = false;
     std::uint32_t mediaType = 0;
-};
-
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
-public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
