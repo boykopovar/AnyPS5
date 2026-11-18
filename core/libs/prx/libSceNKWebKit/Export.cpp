@@ -9098,10 +9098,6 @@ int APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetCustomTextEncodingName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30stopAllMediaPlaybackForProcessEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9597,23 +9593,11 @@ int APS5_VABI WKBundlePageGetAppCacheUsageForOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGetBackingScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageGetPageZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGetRenderTreeSize() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageGetTextZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageHasComposition() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9633,23 +9617,11 @@ int APS5_VABI WKBundlePageInstallPageOverlay() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageIsControlledByAutomation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageIsEditingCommandEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageIsSuspended() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageIsTrackingRepaints() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageIsUsingEphemeralSession() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10148,10 +10120,6 @@ int APS5_VABI WKNotificationManagerSetProvider() {
 
 
 
-int APS5_VABI WKPageBackgroundExtendsBeyondPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageBeginPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10192,35 +10160,11 @@ int APS5_VABI WKPageComputePagesForPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCopyActiveURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyApplicationNameForUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyCommittedURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyCustomTextEncodingName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyCustomUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageCopyPageConfiguration() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKPageCopyPendingAPIRequestURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyProvisionalURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10233,10 +10177,6 @@ int APS5_VABI WKPageCopySessionState() {
 }
 
 int APS5_VABI WKPageCopyStandardUserAgentWithApplicationName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageCopyTitle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10298,10 +10238,6 @@ int APS5_VABI WKPageGetContentsAsString() {
 }
 
 int APS5_VABI WKPageGetContext() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGetEstimatedProgress() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10387,10 +10323,6 @@ int APS5_VABI WKPageHasSelectedRange() {
 }
 
 int APS5_VABI WKPageHideFindUI() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageIsClosed() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10550,14 +10482,6 @@ int APS5_VABI WKPageSetAllowsRemoteInspection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetApplicationNameForUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetBackgroundExtendsBeyondPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetCaretVisible() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10567,10 +10491,6 @@ int APS5_VABI WKPageSetControlledByAutomation() {
 }
 
 int APS5_VABI WKPageSetCustomBackingScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetCustomUserAgent() {
     NotImplemented_nid_no_patch(__func__);
 }
 

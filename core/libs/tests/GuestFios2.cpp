@@ -947,6 +947,22 @@ static void CheckOverlayResolve(const std::string& directory) {
     REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
     REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
 
+    const std::int32_t rootDestination = AddOverlay(0, 0, "/", source);
+    REQUIRE(Resolve(0, "/") == source);
+    REQUIRE(Resolve(0, "/app0//./asset.bin") == source + "/app0/asset.bin");
+    REQUIRE(Resolve(0, "app0/asset.bin") == "app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootDestination) == SCE_FIOS_OK);
+
+    const std::int32_t rootSource = AddOverlay(0, 0, "/virtual/", "/");
+    REQUIRE(Resolve(0, "/virtual") == "/");
+    REQUIRE(Resolve(0, "/virtual/asset.bin") == "/asset.bin");
+    REQUIRE(Resolve(0, "/virtualized/asset.bin") == "/virtualized/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootSource) == SCE_FIOS_OK);
+
+    const std::int32_t rootToRoot = AddOverlay(0, 0, "/", "/");
+    REQUIRE(Resolve(0, "//app0/./asset.bin") == "/app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootToRoot) == SCE_FIOS_OK);
+
     for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
         const std::int32_t id = AddOverlay(type, 0, base, source);
         REQUIRE(Resolve(0, base + "/a.txt") == source + "/a.txt");

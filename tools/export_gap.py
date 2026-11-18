@@ -221,6 +221,9 @@ def collect_source_exports(texts):
             record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
+        if nid_names.NID_POSTFIX in text:
+            for name in nid_names.source_data_definitions(text):
+                record_provided(provided, name, "defined as data")
         for nid, helper in nid_names.source_aliases(text):
             if nid not in provided:
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"
