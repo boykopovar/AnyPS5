@@ -62,6 +62,12 @@ int main() {
     Require(sceNpEulaDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpEulaDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpEulaDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpEulaDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpEulaDialogGetResult(result) == kErrNotFinished);
 
     Require(sceNpEulaDialogOpen(&param) == 0);
