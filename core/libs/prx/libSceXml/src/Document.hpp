@@ -23,6 +23,7 @@ void DocumentDestroy(XmlHandle* document);
 int DocumentTerminate(XmlHandle* document);
 bool DocumentIsAvailable(const XmlHandle* document);
 int DocumentGetStatus(const XmlHandle* document);
+void DocumentResetStatus(const XmlHandle* document);
 bool DocumentIsReadOnly(const XmlHandle* document);
 
 enum class NodeQuery { Root, DocRoot, FirstChild, Sibling, Parent, LastChild, FirstAttribute, NextAttribute };
