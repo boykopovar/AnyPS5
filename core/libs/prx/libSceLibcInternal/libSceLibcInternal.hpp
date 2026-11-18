@@ -26,3 +26,4 @@
 #include "prx/libSceLibcInternal/include/TimeGetOrder.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
 #include "prx/libSceLibcInternal/include/DinkumThreadErrors.hpp"
+#include "prx/libSceLibcInternal/include/MutexObject.hpp"
