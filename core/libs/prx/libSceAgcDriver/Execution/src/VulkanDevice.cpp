@@ -48,6 +48,7 @@
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libSceAgcDriver/Execution/include/UpscaleMode.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -249,6 +250,32 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
 
 
 std::uint64_t fillCompletionSyncs = 0;
+
+bool PauseClockForPipelines() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("APS5_PAUSE_CLOCK_FOR_PIPELINES");
+        return value != nullptr && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+thread_local bool backgroundPipelineBuild = false;
+
+struct PipelineWaitClockPause {
+    const bool paused = !backgroundPipelineBuild && PauseClockForPipelines();
+    PipelineWaitClockPause() { if (paused) KernelPauseGuestClock_nid_no_patch(); }
+    ~PipelineWaitClockPause() { if (paused) KernelResumeGuestClock_nid_no_patch(); }
+    PipelineWaitClockPause(const PipelineWaitClockPause&) = delete;
+    PipelineWaitClockPause& operator=(const PipelineWaitClockPause&) = delete;
+};
+
+struct BackgroundPipelineBuild {
+    const bool outer = !backgroundPipelineBuild;
+    BackgroundPipelineBuild() { backgroundPipelineBuild = true; }
+    ~BackgroundPipelineBuild() { if (outer) backgroundPipelineBuild = false; }
+    BackgroundPipelineBuild(const BackgroundPipelineBuild&) = delete;
+    BackgroundPipelineBuild& operator=(const BackgroundPipelineBuild&) = delete;
+};
 
 void check(VkResult result, const char* operation) {
     if (result == VK_ERROR_DEVICE_LOST) Graphics::ReportDeviceLost();
@@ -2959,6 +2986,7 @@ void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResu
     const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
     if (HasComputePipeline(shader)) return;
     const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
+    const BackgroundPipelineBuild background;
     static_cast<void>(computePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushStages, programAddress));
 }
 
@@ -6267,16 +6295,15 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress) {
     const auto pipelineKey = ComputePipelineKey::Of(shader, pushStages != 0);
     std::promise<std::shared_ptr<ComputePipelineObjects>> building;
+    std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
     if (!pipelineKey.identity.Empty()) {
-        std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
-        {
-            std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
-            if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
-            else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
-        }
-        if (other.valid()) return other.get();
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+        if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
+        else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
     }
+    const PipelineWaitClockPause pause;
+    if (other.valid()) return other.get();
     const auto finish = [&](std::shared_ptr<ComputePipelineObjects> built, std::exception_ptr error) {
         if (pipelineKey.identity.Empty()) return built;
         {
