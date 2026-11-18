@@ -5,11 +5,13 @@
 #include FT_MODULE_H
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 
 using FreeType::GuestLibrary;
 
@@ -65,7 +67,31 @@ static void CheckVersionProtection(GuestLibrary* library) {
     });
 }
 
+static bool RefusesAsNotImplemented(const char* function, auto call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return errno == 71 && std::string(error.what()) == std::string(function) + " not implemented";
+    }
+    return false;
+}
+
+static void CheckUnreadableLibrary() {
+    auto* const unreadable = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
+    std::array<std::int32_t, 3> values{11, 22, 33};
+    const auto before = values;
+    Require(RefusesAsNotImplemented("FT_Library_Version_nid_postfix", [&] {
+        FT_Library_Version_nid_postfix(unreadable, &values[0], &values[1], &values[2]);
+    }));
+    Require(values == before);
+    Require(RefusesAsNotImplemented("FT_Get_TrueType_Engine_Type_nid_postfix", [&] {
+        FT_Get_TrueType_Engine_Type_nid_postfix(unreadable);
+    }));
+}
+
 int main() {
+    CheckUnreadableLibrary();
     CheckVersionProtection(nullptr);
     CheckVersion(nullptr, nullptr);
     Require(FT_Get_TrueType_Engine_Type_nid_postfix(nullptr) == FT_TRUETYPE_ENGINE_TYPE_NONE);

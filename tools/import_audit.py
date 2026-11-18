@@ -345,20 +345,27 @@ def pe_headers(path, data):
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
+    mappings = [(section[2], max(section[1], section[3]), section[3], section[4]) for section in sections if max(section[1], section[3]) > 0]
+    if headers_size:
+        mappings.append((0, headers_size, headers_size, 0))
+
     def to_offset(address, length):
-        if address < headers_size and length <= headers_size - address:
-            take(data, address, length, path, f"header data at RVA 0x{address:x}")
-            return address, min(headers_size, len(data))
-        for section in sections:
-            virtual, raw_size, raw_offset = section[2], section[3], section[4]
-            if address < virtual:
-                continue
-            relative = address - virtual
-            if relative >= raw_size or length > raw_size - relative:
-                continue
-            take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
-            return raw_offset + relative, min(raw_offset + raw_size, len(data))
-        raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        matches = [mapping for mapping in mappings if mapping[0] <= address < mapping[0] + mapping[1]]
+        if len(matches) > 1:
+            raise AuditError(f"{path}: overlapping PE mappings at RVA 0x{address:x}")
+        if not matches:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        virtual, _, raw_size, raw_offset = matches[0]
+        relative = address - virtual
+        if relative >= raw_size or length > raw_size - relative:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        following = [mapping[0] for mapping in mappings if address < mapping[0] < virtual + raw_size]
+        boundary = min(following, default=virtual + raw_size)
+        if length > boundary - address:
+            raise AuditError(f"{path}: read at RVA 0x{address:x} crosses overlapping PE mappings")
+        offset = raw_offset + relative
+        take(data, offset, length, path, f"data at RVA 0x{address:x}")
+        return offset, min(raw_offset + boundary - virtual, len(data))
 
     return to_offset, optional + directory, count
 
@@ -665,6 +672,13 @@ def nids_of(name, aliases):
     return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
 
 
+def hashed_nid(symbol):
+    try:
+        return nid_names.compute_nid(symbol)
+    except UnicodeEncodeError:
+        return symbol
+
+
 def top_level_statements(body):
     braces, parens, start, parts = 0, 0, 1, []
     for i, character in enumerate(body[1:-1], 1):
@@ -907,7 +921,7 @@ def read_registry(path):
         if not isinstance(entry, dict) or not isinstance(entry.get("nid"), str) or not isinstance(entry.get("library"), str):
             raise AuditError(f"{path}: entry {index} needs string fields 'nid' and 'library': {entry!r}")
         nid = entry["nid"].split("#", 1)[0]
-        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in nid):
+        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 or 0xD800 <= ord(character) <= 0xDFFF for character in nid):
             raise AuditError(f"{path}: entry {index} has an invalid import symbol {entry['nid']!r}")
         weak = entry.get("weak", False)
         if not isinstance(weak, bool):
@@ -1079,7 +1093,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         resolved_nid = nid
         record["symbol_mismatch"] = False
         if not providers:
-            resolved_nid = nid_names.compute_nid(nid)
+            resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
         kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)

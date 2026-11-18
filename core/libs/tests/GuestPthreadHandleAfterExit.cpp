@@ -47,7 +47,8 @@ static void RequireEnded(Pthread thread) {
 static void WaitUntilReleased(Pthread thread) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     int priority = 0;
-    while (scePthreadGetprio(thread, &priority) != SCE_KERNEL_ERROR_ESRCH) {
+    char name[32];
+    while (scePthreadGetprio(thread, &priority) != SCE_KERNEL_ERROR_ESRCH || scePthreadGetname(thread, name) != SCE_KERNEL_ERROR_ESRCH) {
         Require(std::chrono::steady_clock::now() < deadline);
         std::this_thread::yield();
     }

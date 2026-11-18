@@ -552,6 +552,56 @@ struct QuadWalk {
     }
 };
 
+Outcome LowerWaterfall(bool carried) {
+    IrProgram program;
+    IrBuilder b{program};
+    program.SetWaveSize(64);
+    program.Resources().stage = IrShaderStage::TessellationControl;
+    program.Resources().memoryInfo.push_back(MemoryInfo{.kind = ResourceKind::Lds});
+    const auto block = [&]() -> IrBlock& {
+        auto& created = program.CreateBlock();
+        program.BlockOrder().push_back(&created);
+        BlockInfo info;
+        info.id = created.Id();
+        program.Metadata().blockInfo.push_back(info);
+        return created;
+    };
+    IrBlock& entry = block();
+    IrBlock& head = block();
+    IrBlock& exit = block();
+    program.SetEntryBlock(entry);
+    const auto u = [&](std::uint32_t value) -> IrValue& { return b.Constant(value); };
+    const auto op = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments) -> IrValue& { return b.Emit(opcode, type, arguments); };
+    b.SetInsertionPoint(entry);
+    IrValue& lane = op(IrOpcode::LaneId, IrType::U32, {});
+    IrValue& key = b.BitwiseAnd(lane, u(3u));
+    IrValue& entryExec = op(IrOpcode::ULessThan32, IrType::Bool, {&lane, &u(12u)});
+    entry.AddBranch(&head);
+    program.Metadata().blockInfo[0].terminator.kind = TerminatorKind::Branch;
+    program.Metadata().blockInfo[0].terminator.trueBlock = head.Id();
+    b.SetInsertionPoint(head);
+    IrValue& active = op(IrOpcode::Phi, IrType::Bool, {});
+    IrValue& pick = op(IrOpcode::ReadFirstLane, IrType::U32, {&key, &active});
+    IrValue& match = op(IrOpcode::LogicalAnd, IrType::Bool, {&active, &op(IrOpcode::IEqual32, IrType::Bool, {&pick, &key})});
+    static_cast<void>(op(IrOpcode::ReferenceU32, IrType::Void, {&op(IrOpcode::SelectU32, IrType::U32, {&match, &pick, &u(0u)})}));
+    IrValue& remaining = op(IrOpcode::LogicalAnd, IrType::Bool, {&active, &op(IrOpcode::LogicalNot, IrType::Bool, {&match})});
+    IrValue& ballot = op(IrOpcode::Ballot, IrType::U32x4, {&remaining});
+    IrValue& words = b.BitwiseOr(op(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &u(0u)}), op(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &u(1u)}));
+    IrValue& any = op(IrOpcode::INotEqual32, IrType::Bool, {&words, &u(0u)});
+    static_cast<void>(op(IrOpcode::Reference, IrType::Void, {&any}));
+    auto& info = program.Metadata().blockInfo[1];
+    info.terminator.kind = TerminatorKind::ConditionalBranch;
+    info.terminator.condition = BranchCondition::SccNonZero;
+    info.terminator.trueBlock = head.Id();
+    info.terminator.falseBlock = exit.Id();
+    info.condition = &any;
+    head.AddBranch(&head);
+    head.AddBranch(&exit);
+    active.AddPhiOperand(&entry, &entryExec);
+    active.AddPhiOperand(&head, carried ? &remaining : &entryExec);
+    return Lower(program);
+}
+
 bool Contains(const IrProgram& program, IrOpcode opcode) {
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -785,6 +835,17 @@ bool run(const char* name, const std::function<bool()>& body) {
 
 int main() {
     bool passed = true;
+
+    passed &= run("a waterfall loop's any-lane test lowers to the lane's own remaining bit", [] {
+        const auto outcome = LowerWaterfall(true);
+        if (!outcome.lowered) std::fprintf(stderr, "lowering failed: %s\n", outcome.reason.c_str());
+        return outcome.lowered;
+    });
+
+    passed &= run("an any-lane test whose lanes the loop does not carry stays refused", [] {
+        const auto outcome = LowerWaterfall(false);
+        return !outcome.lowered && outcome.reason.find("lane mask other than its own lane's bit") != std::string::npos;
+    });
 
     passed &= run("a conjunction proves a selected control point is zero for a factor write", [] {
         Hull hull;
