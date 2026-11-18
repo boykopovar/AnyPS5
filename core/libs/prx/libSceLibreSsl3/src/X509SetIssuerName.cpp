@@ -190,6 +190,7 @@ Buffer* DuplicateBuffer(const Buffer* source) {
 LibreSslX509Name* DuplicateName(const LibreSslX509Name* source) {
     auto* copy = static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name)));
     if (!copy) return nullptr;
+    try {
     copy->modified = source->modified;
     if (source->canonEnc) {
         if (source->canonEnclen < 0) {
@@ -222,6 +223,10 @@ LibreSslX509Name* DuplicateName(const LibreSslX509Name* source) {
         }
     }
     return copy;
+    } catch (...) {
+        X509_NAME_free_nid_no_patch(copy);
+        throw;
+    }
 }
 
 }
@@ -241,7 +246,12 @@ int APS5_VABI X509_set_issuer_name_nid_postfix(LibreSsl3Certificate* certificate
     if (!certificate || !certificate->certInfo || !name) return 0;
     auto* info = const_cast<LibreSsl3CertificateInfo*>(certificate->certInfo);
     if (info->issuer == name) return 1;
-    auto* copy = DuplicateName(name);
+    LibreSslX509Name* copy = nullptr;
+    try {
+        copy = DuplicateName(name);
+    } catch (const std::exception&) {
+        return 0;
+    }
     if (!copy) return 0;
     X509_NAME_free_nid_no_patch(static_cast<LibreSslX509Name*>(info->issuer));
     info->issuer = copy;

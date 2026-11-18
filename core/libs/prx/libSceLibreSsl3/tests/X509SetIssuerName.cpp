@@ -121,6 +121,22 @@ void RejectsBadInput() {
     Require(info.issuer == nullptr);
     Require(X509_NAME_dup_nid_no_patch(nullptr) == nullptr);
     X509_NAME_free_nid_no_patch(nullptr);
+
+    TestName source;
+    auto* previous = X509_NAME_dup_nid_no_patch(source.Get());
+    Require(previous != nullptr);
+    info.issuer = previous;
+    LibreSslStack badStack{};
+    badStack.num = -1;
+    LibreSslX509Name badName{&badStack, 0, nullptr, nullptr, 0};
+    Require(X509_set_issuer_name_nid_postfix(&certificate, &badName) == 0);
+    Require(info.issuer == previous);
+    unsigned char canonical = 0;
+    LibreSslX509Name badCanonical{nullptr, 0, nullptr, &canonical, -1};
+    Require(X509_set_issuer_name_nid_postfix(&certificate, &badCanonical) == 0);
+    Require(info.issuer == previous);
+    X509_NAME_free_nid_no_patch(previous);
+    info.issuer = nullptr;
     Require(allocations.empty());
 }
 
