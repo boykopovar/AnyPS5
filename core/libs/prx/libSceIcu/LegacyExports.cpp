@@ -1243,8 +1243,9 @@ int APS5_VABI _ZN6icu_6810UnicodeSetC1EPKtiNS0_14ESerializationER10UErrorCode_ni
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK6icu_6823UCharsDictionaryMatcher7getTypeEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int32_t APS5_VABI _ZNK6icu_6823UCharsDictionaryMatcher7getTypeEv_nid_postfix(const void*) {
+    constexpr std::int32_t UCharsTrieType = 1;
+    return UCharsTrieType;
 }
 
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl7composeEPKDsS2_aaRNS_16ReorderingBufferER10UErrorCode_nid_postfix() {

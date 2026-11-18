@@ -295,7 +295,7 @@ int APS5_VABI sceIcuLegacyUnknown_6FXFOERWLU8_nid_no_patch();
 int APS5_VABI _ZN6icu_6813ResourceValueD1Ev_nid_postfix();
 int APS5_VABI _ZN6icu_687UVector5_initEiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSetC1EPKtiNS0_14ESerializationER10UErrorCode_nid_postfix();
-int APS5_VABI _ZNK6icu_6823UCharsDictionaryMatcher7getTypeEv_nid_postfix();
+std::int32_t APS5_VABI _ZNK6icu_6823UCharsDictionaryMatcher7getTypeEv_nid_postfix(const void* matcher);
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl7composeEPKDsS2_aaRNS_16ReorderingBufferER10UErrorCode_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString7indexOfEPKDsiiii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_6Y1aFRqHq7I_nid_no_patch();

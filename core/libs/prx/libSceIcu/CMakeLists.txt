@@ -291,6 +291,16 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_icu_uchars_matcher_type_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/UCharsMatcherType.cpp)
+    target_include_directories(guest_icu_uchars_matcher_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_uchars_matcher_type_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_uchars_matcher_type_tests)
+    add_test(NAME guest_icu_uchars_matcher_type COMMAND guest_icu_uchars_matcher_type_tests)
+    if(WIN32)
+        set_tests_properties(guest_icu_uchars_matcher_type PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+
     add_test_executable(guest_icu_resource_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Resource.cpp)
     target_include_directories(guest_icu_resource_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_resource_tests PRIVATE libSceIcu)
