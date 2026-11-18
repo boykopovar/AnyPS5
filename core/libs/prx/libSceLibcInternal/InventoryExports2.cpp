@@ -1,5 +1,7 @@
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -76,9 +78,37 @@ int APS5_VABI _Tgamma_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Ttotm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _Ttotm_nid_postfix(void* time, std::int64_t seconds, int isdst) {
+    constexpr std::uint64_t SecondsFrom1900To1970 = 2208988800u;
+    constexpr std::uint64_t SecondsPerDay = 86400;
+    if (time == nullptr) {
+        thread_local std::array<std::int32_t, 14> ownTime{};
+        time = ownTime.data();
+    }
+    const std::uint64_t secs = static_cast<std::uint64_t>(seconds) + SecondsFrom1900To1970;
+    auto days = static_cast<std::int64_t>(secs / SecondsPerDay);
+    const auto weekday = static_cast<std::int32_t>((days + 1) % 7);
+    auto year = static_cast<std::int32_t>(static_cast<std::uint32_t>(days / 365));
+    std::int64_t yearStart = 0;
+    while (days < (yearStart = _Daysto_nid_postfix(year, 0) + 365LL * year)) year = static_cast<std::int32_t>(static_cast<std::uint32_t>(year) - 1u);
+    days -= yearStart;
+    const int leapDays = _Daysto_nid_postfix(year, 0);
+    int month = 12;
+    while (days < _Daysto_nid_postfix(year, --month) - leapDays) {}
+    const std::uint64_t daySeconds = secs % SecondsPerDay;
+    const std::array<std::int32_t, 9> fields{
+        static_cast<std::int32_t>(daySeconds % 60),
+        static_cast<std::int32_t>(daySeconds % 3600 / 60),
+        static_cast<std::int32_t>(daySeconds / 3600),
+        static_cast<std::int32_t>(static_cast<std::uint32_t>(days - (_Daysto_nid_postfix(year, month) - leapDays) + 1)),
+        month,
+        year,
+        weekday,
+        static_cast<std::int32_t>(static_cast<std::uint32_t>(days)),
+        isdst,
+    };
+    if (!GuestCopyOut_nid_no_patch(time, fields.data(), sizeof(fields))) throw std::invalid_argument("_Ttotm: an unwritable time structure");
+    return time;
 }
 
 int APS5_VABI _Tzoff_nid_postfix() {

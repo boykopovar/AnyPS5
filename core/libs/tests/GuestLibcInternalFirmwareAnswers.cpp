@@ -1,6 +1,9 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -34,6 +37,39 @@ static void TestDaysto() {
     Require(_Daysto_nid_postfix(Highest, 0) == 536870911 && _Daysto_nid_postfix(Highest, 11) == 536871245, "the highest year");
 }
 
+static void TestTtotm() {
+    struct Row {
+        std::int64_t seconds;
+        std::array<std::int32_t, 8> fields;
+    };
+    static constexpr std::array<Row, 11> Rows{{
+        {0LL, {0, 0, 0, 1, 0, 70, 4, 0}},
+        {951827696LL, {56, 34, 12, 29, 1, 100, 2, 59}},
+        {-2208988800LL, {0, 0, 0, 1, 0, 0, 1, 0}},
+        {-2203891201LL, {59, 59, 23, 28, 1, 0, 3, 58}},
+        {-2203891200LL, {0, 0, 0, 1, 2, 0, 4, 59}},
+        {3981312000LL, {0, 0, 0, 29, 1, 196, 3, 59}},
+        {4107478028LL, {8, 7, 6, 28, 1, 200, 0, 58}},
+        {4107542400LL, {0, 0, 0, 29, 1, 200, 1, 59}},
+        {4133980800LL, {0, 0, 0, 31, 11, 200, 6, 365}},
+        {13569465600LL, {0, 0, 0, 29, 11, 499, 6, 362}},
+        {-2208988801LL, {15, 0, 7, -206716581, 11, 826865099, 1, -206716248}},
+    }};
+    for (const Row& row : Rows) {
+        for (const int isdst : {0, 1, -1}) {
+            std::array<std::int32_t, 14> time{};
+            time.fill(0x5a5a5a5a);
+            Require(_Ttotm_nid_postfix(time.data(), row.seconds, isdst) == time.data(), "_Ttotm did not return its argument");
+            for (std::size_t field = 0; field < row.fields.size(); ++field) Require(time[field] == row.fields[field], "_Ttotm wrote a wrong field");
+            Require(time[8] == isdst, "_Ttotm did not store isdst unchanged");
+            for (std::size_t field = 9; field < time.size(); ++field) Require(time[field] == 0x5a5a5a5a, "_Ttotm wrote past tm_isdst");
+        }
+    }
+    auto* const own = static_cast<std::int32_t*>(_Ttotm_nid_postfix(nullptr, 951827696LL, 0));
+    Require(own != nullptr && own[3] == 29 && own[4] == 1 && own[5] == 100, "_Ttotm with no structure did not fill its own");
+    Require(_Ttotm_nid_postfix(nullptr, 0, 0) == own && own[5] == 70, "_Ttotm with no structure did not reuse its own");
+}
+
 static void TestXpGetw() {
     const float one[] = {5.0f, 7.0f, 11.0f, 13.0f};
     Require(_FXp_getw_nid_postfix(one, 0) == 0.0f, "no parts sum to 0");
@@ -57,6 +93,7 @@ static void TestXpGetw() {
 int main() {
     Require(_Isdst_nid_postfix() == -1, "_Isdst did not return -1");
     TestDaysto();
+    TestTtotm();
     TestXpGetw();
     return 0;
 }
