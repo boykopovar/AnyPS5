@@ -465,7 +465,7 @@ def load_intervals(path):
     candidate = resolve_summary_path(path)
     lines = []
     for number, record in load_summary_lines(candidate, numbered=True, label=path):
-        if "interval_start_s" not in record:
+        if "interval_start_s" not in record and "interval_end_s" not in record:
             continue
         try:
             validate_interval(record)
