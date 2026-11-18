@@ -155,7 +155,7 @@ def parse_elf(data):
                 raise Refused("segment %d TLS alignment exceeds 8192" % index)
             if memory_size > 0x7FFF0000:
                 raise Refused("segment %d TLS memory size exceeds 0x7fff0000" % index)
-        if kind == PT_LOAD and memory_size > (1 << 64) - vaddr:
+        if kind in (PT_LOAD, PT_TLS) and memory_size > (1 << 64) - vaddr:
             raise Refused("segment %d memory range exceeds ELF64" % index)
         headers.append({
             "index": index, "type": kind, "flags": flags, "offset": file_offset,

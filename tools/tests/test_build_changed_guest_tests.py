@@ -84,6 +84,15 @@ class GuestTestTargets(unittest.TestCase):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
 
+    def test_changed_static_fixture_selects_its_guest_consumer(self):
+        guest = self.target("guest_jxr_tests", source="core/libs/tests/GuestJxr.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_pad_tests", fragment="libc.prx")
+        fixture_source = "core/libs/tests/JxrTileInfoFixture.c"
+        fixture = self.target("jxr_tile_info_fixture", target_type="STATIC_LIBRARY", source=fixture_source)
+        guest["dependencies"] = [{"id": fixture["id"]}]
+        build = self.fixture([guest, unrelated, fixture])
+        self.assertEqual(self.selections(build, [fixture_source]), ["guest_jxr_tests"])
+
     def test_a_header_change_selects_every_guest_test(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
@@ -601,6 +610,25 @@ class ArtifactOwnerNames(unittest.TestCase):
         aliases = build_changed_guest_tests.target_artifact_names(target)
         self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
         self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+
+
+class ChangeClassification(unittest.TestCase):
+    def test_reaches_libs_only_for_library_and_build_inputs(self):
+        for path in ("CMakeLists.txt", "core/libs/a.cpp", ".github/workflows/build.yml", "tools/x.py"):
+            self.assertTrue(build_changed_guest_tests.reaches_libs([path]), path)
+        self.assertFalse(build_changed_guest_tests.reaches_libs(["docs/readme.md", "core/other/a.cpp"]))
+        self.assertFalse(build_changed_guest_tests.reaches_libs([]))
+
+    def test_script_test_patterns_follow_the_changed_inputs(self):
+        patterns = build_changed_guest_tests.script_test_patterns
+        self.assertEqual(patterns(["docs/readme.md"]), [])
+        self.assertEqual(patterns(["core/libs/nid/a.cpp"]), [build_changed_guest_tests.NID_TESTS])
+        self.assertEqual(
+            patterns(["CMakeLists.txt"]),
+            [build_changed_guest_tests.PUBLIC_HEADER_TESTS, build_changed_guest_tests.NID_TESTS])
+
+    def test_test_owner_of_an_empty_command_is_none(self):
+        self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
 
 
 if __name__ == "__main__":

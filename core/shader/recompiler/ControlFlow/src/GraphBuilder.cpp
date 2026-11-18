@@ -382,7 +382,7 @@ bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, Bo
 
 bool pairOverlapsRegister(const RdnaOperand& operand, std::uint32_t linkRegister, std::uint32_t count = 1u) {
     const std::uint32_t slot = scalarIndex(operand);
-    return slot != NoScalarRegister && slot <= linkRegister + 1u && linkRegister < slot + count;
+    return count != 0u && slot != NoScalarRegister && slot <= linkRegister + 1u && linkRegister < slot + count;
 }
 
 bool readsLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkRegister) {
@@ -404,7 +404,7 @@ bool readsLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkReg
         case RdnaInstructionFamily::MTBUF: source1Count = 4u; break;
         case RdnaInstructionFamily::MIMG:
             source1Count = instruction.imageR128 ? 4u : 8u;
-            source2Count = 4u;
+            source2Count = instruction.imageSampler ? 4u : 0u;
             break;
         case RdnaInstructionFamily::FLAT:
             source0Count = 2u;
@@ -652,7 +652,7 @@ bool readsScalarDword(const RdnaInstruction& instruction, std::uint32_t reg, std
         case RdnaInstructionFamily::MTBUF: source1Count = 4u; break;
         case RdnaInstructionFamily::MIMG:
             source1Count = instruction.imageR128 ? 4u : 8u;
-            source2Count = 4u;
+            source2Count = instruction.imageSampler ? 4u : 0u;
             break;
         case RdnaInstructionFamily::FLAT:
             source0Count = 2u;

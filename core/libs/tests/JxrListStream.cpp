@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,9 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 #include <vector>
 
@@ -106,6 +110,50 @@ void Fill(Jxr::Stream* stream, const std::vector<std::uint8_t>& data) {
         Require(WriteWS_List_nid_postfix(stream, data.data() + done, size) == 0);
     }
 }
+
+template <typename Call>
+bool Rejects(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+struct ReadOnlySlot {
+    void* page = nullptr;
+    std::size_t size = 0;
+
+    explicit ReadOnlySlot(Jxr::Stream* value) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        page = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr);
+        std::memcpy(page, &value, sizeof(value));
+        DWORD previous = 0;
+        Require(VirtualProtect(page, size, PAGE_READONLY, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+        std::memcpy(page, &value, sizeof(value));
+        Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlySlot() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+
+    Jxr::Stream** Slot() const { return static_cast<Jxr::Stream**>(page); }
+};
 
 std::vector<std::uint8_t> Pattern(std::size_t size) {
     std::vector<std::uint8_t> data(size);
@@ -234,5 +282,22 @@ int main() {
         std::vector<std::uint8_t> read(10000);
         Require(stream->setPosition(stream, 0) == 0 && stream->read(stream, read.data(), 10000) == 0 && read == data);
         Require(stream->close(&stream) == 0 && !stream && liveBlocks == 0);
+    }
+    {
+        auto* const unmapped = reinterpret_cast<Jxr::Stream**>(0x10);
+        errno = 73;
+        Require(Rejects([&] { CreateWS_List_nid_postfix(unmapped); }) && liveBlocks == 0);
+        Require(Rejects([&] { CloseWS_List_nid_postfix(unmapped); }) && liveBlocks == 0);
+        auto* stream = MakeList();
+        Fill(stream, Pattern(5000));
+        const int live = liveBlocks;
+        {
+            ReadOnlySlot slot(stream);
+            Require(Rejects([&] { CreateWS_List_nid_postfix(slot.Slot()); }) && liveBlocks == live);
+            Require(Rejects([&] { CloseWS_List_nid_postfix(slot.Slot()); }) && liveBlocks == live);
+            Require(*slot.Slot() == stream);
+        }
+        Require(errno == 73);
+        Require(CloseWS_List_nid_postfix(&stream) == 0 && !stream && liveBlocks == 0);
     }
 }

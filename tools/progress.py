@@ -42,7 +42,7 @@ QUALIFIED = re.compile(rf"(?:\.|->|(?:\b(?!(?:{KEYWORDS})\b)\w+|>)\s*::)\s*$")
 CMAKE_SHARED = re.compile(r'^\s*include\(\s*"?\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./([\w.-]+)/[\w.-]+\.cmake"?\s*\)', re.M)
 SOURCE_SHARED = re.compile(r'^\s*#\s*include\s*"prx/([\w.-]+)/[\w./-]+\.cpp"', re.M)
 STUB_WRAPPER = re.compile(
-    r"^[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
+    r"^(?=[\w:<>,\s*&\[\]]*\()[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
     r"(?!(?:if|while|for|switch|catch|return|else)\b)(\w+)\s*\([^;{]*\)\s*"
     r"(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{", re.M)
 DISCARD = re.compile(r"\(void\)\s*\w+\s*;")
@@ -131,6 +131,8 @@ def body_end(text, start):
 
 
 def stub_calls(text):
+    if STUB not in text:
+        return {STUB}
     helpers = {}
     for match in STUB_WRAPPER.finditer(text):
         body = text[match.end() - 1:body_end(text, match.end() - 1)]
@@ -519,6 +521,8 @@ def scan_library(path):
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
                for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
     for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
+        if not definitions:
+            continue
         wrappers = inert_wrappers(text)
         for definition in definitions:
             name = definition.name

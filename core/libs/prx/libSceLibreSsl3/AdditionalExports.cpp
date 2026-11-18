@@ -29,10 +29,6 @@ int APS5_VABI d2i_SSL_SESSION_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI d2i_X509_CRL_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI i2d_SSL_SESSION_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -69,10 +65,6 @@ int APS5_VABI tls_accept_socket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ERR_print_errors_fp_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -86,11 +78,6 @@ int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t ma
 int APS5_VABI i2d_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI ERR_load_X509_strings_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -110,18 +97,6 @@ int APS5_VABI RSAPublicKey_dup_nid_postfix() {
 }
 
 int APS5_VABI X509_print_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_CRL_get0_by_cert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ERR_load_PEM_strings_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -158,10 +133,6 @@ int APS5_VABI tls_connect_socket_nid_postfix(TlsContext* context, int socket, co
     return TlsTransportConnect_nid_no_patch(context, socket, servername);
 }
 
-int APS5_VABI SSL_CTX_set_quic_method_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix(void* ssl) {
     (void)ssl;
     return 1;
@@ -175,13 +146,6 @@ int APS5_VABI ECDSA_do_sign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI X509_digest_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

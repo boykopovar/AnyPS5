@@ -801,7 +801,7 @@ void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12);
 int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char* pass, void** pkey, void** cert, void** ca);
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa);
 void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa);
-int APS5_VABI RSA_generate_key_ex_nid_postfix(void);
+int APS5_VABI RSA_generate_key_ex_nid_postfix(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback);
 LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void);
 int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength);
 int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
