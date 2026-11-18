@@ -89,8 +89,7 @@ void MixedList() {
     LibreSsl3SslCtx context{};
     const std::size_t before = liveAllocations;
     Require(SSL_CTX_set_ciphersuites_nid_postfix(&context,
-        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256::"
-        "TLS_AES_128_CCM_8_SHA256:junk:TLS_AES_128_GCM_SHA256") == 1);
+        "TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_CCM_8_SHA256:TLS_AES_128_GCM_SHA256") == 1);
     const auto* stack = Stored(context);
     Require(stack != nullptr && stack->num == 3);
     Require(StoredId(stack, 0) == 0x03001303u);
@@ -119,7 +118,8 @@ void UnmatchedLists() {
     Require(SSL_CTX_set_ciphersuites_nid_postfix(&context, "TLS_AES_128_GCM_SHA256") == 1);
     const auto* stack = Stored(context);
     Require(stack != nullptr && stack->num == 1 && StoredId(stack, 0) == 0x03001301u);
-    for (const char* list : {"", ":", "::", "TLS_AES_128_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+    for (const char* list : {":", "::", "TLS_AES_128_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+                             "junk", "TLS_AES_128_GCM_SHA256:junk", "junk:TLS_AES_128_GCM_SHA256",
                              "TLS_AES_128_GCM_SHA256_", "tls_aes_128_gcm_sha256", " TLS_AES_128_GCM_SHA256",
                              "TLS_AES_128_GCM_SHA256 ", "TLS_AES_128_GCM_SHA256;TLS_AES_256_GCM_SHA384"}) {
         Require(SSL_CTX_set_ciphersuites_nid_postfix(&context, list) == 0);
@@ -128,6 +128,39 @@ void UnmatchedLists() {
     }
     sk_free_nid_postfix(Stored(context));
     Require(liveAllocations == before);
+}
+
+void EmptyList() {
+    LibreSsl3SslCtx context{};
+    Require(SSL_CTX_set_ciphersuites_nid_postfix(&context, "TLS_AES_128_GCM_SHA256") == 1);
+    const std::size_t before = liveAllocations;
+    Require(SSL_CTX_set_ciphersuites_nid_postfix(&context, "") == 1);
+    const auto* stack = Stored(context);
+    Require(stack != nullptr && stack->num == 0);
+    Require(liveAllocations == before);
+    sk_free_nid_postfix(Stored(context));
+    Require(liveAllocations == 0);
+}
+
+void AliasNames() {
+    LibreSsl3SslCtx context{};
+    const std::size_t before = liveAllocations;
+    constexpr std::array<std::pair<const char*, std::uint64_t>, 5> aliases{{
+        {"AEAD-AES128-GCM-SHA256", 0x03001301u},
+        {"AEAD-AES256-GCM-SHA384", 0x03001302u},
+        {"AEAD-CHACHA20-POLY1305-SHA256", 0x03001303u},
+        {"AEAD-AES128-CCM-SHA256", 0x03001304u},
+        {"AEAD-AES128-CCM-8-SHA256", 0x03001305u}
+    }};
+    for (const auto& [name, id] : aliases) {
+        Require(SSL_CTX_set_ciphersuites_nid_postfix(&context, name) == 1);
+        const auto* stack = Stored(context);
+        Require(stack != nullptr && stack->num == 1);
+        Require(StoredId(stack, 0) == id);
+    }
+    Require(liveAllocations == before + 2);
+    sk_free_nid_postfix(Stored(context));
+    Require(liveAllocations == 0);
 }
 
 void NullArguments() {
@@ -181,6 +214,8 @@ int main() {
     SingleSuites();
     MixedList();
     UnmatchedLists();
+    EmptyList();
+    AliasNames();
     NullArguments();
     ReallocationFailure();
     UnreadableList();
