@@ -105,6 +105,12 @@ const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandle
 const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
+double APS5_VABI WKBundlePageGetBackingScaleFactor(const void* pageRef);
+bool APS5_VABI WKBundlePageIsControlledByAutomation(const void* pageRef);
+bool APS5_VABI WKBundlePageIsSuspended(const void* pageRef);
+bool APS5_VABI WKBundlePageIsUsingEphemeralSession(const void* pageRef);
+std::uint64_t APS5_VABI WKBundlePageGetRenderTreeSize(const void* pageRef);
+bool APS5_VABI WKBundlePageHasComposition(const void* pageRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();

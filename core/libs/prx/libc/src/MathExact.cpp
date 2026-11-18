@@ -1001,6 +1001,14 @@ short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offse
     if (stores) StoreGuestExtended(value, host, "_LExp: unwritable value");
     return kind;
 }
+
+long double APS5_VABI expl_nid_postfix(long double x) {
+    const short kind = TestExtended(Bits(x));
+    if (kind == Zero) return 1.0L;
+    if (kind == Infinite) return std::signbit(x) ? 0.0L : x;
+    if (kind != NotANumber) ExtendedExp(&x, 1.0L, 0);
+    return x;
+}
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
