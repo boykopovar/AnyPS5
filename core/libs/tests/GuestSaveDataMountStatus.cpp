@@ -72,7 +72,7 @@ void CheckUnmountedCalls() {
     Check(sceSaveDataLoadIcon(&point, &icon) == SaveDataErrorNotMounted, "loadIcon unmounted point is NOT_MOUNTED");
     Check(sceSaveDataSaveIcon(nullptr, &icon) == SaveDataErrorParameter, "saveIcon null point is PARAMETER");
     Check(sceSaveDataSaveIcon(&point, &icon) == SaveDataErrorNotMounted, "saveIcon unmounted point is NOT_MOUNTED");
-    Check(sceSaveDataSaveIconByPath(&point, "test.png") == 0, "saveIconByPath succeeds");
+    Check(sceSaveDataSaveIconByPath(&point, "test.png") == SaveDataErrorNotMounted, "saveIconByPath on an absent mount returns NOT_MOUNTED");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");
     Check(sceSaveDataGetMountInfo(reinterpret_cast<const SaveDataMountPoint*>(0x10), &info) == SaveDataErrorParameter, "getMountInfo unmapped point is PARAMETER");
     Check(sceSaveDataGetMountInfo(&point, nullptr) == SaveDataErrorParameter, "getMountInfo null info is PARAMETER");
@@ -160,7 +160,7 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSaveIcon(&unmounted, nullptr) == SaveDataErrorParameter, "saveIcon null icon is PARAMETER before mount lookup");
     Check(sceSaveDataSaveIcon(point, &icon) == 0, "saveIcon on mounted save succeeds");
     Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
-    Check(sceSaveDataSaveIconByPath(point, "icon.png") == 0, "saveIconByPath on mounted save succeeds");
+    Check(sceSaveDataSaveIconByPath(point, "icon.png") == SaveDataErrorNotFound, "saveIconByPath with a missing source returns NOT_FOUND");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");
     Check(sceSaveDataGetMountInfo(point, nullptr) == SaveDataErrorParameter, "getMountInfo null info is PARAMETER");
     Check(sceSaveDataGetMountInfo(point, reinterpret_cast<SaveDataMountInfo*>(0x10)) == SaveDataErrorParameter, "getMountInfo unwritable info is PARAMETER");

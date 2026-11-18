@@ -52,6 +52,8 @@ bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address);
 bool GuestArenaCopyOwned_nid_no_patch(std::uintptr_t source, void* destination, std::size_t bytes);
 bool GuestArenaCompareOwned_nid_no_patch(std::uintptr_t source, const void* expected, std::size_t bytes, bool* equal);
 bool GuestArenaRecoverRead_nid_no_patch(_EXCEPTION_POINTERS* exception);
+bool GuestArenaStoreOwned_nid_no_patch(std::uintptr_t destination, const void* source, std::size_t bytes);
+bool GuestArenaRecoverWrite_nid_no_patch(_EXCEPTION_POINTERS* exception);
 void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes);
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection);

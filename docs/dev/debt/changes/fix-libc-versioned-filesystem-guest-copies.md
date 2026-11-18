@@ -1,0 +1,5 @@
+# libc
+
+## change [Versioned std::__sce_v2::filesystem calls]
+
+- [Versioned std::__sce_v2::filesystem calls](../../../core/libs/prx/libc/src/VersionedFilesystemCalls.cpp) (libc) - console execution, firmware and SDK coverage are unverified. `_Lstat`, `_File_size`, `_Last_write_time`, `_Set_last_write_time`, `_Make_dir`, `_Remove_dir`, `_Unlink`, `_Rename`, `_Resize`, `_Chmod`, `_Copy_file`, `_Statvfs` and `_Current_set2` follow the `libc.prx` bundled with PPSA03671 v01.001.005. libkernel registers the kernel calls they make, as libc cannot link it, and they are made in the module's order: kernel errors in the errno range give their errno, others give 1, and `_File_size` stores the kernel error code itself. As in the module, `_Statvfs` returns `ENOSYS` with unknown space and `_Current_set2` accepts only "/"; an unwritable space output or an unreadable path returns `EFAULT` instead, a host-safety fallback. `_Copy_file` copies 64 KiB at a time through a host buffer instead of the module's heap.

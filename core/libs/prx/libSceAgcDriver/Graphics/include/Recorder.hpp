@@ -71,6 +71,7 @@ public:
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
+    void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
     void SetDepthBias(const Context& context, float constant, float clamp, float slope);
     void SetDepthBounds(const Context& context, float minimum, float maximum);
     void SetCullMode(const Context& context, VkCullModeFlags mode);
