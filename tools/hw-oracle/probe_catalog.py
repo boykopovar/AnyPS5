@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import sys
@@ -23,6 +24,8 @@ PROBE_KEYS = {"id", "instruction", "description", "body", "output_registers", "w
 OPTIONAL_PROBE_KEYS = {"default"}
 CATALOG_KEYS = {"schema_version", "probes"}
 ROW_KEYS = {"name", "input"}
+PS5_CHIP_ID = 0x13fc
+PS5_TARGET = "gfx1013"
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 INSTRUCTION = re.compile(r"[a-z][a-z0-9_]*\Z")
 DECIMAL_WORD = re.compile(r"[0-9]+\Z")
@@ -251,9 +254,9 @@ def validate_device_label(value):
     return value
 
 
-def make_result(probe, digest, device_label, target, runtime, outputs):
+def make_result(probe, digest, device_label, target, runtime, outputs, hardware_identity=None):
     modes = probe["floating_point_modes"]
-    return {
+    result = {
         "schema_version": 1,
         "runtime": runtime,
         "assembly_target": target,
@@ -277,9 +280,13 @@ def make_result(probe, digest, device_label, target, runtime, outputs):
         "device_label": device_label,
         "measured_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if hardware_identity is not None:
+        result["hardware_identity"] = hardware_identity
+    return result
 
 
-def run_probes(probes, digest, output_dir, device_label):
+def run_probes(probes, digest, output_dir, device_label, hardware_identity=None,
+               runtime_name=None, assembly_target=None):
     device_label = validate_device_label(device_label)
     directory = Path(output_dir) / device_label
     destinations = [directory / f"{probe['id']}.json" for probe in probes]
@@ -287,8 +294,8 @@ def run_probes(probes, digest, output_dir, device_label):
     if existing:
         raise ValueError("refusing to replace existing measurement reports: " + ", ".join(existing))
     directory.mkdir(parents=True, exist_ok=True)
-    runtime = hw_oracle.runtime()
-    target = hw_oracle.target()
+    runtime = hw_oracle.runtime() if runtime_name is None else runtime_name
+    target = hw_oracle.target() if assembly_target is None else assembly_target
     reports = []
     for probe, destination in zip(probes, destinations):
         rows = [tuple(row["input"]) for row in probe["rows"]]
@@ -302,12 +309,48 @@ def run_probes(probes, digest, output_dir, device_label):
         if any(type(word) is not int or word < 0 or word > 0xffffffff
                for output in outputs for word in output[:probe["output_registers"]]):
             raise ValueError(f"hardware oracle returned a non-dword result for {probe['id']}")
-        report = make_result(probe, digest, device_label, target, runtime, outputs)
+        report = make_result(probe, digest, device_label, target, runtime, outputs, hardware_identity)
         reports.append((probe, destination, json.dumps(report, indent=2) + "\n"))
     for probe, destination, report in reports:
         write_atomic(destination, report)
         print(f"Measured {probe['id']}: {destination}")
     return destinations
+
+
+def require_ps5_identity(identity, target, runtime, system):
+    if system != "Linux":
+        raise ValueError("PS5 hardware runs require Linux on the console")
+    if runtime != "hsa":
+        raise ValueError("PS5 hardware runs require the HSA runtime")
+    if target != PS5_TARGET or identity.get("name") != PS5_TARGET:
+        raise ValueError("PS5 hardware runs require a detected gfx1013 agent and assembly target")
+    if identity.get("vendor") != "AMD" or identity.get("chip_id") != PS5_CHIP_ID:
+        observed = identity.get("chip_id")
+        suffix = f"0x{observed:04x}" if type(observed) is int else "unknown"
+        raise ValueError(f"PS5 hardware runs require AMD PCI device 0x13fc, detected {suffix}")
+    if type(identity.get("asic_revision")) is not int or type(identity.get("compute_units")) is not int or identity["compute_units"] < 1:
+        raise ValueError("PS5 hardware runs require complete HSA agent identity")
+    return dict(identity)
+
+
+def run_ps5_probes(probes, digest, output_dir, device_label):
+    system = platform.system()
+    if system != "Linux":
+        raise ValueError("PS5 hardware runs require Linux on the console")
+    if os.environ.get("HSA_OVERRIDE_GFX_VERSION"):
+        raise ValueError("PS5 hardware runs reject HSA_OVERRIDE_GFX_VERSION")
+    runtime = hw_oracle.runtime()
+    if runtime != "hsa":
+        raise ValueError("PS5 hardware runs require the HSA runtime")
+    identity = hw_oracle.hsa_identity(hw_oracle.oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
+    target = hw_oracle.target()
+    verified = require_ps5_identity(identity, target, runtime, system)
+    verified.update({
+        "kind": "ps5-linux-hsa",
+        "operating_system": system,
+        "kernel_release": platform.release(),
+    })
+    return run_probes(probes, digest, output_dir, device_label, verified, runtime, target)
 
 
 def read_measurement(path, probe, device_label):
@@ -387,6 +430,7 @@ def build_parser():
     listing.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     for name, help_text in (("generate", "write reproducible assembly and input files"),
                             ("run", "measure selected probes on the configured hardware oracle"),
+                            ("run-ps5-linux", "measure selected probes on a verified PS5 Linux gfx1013 GPU"),
                             ("coverage", "report measured and missing probes for a device label")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
@@ -422,6 +466,9 @@ def main(argv=None):
             return 0
         if args.command == "run":
             run_probes(selected, digest, args.results_dir, args.device_label)
+            return 0
+        if args.command == "run-ps5-linux":
+            run_ps5_probes(selected, digest, args.results_dir, args.device_label)
             return 0
         states = coverage(selected, digest, args.results_dir, args.device_label)
         print_coverage(selected, digest, states, args.device_label, as_json=args.json)
