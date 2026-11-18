@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <vector>
 
 struct PcmFixture {
@@ -364,6 +365,67 @@ static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t c
     Require(lateWriteVisible);
 }
 
+static void TestReportedRingLifetime(const PcmFixture& fixture, std::uint32_t channels, std::uint32_t rate, float pitch) {
+    constexpr std::uint32_t RegionFrames = PcmGrain * 4;
+    constexpr std::uint32_t RegionCount = 4;
+    const auto frameBytes = channels * fixture.bytes;
+    std::vector<std::uint8_t> ring(RegionFrames * RegionCount * frameBytes);
+    struct Region { std::uint8_t* data; std::uint32_t frames; };
+    std::deque<Region> pending;
+    std::deque<std::vector<std::uint8_t>> immutable;
+    Playback playback(fixture.type, channels, rate), reference(fixture.type, channels, rate);
+    for (const auto voice : {playback.voice, reference.voice})
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, pitch});
+    std::uint64_t generated = 0;
+    const auto queue = [&](std::uint8_t* data, std::uint32_t frames) {
+        for (std::uint32_t frame = 0; frame < frames; ++frame, ++generated) {
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                const auto index = (generated * 17 + generated / 7 + channel * 3) % fixture.samples.size();
+                std::copy_n(fixture.data.data() + index * fixture.bytes, fixture.bytes,
+                            data + static_cast<std::size_t>(frame * channels + channel) * fixture.bytes);
+            }
+        }
+        immutable.emplace_back(data, data + frames * frameBytes);
+        const Ngs2WaveformBlock block{0, frames * frameBytes, 0, 0, frames, 0, 0};
+        playback.Add(data, &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE);
+        reference.Add(immutable.back().data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE);
+        pending.push_back({data, frames});
+    };
+    for (std::uint32_t region = 0; region < RegionCount; ++region)
+        queue(ring.data() + region * RegionFrames * frameBytes, RegionFrames);
+    std::uint64_t previous = 0;
+    for (unsigned grain = 0; grain < 100; ++grain) {
+        Require(playback.Render() == reference.Render());
+        const auto state = playback.State();
+        const auto expected = reference.State();
+        Require(state.decoded_data_size == expected.decoded_data_size);
+        Require(state.num_decoded_samples == expected.num_decoded_samples);
+        Require(state.decoded_data_size >= previous && state.decoded_data_size <= generated * frameBytes);
+        Require(state.decoded_data_size % frameBytes == 0);
+        auto released = (state.decoded_data_size - previous) / frameBytes;
+        while (released != 0) {
+            Require(!pending.empty());
+            const auto region = pending.front();
+            const auto frames = static_cast<std::uint32_t>(std::min<std::uint64_t>(released, region.frames));
+            pending.front().data += frames * frameBytes;
+            pending.front().frames -= frames;
+            if (pending.front().frames == 0) pending.pop_front();
+            queue(region.data, frames);
+            released -= frames;
+        }
+        previous = state.decoded_data_size;
+    }
+    Require(previous > ring.size() * 2);
+}
+
+static void TestReportedRingLifetimes() {
+    for (const auto& fixture : Fixtures)
+        for (const auto channels : {1u, 2u})
+            for (const auto rate : {44100u, 48000u, 96000u})
+                for (const auto pitch : {0.75f, 1.0f, 2.0f})
+                    TestReportedRingLifetime(fixture, channels, rate, pitch);
+}
+
 static void TestReportedInputLifetimes() {
     for (const auto& fixture : Fixtures)
         for (const auto channels : {1u, 2u})
@@ -373,6 +435,10 @@ static void TestReportedInputLifetimes() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--reported-ring") == 0) {
+        TestReportedRingLifetimes();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--reported-lifetime") == 0) {
         TestReportedInputLifetimes();
         return 0;
@@ -389,5 +455,6 @@ int main(int argc, char** argv) {
     }
     TestNumericEdges();
     TestReportedInputLifetimes();
+    TestReportedRingLifetimes();
     return 0;
 }
