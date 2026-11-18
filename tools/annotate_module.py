@@ -48,6 +48,7 @@ R_X86_64_TLSDESC = 36
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
     25: "DT_INIT_ARRAY", 27: "DT_INIT_ARRAYSZ", 26: "DT_FINI_ARRAY", 28: "DT_FINI_ARRAYSZ",
@@ -340,6 +341,16 @@ def ghidra_symbols(module, namer):
                                                           offset + address - start < len(module.data)
                                                           for start, offset, size, flags in module.loads)
         rows.add((address, function, namer.resolve(symbol), symbol))
+    exported_functions = {address for address, function, _, _ in rows if function}
+    for _, info, addend in module.relocations():
+        if info != R_X86_64_IRELATIVE:
+            continue
+        address = addend & 0xffffffffffffffff
+        if address not in exported_functions and any(flags & PF_X and start <= address < start + size and
+                                                     offset + address - start < len(module.data)
+                                                     for start, offset, size, flags in module.loads):
+            name = "irelative_resolver_%x" % address
+            rows.add((address, True, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
