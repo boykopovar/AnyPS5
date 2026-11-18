@@ -2625,11 +2625,10 @@ static int RemPio2(double x, double* y) {
     return n;
 }
 
-/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/e_rem_pio2l.h, k_sinl.c, k_cosl.c and k_tanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/e_rem_pio2l.h */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/e_rem_pio2l.h: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/e_rem_pio2l.h */
 /*
  * ====================================================
  * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
- * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
  * Copyright (c) 2008 Steven G. Kargl, David Schultz, Bruce D. Evans.
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
@@ -2721,6 +2720,18 @@ static int RemPio2l(long double x, long double* y) {
     return RemPio2lLarge(x, y);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/k_sinl.c and k_cosl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/k_sinl.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ * Copyright (c) 2008 Steven G. Kargl, David Schultz, Bruce D. Evans.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static const volatile double TrigLongS1Hi = -0.16666666666666666;
 static const volatile double TrigLongS1Lo = -9.2563760475949941e-18;
 static constexpr double TrigLongS2 = 0.0083333333333333332;
@@ -2758,6 +2769,17 @@ static long double KernelCosl(long double x, long double y) {
     return w + (((1.0 - w) - hz) + (z * r - x * y));
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/k_tanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/k_tanl.c */
+/*
+ * ====================================================
+ * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+ * Copyright (c) 2008 Steven G. Kargl, David Schultz, Bruce D. Evans.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static const volatile double TrigLongT3Hi = 0.33333333333333331;
 static const volatile double TrigLongT3Lo = 1.8350121769317163e-17;
 static const volatile double TrigLongT5Hi = 0.13333333333333336;
