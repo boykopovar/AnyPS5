@@ -85,7 +85,7 @@ alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
     0xbf810000u, 0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 7> ArgumentWriterCode{0x7e000202u, 0x7e020203u, 0x7e040204u, 0x7e060280u, 0xdc7c8000u, 0x00000003u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 9> ArgumentWriterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020203u, 0x7e040204u, 0xe07c0000u, 0x80020000u, 0xbf810000u};
 
 alignas(256) constexpr std::array<std::uint32_t, 11> PixelRead{0x7e1a0280u, 0xdc308000u, 0x0c02000du, 0xbf8c3f70u, 0x7e10030cu, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 
@@ -488,10 +488,12 @@ private:
     FlushFunction original;
 };
 
-ShaderRecompiler::RecompileResult ArgumentWriter(AgcDriver::VulkanDevice& device, std::uint64_t address) {
-    const std::array<std::uint32_t, 5> user{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3u, 1u, 0u};
+ShaderRecompiler::RecompileResult ArgumentWriter(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint64_t descriptorAddress) {
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, 16u, 0x31016facu};
+    std::memcpy(reinterpret_cast<void*>(descriptorAddress), descriptor.data(), sizeof(descriptor));
+    const std::array<std::uint32_t, 5> user{static_cast<std::uint32_t>(descriptorAddress), static_cast<std::uint32_t>(descriptorAddress >> 32u), 3u, 1u, 0u};
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(ArgumentWriterCode.data());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(std::span(ArgumentWriterCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{codeAddress, std::as_bytes(std::span(ArgumentWriterCode))}, {descriptorAddress, std::as_bytes(std::span(descriptor))}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, codeAddress, ArgumentWriterCode, 0, {}},
@@ -540,7 +542,7 @@ void IndirectRangeUsesStoredVertices(const GuestBlock& fetch, const GuestBlock& 
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             auto* recorder = AgcDriver::VulkanDeviceTestAccess::RecorderOf(*device);
             Require(recorder != nullptr, "the argument producer has no recorder");
-            const auto producer = ArgumentWriter(*device, records.At(0));
+            const auto producer = ArgumentWriter(*device, records.At(0), records.At(0x300));
             const auto code = reinterpret_cast<std::uintptr_t>(ArgumentWriterCode.data());
             const auto prepared = device->PrepareDispatch(producer, {}, 1, code);
             gate = std::make_unique<AgcDriver::Test::ProducerSubmissionGate>(*device);
