@@ -3,7 +3,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#ifdef _WIN32
 #include "SDL.h"
+#endif
+#undef main
 #include <chrono>
 #include <cstdio>
 #include <cstring>
