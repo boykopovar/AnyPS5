@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
@@ -138,6 +139,55 @@ bool SameBytes(const Asn1String* value, const void* bytes, std::size_t length) {
 
 }
 
+void SetIncrementIsFailureAtomic() {
+    LibreSslX509Name* name = MakeName();
+    Require(Add(name, "CN", MbstringUtf8, "a", -1, 0) == 1);
+    Require(Add(name, "CN", MbstringUtf8, "b", -1, 0) == 1);
+    Require(EntryOf(name, 0)->set == 0 && EntryOf(name, 1)->set == 1);
+    auto* canonical = static_cast<unsigned char*>(Allocate_nid_no_patch(4));
+    canonical[0] = 0x30;
+    name->canonEnc = canonical;
+    name->canonEnclen = 4;
+    name->modified = 0;
+
+    EntryOf(name, 0)->set = std::numeric_limits<int>::max();
+    bool threw = false;
+    try {
+        Add(name, "CN", MbstringUtf8, "c", 0, 0);
+    } catch (const std::overflow_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(name->entries->num == 2);
+    Require(name->modified == 0);
+    Require(name->canonEnc == canonical && name->canonEnclen == 4);
+    Require(allocations.find(canonical) != allocations.end());
+
+    EntryOf(name, 0)->set = 1;
+    EntryOf(name, 1)->set = std::numeric_limits<int>::max();
+    threw = false;
+    try {
+        Add(name, "CN", MbstringUtf8, "c", 0, 0);
+    } catch (const std::overflow_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(name->entries->num == 2);
+    Require(name->modified == 0);
+    Require(name->canonEnc == canonical && name->canonEnclen == 4);
+
+    EntryOf(name, 1)->set = std::numeric_limits<int>::max() - 1;
+    Require(Add(name, "CN", MbstringUtf8, "c", 0, 0) == 1);
+    Require(name->entries->num == 3);
+    Require(EntryOf(name, 0)->set == 1);
+    Require(EntryOf(name, 1)->set == 2);
+    Require(EntryOf(name, 2)->set == std::numeric_limits<int>::max());
+    Require(name->modified == 1);
+    Require(name->canonEnc == nullptr);
+    FreeName(name);
+    Require(allocations.empty());
+}
+
 int main() {
     std::array<void*, 7> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
@@ -145,6 +195,7 @@ int main() {
         reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch), reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    SetIncrementIsFailureAtomic();
 
     Require(X509_NAME_add_entry_by_txt_nid_postfix(nullptr, "CN", MbstringUtf8,
         reinterpret_cast<const unsigned char*>("x"), 1, -1, -1) == 0);

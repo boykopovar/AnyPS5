@@ -769,8 +769,6 @@ int AddEntry(LibreSslX509Name* name, LibreSslX509NameEntry* entry, int loc, int 
     if (loc > count) loc = count;
     else if (loc < 0) loc = count;
     bool increment = set == 0;
-    name->modified = 1;
-    ReleaseCanonical(name);
     if (set == -1) {
         if (loc == 0) {
             set = 0;
@@ -783,18 +781,22 @@ int AddEntry(LibreSslX509Name* name, LibreSslX509NameEntry* entry, int loc, int 
     } else {
         set = EntryAt(stack, loc, function)->set;
     }
+    std::vector<std::pair<LibreSslX509NameEntry*, int>> staged;
     if (increment) {
-        for (int index = loc + 1; index < count; ++index) Increment(EntryAt(stack, index, function)->set, function);
+        staged.reserve(static_cast<std::size_t>(count - loc));
+        for (int index = loc; index < count; ++index) {
+            LibreSslX509NameEntry* following = EntryAt(stack, index, function);
+            staged.emplace_back(following, Increment(following->set, function));
+        }
     }
-    entry->set = set;
     if (!InsertEntry(stack, entry, loc, function)) {
         PutX509Error(AllocationFailure);
         return 0;
     }
-    if (increment) {
-        const int total = stack->num;
-        for (int index = loc + 1; index < total; ++index) ++EntryAt(stack, index, function)->set;
-    }
+    name->modified = 1;
+    ReleaseCanonical(name);
+    entry->set = set;
+    for (const auto& [following, value] : staged) following->set = value;
     return 1;
 }
 
