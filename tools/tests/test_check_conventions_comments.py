@@ -531,6 +531,17 @@ class TestFixtureExportTests(unittest.TestCase):
                 cwd=root, capture_output=True, text=True, env=env, timeout=20,
             )
 
+    def test_pragma_once_is_allowed_whatever_its_spacing(self):
+        for directive in ("#pragma once", "#pragma  once", "#pragma\t once", "#  pragma   once"):
+            with self.subTest(directive=directive):
+                result = self.check("core/libs/prx/libSceAjm/include/Port.hpp", f"{directive}\nint Port();\n")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for directive in ("#pragma pack(1)", "#pragma  pack(1)", "#pragma oncely", "#pragma  once_more"):
+            with self.subTest(directive=directive):
+                result = self.check("core/libs/prx/libSceAjm/include/Port.hpp", f"{directive}\nint Port();\n")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("core/libs/prx/libSceAjm/include/Port.hpp:1: error: [extension]", result.stdout)
+
     def test_mock_in_tests_directory_is_not_an_export(self):
         result = self.check("core/libs/prx/libSceAudioOut/tests/Shutdown.cpp",
                             'extern "C" std::uint64_t APS5_VABI sceKernelGetProcessTime() { return 0; }\n')

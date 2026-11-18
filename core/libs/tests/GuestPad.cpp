@@ -123,7 +123,7 @@ static void CheckInputCommands() {
     const auto lifted = commands.Poll(4201000);
     Require(lifted.hasTouch && !lifted.touchActive && lifted.touchId == 127 && lifted.buttons == 0);
     std::uint64_t poll = 4301000;
-    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)",
+    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)",
             "touch(0,0,0,2)", "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)",
             "touch(0,,0,1)", "touch(0,0,0,1)x", "touch(0,0,0,1) trailing"}) {
         std::ofstream(path) << "13 0 5000 " << invalid << '\n';
@@ -1788,6 +1788,9 @@ int main() {
     Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadSetTriggerEffect(handle2, reinterpret_cast<const void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;

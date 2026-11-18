@@ -932,5 +932,19 @@ class NidEncodingTests(unittest.TestCase):
                 self.assertEqual(nid_names.compute_nid(name), expected)
 
 
+    def test_strip_nid_postfix_removes_postfix_and_disambig(self):
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_postfix"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_disambig3"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo"), "foo")
+
+
+    def test_read_db_keeps_first_name_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nids.txt"
+            path.write_text("\ufeff# header\nAAAAAAAAAAA first # note\nAAAAAAAAAAA second\nBBBBBBBBBBB\nCCCCCCCCCCC third\n", encoding="utf-8")
+            db = nid_names.read_db(path)
+            self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
+
+
 if __name__ == "__main__":
     unittest.main()

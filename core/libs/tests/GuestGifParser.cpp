@@ -23,8 +23,8 @@ int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int unsupported = static_cast<int>(0x809D4054u);
-    Require(libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch() == 0);
-    Require(libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch() == 0);
+    Require(_ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() == 0);
+    Require(_ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() == 0);
 
     bool threwNull = false;
     try {
@@ -53,7 +53,7 @@ int main() {
         Require(libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(config.data()) == 0);
         Require(errno == 71);
         Require(config == snapshot);
-        Require(libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch() == 0);
+        Require(_ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() == 0);
     }
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
