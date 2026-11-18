@@ -8075,10 +8075,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSetaSERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_toLegacyType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_pj4c3_minus_54ZIk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

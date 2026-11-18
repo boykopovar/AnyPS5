@@ -494,6 +494,20 @@ def link_file(source, target):
         shutil.copy2(source, target)
 
 
+def copy_asset(source, target):
+    if sys.platform == "linux" and source.is_file():
+        try:
+            import fcntl
+            with source.open("rb") as original, target.open("xb") as cloned:
+                fcntl.ioctl(cloned.fileno(), getattr(fcntl, "FICLONE", 0x40049409), original.fileno())
+        except (ImportError, OSError):
+            pass
+        else:
+            shutil.copystat(source, target)
+            return
+    shutil.copy2(source, target)
+
+
 def link_tree(source, target, skip):
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
@@ -503,7 +517,7 @@ def link_tree(source, target, skip):
             (target / relative).mkdir(parents=True, exist_ok=True)
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            link_file(path, target / relative)
+            copy_asset(path, target / relative)
 
 
 def lock_work(path):

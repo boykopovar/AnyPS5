@@ -287,7 +287,7 @@ class Check:
             for nid, name in source_aliases(text):
                 if "unknown" in name.lower():
                     tree_unknowns[nid].append(f"{name} at {path}:{number}")
-            for symbol in nid_symbols(text):
+            for symbol in nid_symbols(text) if unknowns else ():
                 tree_symbols[symbol_nid(symbol)].append(f"{symbol} at {path}:{number}")
         for nid, name, path, number in unknowns:
             if tree_symbols[nid]:
@@ -791,6 +791,8 @@ def symbol_nid(name):
 
 
 def asm_exports(text):
+    if "ASM_FUNCTION" not in text:
+        return {}
     tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     exports = defaultdict(list)
     for index, match in enumerate(tokens[:-2]):
