@@ -11,6 +11,7 @@
 #include <exception>
 #include <iterator>
 #include <initializer_list>
+#include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -216,6 +217,10 @@ void TestAttr() {
         if (pthread_get_specificarray_np_nid_postfix(1, -1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(513, 1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(512, 2, array) != GUEST_EINVAL) return false;
+        constexpr int IntMax = std::numeric_limits<int>::max();
+        for (const PthreadKey key : {2, 512, IntMax}) {
+            if (pthread_get_specificarray_np_nid_postfix(key, IntMax, nullptr) != GUEST_EINVAL) return false;
+        }
         if (pthread_get_specificarray_np_nid_postfix(1, 1, nullptr) != GUEST_EFAULT) return false;
         PthreadKey key1 = 0;
         PthreadKey key2 = 0;
