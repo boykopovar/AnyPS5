@@ -385,9 +385,9 @@ void* APS5_VABI X509_STORE_CTX_get0_param_nid_postfix(LibreSslX509StoreContext* 
 int APS5_VABI X509_STORE_load_locations_nid_postfix();
 int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix(LibreSslX509VerifyParam* param, std::uint64_t flags);
 void* APS5_VABI X509_get0_pubkey_nid_postfix(const LibreSsl3Certificate* certificate);
-int APS5_VABI d2i_SSL_SESSION_nid_postfix();
+LibreSsl3SslSession* APS5_VABI d2i_SSL_SESSION_nid_postfix(LibreSsl3SslSession** session, const unsigned char** input, std::int64_t length);
 LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(LibreSsl3X509Crl** output, const unsigned char** input, std::int64_t length);
-int APS5_VABI i2d_SSL_SESSION_nid_postfix();
+int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned char** output);
 int APS5_VABI i2d_X509_nid_postfix(const LibreSsl3Certificate* certificate, unsigned char** output);
 void APS5_VABI sk_free_nid_postfix(LibreSslStack* stack);
 LibreSslStack* APS5_VABI sk_new_nid_postfix(StackCompare compare);
