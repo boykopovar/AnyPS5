@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
