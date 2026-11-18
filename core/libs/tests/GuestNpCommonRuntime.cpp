@@ -585,6 +585,14 @@ void APS5_VABI ExRelease(void* pointer, void* context) {
     record->released = pointer;
 }
 
+void* APS5_VABI VectorAllocate(std::size_t size, void* context) {
+    auto* storage = static_cast<std::vector<char>*>(context);
+    storage->assign(size, 'x');
+    return storage->data();
+}
+
+void APS5_VABI VectorRelease(void*, void*) {}
+
 void TestAllocatorExRecorded() {
     ExRecord record {};
     NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
@@ -612,6 +620,21 @@ void TestAllocatorExRecorded() {
     Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
             && std::memcmp(record.block.data(), "xyz", 4) == 0,
         "the limit bounds the read of an unterminated buffer");
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    const int allocations = record.allocations;
+    errno = 71;
+    Require(_sceNpAllocatorExStrdup(&allocator, unreadable) == nullptr && record.allocations == allocations && errno == 71,
+        "an unreadable string is refused before allocating and errno is kept");
+    Require(_sceNpAllocatorExStrndup(&allocator, unreadable, 8) == nullptr && record.allocations == allocations && errno == 71,
+        "an unreadable bounded string is refused before allocating and errno is kept");
+    Require(_sceNpAllocatorExStrndup(&allocator, unreadable, 0) != nullptr && record.size == 1 && record.block[0] == 0,
+        "a zero limit reads nothing and duplicates an empty string");
+    std::vector<char> storage;
+    NpAllocatorEx vectorAllocator {{VectorAllocate, nullptr, VectorRelease, &storage}, 0};
+    const std::string longText(5000, 'n');
+    Require(_sceNpAllocatorExStrdup(&vectorAllocator, longText.c_str()) == storage.data() && storage.size() == 5001
+            && std::memcmp(storage.data(), longText.c_str(), 5001) == 0,
+        "a string longer than one copy chunk is duplicated whole");
 }
 
 void TestRingBuf() {
@@ -1097,6 +1120,13 @@ void TestUserIdList() {
     }
     Require(sceNpUserGetUserIdList(users.data(), users.size(), &count) == 0, "the registered user ids are read");
     Require(count == 1 && users[0] == USER_SERVICE_INITIAL_USER_ID, "the initial user is the only registered user");
+    count = 0x5A5A;
+    errno = 71;
+    Require(sceNpUserGetUserIdList(reinterpret_cast<int*>(0x10), users.size(), &count) == NpInvalidArgument && errno == 71,
+        "an unwritable user id list is refused and errno is kept");
+    Require(count == 0x5A5A, "an unwritable user id list leaves the count unchanged");
+    Require(sceNpUserGetUserIdList(users.data(), users.size(), reinterpret_cast<int*>(0x10)) == NpInvalidArgument && errno == 71,
+        "an unwritable user count is refused and errno is kept");
 }
 
 void TestIds() {
@@ -1154,6 +1184,11 @@ void TestJsonText() {
                 Equals(guarded.buffer, "abcdefghij") && guarded.canary[0] == 0,
         "escaping that runs out of room keeps the text it appended");
     Require(sceNpUtilJsonEscape(reinterpret_cast<char*>(0x10), 64, "a", 1) == NpUtilInvalid, "escaping into an unmapped buffer is refused");
+    std::strcpy(escaped, "x");
+    Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), reinterpret_cast<const char*>(0x10), 4) == NpUtilInvalid && Equals(escaped, "x"),
+        "escaping an unmapped source is refused and leaves the buffer");
+    Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), "yz", 100) == 0 && Equals(escaped, "xyz"),
+        "escaping stops at the source terminator before its length");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -1173,6 +1208,9 @@ void TestJsonText() {
         "unescaping into an unwritable buffer is refused and keeps errno");
     Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71,
         "an unwritable unescaped length is refused and keeps errno");
+    length = 9;
+    Require(sceNpUtilJsonUnescape(text, sizeof(text), reinterpret_cast<const char*>(0x10), 4, &length) == NpUtilInvalid && length == 9,
+        "unescaping an unmapped source is refused and leaves the length");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -1194,6 +1232,11 @@ void TestJsonText() {
         "unwritable destination length is refused");
     Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "a", 1, &length, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid,
         "unwritable consumed length is refused");
+    length = 9;
+    consumed = 9;
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), reinterpret_cast<const char*>(0x10), 1, &length, &consumed) == NpUtilInvalid
+            && length == 9 && consumed == 9,
+        "an unmapped source character is refused and leaves the lengths");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";

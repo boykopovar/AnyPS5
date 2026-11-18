@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <type_traits>
 
@@ -89,6 +90,7 @@ struct String {
 
 StringView ViewOf(const StringImpl* impl);
 char16_t CodeUnitAt(const StringView& view, unsigned index);
+std::optional<std::uint16_t> PortOf(const URL& url);
 
 struct StringViewWithUnderlyingString {
     StringView view;

@@ -570,6 +570,97 @@ static void BorrowedUnixReadiness() {
 }
 #endif
 
+static void MultiWakeupPoll() {
+    const auto before = Descriptors();
+    Require(curl_multi_wakeup_nid_postfix(nullptr) == CURLM_BAD_HANDLE);
+    auto* multi = curl_multi_init_nid_postfix();
+    Require(multi != nullptr);
+    int pair[2]{};
+    Require(socketpair_nid_postfix(1, 1, 0, pair) == 0);
+
+    guest_curl_waitfd extra{pair[1], CURL_WAIT_POLLIN, 0};
+    int ready = -1;
+    const auto baselineStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 60, &ready) == CURLM_OK);
+    const auto baselineElapsed = std::chrono::steady_clock::now() - baselineStart;
+    Require(ready == 0 && extra.revents == 0);
+    Require(baselineElapsed >= std::chrono::milliseconds(25));
+
+    Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    extra.revents = 0;
+    ready = -1;
+    const auto prePollStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 3000, &ready) == CURLM_OK);
+    const auto prePollElapsed = std::chrono::steady_clock::now() - prePollStart;
+    Require(ready == 0 && extra.revents == 0);
+    Require(prePollElapsed < std::chrono::milliseconds(1500));
+
+    extra.revents = 0;
+    ready = -1;
+    const auto drainedPollStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 60, &ready) == CURLM_OK);
+    Require(std::chrono::steady_clock::now() - drainedPollStart >= std::chrono::milliseconds(25));
+    Require(ready == 0 && extra.revents == 0);
+
+    for (int round = 0; round < 3; ++round) {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool wakerReady = false;
+        bool pollArmed = false;
+        std::int32_t wakeResult = -1;
+
+        std::thread waker([&] {
+            {
+                std::lock_guard lock(mutex);
+                wakerReady = true;
+            }
+            cv.notify_one();
+            {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [&] { return pollArmed; });
+            }
+            wakeResult = curl_multi_wakeup_nid_postfix(multi);
+        });
+
+        {
+            std::unique_lock lock(mutex);
+            cv.wait(lock, [&] { return wakerReady; });
+            pollArmed = true;
+        }
+        cv.notify_one();
+
+        extra.revents = 0;
+        ready = -1;
+        const auto wakeStart = std::chrono::steady_clock::now();
+        const auto pollResult = curl_multi_poll_nid_postfix(multi, &extra, 1, 4000, &ready);
+        const auto wakeElapsed = std::chrono::steady_clock::now() - wakeStart;
+
+        waker.join();
+        Require(wakeResult == CURLM_OK);
+        Require(pollResult == CURLM_OK);
+        Require(ready == 0 && extra.revents == 0);
+        Require(wakeElapsed < std::chrono::milliseconds(1500));
+    }
+
+    extra.revents = 0;
+    ready = -1;
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 20, &ready) == CURLM_OK);
+    Require(ready == 0 && extra.revents == 0);
+
+    Require(send_nid_postfix(pair[0], "w", 1, 0) == 1);
+    extra.revents = 0;
+    ready = -1;
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 1000, &ready) == CURLM_OK);
+    Require(ready == 1 && (extra.revents & CURL_WAIT_POLLIN) != 0);
+    char byte = 0;
+    Require(recv_nid_postfix(pair[1], &byte, 1, 0) == 1 && byte == 'w');
+
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
+    Require(Descriptors() == before);
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
@@ -583,5 +674,6 @@ int main() {
     ConnectOnly();
     CallbackOwnership();
     ErrorsAndExtraDescriptors();
+    MultiWakeupPoll();
     curl_global_cleanup_nid_postfix();
 }
