@@ -1603,6 +1603,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.imageTableRanges = snapshot.tables.ranges;
         result.imageTableReadRanges.reserve(snapshot.tables.tables.size());
         for (const auto& table : snapshot.tables.tables) result.imageTableReadRanges.push_back(table.readRanges.Copy());
+        result.imageTableRecords.reserve(snapshot.tables.tables.size());
+        for (const auto& table : snapshot.tables.tables) result.imageTableRecords.push_back({table.recordStart, table.recordStride, table.recordBytes});
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
@@ -1929,7 +1931,7 @@ std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
 
 std::uint64_t resultBytes(const RecompileResult& result) {
     const auto bytes = [](const auto& values) { return vectorBytes(values); };
-    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges) + bytes(result.imageTableRecords);
     for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
     for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
     return total;
