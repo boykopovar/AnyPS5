@@ -503,6 +503,8 @@ int main() {
     int moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal(nullptr, 0, nullptr, 0, &moduleResult) == kKernelEinval);
     Require(moduleResult == -1);
+    Require(sceSysmoduleLoadModuleByNameInternal(reinterpret_cast<const char*>(0x10), 0, nullptr, 0, &moduleResult) == static_cast<int>(0x8002000e));
+    Require(moduleResult == -1);
     KernelModule byName = sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult);
     Require(byName > 0);
     Require(moduleResult == 0);
