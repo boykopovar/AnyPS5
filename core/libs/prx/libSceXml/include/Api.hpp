@@ -202,9 +202,9 @@ std::uint32_t APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeTypeEv(const XmlNode* self
 bool APS5_VABI _ZNK3sce3Xml3Dom4Node11isAvailableEv(const XmlNode* self);
 XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node12getLastChildEv(XmlNodeId* result, const XmlNode* self);
 XmlString* APS5_VABI _ZNK3sce3Xml3Dom4Node12getNodeValueEv(XmlString* result, const XmlNode* self);
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE();
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list);
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEv();
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE();
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list);
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEv();
 XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node13getFirstChildEv(XmlNodeId* result, const XmlNode* self);
 XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom4Node13getParentNodeEv(XmlNodeId* result, const XmlNode* self);

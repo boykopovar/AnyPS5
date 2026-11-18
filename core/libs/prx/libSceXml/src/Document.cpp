@@ -289,15 +289,27 @@ std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNo
     return 0;
 }
 
+int GenerationChildren(Generation& generation, std::uint64_t offset, XmlHandle* list) {
+    const Reader reader(generation.buffers);
+    std::vector<XmlNodeId> items;
+    for (std::uint64_t child = reader.FirstChild(offset); child != 0; child = reader.Sibling(child)) {
+        items.push_back(MakeNode(&generation, child));
+    }
+    return NodeListReplace(list, items);
+}
+
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list) {
     if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
     Live(document);
-    Generation& generation = *RefOf(document)->generation;
+    return GenerationChildren(*RefOf(document)->generation, OffsetOf(node), list);
+}
+
+int GenerationAttributes(Generation& generation, std::uint64_t offset, XmlHandle* list) {
     const Reader reader(generation.buffers);
     std::vector<XmlNodeId> items;
-    for (std::uint64_t child = reader.FirstChild(OffsetOf(node)); child != 0; child = reader.Sibling(child)) {
-        items.push_back(MakeNode(&generation, child));
+    for (std::uint64_t attribute = reader.FirstAttribute(offset); attribute != 0; attribute = reader.NextAttribute(attribute)) {
+        items.push_back(MakeNode(&generation, attribute));
     }
     return NodeListReplace(list, items);
 }
@@ -306,13 +318,7 @@ int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* lis
     if (document == nullptr || list == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr || list->impl == nullptr) return ListNotInitialized;
     Live(document);
-    Generation& generation = *RefOf(document)->generation;
-    const Reader reader(generation.buffers);
-    std::vector<XmlNodeId> items;
-    for (std::uint64_t attribute = reader.FirstAttribute(OffsetOf(node)); attribute != 0; attribute = reader.NextAttribute(attribute)) {
-        items.push_back(MakeNode(&generation, attribute));
-    }
-    return NodeListReplace(list, items);
+    return GenerationAttributes(*RefOf(document)->generation, OffsetOf(node), list);
 }
 
 int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list) {

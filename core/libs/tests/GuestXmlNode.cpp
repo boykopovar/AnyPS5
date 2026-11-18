@@ -1,4 +1,5 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/include/InventoryExports.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -239,6 +240,35 @@ std::string DocumentRead(XmlString* (APS5_VABI* read)(XmlString*, const XmlHandl
     return Text(result);
 }
 
+using NodeListRead = int (APS5_VABI*)(const XmlNode*, XmlHandle*);
+using DocumentListRead = int (APS5_VABI*)(const XmlHandle*, XmlNodeId, XmlHandle*);
+
+const XmlHandle* g_initializer = nullptr;
+
+std::vector<XmlNodeId> Items(const XmlHandle* list) {
+    std::vector<XmlNodeId> items;
+    const std::uint32_t length = _ZNK3sce3Xml3Dom8NodeList9getLengthEv(list);
+    for (std::uint32_t i = 0; i < length; ++i) items.push_back(_ZNK3sce3Xml3Dom8NodeList4itemEj(list, i));
+    return items;
+}
+
+void CompareLists(const XmlHandle* document, XmlNodeId id, const XmlNode* node, NodeListRead fromNode, DocumentListRead fromDocument, const char* what) {
+    XmlHandle nodeList{nullptr};
+    XmlHandle documentList{nullptr};
+    Require(_ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&nodeList, g_initializer) == 0, "a node list starts");
+    Require(_ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&documentList, g_initializer) == 0, "a document list starts");
+    _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&nodeList, XmlNodeId{reinterpret_cast<void*>(9), reinterpret_cast<void*>(9), 0});
+    const int nodeResult = fromNode(node, &nodeList);
+    const int documentResult = fromDocument(document, id, &documentList);
+    Require(nodeResult == documentResult, what);
+    const std::vector<XmlNodeId> left = Items(&nodeList);
+    const std::vector<XmlNodeId> right = Items(&documentList);
+    Require(left.size() == right.size(), what);
+    for (std::size_t i = 0; i < left.size(); ++i) Require(SameId(left[i], right[i]), what);
+    _ZN3sce3Xml3Dom8NodeList9terminateEv(&nodeList);
+    _ZN3sce3Xml3Dom8NodeList9terminateEv(&documentList);
+}
+
 void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
     if (IdIsNull(id)) return;
     ++visited;
@@ -263,6 +293,8 @@ void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
     } else if (type == 4) {
         name = DocumentRead(&_ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE, document, id);
     }
+    CompareLists(document, id, &node, &_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE, &_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE, "getChildNodes matches the document read");
+    CompareLists(document, id, &node, &_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE, &_ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE, "getAttributes matches the document read");
     Require(NodeName(&node) == name, "getNodeName follows the node type");
     Require(NodeValue(&node) == value, "getNodeValue follows the node type");
     XmlNodeId attribute{};
@@ -281,6 +313,7 @@ void Visit(const XmlHandle* document, XmlNodeId id, int& visited) {
 
 void TestNavigation() {
     Fixture f;
+    g_initializer = &f.initializer;
     Require(f.Parse("<r a=\"1\" b=\"2\"><x>one<y z=\"3\"/>two</x><!-- c --><w/>tail</r>") == 0, "parse");
     XmlHandle document{nullptr};
     _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
@@ -314,6 +347,11 @@ void TestNavigation() {
         navigation.node(&result, &empty);
         Require(IdIsNull(result), "a node without a document has no relatives");
         Require(NodeName(&empty) == "<null>" && NodeValue(&empty) == "<null>", "a node without a document has no name or value");
+        XmlHandle list{nullptr};
+        Require(_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(&empty, nullptr) == static_cast<int>(0x80850003), "a null list is refused first");
+        Require(_ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(&empty, &list) == static_cast<int>(0x80850002), "a node without a document has no child list");
+        Require(_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(&empty, nullptr) == static_cast<int>(0x80850003), "a null attribute list is refused first");
+        Require(_ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(&empty, &list) == static_cast<int>(0x80850002), "a node without a document has no attribute list");
         bool threw = false;
         try {
             navigation.node(nullptr, &empty);

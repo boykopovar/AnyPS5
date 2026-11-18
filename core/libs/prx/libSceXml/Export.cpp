@@ -886,16 +886,16 @@ XmlString* APS5_VABI _ZNK3sce3Xml3Dom4Node12getNodeValueEv(XmlString* result, co
     return XmlDom::NodeValue(result, self);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list) {
+    return XmlDom::NodeAttributes(self, list);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getAttributesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEPNS1_8NodeListE(const XmlNode* self, XmlHandle* list) {
+    return XmlDom::NodeChildNodes(self, list);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13getChildNodesEv() {

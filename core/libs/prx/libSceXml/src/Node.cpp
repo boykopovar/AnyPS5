@@ -2,6 +2,7 @@
 
 #include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DomReader.hpp"
+#include "prx/libSceXml/src/NodeList.hpp"
 
 #include <stdexcept>
 
@@ -112,6 +113,31 @@ XmlString* NodeValue(XmlString* result, const XmlNode* self) {
     case AttributeNode: return GenerationString(result, *generation, StringQuery::AttributeValue, offset);
     default: return GenerationString(result, *generation, StringQuery::Text, offset);
     }
+}
+
+namespace {
+
+constexpr int NodeListMissing = static_cast<int>(0x80850003);
+constexpr int NodeWithoutDocument = static_cast<int>(0x80850002);
+
+int FillNodeList(const XmlNode* self, XmlHandle* list, int (*fill)(Generation&, std::uint64_t, XmlHandle*)) {
+    if (self == nullptr) throw std::invalid_argument("sce::Xml::Dom::Node: null object");
+    if (list == nullptr) return NodeListMissing;
+    if (self->document == nullptr) return NodeWithoutDocument;
+    if (list->impl == nullptr) return ListNotInitialized;
+    Generation* generation = static_cast<Generation*>(self->document);
+    if (!generation->alive) throw std::logic_error("sce::Xml::Dom::Node: reading a node after its builder parsed again or terminated reads freed memory in 13.42");
+    return fill(*generation, reinterpret_cast<std::uint64_t>(self->id.second), list);
+}
+
+}
+
+int NodeChildNodes(const XmlNode* self, XmlHandle* list) {
+    return FillNodeList(self, list, &GenerationChildren);
+}
+
+int NodeAttributes(const XmlNode* self, XmlHandle* list) {
+    return FillNodeList(self, list, &GenerationAttributes);
 }
 
 }
