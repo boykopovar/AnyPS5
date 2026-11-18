@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -19,7 +20,7 @@ void ZeroGuest(void* destination, std::size_t bytes, const char* function) {
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, zeros, bytes);
     errno = savedErrno;
-    if (!copied) NotImplemented_nid_no_patch(function);
+    if (!copied) throw std::runtime_error(function);
 }
 
 } // namespace
@@ -41,8 +42,7 @@ int APS5_VABI sceSystemLogger2NativeQueueClientSetDeliveryEnable() {
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientSetDeliveryResult() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SYSTEM_LOGGER2_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientSetNativeQueueConfig() {
@@ -50,7 +50,7 @@ int APS5_VABI sceSystemLogger2NativeQueueClientSetNativeQueueConfig() {
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientSetBatchDeliveryResult() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_SYSTEM_LOGGER2_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientSetEventFilter() {
@@ -68,7 +68,7 @@ int APS5_VABI sceSystemLogger2NativeQueueClientGetEvent2() {
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceSystemLogger2NativeQueueClientTerminate() {

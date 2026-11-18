@@ -1802,6 +1802,28 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
+
+    add_test_executable(guest_system_logger2_game_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger2Game.cpp)
+    target_include_directories(guest_system_logger2_game_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_logger2_game_tests PRIVATE libSceSystemLogger2Game libc)
+    configure_windows_unwind(guest_system_logger2_game_tests)
+    add_test(NAME guest_system_logger2_game COMMAND guest_system_logger2_game_tests)
+    set_tests_properties(guest_system_logger2_game PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_logger2_game PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2Game>")
+    endif()
+
+    add_test_executable(guest_system_logger2_delivery_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger2Delivery.cpp)
+    target_include_directories(guest_system_logger2_delivery_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_logger2_delivery_tests PRIVATE libSceSystemLogger2Delivery libc)
+    configure_windows_unwind(guest_system_logger2_delivery_tests)
+    add_test(NAME guest_system_logger2_delivery COMMAND guest_system_logger2_delivery_tests)
+    set_tests_properties(guest_system_logger2_delivery PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_logger2_delivery PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2Delivery>")
+    endif()
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)

@@ -233,17 +233,23 @@ int APS5_VABI sceSystemLogger2SetRnpsEventAsync(const void* event) {
 }
 
 int APS5_VABI libSceSystemLogger2Unknown_PcjxaaFQATU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(loggerMutex);
+    if (!loggerInitialized) return NOT_INITIALIZED;
+    return NOT_AVAILABLE;
 }
 APS5_EXPORT("PcjxaaFQATU", libSceSystemLogger2Unknown_PcjxaaFQATU_nid_no_patch);
 
 int APS5_VABI libSceSystemLogger2Unknown_UI7zoVuRjdU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(loggerMutex);
+    if (!loggerInitialized) return NOT_INITIALIZED;
+    return NOT_AVAILABLE;
 }
 APS5_EXPORT("UI7zoVuRjdU", libSceSystemLogger2Unknown_UI7zoVuRjdU_nid_no_patch);
 
 int APS5_VABI libSceSystemLogger2Unknown_eI4wpp_plus_8Bco_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(loggerMutex);
+    if (!loggerInitialized) return NOT_INITIALIZED;
+    return NOT_AVAILABLE;
 }
 APS5_EXPORT("eI4wpp+8Bco", libSceSystemLogger2Unknown_eI4wpp_plus_8Bco_nid_no_patch);
 
