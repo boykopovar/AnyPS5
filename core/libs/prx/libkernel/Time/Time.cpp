@@ -14,6 +14,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -114,11 +115,59 @@ static std::uint64_t ClockOrigin() {
     return origin;
 }
 
-static std::uint64_t GetMonotonicNanos() {
+static std::uint64_t ScaledMonotonicNanos() {
     if (TimeScale() == 1.0) return RawMonotonicNanos();
     const auto origin = ClockOrigin();
     const auto raw = RawMonotonicNanos();
     return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
+}
+
+namespace {
+
+struct GuestClockPause {
+    std::mutex mutex;
+    unsigned depth = 0;
+    std::atomic<std::uint64_t> sequence{0};
+    std::atomic<bool> paused{false};
+    std::atomic<std::uint64_t> pausedAt{0};
+    std::atomic<std::uint64_t> pausedNanos{0};
+};
+
+GuestClockPause& ClockPause() {
+    static GuestClockPause pause;
+    return pause;
+}
+
+}
+
+static std::uint64_t GetMonotonicNanos() {
+    auto& pause = ClockPause();
+    for (;;) {
+        const auto sequence = pause.sequence.load();
+        if ((sequence & 1u) != 0) continue;
+        const auto now = pause.paused.load() ? pause.pausedAt.load() : ScaledMonotonicNanos() - pause.pausedNanos.load();
+        if (pause.sequence.load() == sequence) return now;
+    }
+}
+
+extern "C" void KernelPauseGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth++ != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedAt.store(ScaledMonotonicNanos() - pause.pausedNanos.load());
+    pause.paused.store(true);
+    pause.sequence.fetch_add(1);
+}
+
+extern "C" void KernelResumeGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth == 0 || --pause.depth != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedNanos.store(ScaledMonotonicNanos() - pause.pausedAt.load());
+    pause.paused.store(false);
+    pause.sequence.fetch_add(1);
 }
 
 static std::uint64_t GetStartNanos() {
