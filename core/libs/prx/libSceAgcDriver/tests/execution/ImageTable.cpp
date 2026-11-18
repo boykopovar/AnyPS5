@@ -66,6 +66,7 @@ constexpr std::uint32_t StoreHalfPitch = 256u / sizeof(std::uint16_t);
 alignas(256) std::array<std::uint16_t, StoreHalfPitch * Height> StoreHalfTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
+alignas(256) std::array<std::uint32_t, 64 * Stride / 4> WideTable{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
 alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
@@ -527,6 +528,27 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
     return Execute(device, span, Srt.data(), memory, groups, threads, waveSize);
+}
+
+template <std::size_t CodeWords>
+Outcome RunWide(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, std::uint32_t outputRecord) {
+    const auto table = Buffer(WideTable.data(), static_cast<std::uint32_t>(sizeof(WideTable)));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    auto* output = WideTable.data() + outputRecord * (Stride / 4u);
+    const auto outputBuffer = Buffer(output, groups * Lanes * 16u);
+    std::copy(table.begin(), table.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    std::copy(outputBuffer.begin(), outputBuffer.end(), Srt.begin() + 8);
+    const std::span<const std::uint32_t> span(code);
+    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+        {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+        {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+        {reinterpret_cast<std::uintptr_t>(WideTable.data()), std::as_bytes(std::span(WideTable))},
+        {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+    }};
+    auto outcome = Execute(device, span, Srt.data(), memory, groups, Lanes, 64);
+    outcome.words.assign(output, output + groups * Lanes * 4u);
+    return outcome;
 }
 
 template <std::size_t CodeWords>
@@ -1030,6 +1052,17 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto aliased = Run(device, TableCode, 1, Lanes, 64, true);
     Require(Faulted(aliased) && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table: a dispatch storing into its own table did not fault on use:\n" + aliased.log);
     SetClassRecords();
+    Keys = {};
+    const auto plain = Run(device, TableCode, 1, Lanes, 64);
+    Require(!Faulted(plain), "image table: the record before a wide table run faulted:\n" + plain.log);
+    std::fill(WideTable.begin(), WideTable.end(), 0u);
+    std::copy(Table.begin(), Table.end(), WideTable.begin());
+    const auto beside = RunWide(device, TableCode, 1, 32u);
+    Require(!Faulted(beside), "image table: a dispatch storing into records no key of it selects faulted:\n" + beside.log);
+    Require(Group(beside, 0) == Group(plain, 0), "image table: a record beside a store into other records of its table differs from the run without the store");
+    std::copy(Table.begin(), Table.end(), WideTable.begin());
+    const auto over = RunWide(device, TableCode, 1, 0u);
+    Require(Faulted(over) && over.log.find("is written by its own dispatch") != std::string::npos, "image table: a store over the selected record of a wide table did not fault:\n" + over.log);
 }
 
 void RunReadTests(AgcDriver::VulkanDevice& device) {
