@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -119,6 +120,29 @@ void TestZeroAlphaFollowsTheLastSample() {
     Require(average.engaged && average.storage.value == 9.0f);
 }
 
+template<class TCall>
+bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestUnmappedFilter() {
+    WebRtcSmoothingFilterImpl filter{};
+    _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(&filter, 0);
+    auto* unmapped = reinterpret_cast<WebRtcSmoothingFilterImpl*>(0x10);
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(unmapped, 20); }));
+    Require(ThrowsInvalidArgument([&] { Slot<AddSample>(filter, 2)(unmapped, 1.0f); }));
+    Require(ThrowsInvalidArgument([&] { Slot<GetAverage>(filter, 3)(unmapped); }));
+    Require(ThrowsInvalidArgument([&] { Slot<SetTimeConstantMs>(filter, 4)(unmapped, 10); }));
+    Add(filter, 3.0f);
+    const auto average = Average(filter);
+    Require(average.engaged && average.storage.value == 3.0f);
+}
+
 void TestDeletingDestructor() {
     auto* filter = static_cast<WebRtcSmoothingFilterImpl*>(_Znwm_nid_postfix(sizeof(WebRtcSmoothingFilterImpl)));
     _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(filter, 20);
@@ -135,6 +159,7 @@ int main() {
     TestFirstSampleAndTimeConstant();
     TestTimeConstantRefusedDuringInitialization();
     TestZeroAlphaFollowsTheLastSample();
+    TestUnmappedFilter();
     TestDeletingDestructor();
     return 0;
 }
