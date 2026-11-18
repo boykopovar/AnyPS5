@@ -11,12 +11,17 @@
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, std::uint64_t>, 5> CipherSuites{{
+constexpr std::array<std::pair<std::string_view, std::uint64_t>, 10> CipherSuites{{
     {"TLS_AES_128_GCM_SHA256", 0x03001301u},
+    {"AEAD-AES128-GCM-SHA256", 0x03001301u},
     {"TLS_AES_256_GCM_SHA384", 0x03001302u},
+    {"AEAD-AES256-GCM-SHA384", 0x03001302u},
     {"TLS_CHACHA20_POLY1305_SHA256", 0x03001303u},
+    {"AEAD-CHACHA20-POLY1305-SHA256", 0x03001303u},
     {"TLS_AES_128_CCM_SHA256", 0x03001304u},
-    {"TLS_AES_128_CCM_8_SHA256", 0x03001305u}
+    {"AEAD-AES128-CCM-SHA256", 0x03001304u},
+    {"TLS_AES_128_CCM_8_SHA256", 0x03001305u},
+    {"AEAD-AES128-CCM-8-SHA256", 0x03001305u}
 }};
 
 std::uint64_t CipherSuiteId(std::string_view name) {
@@ -46,24 +51,18 @@ extern "C" int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix(LibreSsl3SslCtx* c
     const std::string guestText = ReadGuestText(ciphersuites, __func__);
     auto* const stack = sk_new_nid_postfix(nullptr);
     if (!stack) return 0;
-    std::string_view remaining(guestText);
-    std::size_t recognised = 0;
-    for (;;) {
-        const std::size_t separator = remaining.find(':');
-        const std::uint64_t id = CipherSuiteId(remaining.substr(0, separator));
-        if (id) {
-            if (!sk_push_nid_postfix(stack, CipherIdPointer(id))) {
+    if (!guestText.empty()) {
+        std::string_view remaining(guestText);
+        for (;;) {
+            const std::size_t separator = remaining.find(':');
+            const std::uint64_t id = CipherSuiteId(remaining.substr(0, separator));
+            if (!id || !sk_push_nid_postfix(stack, CipherIdPointer(id))) {
                 sk_free_nid_postfix(stack);
                 return 0;
             }
-            ++recognised;
+            if (separator == std::string_view::npos) break;
+            remaining.remove_prefix(separator + 1);
         }
-        if (separator == std::string_view::npos) break;
-        remaining.remove_prefix(separator + 1);
-    }
-    if (recognised == 0) {
-        sk_free_nid_postfix(stack);
-        return 0;
     }
     sk_free_nid_postfix(static_cast<LibreSslStack*>(context->cipherListTls13));
     context->cipherListTls13 = stack;
