@@ -141,6 +141,21 @@ void KeepsTheCurveOfThePointAfterTheGroupChanges() {
     EC_KEY_free_nid_postfix(key);
 }
 
+void LeavesTheKeyUnchangedWhenTheInputCannotBeRead() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
+    Require(key != nullptr);
+    const unsigned char* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
+    const unsigned char* cursor = unreadable;
+    bool threw = false;
+    try {
+        o2i_ECPublicKey_nid_postfix(&key, &cursor, 65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && key->publicKey == nullptr && cursor == unreadable);
+    EC_KEY_free_nid_postfix(key);
+}
+
 void ReleasesTheDecodedPointWhenDecodingThrows() {
     constexpr int Secp224r1 = 713;
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp224r1);
@@ -268,6 +283,7 @@ int main() {
     LeavesAKeyWithoutAPointUnchangedOnFailure();
     KeepsTheCurveOfThePointAfterTheGroupChanges();
     ReleasesTheDecodedPointWhenDecodingThrows();
+    LeavesTheKeyUnchangedWhenTheInputCannotBeRead();
     RejectsAMissingKeyOrGroup();
     RejectsBadEncodings();
     RejectsARangeThatWrapsTheAddressSpace();

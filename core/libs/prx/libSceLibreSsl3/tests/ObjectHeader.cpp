@@ -2,10 +2,11 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <array>
-#include <limits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <source_location>
 #include <span>
 #include <stdexcept>
@@ -61,8 +62,10 @@ int main() {
     Check(std::array<unsigned char, 4>{0xdf, 0x80, 0x7f, 0}, 0, 4, 0, 127, 192);
     Check(std::array<unsigned char, 7>{0x1f, 0x87, 0xff, 0xff, 0xff, 0x7f, 0}, 0, 7, 0, 0x7fffffff, 0);
     Check(std::array<unsigned char, 4>{0x04, 0x82, 0, 0}, 0, 4, 0, 4, 0);
-    Check(std::array<unsigned char, 10>{0x30, 0x88, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-        160, 10, -1, 16, 0, 155);
+    Check(std::array<unsigned char, 10>{0x30, 0x88, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, 128, 0, 0, 0, 0, 123);
+    Check(std::array<unsigned char, 10>{0x30, 0x88, 0x80, 0, 0, 0, 0, 0, 0, 0}, 128, 0, 0, 0, 0, 123);
+    Check(std::array<unsigned char, 10>{0x30, 0x88, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+        160, 10, std::numeric_limits<std::int64_t>::max(), 16, 0, 155);
     std::vector<unsigned char> longest(128);
     longest[0] = 4;
     longest[1] = 0xfe;

@@ -215,7 +215,6 @@ constexpr int Asn1Library = 13;
 constexpr int EcLibrary = 16;
 constexpr int AnyFunction = 0xfff;
 constexpr int NestedAsn1Error = 58;
-constexpr int MallocFailure = 65;
 constexpr int PassedNullParameter = 67;
 constexpr int BadObjectHeader = 102;
 constexpr int D2iEcpkParametersFailure = 117;
@@ -261,6 +260,12 @@ struct Parameters {
 struct PointDeleter {
     void operator()(EcPoint* point) const {
         EC_POINT_free_nid_postfix(point);
+    }
+};
+
+struct GroupDeleter {
+    void operator()(EcGroup* group) const {
+        EC_GROUP_free_nid_postfix(group);
     }
 };
 
@@ -353,10 +358,6 @@ std::optional<Parameters> DecodeParameters(std::span<const unsigned char> input)
     }
     const std::span<const unsigned char> content = cursor.first(header.length);
     const std::size_t consumed = input.size() - cursor.size() + header.length;
-    if (content.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
-        PutAsn1Error(NestedAsn1Error, 1);
-        return std::nullopt;
-    }
     if (header.tag == NullTag) {
         if (!content.empty()) {
             PutAsn1Error(NullIsWrongLength, 2);
@@ -391,7 +392,12 @@ EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
     const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
     if (sized && length > 0) {
-        const std::int64_t copied = std::min(length, MaxEncodedBytes);
+        std::int64_t copied = std::min(length, MaxEncodedBytes);
+        if (copied > 2) {
+            unsigned char header[2];
+            if (!RangeFits(in, 2) || !GuestBytes(in).CopyIn(header, sizeof(header))) APS5_INVALID_ARG_EX;
+            if ((header[0] & 0x1f) != 0x1f && header[1] < 0x80) copied = std::min<std::int64_t>(copied, 2 + header[1]);
+        }
         if (!RangeFits(in, copied)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(copied));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
@@ -424,22 +430,22 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     EcKey* current = nullptr;
     if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     if (key != nullptr && (!GuestPtr<EcKey*>(key).CopyIn(current) || !GuestPtr<EcKey*>(key).CopyOut(current))) APS5_INVALID_ARG_EX;
-    std::unique_ptr<EcKey, KeyDeleter> created;
-    if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
-    EcKey* result = created ? created.get() : current;
     const unsigned char* const start = cursor;
-    EcGroup* group = DecodeGroup(cursor, length);
-    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
-        EC_GROUP_free_nid_postfix(group);
-        APS5_INVALID_ARG_EX;
-    }
-    if (group == nullptr) {
+    std::unique_ptr<EcGroup, GroupDeleter> group(DecodeGroup(cursor, length));
+    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
+    if (!group) {
         PutError(EcLibrary);
         return nullptr;
     }
+    std::unique_ptr<EcKey, KeyDeleter> created;
+    if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
+    EcKey* result = created ? created.get() : current;
+    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) {
+        GuestPtr<const unsigned char*>(in).CopyOut(start);
+        APS5_INVALID_ARG_EX;
+    }
     EC_GROUP_free_nid_postfix(result->group);
-    result->group = group;
-    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) APS5_INVALID_ARG_EX;
+    result->group = group.release();
     created.release();
     return result;
 }
@@ -464,14 +470,12 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         return nullptr;
     }
     std::unique_ptr<EcPoint, PointDeleter> decoded(EC_POINT_new_nid_postfix(result->group));
-    if (!decoded) {
-        PutError(MallocFailure);
-        return nullptr;
-    }
     if (!EC_POINT_oct2point_nid_postfix(result->group, decoded.get(), bytes.data(), bytes.size(), nullptr)) {
         PutError(EcLibrary);
         return nullptr;
     }
+    const unsigned char* const next = cursor + length;
+    if (!GuestPtr<const unsigned char*>(in).CopyOut(next)) APS5_INVALID_ARG_EX;
     if (result->publicKey != nullptr && result->publicKey->curve.nid == result->group->curve.nid) {
         std::swap(result->publicKey->point, decoded->point);
     } else {
@@ -479,8 +483,6 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         result->publicKey = decoded.release();
     }
     result->conversionForm = bytes[0] & ~1;
-    cursor += length;
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     return result;
 }
 

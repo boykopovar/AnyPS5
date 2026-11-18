@@ -1,7 +1,67 @@
+/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/asn1/asn1_lib.c (asn1_lib.c,v 1.54) and
+ * asn1/a_int.c */
+/* $OpenBSD: asn1_lib.c,v 1.45 2020/12/08 15:06:42 tb Exp $ */
+/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+ * All rights reserved.
+ *
+ * This package is an SSL implementation written
+ * by Eric Young (eay@cryptsoft.com).
+ * The implementation was written so as to conform with Netscapes SSL.
+ *
+ * This library is free for commercial and non-commercial use as long as
+ * the following conditions are aheared to.  The following conditions
+ * apply to all code found in this distribution, be it the RC4, RSA,
+ * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
+ * included with this distribution is covered by the same copyright terms
+ * except that the holder is Tim Hudson (tjh@cryptsoft.com).
+ *
+ * Copyright remains Eric Young's, and as such any Copyright notices in
+ * the code are not to be removed.
+ * If this package is used in a product, Eric Young should be given attribution
+ * as the author of the parts of the library used.
+ * This can be in the form of a textual message at program startup or
+ * in documentation (online or textual) provided with the package.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    "This product includes cryptographic software written by
+ *     Eric Young (eay@cryptsoft.com)"
+ *    The word 'cryptographic' can be left out if the rouines from the library
+ *    being used are not cryptographic related :-).
+ * 4. If you include any Windows specific code (or a derivative thereof) from
+ *    the apps directory (application code) you must include an acknowledgement:
+ *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * The licence and distribution terms for any publically available version or
+ * derivative of this code cannot be changed.  i.e. this code cannot simply be
+ * copied and put under another distribution licence
+ * [including the GNU Public Licence.]
+ */
+
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
-#include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/libc.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
@@ -13,7 +73,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
 
 namespace {
 
@@ -112,13 +171,9 @@ private:
     std::vector<unsigned char> taken;
 };
 
-bool ReadByte(GuestInput& input, unsigned char& byte) {
-    return input.ReadByte(byte);
-}
-
 bool ReadIdentifier(GuestInput& input, std::uint8_t& tagClass, bool& constructed, std::uint32_t& tag) {
     unsigned char identifier;
-    if (!ReadByte(input, identifier)) return false;
+    if (!input.ReadByte(identifier)) return false;
     tagClass = identifier >> 6;
     constructed = (identifier & 0x20) != 0;
     tag = identifier & 0x1f;
@@ -126,7 +181,7 @@ bool ReadIdentifier(GuestInput& input, std::uint8_t& tagClass, bool& constructed
     tag = 0;
     unsigned char byte;
     do {
-        if (!ReadByte(input, byte)) return false;
+        if (!input.ReadByte(byte)) return false;
         if (tag > (std::numeric_limits<std::uint32_t>::max() >> 7)) return false;
         tag = (tag << 7) | (byte & 0x7f);
     } while (byte & 0x80);
@@ -135,7 +190,7 @@ bool ReadIdentifier(GuestInput& input, std::uint8_t& tagClass, bool& constructed
 
 bool ReadLength(GuestInput& input, bool& indefinite, std::size_t& length) {
     unsigned char lengthByte;
-    if (!ReadByte(input, lengthByte)) return false;
+    if (!input.ReadByte(lengthByte)) return false;
     indefinite = lengthByte == 0x80;
     length = lengthByte < 0x80 ? lengthByte : 0;
     if (lengthByte <= 0x80) return true;
@@ -143,7 +198,7 @@ bool ReadLength(GuestInput& input, bool& indefinite, std::size_t& length) {
     if (bytes == 0x7f) return false;
     for (int index = 0; index < bytes; ++index) {
         unsigned char byte;
-        if (!ReadByte(input, byte)) return false;
+        if (!input.ReadByte(byte)) return false;
         if (length > (std::numeric_limits<std::size_t>::max() >> 8)) return false;
         length = (length << 8) | byte;
     }
@@ -186,23 +241,27 @@ void ClearAndFree(void* data, std::size_t size) {
     free_nid_postfix(data);
 }
 
+void ValidateInteger(void* value) {
+    if (!value) return;
+    const Asn1String integer = GuestLoad(static_cast<const Asn1String*>(value), "ASN1_STRING");
+    if (!GuestWritable_nid_no_patch(value, sizeof(Asn1String))) throw std::invalid_argument("ASN1_STRING: unwritable object");
+    if ((integer.flags & 0x10) || !integer.data) return;
+    if (integer.length < 0) throw std::invalid_argument("ASN1_STRING: negative length");
+    if (!GuestWritable_nid_no_patch(integer.data, static_cast<std::size_t>(integer.length))) throw std::invalid_argument("ASN1_STRING: unwritable data");
+}
+
 void FreeInteger(void* value) {
     if (!value) return;
+    ValidateInteger(value);
     auto& integer = *static_cast<Asn1String*>(value);
-    if (!(integer.flags & 0x10)) {
-        if (integer.data) {
-            if (integer.length < 0) throw std::invalid_argument("ASN1_STRING: negative length");
-            ClearAndFree(integer.data, static_cast<std::size_t>(integer.length));
-        }
-    }
+    if (!(integer.flags & 0x10) && integer.data) ClearAndFree(integer.data, static_cast<std::size_t>(integer.length));
     integer.flags &= ~std::int64_t{0x10};
     integer.data = nullptr;
     integer.length = 0;
     free_nid_postfix(value);
 }
 
-
-} // namespace
+}
 
 extern "C" {
 
@@ -224,7 +283,8 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
     std::size_t parsedLength;
     if (!ReadIdentifier(remaining, parsedClass, constructed, parsedTag)
         || !ReadLength(remaining, indefinite, parsedLength) || (indefinite && !constructed)
-        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         GuestStore(tagClass, 0, "ASN1_get_object");
         GuestStore(tag, 0, "ASN1_get_object");
         GuestStore(length, std::int64_t{0}, "ASN1_get_object");
@@ -232,8 +292,7 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
         return 0x80;
     }
     int result = (constructed ? 0x20 : 0) | (indefinite ? 1 : 0);
-    if (parsedLength > remaining.Remaining()
-        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    if (parsedLength > remaining.Remaining()) {
         PutError(TooLong);
         result |= 0x80;
     }
@@ -250,15 +309,15 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
     const unsigned char* const start = GuestLoad(input, "d2i_ASN1_INTEGER");
     if (!start) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
     GuestStore(input, start, "d2i_ASN1_INTEGER");
+    void* previous = nullptr;
+    if (output) {
+        previous = GuestLoad(output, "d2i_ASN1_INTEGER");
+        GuestStore(output, previous, "d2i_ASN1_INTEGER");
+        ValidateInteger(previous);
+    }
     GuestInput remaining(start, static_cast<std::size_t>(length), "d2i_ASN1_INTEGER");
     auto content = ReadInteger(remaining);
     if (!content) return nullptr;
-    if (output) {
-        void* const previous = GuestLoad(output, "d2i_ASN1_INTEGER");
-        GuestStore(output, previous, "d2i_ASN1_INTEGER");
-        FreeInteger(previous);
-        GuestStore(output, static_cast<void*>(nullptr), "d2i_ASN1_INTEGER");
-    }
     if (content->empty()) {
         PutError(LengthMismatch);
         return nullptr;
@@ -296,8 +355,18 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         return nullptr;
     }
     *integer = {static_cast<std::int32_t>(content->size()), negative ? 0x102 : 2, data, 0};
-    if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
-    GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
+    try {
+        GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
+        if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
+    } catch (...) {
+        FreeInteger(integer);
+        try {
+            GuestStore(input, start, "d2i_ASN1_INTEGER");
+        } catch (...) {
+        }
+        throw;
+    }
+    FreeInteger(previous);
     return integer;
 }
 

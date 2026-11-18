@@ -13,6 +13,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 constexpr int Secp256r1 = 415;
@@ -78,10 +85,10 @@ const std::vector<unsigned char> P256Point = Hex(
     "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6"
     "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299");
 
-void RequireGroup(const EcKey* key, int nid) {
-    Require(key != nullptr && key->group != nullptr);
-    Require(key->group->curve.nid == nid);
-    Require(key->group->asn1Flag == 1);
+void RequireGroup(const EcKey* key, int nid, std::source_location location = std::source_location::current()) {
+    Require(key != nullptr && key->group != nullptr, location);
+    Require(key->group->curve.nid == nid, location);
+    Require(key->group->asn1Flag == 1, location);
 }
 
 void SignsAndVerifies(EcKey* key) {
@@ -242,6 +249,38 @@ void BoundsWhatItCopies() {
     EC_KEY_free_nid_postfix(key);
 }
 
+void ReadsOnlyTheBytesTheEncodingNeeds() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* base = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(base != nullptr);
+    DWORD previous;
+    Require(VirtualProtect(base + page, page, PAGE_NOACCESS, &previous));
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* base = static_cast<unsigned char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(base != MAP_FAILED);
+    Require(mprotect(base + page, page, PROT_NONE) == 0);
+#endif
+    unsigned char* const end = base + page - P256.size();
+    std::memcpy(end, P256.data(), P256.size());
+    for (const std::int64_t length : {std::int64_t{4096}, std::int64_t{5000}, std::int64_t{std::numeric_limits<std::int32_t>::max()}}) {
+        const unsigned char* cursor = end;
+        ERR_clear_error_nid_postfix();
+        EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, length);
+        Require(key != nullptr && cursor == end + P256.size());
+        RequireGroup(key, Secp256r1);
+        EC_KEY_free_nid_postfix(key);
+    }
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, 2 * page);
+#endif
+}
+
 void RejectsARangeThatWrapsTheAddressSpace() {
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
     Require(key != nullptr);
@@ -282,6 +321,7 @@ int main() {
     RejectsCurvesItCannotName();
     RejectsMalformedDer();
     BoundsWhatItCopies();
+    ReadsOnlyTheBytesTheEncodingNeeds();
     RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
     std::puts("libSceLibreSsl3 d2i_ECParameters tests passed");
