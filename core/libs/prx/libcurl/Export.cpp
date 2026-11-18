@@ -878,35 +878,6 @@ int Timer(CURLM* multi, long timeout, void* opaque) {
     return reinterpret_cast<Function>(context->timer)(multi, timeout, context->timerData);
 }
 
-int Push(CURL* parent, CURL* easy, size_t numHeaders, struct curl_pushheaders* headers, void* opaque) {
-    auto* context = static_cast<MultiContext*>(opaque);
-    std::shared_ptr<EasyContext> source;
-    {
-        std::lock_guard lock(contextMutex);
-        const auto found = easies.find(parent);
-        if (found != easies.end()) source = found->second;
-    }
-    if (!source) throw std::invalid_argument("curl push: unknown parent easy handle");
-    std::shared_ptr<EasyContext> copy;
-    try {
-        copy = std::make_shared<EasyContext>(*source);
-        std::lock_guard lock(contextMutex);
-        easies.insert_or_assign(easy, copy);
-    } catch (const std::bad_alloc&) {
-        return CURL_PUSH_DENY;
-    }
-    CopyEasyMime(parent, easy);
-    RebindEasy(easy, copy.get());
-    using Function = int (APS5_VABI*)(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
-    const auto result = reinterpret_cast<Function>(context->push)(parent, easy, numHeaders, headers, context->pushData);
-    if (result != CURL_PUSH_OK) {
-        ForgetEasyMime(easy);
-        std::lock_guard lock(contextMutex);
-        easies.erase(easy);
-    }
-    return result;
-}
-
 struct ShareContext {
     guest_curl_lock_callback lock = nullptr;
     guest_curl_unlock_callback unlock = nullptr;
@@ -935,6 +906,40 @@ std::shared_ptr<ShareContext> FindShare(CURLSH* share) {
 } // namespace
 
 extern "C" {
+
+int Push_nid_no_patch(CURL* parent, CURL* easy, size_t numHeaders, struct curl_pushheaders* headers, void* opaque) {
+    auto* context = static_cast<MultiContext*>(opaque);
+    std::shared_ptr<EasyContext> source;
+    {
+        std::lock_guard lock(contextMutex);
+        const auto found = easies.find(parent);
+        if (found != easies.end()) source = found->second;
+    }
+    if (!source) return CURL_PUSH_DENY;
+    std::shared_ptr<EasyContext> copy;
+    try {
+        copy = std::make_shared<EasyContext>(*source);
+        {
+            std::lock_guard lock(contextMutex);
+            easies.insert_or_assign(easy, copy);
+        }
+        CopyEasyMime(parent, easy);
+        RebindEasy(easy, copy.get());
+    } catch (const std::exception&) {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+        return CURL_PUSH_DENY;
+    }
+    using Function = int (APS5_VABI*)(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
+    const auto result = reinterpret_cast<Function>(context->push)(parent, easy, numHeaders, headers, context->pushData);
+    if (result != CURL_PUSH_OK) {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+    }
+    return result;
+}
 
 char* APS5_VABI curl_pushheader_bynum_nid_postfix(struct curl_pushheaders* h, size_t num) {
     return ::curl_pushheader_bynum(h, num);
@@ -1487,7 +1492,7 @@ std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::i
     } else if (option == CURLMOPT_PUSHFUNCTION) {
         auto* value = CURL_ARG(void*);
         result = ::curl_multi_setopt(multi_handle, CURLMOPT_PUSHDATA, context.get());
-        if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Push : nullptr);
+        if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Push_nid_no_patch : nullptr);
         if (result == CURLM_OK) context->push = value;
     } else if (option == CURLMOPT_PUSHDATA) {
         auto* value = CURL_ARG(void*);
