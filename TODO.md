@@ -1,6 +1,5 @@
 # TODO
 
-- PR #23173: answer review feedback until it merges, then delete the `fix/title-run-tests-interpreter-dlls` branch.
 - #23232: if asked, rerun the three failing agc_driver tests on the RTX 4070 SUPER with the Vulkan validation layer settings from AGENTS.md and post any `VUID-` lines.
 - docs(build): BUILD.md names WinLibs GCC 15.2.0; check the exception model of WinLibs 16.2.0 r3 (x86_64-ucrt-posix-seh), which builds the full tree here, and add it if it qualifies.
 - test(tools): reproduce the one-off `debt_split` failure in `test_apply_changes_preserve_original_occurrences_and_upstream_entries` with `ctest -R ^debt_split -j 32 --repeat until-fail:50`; file an issue with the log if it fails.
@@ -10,3 +9,4 @@
 - PR #22466: build it with WinLibs GCC 16.2.0 and comment whether the "multiple non-default manifests" link warning is gone.
 - #22358: build the open fix PRs with WinLibs GCC 16.2.0 and comment which ones compile.
 - After each upstream merge: run `py -3 -m unittest discover -s tools/tests` and the relinker ctest; file an issue for any Windows-only failure.
+- Skipped #23267 (reporter offered the test PR), #23262 (fix ready by reporter).
