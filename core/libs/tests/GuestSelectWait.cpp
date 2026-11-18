@@ -6,6 +6,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -17,6 +24,33 @@ static void Require(bool value, const char* message) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+template<typename TAction>
+static void WithStandardDevice(int descriptor, TAction action) {
+    const int saved = dup_nid_postfix(descriptor);
+#ifdef _WIN32
+    const int device = ::_open("NUL", _O_RDWR);
+#else
+    const int device = ::open("/dev/null", O_RDWR);
+#endif
+    Require(device >= 0, "could not open the standard descriptor fixture");
+    const int mapped = dup2_nid_postfix(device, descriptor);
+    const int deviceClosed = device != descriptor ? close_nid_postfix(device) : 0;
+    std::exception_ptr failure;
+    if (mapped == descriptor && deviceClosed == 0) {
+        try {
+            action();
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }
+    const int restored = saved >= 0 ? dup2_nid_postfix(saved, descriptor) : close_nid_postfix(descriptor);
+    const int savedClosed = saved >= 0 ? close_nid_postfix(saved) : 0;
+    Require(mapped == descriptor && deviceClosed == 0, "could not map the standard descriptor fixture");
+    Require(restored == (saved >= 0 ? descriptor : 0) && savedClosed == 0,
+        "could not restore the standard descriptor");
+    if (failure) std::rethrow_exception(failure);
 }
 
 int main() {
@@ -54,20 +88,24 @@ int main() {
     std::array<std::uint64_t, 16> read{};
     read[0] = 1 | (std::uint64_t{1} << 63);
     read[1] = 1;
-    const GuestTimeval limit{0, 500};
-    const auto start = Clock::now();
-    Require(select_nid_postfix(1, read.data(), nullptr, nullptr, &limit) == 0,
-        "select with no ready device did not time out");
-    Require(Clock::now() - start >= std::chrono::microseconds(limit.microseconds),
-        "select with no ready device returned before its deadline");
-    Require(read[0] == 0,
-        "select did not clear the bits up to the end of the last copied word");
-    Require(read[1] == 1,
-        "select did not preserve the words past the descriptor limit");
-    std::array<std::uint64_t, 16> write{};
-    write[0] = 2;
-    const GuestTimeval longLimit{1, 0};
-    Require(select_nid_postfix(2, nullptr, write.data(), nullptr, &longLimit) == 1 && write[0] == 2,
-        "select did not report a ready device");
+    WithStandardDevice(0, [&] {
+        const GuestTimeval limit{0, 500};
+        const auto start = Clock::now();
+        Require(select_nid_postfix(1, read.data(), nullptr, nullptr, &limit) == 0,
+            "select with no ready device did not time out");
+        Require(Clock::now() - start >= std::chrono::microseconds(limit.microseconds),
+            "select with no ready device returned before its deadline");
+        Require(read[0] == 0,
+            "select did not clear the bits up to the end of the last copied word");
+        Require(read[1] == 1,
+            "select did not preserve the words past the descriptor limit");
+    });
+    WithStandardDevice(1, [] {
+        std::array<std::uint64_t, 16> write{};
+        write[0] = 2;
+        const GuestTimeval longLimit{1, 0};
+        Require(select_nid_postfix(2, nullptr, write.data(), nullptr, &longLimit) == 1 && write[0] == 2,
+            "select did not report a ready device");
+    });
     std::puts("20 select wait scenarios passed");
 }
