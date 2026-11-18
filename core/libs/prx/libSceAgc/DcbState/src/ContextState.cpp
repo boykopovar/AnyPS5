@@ -10,7 +10,7 @@
 
 namespace {
 
-bool ReserveContextRestore(CommandBuffer* buffer) {
+bool ReserveContextPacket(CommandBuffer* buffer, std::uint32_t words) {
     const auto available = [&] {
         const auto up = reinterpret_cast<std::uintptr_t>(buffer->cursor_up);
         const auto down = reinterpret_cast<std::uintptr_t>(buffer->cursor_down);
@@ -20,9 +20,9 @@ bool ReserveContextRestore(CommandBuffer* buffer) {
         const auto count = (down - up) / sizeof(std::uint32_t);
         return count >= buffer->reserved_dw ? count - buffer->reserved_dw : 0;
     };
-    if (available() >= 5) return true;
-    if (buffer->callback == nullptr || buffer->reserved_dw > std::numeric_limits<std::uint32_t>::max() - 5u) return false;
-    return buffer->callback(buffer, buffer->reserved_dw + 5u, buffer->user_data) && available() >= 5;
+    if (available() >= words) return true;
+    if (buffer->callback == nullptr || buffer->reserved_dw > std::numeric_limits<std::uint32_t>::max() - words) return false;
+    return buffer->callback(buffer, buffer->reserved_dw + words, buffer->user_data) && available() >= words;
 }
 
 }
@@ -30,6 +30,20 @@ bool ReserveContextRestore(CommandBuffer* buffer) {
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
+    if (operation == 3) {
+        Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
+        if (!ReserveContextPacket(buf, 3)) return nullptr;
+        auto* first = buf->cursor_up;
+        first[0] = Agc::Command::Header(0x28u, 3);
+        first[1] = 0;
+        first[2] = 0x80018001u;
+        buf->cursor_up += 3;
+        if (!ReserveContextPacket(buf, 2)) return nullptr;
+        buf->cursor_up[0] = Agc::Command::Header(0x12u, 2);
+        buf->cursor_up[1] = 1;
+        buf->cursor_up += 2;
+        return sceAgcDcbContextStateOp_0100(buf, 0) == nullptr ? nullptr : first;
+    }
     if (operation != 1) {
         return sceAgcDcbContextStateOp_0100(buf, operation);
     }
@@ -67,7 +81,7 @@ uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, uint32_t op
     };
     if (operation == 0) {
         const auto registers = Agc::Command::GetCurrentDefaultCxRegisters();
-        if (!ReserveContextRestore(buf)) return nullptr;
+        if (!ReserveContextPacket(buf, 5)) return nullptr;
         auto* packet = buf->cursor_up;
         const auto pointer = reinterpret_cast<std::uintptr_t>(registers.data());
         packet[0] = Agc::Command::Header(0x9fu, 5);
