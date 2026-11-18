@@ -9,6 +9,7 @@
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <filesystem>
+#include <cstring>
 
 
 #include <utility>
@@ -36,7 +37,7 @@ WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vec
 
 const std::string& WindowsPePatcher::GetDiagnostics() const { return diagnostics; }
 
-std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
+std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines, const std::optional<std::uint32_t> requiredExtensions) {
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     report(0);
     diagnostics.clear();
@@ -71,6 +72,15 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     }
     if (!hasProcessParameters) {
         sections.push_back({".procpar", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(8)});
+        nextRva = AlignRva(nextRva + sections.back().Data.size());
+    }
+    if (requiredExtensions) {
+        std::vector<std::uint8_t> record(16);
+        constexpr char magic[8] = {'A', '5', 'C', 'P', 'U', 0, 0, 0};
+        std::memcpy(record.data(), magic, sizeof(magic));
+        Io::WriteU32(record, 8, 1);
+        Io::WriteU32(record, 12, *requiredExtensions);
+        sections.push_back({".aps5cpu", nextRva, SectionRead | 0x40u, std::move(record)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
     for (const auto& header : originalHeaders) {

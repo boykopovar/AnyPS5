@@ -11,6 +11,10 @@ namespace Elfpatcher {
     public:
         virtual ~IProgramHeaderLayoutBuilder() = default;
 
+        virtual std::size_t RequiredProgramHeaderCount(const std::vector<Domain::ProgramHeader>& originalHeaders, bool noteSlot) const {
+            return RequiredProgramHeaderCount(originalHeaders) + (noteSlot ? 1 : 0);
+        }
+
         virtual std::uint64_t ComputeExtraBlockVaddr(const std::vector<Domain::ProgramHeader>& originalHeaders, std::uint64_t extraBlockOffset) const = 0;
 
         virtual std::size_t RequiredProgramHeaderCount(const std::vector<Domain::ProgramHeader>& originalHeaders) const = 0;

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_SYSTEM_HOSTCPU_HPP
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,8 @@ HostCpuRegisters ReadHostCpuRegisters();
 std::string HostCpuModel();
 std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers);
 std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers);
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, std::optional<std::uint32_t> recordedExtensions);
 void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model);
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, std::optional<std::uint32_t> recordedExtensions);
 
 #endif

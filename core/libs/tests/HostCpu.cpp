@@ -137,6 +137,32 @@ static void CheckExportedHelpers() {
     Require(std::string(MissingHostCpuFeatures_nid_no_patch(&lacking).value) == "BMI1, BMI2", "exported missing list is not joined with a comma and a space");
 }
 
+static void CheckRecordedExtensions() {
+    constexpr std::uint32_t fma = 1u << 5;
+    constexpr std::uint32_t avx2 = 1u << 4;
+    constexpr std::uint32_t f16c = 1u << 6;
+    auto registers = Zen2();
+    registers.Leaf1Ecx &= ~(Bit(12) | Bit(22) | Bit(29));
+    registers.Leaf7Ebx = 0;
+    registers.Leaf80000001Ecx &= ~Bit(5);
+    Require(MissingHostCpuFeatures(registers, 0u) == std::vector<std::string>{}, "a record without extensions kept a requirement");
+    Require(MissingHostCpuFeatures(registers, fma) == std::vector<std::string>{"FMA"}, "a record for FMA did not require FMA alone");
+    Require(MissingHostCpuFeatures(registers, avx2 | f16c) == std::vector<std::string>{"AVX2", "F16C"}, "a record for AVX2 and F16C did not require both");
+    {
+        auto baseline = registers;
+        baseline.Leaf1Ecx &= ~Bit(23);
+        Require(MissingHostCpuFeatures(baseline, 0u) == std::vector<std::string>{"POPCNT"}, "a record relaxed the baseline check");
+    }
+    bool threw = false;
+    try {
+        CheckHostCpu(registers, "Example CPU", fma);
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        Require(std::string(error.what()).find("lacks FMA") != std::string::npos, "recorded-extension message does not name FMA");
+    }
+    Require(threw, "a recorded FMA requirement did not throw on a host without FMA");
+}
+
 int main() {
     try {
         CheckExportedHelpers();
@@ -145,6 +171,7 @@ int main() {
         CheckSingleMissingExtension();
         CheckAvxWithoutOsState();
         CheckPreHaswell();
+        CheckRecordedExtensions();
         CheckError();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

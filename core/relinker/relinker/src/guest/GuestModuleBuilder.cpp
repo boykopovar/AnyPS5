@@ -5,6 +5,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
+#include <codegen/x86/RequiredExtensions.hpp>
 #include <domain/ImportModule.hpp>
 #include <io/NativePath.hpp>
 #include <io/BufferUtils.hpp>
@@ -493,6 +494,16 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const bool sceImage = std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
         const bool hasEhFrame = sceImage || std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
         const auto unwindFunctions = hasEhFrame ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        std::uint32_t artifactExtensions = 0;
+        for (const auto& header : codeHeaders) {
+            std::vector<CodeRange> ranges;
+            for (const auto& function : unwindFunctions) {
+                const auto begin = std::max<std::uint64_t>(function.Begin, header.MappedAddress);
+                const auto end = std::min<std::uint64_t>(function.End, header.MappedAddress + header.FileSize);
+                if (begin < end) ranges.push_back({begin - header.MappedAddress, end - header.MappedAddress});
+            }
+            artifactExtensions |= Codegen::RequiredExtensions(image.Bytes.data() + header.Offset, static_cast<std::size_t>(header.FileSize), ranges);
+        }
         std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
         for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
@@ -592,7 +603,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<std::string> neededLibraries;
         for (const auto& name : image.Dependencies)
             if (findGuest(name) == guestNames.end() && !unavailableUnused(index, name)) neededLibraries.push_back(hostLibrary(name));
-        artifacts.push_back({target, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
+        artifacts.push_back({target, artifactExtensions, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
     }
     return artifacts;

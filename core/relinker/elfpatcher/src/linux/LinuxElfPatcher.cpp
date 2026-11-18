@@ -430,7 +430,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::string& runPath,
     const bool lazyBinding,
     const bool dependencyDiagnostics,
-    const std::vector<Codegen::TrampolineSite>& trampolines)
+    const std::vector<Codegen::TrampolineSite>& trampolines,
+    const std::optional<std::uint32_t> requiredExtensions)
 {
     const auto dynSection = ImportsByNid(sourceDynSection);
     if (runPath.empty() || runPath.front() == ':' || runPath.back() == ':' || runPath.find("::") != std::string::npos)
@@ -783,9 +784,29 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (char i : kInterp)
         buf.push_back(static_cast<std::uint8_t>(i));
 
+    std::uint64_t noteOff = 0;
+    std::uint64_t noteSize = 0;
+    if (requiredExtensions) {
+        alignBuf(buf, 4);
+        noteOff = static_cast<std::uint64_t>(buf.size());
+        const auto appendU32 = [&buf](const std::uint32_t value) {
+            for (unsigned shift = 0; shift < 32; shift += 8) buf.push_back(static_cast<std::uint8_t>(value >> shift));
+        };
+        appendU32(7);
+        appendU32(8);
+        appendU32(1);
+        for (const char character : std::string_view("AnyPS5")) buf.push_back(static_cast<std::uint8_t>(character));
+        buf.push_back(0);
+        const auto notePadded = static_cast<std::uint8_t>(buf.size() % 4);
+        for (std::uint8_t padding = notePadded; padding != 0 && padding < 4; ++padding) buf.push_back(0);
+        appendU32(1);
+        appendU32(*requiredExtensions);
+        noteSize = static_cast<std::uint64_t>(buf.size()) - noteOff;
+    }
+
     std::uint64_t tableOff = phOff;
     std::uint16_t tableSlots = phNum;
-    if (const auto required = _programHeaderLayoutBuilder->RequiredProgramHeaderCount(originalHeaders); required > phNum && required <= std::numeric_limits<std::uint16_t>::max()) {
+    if (const auto required = _programHeaderLayoutBuilder->RequiredProgramHeaderCount(originalHeaders, requiredExtensions.has_value()); required > phNum && required <= std::numeric_limits<std::uint16_t>::max()) {
         alignBuf(buf, kPhdrHeaderAlignment);
         tableOff = static_cast<std::uint64_t>(buf.size());
         tableSlots = static_cast<std::uint16_t>(required);
@@ -814,6 +835,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.DynamicSegmentSize = dynSegBuf.size();
     layoutRequest.InterpOffset = interpOff;
     layoutRequest.InterpSize = interpSize;
+    layoutRequest.NoteOffset = noteOff;
+    layoutRequest.NoteSize = noteSize;
     layoutRequest.MovedLoadAlignment = movedLoadAlignment;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);

@@ -3,10 +3,21 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+#include <link.h>
+#endif
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <string_view>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +40,15 @@ struct FeatureBit {
     unsigned Bit;
     bool Required;
 };
+
+constexpr std::uint32_t kLzcnt = 1u << 0;
+constexpr std::uint32_t kBmi1 = 1u << 1;
+constexpr std::uint32_t kBmi2 = 1u << 2;
+constexpr std::uint32_t kMovbe = 1u << 3;
+constexpr std::uint32_t kAvx2 = 1u << 4;
+constexpr std::uint32_t kFma = 1u << 5;
+constexpr std::uint32_t kF16c = 1u << 6;
+constexpr char kRecordName[] = "AnyPS5";
 
 constexpr FeatureBit kFeatures[] = {
     {"SSE", Register::Leaf1Edx, 25, true},
@@ -94,6 +114,99 @@ bool AvxStateEnabled(const HostCpuRegisters& registers) {
 std::string DisplayModel(const std::string& model) {
     const auto end = model.find_last_not_of(' ');
     return end == std::string::npos ? std::string("unknown model") : model.substr(0, end + 1);
+}
+
+std::optional<std::uint32_t> FeatureMask(const char* name) {
+    const std::string_view feature(name);
+    if (feature == "LZCNT") return kLzcnt;
+    if (feature == "BMI1") return kBmi1;
+    if (feature == "BMI2") return kBmi2;
+    if (feature == "MOVBE") return kMovbe;
+    if (feature == "AVX2") return kAvx2;
+    if (feature == "FMA") return kFma;
+    if (feature == "F16C") return kF16c;
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> ReadNoteExtensions(const std::uint8_t* note, const std::size_t size) {
+    std::size_t offset = 0;
+    while (offset + 12 <= size) {
+        std::uint32_t namesz = 0;
+        std::uint32_t descsz = 0;
+        std::uint32_t type = 0;
+        std::memcpy(&namesz, note + offset, 4);
+        std::memcpy(&descsz, note + offset + 4, 4);
+        std::memcpy(&type, note + offset + 8, 4);
+        offset += 12;
+        const std::size_t nameStart = offset;
+        if (namesz > size - offset) return std::nullopt;
+        offset += (namesz + 3u) & ~std::size_t{3};
+        if (offset > size || descsz > size - offset) return std::nullopt;
+        const std::size_t descStart = offset;
+        offset += (descsz + 3u) & ~std::size_t{3};
+        if (type != 1 || namesz != sizeof(kRecordName) || descsz < 8) continue;
+        if (std::memcmp(note + nameStart, kRecordName, sizeof(kRecordName)) != 0) continue;
+        std::uint32_t version = 0;
+        std::uint32_t mask = 0;
+        std::memcpy(&version, note + descStart, 4);
+        std::memcpy(&mask, note + descStart + 4, 4);
+        if (version == 1) return mask;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> RecordedExtensions() {
+#ifdef _WIN32
+    const auto* image = reinterpret_cast<const std::uint8_t*>(GetModuleHandleW(nullptr));
+    if (image == nullptr) return std::nullopt;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0) return std::nullopt;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return std::nullopt;
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index) {
+        const auto& section = sections[index];
+        if (std::memcmp(section.Name, ".aps5cpu", 8) != 0) continue;
+        if (section.Misc.VirtualSize < 16) return std::nullopt;
+        const auto* record = image + section.VirtualAddress;
+        constexpr char magic[8] = {'A', '5', 'C', 'P', 'U', 0, 0, 0};
+        if (std::memcmp(record, magic, sizeof(magic)) != 0) return std::nullopt;
+        std::uint32_t version = 0;
+        std::uint32_t mask = 0;
+        std::memcpy(&version, record + 8, 4);
+        std::memcpy(&mask, record + 12, 4);
+        if (version != 1) return std::nullopt;
+        return mask;
+    }
+    return std::nullopt;
+#elif defined(__linux__)
+    struct State {
+        std::optional<std::uint32_t> Extensions;
+    } state;
+    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
+        auto& result = *static_cast<State*>(data);
+        if (image->dlpi_name != nullptr && image->dlpi_name[0] != '\0') return 0;
+        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+            const auto& header = image->dlpi_phdr[index];
+            if (header.p_type != PT_NOTE || header.p_filesz == 0) continue;
+            bool mapped = false;
+            for (std::uint16_t loadIndex = 0; loadIndex < image->dlpi_phnum; ++loadIndex) {
+                const auto& load = image->dlpi_phdr[loadIndex];
+                if (load.p_type == PT_LOAD && header.p_vaddr >= load.p_vaddr &&
+                    header.p_vaddr - load.p_vaddr <= load.p_memsz &&
+                    header.p_filesz <= load.p_memsz - (header.p_vaddr - load.p_vaddr))
+                    mapped = true;
+            }
+            if (!mapped) continue;
+            result.Extensions = ReadNoteExtensions(reinterpret_cast<const std::uint8_t*>(image->dlpi_addr + header.p_vaddr), header.p_filesz);
+            if (result.Extensions) return 1;
+        }
+        return 0;
+    }, &state);
+    return state.Extensions;
+#else
+    return std::nullopt;
+#endif
 }
 
 std::string Join(const std::vector<std::string>& names) {
@@ -168,9 +281,18 @@ std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers) {
 }
 
 std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers) {
+    return MissingHostCpuFeatures(registers, std::nullopt);
+}
+
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, const std::optional<std::uint32_t> recordedExtensions) {
     std::vector<std::string> missing;
-    for (const auto& feature : HostCpuFeatures(registers))
-        if (feature.Required && !feature.Present) missing.emplace_back(feature.Name);
+    for (const auto& feature : HostCpuFeatures(registers)) {
+        bool required = feature.Required;
+        if (recordedExtensions) {
+            if (const auto mask = FeatureMask(feature.Name)) required = (*recordedExtensions & *mask) != 0;
+        }
+        if (required && !feature.Present) missing.emplace_back(feature.Name);
+    }
     return missing;
 }
 
@@ -195,13 +317,17 @@ HostCpuText HostCpuModel_nid_no_patch() {
 }
 
 HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* registers) {
-    return PackText(Join(MissingHostCpuFeatures(*registers)));
+    return PackText(Join(MissingHostCpuFeatures(*registers, RecordedExtensions())));
 }
 
 }
 
 void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model) {
-    const auto missing = MissingHostCpuFeatures(registers);
+    CheckHostCpu(registers, model, RecordedExtensions());
+}
+
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, const std::optional<std::uint32_t> recordedExtensions) {
+    const auto missing = MissingHostCpuFeatures(registers, recordedExtensions);
     if (missing.empty()) return;
     throw std::runtime_error("The host CPU (" + DisplayModel(model) + ") lacks " + Join(missing) +
         ". The PS5's Zen 2 CPU has these extensions and titles run their instructions natively, so this CPU cannot run them.");

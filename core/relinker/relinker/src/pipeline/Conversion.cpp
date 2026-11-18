@@ -33,8 +33,31 @@
 #include <bit>
 #include <domain/InputProgress.hpp>
 #include <relinker/patching/GamePatch.hpp>
+#include <codegen/x86/RequiredExtensions.hpp>
+#include <io/BufferUtils.hpp>
 
 namespace Relinker {
+
+namespace {
+
+std::uint32_t ElfImageExtensions(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers) {
+    std::uint32_t required = 0;
+    const auto functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
+    for (const auto& header : headers) {
+        if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+        if (header.Offset > bytes.size() || header.FileSize > bytes.size() - header.Offset) return Codegen::AllCpuExtensions;
+        std::vector<Domain::CodeRange> ranges;
+        for (const auto& function : functions) {
+            const auto begin = std::max<std::uint64_t>(function.Begin, header.MappedAddress);
+            const auto end = std::min<std::uint64_t>(function.End, header.MappedAddress + header.FileSize);
+            if (begin < end) ranges.push_back({begin - header.MappedAddress, end - header.MappedAddress});
+        }
+        required |= Codegen::RequiredExtensions(bytes.data() + header.Offset, static_cast<std::size_t>(header.FileSize), ranges);
+    }
+    return required;
+}
+
+}
 
 Conversion::Conversion(Domain::IProgress& progress) : progress(progress) {}
 
@@ -43,7 +66,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     static_assert(std::endian::native == std::endian::little);
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
-    if (options.ToAvx && (!options.ToIntel || options.Target != TargetSystem::MacOs)) throw Domain::RelinkerException("AVX conversion requires Intel lowering and a macOS target: only the macOS runtime skips the host CPU check");
+    if (options.ToAvx && !options.ToIntel) throw Domain::RelinkerException("AVX conversion requires Intel lowering");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
     if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
     if (input.InputPath.empty() || input.OutputPath.empty()) throw Domain::RelinkerException("Input and output names are required");
@@ -151,6 +174,12 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (!input.Modules.empty()) {
         guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
     }
+    std::optional<std::uint32_t> requiredExtensions;
+    if (options.ToAvx) {
+        auto extensions = ElfImageExtensions(sourceBytes, result.OriginalHeaders);
+        for (const auto& artifact : guestArtifacts) extensions |= artifact.RequiredExtensions;
+        requiredExtensions = extensions;
+    }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
 
@@ -186,7 +215,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             for (auto& patch : appliedPatches)
                 if (patch.Target == options.TargetName) patch.OutputRva = image.GetRva(patch.VirtualAddress);
         }
-        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines);
+        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines, requiredExtensions);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
         throw;
