@@ -85,4 +85,12 @@ int main() {
             }
         }
     }
+    for (const char* zeroText : {"-0", " \t-0tail"}) {
+        const std::size_t len = std::strlen(zeroText) + 1;
+        auto* source = input.At<char>(len);
+        std::memcpy(source, zeroText, len);
+        Require(atoi_nid_postfix(source) == 0);
+        Require(atol_nid_postfix(source) == 0);
+        Require(atoll_nid_postfix(source) == 0);
+    }
 }

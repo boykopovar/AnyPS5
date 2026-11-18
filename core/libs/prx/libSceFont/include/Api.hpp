@@ -38,7 +38,37 @@ struct FontGraphicsDeviceParam;
 
 struct FontGraphicsService;
 
-struct FontGraphicsServiceParam;
+struct FontGraphicsBackendEntry {
+    std::uint32_t opcode;
+    std::uint32_t reserved;
+    std::uint64_t value;
+};
+
+struct FontGraphicsBackendList {
+    std::uint32_t reserved;
+    std::int32_t count;
+    const FontGraphicsBackendEntry* entries;
+};
+
+using FontGraphicsBackendSink = int (APS5_VABI*)(void* dispatch, const FontGraphicsBackendList* list);
+using FontGraphicsBackendEnumerate = int (APS5_VABI*)(void* dispatch, FontGraphicsBackendSink sink);
+
+struct FontGraphicsServiceParam {
+    std::uint16_t tag;
+    std::uint16_t revision;
+    std::uint32_t level;
+    void** instanceSlot;
+    std::uint32_t instanceSize;
+    std::uint32_t reserved14;
+    FontGraphicsBackendEnumerate enumerate;
+};
+
+static_assert(sizeof(FontGraphicsBackendEntry) == 0x10);
+static_assert(sizeof(FontGraphicsBackendList) == 0x10);
+static_assert(sizeof(FontGraphicsServiceParam) == 0x20);
+static_assert(offsetof(FontGraphicsServiceParam, instanceSlot) == 0x08);
+static_assert(offsetof(FontGraphicsServiceParam, instanceSize) == 0x10);
+static_assert(offsetof(FontGraphicsServiceParam, enumerate) == 0x18);
 
 struct FontWords;
 
@@ -338,10 +368,10 @@ int APS5_VABI sceFontGraphicsGetDrawingFrameHandle();
 int APS5_VABI sceFontGraphicsGetIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsProcessWaitAllSequences();
 int APS5_VABI sceFontGraphicsStructureVertexesGlyph();
-int APS5_VABI sceFontGraphicsTextureRefersSurface();
+FontGraphicsSurface* APS5_VABI sceFontGraphicsTextureRefersSurface(const FontGraphicsSurfaceTexture* texture);
 int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color);
-int APS5_VABI sceFontSupportSystemUpdation();
+int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t version);
 int APS5_VABI sceFontGraphicsCanvasRenewal();
 int APS5_VABI sceFontGraphicsDesignStartDrawing();
 int APS5_VABI sceFontGraphicsGetVertexesGlyphMetrics();
@@ -365,7 +395,7 @@ int APS5_VABI sceFontGraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphic
 int APS5_VABI sceFontGraphicsAdjustGradientSpread();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithLayout();
 int APS5_VABI sceFontGraphicsCanvasGetPreprocess();
-int APS5_VABI sceFontGraphicsReportError();
+int APS5_VABI sceFontGraphicsReportError(int error);
 int APS5_VABI sceFontGraphicsDrawRectangleShape();
 int APS5_VABI sceFontGraphicsProcessSetSyncPolicy();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithMapping();
@@ -375,7 +405,7 @@ int APS5_VABI sceFontGraphicsCanvasClearPreprocess();
 int APS5_VABI sceFontGraphicsFindIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsDefineIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsProcessRenderSequence();
-int APS5_VABI sceFontOutlineVertexesInterfaceInit();
+int APS5_VABI sceFontOutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count);
 int APS5_VABI sceFontGraphicsSurfaceSetTargetView();
 
 }

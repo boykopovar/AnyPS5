@@ -12,7 +12,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -46,6 +49,7 @@ static constexpr int NonBlocking = 4;
 static constexpr int CreateFlag = 0x200;
 static constexpr int ExclusiveFlag = 0x800;
 static constexpr int Append = 8;
+static constexpr int AsyncFlag = 0x40;
 static constexpr int ReadAheadFlag = 0x200;
 static constexpr int CreateReadWrite = 0x202;
 static constexpr int CreateWriteAppend = 0x209;
@@ -62,16 +66,18 @@ static constexpr int GuestEinval = 22;
 static constexpr int GuestEnotty = 25;
 static constexpr int GuestEagain = 35;
 static constexpr int GuestEopnotsupp = 45;
+static constexpr int GuestEaddrnotavail = 49;
 static constexpr int GuestEoverflow = 84;
 static constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 static constexpr std::uint64_t ReadableRequest = 0x4004667f;
 static constexpr std::uint64_t WindowSizeRequest = 0x40087468;
 static constexpr std::uint64_t AsyncRequest = 0x8004667d;
+static constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
 static constexpr std::uint64_t CloseOnExecRequest = 0x20006601;
 static constexpr std::uint64_t KeepOnExecRequest = 0x20006602;
 static constexpr std::uint64_t MalformedRequests[] = {0, 123, 0x5401, 0x5413, 0x40007468, 0x20087468, 0x00087468};
 static constexpr std::uint64_t IntegerArgumentRequest = 0x20046601;
-static constexpr std::uint64_t EmptyInputRequest = 0x80006601;
+static constexpr std::uint64_t EmptyInputRequest = 0x8000667f;
 static constexpr int SceEbadf = static_cast<int>(0x80020009u);
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
 static constexpr int SceEnotsup = static_cast<int>(0x8002002du);
@@ -219,7 +225,9 @@ static void SocketsKeepTheirPath() {
     Require(ioctl_nid_postfix(socket, KeepOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     RequireMalformedRequestsFail(socket);
     RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
-    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEnotty);
+    char windowSize[8] = {};
+    RequireFailure(ioctl_nid_postfix(socket, WindowSizeRequest, windowSize), GuestEaddrnotavail);
     RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     RequireFailure(ioctl_nid_postfix(socket, ReadableRequest, nullptr), GuestEfault);
@@ -284,17 +292,26 @@ static void FileFlagsRoundTrip() {
     Require(ioctl_nid_postfix(file, ReadableRequest, &readable) == 0 && readable == 3);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, nullptr), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     RequireFailure(ioctl_nid_postfix(file, ReadableRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(file, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
-    Require(ThrowsWith([file] { int on = 1; ioctl_nid_postfix(file, AsyncRequest, &on); }, "ioctl: request 0x8004667D on a file is not implemented"));
+    Require(ThrowsWith([file] { int type = 0; ioctl_nid_postfix(file, DeviceTypeRequest, &type); }, "ioctl: request 0x4004667A on a file is not implemented"));
 
     RequireFailure(fcntl_nid_postfix(file, DuplicateCommand, -1), GuestEinval);
     Require(sceKernelFcntl(file, DuplicateCommand, -1) == SceEinval);
     RequireFailure(fcntl_nid_postfix(file, 99), GuestEinval);
     RequireFailure(fcntl_nid_postfix(file, GetLock, nullptr), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, GetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, SetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, SetLockWait, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldGetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldSetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldSetLockWait, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(-1, SetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     GuestLock lock{0, 0, 0, 3, 0, 0};
     Require(fcntl_nid_postfix(file, SetLock, &lock) == 0);
     GuestLock probe{0, 0, 0, 1, 0, 0};
@@ -530,9 +547,43 @@ static void PipeFlagsRoundTrip() {
     RequireFailure(fcntl_nid_postfix(pipe[1], SetLock, &lock), GuestEbadf);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(pipe[0], WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(pipe[0], EmptyInputRequest, nullptr), GuestEnotty);
     RequireMalformedRequestsFail(pipe[0]);
     Require(ThrowsWith([&pipe] { fcntl_nid_postfix(pipe[0], SetFlags, NonBlocking | 0x40); }, "fcntl: O_ASYNC on a pipe is not implemented"));
     for (const int descriptor : pipe) Require(close_nid_postfix(descriptor) == 0);
+}
+
+static void AsyncRequestSetsTheStatusFlag() {
+    std::filesystem::create_directory("kernel_fcntl_async_dir");
+    const int file = sceKernelOpen("kernel_fcntl_async.bin", CreateReadWrite, 0644);
+    const int directory = sceKernelOpen("kernel_fcntl_async_dir", OpenDirectory, 0);
+    const int random = sceKernelOpen("/dev/urandom", ReadOnly, 0);
+    Require(file >= 0 && directory >= 0 && random >= 0);
+    const int copy = dup_nid_postfix(file);
+    Require(copy >= 0);
+    int enable = 1;
+    Require(ioctl_nid_postfix(copy, AsyncRequest, &enable) == 0 && (fcntl_nid_postfix(file, GetFlags) & AsyncFlag) != 0);
+    enable = 0;
+    Require(ioctl_nid_postfix(file, AsyncRequest, &enable) == 0 && (fcntl_nid_postfix(copy, GetFlags) & AsyncFlag) == 0);
+    Require(close_nid_postfix(copy) == 0);
+    for (const int descriptor : {file, directory, random}) {
+        int on = 1;
+        int off = 0;
+        Require(ioctl_nid_postfix(descriptor, AsyncRequest, &on) == 0);
+        Require((fcntl_nid_postfix(descriptor, GetFlags) & AsyncFlag) != 0);
+        Require(ioctl_nid_postfix(descriptor, AsyncRequest, &off) == 0);
+        Require((fcntl_nid_postfix(descriptor, GetFlags) & AsyncFlag) == 0);
+        RequireFailure(ioctl_nid_postfix(descriptor, AsyncRequest, nullptr), GuestEfault);
+        Require(close_nid_postfix(descriptor) == 0);
+    }
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    int off = 0;
+    Require(ioctl_nid_postfix(pipe[0], AsyncRequest, &off) == 0);
+    Require(ThrowsWith([&pipe] { int on = 1; ioctl_nid_postfix(pipe[0], AsyncRequest, &on); }, "ioctl: O_ASYNC on a pipe is not implemented"));
+    for (const int descriptor : pipe) Require(close_nid_postfix(descriptor) == 0);
+    std::remove("kernel_fcntl_async.bin");
+    std::filesystem::remove("kernel_fcntl_async_dir");
 }
 
 #ifndef _WIN32
@@ -593,11 +644,38 @@ static void StandardInputFlags() {
     Require(fcntl_nid_postfix(0, GetDescriptorFlags) == 0);
 }
 
+static void RequireNoDeviceType(int device) {
+    for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+        int type = 0x5a5a5a5a;
+        Require(call(device, DeviceTypeRequest, &type) == 0 && type == 0);
+        RequireFailure(call(device, DeviceTypeRequest, nullptr), GuestEfault);
+        RequireFailure(call(device, DeviceTypeRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    }
+}
+
+static void CharacterDevicesHaveNoDeviceType() {
+#ifdef _WIN32
+    const int device = ::_open("NUL", _O_RDONLY | _O_BINARY);
+#else
+    const int device = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+#endif
+    Require(device >= 0);
+    RequireNoDeviceType(device);
+    Require(close_nid_postfix(device) == 0);
+#ifndef _WIN32
+    const int terminal = ::posix_openpt(O_RDWR | O_NOCTTY);
+    Require(terminal >= 0 && ::isatty(terminal) == 1);
+    RequireNoDeviceType(terminal);
+    Require(close_nid_postfix(terminal) == 0);
+#endif
+}
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
     RecordLocksBelongToTheProcess();
     PipeFlagsRoundTrip();
+    AsyncRequestSetsTheStatusFlag();
 #ifndef _WIN32
     HostSocketFlags();
 #endif
@@ -605,5 +683,6 @@ int main() {
     HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs();
 #endif
     StandardInputFlags();
+    CharacterDevicesHaveNoDeviceType();
     return 0;
 }

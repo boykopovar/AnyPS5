@@ -1,0 +1,5 @@
+# shader
+
+## change [MIMG BY2/BY4 loads]
+
+- [MIMG BY2/BY4 loads](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) (`image_load[_mip]_by2/by4`, opcodes 0x42, 0x43, 0x4a, 0x4b) were measured on RDNA2 (gfx1035) with the [hardware oracle](../HW_ORACLE.md) for 2D images. They read N texels (BY2: 2, BY4: 4) from `x & ~(N - 1)` on row y, texel by texel and component by component, each converted like `image_load`. Every register is zero past the last mip level, when `x + N - 1` is outside the level's width (unaligned x, unsigned) or y outside its height. Data only comes back when N texels fit in one dword: R8 and R16 (DMASK 0x3) or RG8 (0xf) for BY2, R8 (0xf) for BY4; 32-bit texels return zeros. The T# swizzle does not change the result on gfx1036, yet a non-identity swizzle throws, as do other formats, masks, dimensions and D16/A16; image tables keep these restrictions. The stores (0x52, 0x53, 0x5a, 0x5b) throw at translation; on hardware they write from the unaligned x to the end of its dword.

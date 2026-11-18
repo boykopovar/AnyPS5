@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -104,7 +106,39 @@ static void CheckWideInitialization(const Algorithm& algorithm) {
     }
 }
 
+static void TestDigestVerifyInitNullKey() {
+    EvpMd digest{};
+    EvpMdContext context{};
+    context.digest = &digest;
+    context.engine = reinterpret_cast<void*>(std::uintptr_t{0x1234});
+    context.flags = 0x1122334455667788;
+    context.mdData = reinterpret_cast<void*>(std::uintptr_t{0x5678});
+    context.pkeyContext = nullptr;
+    context.update = nullptr;
+    std::array<std::byte, sizeof(context)> before{};
+    std::memcpy(before.data(), &context, sizeof(context));
+    void* output = reinterpret_cast<void*>(std::uintptr_t{0x9abc});
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(32, 0xfff, 67, nullptr, 0);
+    LibreSslPutError_nid_no_patch(3, 0xfff, 108, nullptr, 0);
+    Require(EVP_DigestVerifyInit_nid_postfix(&context, &output,
+        reinterpret_cast<const EvpMd*>(std::uintptr_t{0xdead}),
+        reinterpret_cast<void*>(std::uintptr_t{0xbeef}), nullptr) == 0,
+        "null key returns zero before reading type or engine");
+    Require(output == reinterpret_cast<void*>(std::uintptr_t{0x9abc}), "null key leaves the output context unchanged");
+    Require(std::memcmp(&context, before.data(), sizeof(context)) == 0, "null key leaves the digest context unchanged");
+    Require(EVP_DigestVerifyInit_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr) == 0,
+        "null key accepts a null output context");
+    Require(std::memcmp(&context, before.data(), sizeof(context)) == 0, "second null-key call leaves the digest context unchanged");
+    Require(ERR_peek_error_nid_postfix() == 0x20fff043, "null key preserves the oldest queued error");
+    Require(ERR_get_error_nid_postfix() == 0x20fff043 && ERR_get_error_nid_postfix() == 0x03fff06c,
+        "null key preserves queued error order");
+    Require(ERR_get_error_nid_postfix() == 0, "null key adds no queued error");
+    RequireThrows([] { EVP_DigestVerifyInit_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); }, "null digest context");
+}
+
 int main() {
+    TestDigestVerifyInitNullKey();
     const std::string messages[6] {
         "",
         "abc",

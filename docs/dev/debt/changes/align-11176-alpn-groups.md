@@ -1,0 +1,5 @@
+# libSceLibreSsl
+
+## add Functional
+
+- [SSL_CTX_set_alpn_protos, SSL_CTX_set1_groups_list](../../../core/libs/prx/libSceLibreSsl/src/SslCtxSettings.cpp) (libSceLibreSsl) - Console behavior is unverified; no export creates a context. They follow LibreSSL 2.5.4 [ssl_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl_lib.c#L1652-L1663) and [t1_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/t1_lib.c#L410-L456) ([version](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214)). Short names use `OBJ_sn2nid`; dynamic NIDs outside the 29 supported curves return 0. Long-name lookup remains absent. Registered long names throw when no short name matches, before the 15 NIST aliases resolve. Static long names add no supported curve. `SSL_CTX_ctrl` command 92 still throws. A null context, internal state, or group list throws. A null protocol list with a nonzero length throws.

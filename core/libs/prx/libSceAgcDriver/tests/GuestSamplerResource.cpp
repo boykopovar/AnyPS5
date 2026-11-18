@@ -470,6 +470,15 @@ void RunGuestSamplerResourceTests() {
         requireUnnormalized(decoded, clamp == 1u ? "unnormalized S# with clamp mode 1" : "unnormalized S# with clamp mode 3");
         Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-edge after the shader mirrors the coordinate");
     }
+    for (std::uint32_t type = 0; type < borders.size(); ++type) {
+        Fields mirroredBorder = unnormalizedBase;
+        mirroredBorder.clampX = 7;
+        mirroredBorder.clampY = type == 0u ? 2u : 7u;
+        mirroredBorder.borderColorType = type;
+        const auto decoded = DecodeSamplerResource(pack(mirroredBorder), true);
+        requireUnnormalized(decoded, "unnormalized S# with clamp mode 7");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && decoded.addressModeV == (type == 0u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) && decoded.borderColor == borders[type], "unnormalized clamp mode 7 must decode to clamp-to-border after the shader mirrors the coordinate");
+    }
     Fields unnormalizedBiased = unnormalizedBase;
     unnormalizedBiased.lodBiasRaw = 256;
     unnormalizedBiased.lodBiasSec = 8;
@@ -516,9 +525,11 @@ void RunGuestSamplerResourceTests() {
     RunMirrorOnceTests(base);
     RunSamplerReductionTests(base);
 
-    Fields badDegamma = base;
-    badDegamma.disableDegamma = true;
-    rejectFields(badDegamma, "disables degamma");
+    Fields degamma = base;
+    degamma.disableDegamma = true;
+    const auto degammaResult = DecodeSamplerResource(pack(degamma));
+    Require(degammaResult.disableDegamma && !plain.disableDegamma, "disableDegamma must be decoded into disableDegamma");
+    Require(degammaResult.magFilter == plain.magFilter && degammaResult.minFilter == plain.minFilter && degammaResult.mipmapMode == plain.mipmapMode && degammaResult.maxLod == plain.maxLod && degammaResult.minLod == plain.minLod && degammaResult.lodBias == plain.lodBias && degammaResult.anisotropyEnable == plain.anisotropyEnable && degammaResult.addressModeU == plain.addressModeU && degammaResult.addressModeV == plain.addressModeV && degammaResult.addressModeW == plain.addressModeW, "disableDegamma must not change the host sampler state");
 
     Fields secLodBias = base;
     secLodBias.lodBiasSec = 1;

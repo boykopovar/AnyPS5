@@ -1,6 +1,9 @@
+import datetime
+import gzip
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -48,9 +51,9 @@ def public_headers(root):
         if not header.is_file():
             raise RuntimeError(f"Missing public header: {header}")
         visited.add(header)
-        text = header.read_text(encoding="utf-8").replace("\\\n", "").replace("\\\r\n", "")
+        text = header.read_text(encoding="utf-8-sig").replace("\\\n", "").replace("\\\r\n", "")
         text = CPP_TOKEN.sub(lambda match: re.sub(r"[^\n]", " ", match.group()) if match.group("comment") or match.group("raw") else match.group(), text)
-        for keyword, line in re.findall(r"^[ \t]*#[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
+        for keyword, line in re.findall(r"^[ \t]*(?:#|%:)[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
             if keyword == "include_next":
                 raise RuntimeError(f"Unsupported include_next in {header}: {line.strip()}")
             match = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', line)
@@ -76,9 +79,51 @@ def public_headers(root):
     return sorted(visited)
 
 
+def source_date_epoch():
+    text = os.environ.get("SOURCE_DATE_EPOCH")
+    if text is None:
+        return None
+    if not re.fullmatch(r"[0-9]+", text):
+        raise ValueError("SOURCE_DATE_EPOCH must be an ASCII decimal integer between 0 and 4294967295")
+    digits = text.lstrip("0") or "0"
+    if len(digits) > 10 or int(digits) > 4294967295:
+        raise ValueError("SOURCE_DATE_EPOCH must be an ASCII decimal integer between 0 and 4294967295")
+    return int(digits)
+
+
+def write_header_archives(entries, staging, names, epoch):
+    with zipfile.ZipFile(staging / names[0], "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
+        for source, destination in entries:
+            if epoch is None:
+                archive.write(source, destination)
+            else:
+                timestamp = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=max(epoch, 315532800))
+                info = zipfile.ZipInfo(destination, timestamp.timetuple()[:6])
+                info.create_system = 3
+                info.external_attr = (stat.S_IFREG | 0o644) << 16
+                archive.writestr(info, source.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    if epoch is None:
+        with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
+            for source, destination in entries:
+                archive.add(source, destination)
+    else:
+        with (staging / names[1]).open("wb") as target, gzip.GzipFile(filename="", mode="wb", fileobj=target, mtime=epoch, compresslevel=9) as compressed:
+            with tarfile.open(mode="w", fileobj=compressed, dereference=True) as archive:
+                for source, destination in entries:
+                    info = archive.gettarinfo(source, arcname=destination)
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    info.mode = 0o644
+                    info.mtime = epoch
+                    info.pax_headers = {}
+                    with source.open("rb") as content:
+                        archive.addfile(info, content)
+
+
 def package(root, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
+    epoch = source_date_epoch()
     libs = resolved_path(root / "core/libs")
     headers = public_headers(root)
     license_file = root / "LICENSE"
@@ -96,14 +141,53 @@ def package(root, output, version):
             if attributes & (stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_READONLY):
                 raise RuntimeError(f"Release destination is a directory or read-only: {path}")
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".headers-", dir=output) as temporary:
-        staging = Path(temporary)
-        with zipfile.ZipFile(staging / names[0], "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
-            for source, destination in entries:
-                archive.write(source, destination)
-        with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
-            for source, destination in entries:
-                archive.add(source, destination)
-        for name in names:
-            (staging / name).replace(output / name)
+    staging = Path(tempfile.mkdtemp(prefix=".headers-", dir=output))
+    preserve_staging = False
+    try:
+        write_header_archives(entries, staging, names, epoch)
+        previous = staging / "previous"
+        previous.mkdir()
+        try:
+            for name in names:
+                destination = output / name
+                if destination.exists() or destination.is_symlink():
+                    destination.replace(previous / name)
+            for name in names:
+                (staging / name).replace(output / name)
+        except BaseException as promotion_error:
+            preserve_staging = True
+            backed_up = [name for name in names if os.path.lexists(previous / name)]
+            replaced = [name for name in names if not os.path.lexists(staging / name)]
+            restore_error = None
+            unrestored = []
+            leftovers = []
+            for name in reversed(replaced):
+                try:
+                    (output / name).unlink(missing_ok=True)
+                except OSError as error:
+                    restore_error = restore_error or error
+                    leftovers.append(name)
+            for name in reversed(backed_up):
+                try:
+                    (previous / name).replace(output / name)
+                    if name in leftovers:
+                        leftovers.remove(name)
+                except OSError as error:
+                    restore_error = restore_error or error
+                    unrestored.append(name)
+            if restore_error is not None:
+                message = f"Could not restore public header release archives after {promotion_error}"
+                if unrestored:
+                    preserve_staging = True
+                    message += f"; unrestored backups {', '.join(unrestored)} retained at {previous}"
+                if leftovers:
+                    preserve_staging = True
+                    paths = ", ".join(str(output / name) for name in leftovers)
+                    message += f"; promoted archives could not be removed and remain at {paths}; remaining staged archives retained at {staging}"
+                raise RuntimeError(message) from restore_error
+            preserve_staging = False
+            raise
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging)
     print(f"Packaged {len(headers)} public headers and recursive dependencies")

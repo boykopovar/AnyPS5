@@ -1,7 +1,10 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,10 +12,23 @@
 
 namespace {
 
+constexpr std::uint16_t Tls1Version = 0x0301;
 constexpr std::uint16_t Tls11Version = 0x0302;
 constexpr std::uint16_t Tls12Version = 0x0303;
+constexpr std::uint16_t Tls13Version = 0x0304;
 constexpr std::uint16_t Dtls1Version = 0xfeff;
 constexpr std::uint16_t Dtls12Version = 0xfefd;
+
+bool ValidAlpnList(const std::uint8_t* list, std::uint32_t length) {
+    std::uint32_t offset = 0;
+    while (offset < length) {
+        const std::uint32_t nameLength = list[offset];
+        if (nameLength == 0 || nameLength > length - offset - 1)
+            return false;
+        offset += nameLength + 1;
+    }
+    return true;
+}
 
 std::uint16_t TlsVersion(std::uint16_t dtlsVersion) {
     if (dtlsVersion == Dtls1Version) return Tls11Version;
@@ -48,6 +64,23 @@ int SetVersionBound(const LibreSsl3SslMethod& method, std::uint16_t version, boo
     return 1;
 }
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+int RetainGuest(T* object, const char* function) {
+    std::int32_t* const references = &object->references;
+    std::int32_t current{};
+    if (!CopyGuestInPreservingErrno(current, references) || !GuestWritable_nid_no_patch(references, sizeof(current)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return Retain_nid_no_patch(*references);
+}
+
 } // namespace
 
 extern "C" {
@@ -55,13 +88,63 @@ extern "C" {
 int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
     if (!ssl)
         throw std::invalid_argument("SSL_up_ref requires an SSL");
-    return Retain_nid_no_patch(ssl->references);
+    return RetainGuest(ssl, __func__);
+}
+
+const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
+    static constexpr LibreSsl3SslMethod method{0, 1, Tls13Version, Tls1Version, Tls13Version};
+    return &method;
+}
+
+const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix() {
+    return TLS_method_nid_postfix();
+}
+
+void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_set_info_callback requires an SSL");
+    ssl->infoCallback = reinterpret_cast<void*>(callback);
+}
+
+int APS5_VABI SSL_set_alpn_protos_nid_postfix(LibreSsl3Ssl* ssl, const std::uint8_t* protos, std::uint32_t protosLength) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_set_alpn_protos requires an SSL");
+    if (!protos)
+        protosLength = 0;
+    if (protosLength > 0 && !ValidAlpnList(protos, protosLength))
+        return 1;
+    free_nid_postfix(ssl->alpnClientProtoList);
+    ssl->alpnClientProtoList = nullptr;
+    ssl->alpnClientProtoListLength = 0;
+    if (protosLength == 0)
+        return 0;
+    auto* copy = static_cast<std::uint8_t*>(malloc_nid_postfix(protosLength));
+    if (!copy)
+        return 1;
+    std::memcpy(copy, protos, protosLength);
+    ssl->alpnClientProtoList = copy;
+    ssl->alpnClientProtoListLength = protosLength;
+    return 0;
 }
 
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
     if (!session)
         throw std::invalid_argument("SSL_SESSION_up_ref requires a session");
-    return Retain_nid_no_patch(session->references);
+    return RetainGuest(session, __func__);
+}
+
+const char* APS5_VABI SSL_get_version_nid_postfix(const LibreSsl3Ssl* ssl) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_get_version requires an SSL");
+    switch (ssl->version) {
+    case Tls1Version: return "TLSv1";
+    case Tls11Version: return "TLSv1.1";
+    case Tls12Version: return "TLSv1.2";
+    case Tls13Version: return "TLSv1.3";
+    case Dtls1Version: return "DTLSv1";
+    case Dtls12Version: return "DTLSv1.2";
+    default: return "unknown";
+    }
 }
 
 int APS5_VABI SSL_CTX_set_min_proto_version_nid_postfix(LibreSsl3SslCtx* context, std::uint16_t version) {
@@ -78,6 +161,21 @@ int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(LibreSsl3SslCtx* context
                            context->minTlsVersion, context->maxTlsVersion, context->maxProtoVersion);
 }
 
+std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context, std::int64_t timeout) {
+    if (!context) return 0;
+    const auto previous = context->sessionTimeout;
+    context->sessionTimeout = timeout;
+    return previous;
+}
+
+int APS5_VABI SSL_CTX_set_quic_method_nid_postfix(LibreSsl3SslCtx* context, const void* quicMethod) {
+    if (!context || !context->method)
+        throw std::invalid_argument("SSL_CTX_set_quic_method requires a context with a method");
+    if (static_cast<const LibreSsl3SslMethod*>(context->method)->dtls) return 0;
+    context->quicMethod = quicMethod;
+    return 1;
+}
+
 std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl, unsigned char* out, std::size_t maxOut) {
     constexpr std::size_t randomSize = sizeof(LibreSsl3Ssl3State::clientRandom);
     if (!out) return randomSize;
@@ -89,6 +187,12 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
         throw std::invalid_argument("SSL_get_client_random requires SSL3 state");
     std::memcpy(out, ssl->s3->clientRandom, length);
     return length;
+}
+
+void APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix(LibreSsl3SslCtx* context, LibreSsl3KeylogCallback callback) {
+    if (!context)
+        throw std::invalid_argument("SSL_CTX_set_keylog_callback requires a context");
+    context->keylogCallback = reinterpret_cast<void*>(callback);
 }
 
 }

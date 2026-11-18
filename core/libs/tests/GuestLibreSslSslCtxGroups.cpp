@@ -278,15 +278,25 @@ static bool TestAddedGroupNames() {
         const auto* kept = fixture.GroupList();
         OBJ_cleanup_nid_postfix();
         ERR_clear_error_nid_postfix();
-        Require(OBJ_create_nid_postfix("1.2.3.4", test[0], test[1]) >= 956);
+        const int nid = OBJ_create_nid_postfix("1.2.3.4", test[0], test[1]);
+        Require(nid >= 956);
         bool correct = false;
         const char* name = test[0] ? test[0] : test[1];
-        try { correct = SSL_CTX_set1_groups_list_nid_postfix(fixture.Context(), name) == 0; }
-        catch (const std::runtime_error& error) {
-            const std::string text = error.what();
-            const char* function = "SSL_CTX_set1_groups_list";
-            correct = text.find(function) != std::string::npos && text.find("not implemented") != std::string::npos;
+        if (test[0]) Require(OBJ_sn2nid_nid_postfix(name) == nid);
+        const int guest = liveAllocations;
+        const int host = liveHostAllocations;
+        if (test[0]) {
+            correct = SSL_CTX_set1_groups_list_nid_postfix(fixture.Context(), name) == 0;
+        } else {
+            try { SSL_CTX_set1_groups_list_nid_postfix(fixture.Context(), name); }
+            catch (const std::runtime_error& error) {
+                const std::string text = error.what();
+                const char* function = "SSL_CTX_set1_groups_list";
+                correct = text.find(function) != std::string::npos && text.find("not implemented") != std::string::npos;
+            }
         }
+        Require(liveAllocations == guest);
+        Require(liveHostAllocations == host);
         OBJ_cleanup_nid_postfix();
         ERR_clear_error_nid_postfix();
         if (!correct) std::fprintf(stderr, "registered group name %s is incorrectly accepted\n", name);
@@ -301,6 +311,7 @@ static bool TestAddedGroupNames() {
         OBJ_cleanup_nid_postfix();
         ERR_clear_error_nid_postfix();
         Require(OBJ_create_nid_postfix("1.2.3.4", nullptr, "prime256v1") >= 956);
+        Require(OBJ_sn2nid_nid_postfix("prime256v1") == 415);
         const int result = SSL_CTX_set1_groups_list_nid_postfix(fixture.Context(), "prime256v1");
         OBJ_cleanup_nid_postfix();
         ERR_clear_error_nid_postfix();

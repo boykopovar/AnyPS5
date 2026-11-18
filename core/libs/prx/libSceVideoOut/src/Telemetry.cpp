@@ -1,12 +1,16 @@
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <ios>
+#include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #ifdef _WIN32
@@ -58,6 +62,25 @@ std::string head(std::int64_t timeNanos, const char* event) {
 
 }
 
+std::optional<FlipTimingWindow> ParseFlipTimingWindow(const char* setting) {
+    if (setting == nullptr || *setting == '\0') return std::nullopt;
+    const std::string_view text(setting);
+    const auto colon = text.find(':');
+    if (colon != std::string_view::npos) {
+        FlipTimingWindow window{};
+        const char* middle = text.data() + colon;
+        const char* end = text.data() + text.size();
+        const auto first = std::from_chars(text.data(), middle, window.first);
+        const auto count = std::from_chars(middle + 1, end, window.count);
+        if (first.ec == std::errc{} && first.ptr == middle && count.ec == std::errc{} && count.ptr == end &&
+            window.first > 0 && window.count >= 2 && window.count <= 100000 &&
+            window.count - 1 <= std::numeric_limits<std::uint64_t>::max() - window.first) {
+            return window;
+        }
+    }
+    throw std::runtime_error("APS5_VIDEOOUT_FLIP_TIMING must be FIRST:COUNT with FIRST positive, COUNT 2 to 100000, and the last flip in range");
+}
+
 BoundedLineQueue::BoundedLineQueue(std::size_t capacity) : capacity(capacity) {
 }
 
@@ -93,15 +116,19 @@ std::uint64_t BoundedLineQueue::Dropped() const {
     return dropped.load(std::memory_order_relaxed);
 }
 
-Writer::Writer(const std::string& directory, std::size_t capacity, const std::string& commit) : queue(capacity) {
+Writer::Writer(const std::string& directory, std::size_t capacity, const std::string& commit,
+               std::optional<FlipTimingWindow> flipTiming) : queue(capacity), flipTiming(flipTiming) {
     const std::string path = directory + "/videoout.jsonl";
     output.open(std::filesystem::path(reinterpret_cast<const char8_t*>(path.c_str())), std::ios::binary | std::ios::app);
     if (!output.is_open()) throw std::runtime_error("VideoOut telemetry: cannot open " + path);
-    output.exceptions(std::ios::badbit | std::ios::failbit);
     const auto steady = steadyNanos();
     char text[256];
-    std::snprintf(text, sizeof(text), ",\"contract\":\"%s\",\"commit\":\"%s\",\"pid\":%lld,\"prx\":\"libSceVideoOut\"}\n", ContractLevel, commit.c_str(), static_cast<long long>(processId()));
-    queue.Push(head(steady, "contract") + text);
+    std::snprintf(text, sizeof(text), ",\"contract\":\"%s\",\"commit\":\"%s\",\"pid\":%lld,\"prx\":\"libSceVideoOut\"", ContractLevel, commit.c_str(), static_cast<long long>(processId()));
+    auto contract = head(steady, "contract") + text;
+    if (flipTiming) {
+        contract += ",\"flip_start\":" + std::to_string(flipTiming->first) + ",\"flip_count\":" + std::to_string(flipTiming->count);
+    }
+    queue.Push(contract + "}\n");
     thread = std::jthread([this](std::stop_token token) { run(token); });
 }
 
@@ -117,6 +144,7 @@ bool Writer::emit(std::string line, bool mustKeep) {
 void Writer::writeAll(const std::string& text) {
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     output.flush();
+    if (!output) throw std::ios_base::failure("VideoOut telemetry: writing videoout.jsonl failed");
 }
 
 void Writer::writeDrops(bool force) {
@@ -172,6 +200,20 @@ void Writer::EmitPresent(std::uint64_t frame, double fps) {
     emit(head(steadyNanos(), "present") + text, false);
 }
 
+void Writer::EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs) {
+    if (!flipTiming) return;
+    auto selected = flipGeneration.load(std::memory_order_relaxed);
+    if (selected == 0 && flipGeneration.compare_exchange_strong(selected, generation, std::memory_order_relaxed)) {
+        selected = generation;
+    }
+    if (selected != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
+    char text[128];
+    std::snprintf(text, sizeof(text), ",\"n\":%llu,\"generation\":%llu,\"process_us\":%llu}\n",
+        static_cast<unsigned long long>(sequence), static_cast<unsigned long long>(generation),
+        static_cast<unsigned long long>(processTimeUs));
+    emit(head(steadyNanos(), "flip_complete") + text, false);
+}
+
 std::uint64_t Writer::Dropped() const {
     return queue.Dropped();
 }
@@ -195,13 +237,14 @@ bool EmitPadIfChanged(Writer& writer, PadChangeFilter& filter, std::uint64_t fra
     return true;
 }
 
-std::unique_ptr<Writer> OpenFromEnvironment(const char* directory, const std::string& commit) {
+std::unique_ptr<Writer> OpenFromEnvironment(const char* directory, const std::string& commit, const char* flipTiming) {
     if (directory == nullptr || directory[0] == '\0') return nullptr;
-    return std::make_unique<Writer>(directory, DefaultQueueCapacity, commit);
+    return std::make_unique<Writer>(directory, DefaultQueueCapacity, commit, ParseFlipTimingWindow(flipTiming));
 }
 
 Writer* Instance() {
-    static const std::unique_ptr<Writer> writer = OpenFromEnvironment(configuredDirectory().c_str(), APS5_TRACE_COMMIT);
+    static const std::unique_ptr<Writer> writer = OpenFromEnvironment(configuredDirectory().c_str(), APS5_TRACE_COMMIT,
+        std::getenv("APS5_VIDEOOUT_FLIP_TIMING"));
     return writer.get();
 }
 
