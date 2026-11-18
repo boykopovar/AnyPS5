@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -185,8 +186,7 @@ int APS5_VABI libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch(void* output) {
     Request request{};
     const int status = Control<StatusCommand>(request);
     if (status < 0 || output == nullptr) return status;
-    NotImplemented_nid_no_patch("Ac6aYjr1pY8: translating the device's budget status into the caller's structure");
-    return status;
+    throw std::runtime_error("Ac6aYjr1pY8: translating the device's budget status into the caller's structure");
 }
 APS5_EXPORT("Ac6aYjr1pY8", libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch);
 
