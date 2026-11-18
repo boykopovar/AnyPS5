@@ -153,10 +153,18 @@ struct Adapter {
     const unsigned char* HeapBytes(int i) { return heapStorage[i]; }
     void Counter(int op, int heap, std::uint64_t bytes) {
         switch (op) {
-        case 0: _ZN7bmalloc15IsoHeapImplBase9didCommitEPvm(Heap(heap), nullptr, bytes); break;
-        case 1: _ZN7bmalloc15IsoHeapImplBase11didDecommitEPvm(Heap(heap), nullptr, bytes); break;
-        case 2: _ZN7bmalloc15IsoHeapImplBase13isNowFreeableEPvm(Heap(heap), nullptr, bytes); break;
-        default: _ZN7bmalloc15IsoHeapImplBase18isNoLongerFreeableEPvm(Heap(heap), nullptr, bytes); break;
+        case 0:
+            _ZN7bmalloc15IsoHeapImplBase9didCommitEPvm(Heap(heap), nullptr, bytes);
+            break;
+        case 1:
+            _ZN7bmalloc15IsoHeapImplBase11didDecommitEPvm(Heap(heap), nullptr, bytes);
+            break;
+        case 2:
+            _ZN7bmalloc15IsoHeapImplBase13isNowFreeableEPvm(Heap(heap), nullptr, bytes);
+            break;
+        default:
+            _ZN7bmalloc15IsoHeapImplBase18isNoLongerFreeableEPvm(Heap(heap), nullptr, bytes);
+            break;
         }
     }
     std::uint64_t Footprint(int heap) { return _ZN7bmalloc15IsoHeapImplBase9footprintEv(Heap(heap)); }
