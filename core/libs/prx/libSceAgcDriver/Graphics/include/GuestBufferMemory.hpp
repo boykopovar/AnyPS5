@@ -288,6 +288,7 @@ struct AddressSpaceStats {
     std::uint64_t heapRetries = 0;
     std::uint64_t heapRetryImports = 0;
     std::uint64_t heapRetryOwed = 0;
+    std::uint64_t heapRetryRetakes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 

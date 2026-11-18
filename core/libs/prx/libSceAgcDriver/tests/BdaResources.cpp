@@ -3427,8 +3427,8 @@ void heapMirrorRetryTests(const Context& context) {
     constexpr int builds = 70;
     auto importing = context;
     importing.hostImportAlignment = bytes;
-    const auto fixture = [&](bool recorded) {
-        const std::string name = recorded ? " (recorded work active)" : "";
+    const auto fixture = [&](bool recorded, bool retaken) {
+        const std::string name = recorded ? " (recorded work active)" : retaken ? " (reused address space)" : "";
         ClearHostImports(context.device);
         void* area = mmap(nullptr, 4 * bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(area != MAP_FAILED, "cannot map the heap mirror retry blocks");
@@ -3457,6 +3457,24 @@ void heapMirrorRetryTests(const Context& context) {
             Require(found != ranges.end(), "the heap range is missing from the BDA table of a build" + name);
             leased.WriteBack();
         };
+        const auto retakes = [&](int passes) {
+            GuestBufferMemory kept(importing);
+            kept.AcquireRegistered();
+            kept.Upload(true);
+            int taken = 0;
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                static_cast<void>(kept.ReleaseSpace());
+                for (; taken < passes; ++taken) {
+                    heap[65536 + written % 4096] = static_cast<std::uint8_t>(0x30 + written % 64);
+                    ++written;
+                    if (!kept.RetakeSpace()) break;
+                    static_cast<void>(kept.ReleaseSpace());
+                }
+            }
+            kept.WriteBack();
+            return taken;
+        };
         SetHeapMirrorRetry(false);
         registry(idleAt, true, false);
         {
@@ -3474,9 +3492,17 @@ void heapMirrorRetryTests(const Context& context) {
         const auto off = AddressSpaceCounters();
         for (int pass = 0; pass < 2 * builds; ++pass) build();
         Require(MirrorCounters().heapMirrors == before.heapMirrors + 1 && HostImportCovers(importing, idleAt, 16) && AddressSpaceCounters().heapRetries == off.heapRetries, "a heap mirror was tried as an import again without APS5_HEAP_MIRROR_RETRY" + name);
+        if (retaken) Require(retakes(2 * builds) == 2 * builds && AddressSpaceCounters().heapRetryRetakes == off.heapRetryRetakes, "a reused address space was sent to a build without APS5_HEAP_MIRROR_RETRY");
         SetHeapMirrorRetry(true);
         const auto counted = AddressSpaceCounters();
-        if (recorded) {
+        if (retaken) {
+            const auto taken = retakes(builds);
+            const auto refused = AddressSpaceCounters();
+            Require(taken > 0 && taken < builds && refused.heapRetryRetakes == counted.heapRetryRetakes + 1 && refused.heapRetries == counted.heapRetries, "reuses of an address space with a heap mirror did not send one to a build when the retry was due");
+            build();
+            const auto after = AddressSpaceCounters();
+            Require(after.heapRetries == counted.heapRetries + 1 && after.heapRetryImports == counted.heapRetryImports + 1 && after.heapRetryOwed == counted.heapRetryOwed, "the build after a refused reuse did not try the heap mirror as an import");
+        } else if (recorded) {
             {
                 std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
                 Recorder recorder(importing);
@@ -3507,8 +3533,9 @@ void heapMirrorRetryTests(const Context& context) {
         GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(heap, bytes);
         munmap(area, 4 * bytes);
     };
-    fixture(false);
-    fixture(true);
+    fixture(false, false);
+    fixture(true, false);
+    fixture(false, true);
 #else
     static_cast<void>(context);
 #endif
