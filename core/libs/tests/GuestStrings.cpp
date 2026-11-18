@@ -465,6 +465,8 @@ int main() {
     Require(std::strcmp(dirname_nid_postfix(absolute), "/one") == 0);
     char rootChild[] = "/file";
     Require(std::strcmp(dirname_nid_postfix(rootChild), "/") == 0);
+    const char* parent = dirname_nid_postfix("a/long/parent/child");
+    Require(std::strcmp(dirname_nid_postfix(parent + 2), "long") == 0);
     char onlySlashes[] = "////";
     Require(std::strcmp(dirname_nid_postfix(onlySlashes), "/") == 0);
     Require(std::strcmp(basename_nid_postfix(nullptr), ".") == 0);
