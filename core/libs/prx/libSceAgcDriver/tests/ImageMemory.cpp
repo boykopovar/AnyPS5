@@ -77,6 +77,7 @@ struct MockState {
     VkDeviceSize deviceLimit = 0;
     VkDeviceSize reportedBudget = 8ull << 30u;
     VkDeviceSize reportedUsage = 0;
+    VkDeviceSize reportedBarUsage = 0;
     VkResult refusedDevice = VK_SUCCESS;
     bool failHostAfterAllocate = false;
 };
@@ -215,6 +216,8 @@ VKAPI_ATTR void VKAPI_CALL MemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceM
     budget->heapBudget[0] = mock.reportedBudget;
     budget->heapUsage[0] = mock.reportedUsage;
     budget->heapBudget[1] = 8ull << 30u;
+    budget->heapBudget[2] = 36 * MiB;
+    budget->heapUsage[2] = mock.reportedBarUsage;
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice, const char* name) {
@@ -857,6 +860,21 @@ void EmptyBlockReclamation() {
         mock.reportedUsage = mock.reportedBudget + MiB;
         Drop(image, allocation);
         Expect(context.bufferPool->ImageSlabBlocks() == 0 && mock.live == 0, "over-budget device memory retained an empty image block");
+    }
+    Clean();
+    ResetMock();
+    {
+        auto context = NewContext();
+        context.memory.memoryHeapCount = 3;
+        context.memory.memoryHeaps[2] = {214 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.physical = Handle<VkPhysicalDevice>(1);
+        context.memoryProperties2 = MemoryProperties2;
+        mock.reportedBarUsage = 178 * MiB;
+        const auto image = NewImage();
+        auto allocation = Take(context, image);
+        Bind(image, allocation);
+        Drop(image, allocation);
+        Expect(context.bufferPool->ImageSlabBlocks() == 1, "another device-local heap over its budget stopped an empty image block being retained");
     }
     Clean();
 }
