@@ -518,6 +518,28 @@ void CheckTransferFillers() {
     Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
     Require(Throws([&] { sceUsbdSetIsoPacketLengths(small, 8); }), "setting iso packet lengths above the allocated packet count did not throw");
     sceUsbdFreeTransfer(small);
+    const auto refused = [&](UsbdTransfer* other) {
+        return Throws([&] { sceUsbdFillInterruptTransfer(other, &device, 0x81, data, 8, &MarkDone, &user, 0); })
+            && Throws([&] { sceUsbdFillBulkTransfer(other, &device, 0x02, data, 64, &MarkDone, &user, 500); })
+            && Throws([&] { sceUsbdFillIsoTransfer(other, &device, 0x83, data, 16, 1, &MarkDone, &user, 0); })
+            && Throws([&] { sceUsbdFillControlTransfer(other, &device, control, &MarkDone, &user, 100); })
+            && Throws([&] { sceUsbdControlTransferGetData(other); })
+            && Throws([&] { sceUsbdControlTransferGetSetup(other); })
+            && Throws([&] { sceUsbdSetIsoPacketLengths(other, 8); })
+            && Throws([&] { sceUsbdGetIsoPacketBuffer(other, 0); });
+    };
+    UsbdTransfer stray{};
+    stray.numIsoPackets = 1;
+    Require(refused(&stray), "a transfer sceUsbdAllocTransfer did not return was accepted");
+    Require(stray.deviceHandle == nullptr && stray.buffer == nullptr && stray.length == 0 && stray.type == 0 && stray.isoPacketDescriptors[0].length == 0,
+        "a transfer sceUsbdAllocTransfer did not return was written");
+    auto* freed = sceUsbdAllocTransfer(1);
+    Require(freed != nullptr, "transfer allocation failed");
+    sceUsbdFreeTransfer(freed);
+    Require(refused(freed), "a freed transfer was accepted");
+    Require(refused(nullptr), "a null transfer was accepted");
+    sceUsbdFillBulkTransfer(transfer, &device, 0x02, data, 64, &MarkDone, &user, 500);
+    Require(transfer->type == 2 && transfer->buffer == data && transfer->length == 64, "an allocated transfer was not filled after the refusals");
     sceUsbdFreeTransfer(transfer);
 }
 
