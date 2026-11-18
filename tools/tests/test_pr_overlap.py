@@ -388,8 +388,33 @@ class UnicodePathTests(unittest.TestCase):
                 os.chdir(previous)
 
 
+WINDOWS_LAUNCHER = """import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+fake, script, *argv = sys.argv[1:]
+sys.path.insert(0, str(Path(script).parent))
+import pr_overlap
+
+original = subprocess.run
+
+
+def run(command, *args, **kwargs):
+    if command and command[0] == "gh":
+        found = shutil.which("gh", path=fake)
+        if found is None:
+            raise SystemExit("gh stand-in not found in " + fake)
+        command = [found, *command[1:]]
+    return original(command, *args, **kwargs)
+
+
+subprocess.run = run
+raise SystemExit(pr_overlap.main(argv))
+"""
+
+
 class SubdirectoryTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "fake gh is a shell script")
     def test_branch_report_from_a_subdirectory_matches_the_root(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "repo"
@@ -420,15 +445,23 @@ class SubdirectoryTests(unittest.TestCase):
                 heads[branch] = git("rev-parse", "HEAD")
             pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
             (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
-            (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
-            (fake / "gh").chmod(0o755)
+            if os.name == "nt":
+                (fake / "gh.cmd").write_text(f'@echo off\r\ntype "{fake / "pulls.json"}"\r\nexit 0\r\n', encoding="utf-8")
+                (fake / "launcher.py").write_text(WINDOWS_LAUNCHER, encoding="utf-8")
+            else:
+                (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
+                (fake / "gh").chmod(0o755)
             environment = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "GIT_CONFIG_COUNT": "1",
                            "GIT_CONFIG_KEY_0": f"url.{root.as_uri()}.insteadOf", "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git"}
             environment.pop("GITHUB_REPOSITORY", None)
             script = Path(pr_overlap.__file__).resolve()
+            if os.name == "nt":
+                entry = [sys.executable, str(fake / "launcher.py"), str(fake), str(script)]
+            else:
+                entry = [sys.executable, str(script)]
             outputs = {}
             for subdirectory in (".", "tools", "core/libs/prx"):
-                result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--branch", "mine"],
+                result = subprocess.run([*entry, "--repo", "owner/project", "--branch", "mine"],
                                         cwd=root / subdirectory, env=environment, capture_output=True, text=True,
                                         encoding="utf-8", timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -437,7 +470,7 @@ class SubdirectoryTests(unittest.TestCase):
             self.assertIn("| `sceExample` |", outputs["."])
             self.assertEqual(outputs["tools"], outputs["."])
             self.assertEqual(outputs["core/libs/prx"], outputs["."])
-            result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--out", "reports"],
+            result = subprocess.run([*entry, "--repo", "owner/project", "--out", "reports"],
                                     cwd=root / "tools", env=environment, capture_output=True, text=True,
                                     encoding="utf-8", timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
