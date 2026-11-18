@@ -1,15 +1,30 @@
 name: Experimental guest CPU
+
 on:
   push:
     branches:
-      - experiment/ios-arm64-cpu-interpreter
+      - ci/guest-cpu-test
+  pull_request:
+    branches:
+      - ci/guest-cpu-test
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-cpu-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 jobs:
   desktop:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install Stage 3 compiler (Linux only)
@@ -20,12 +35,20 @@ jobs:
       - name: Build
         run: cmake --build guest-cpu-build --config Release
       - name: Test
-        run: ctest --test-dir guest-cpu-build -C Release --output-on-failure
+        run: ctest --test-dir guest-cpu-build -C Release --output-on-failure --timeout 300
   ios-compile:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Configure iOS arm64 static library
         run: cmake -S experimental/arm64-cpu -B guest-cpu-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 -DANYPS5_GUEST_CPU_TESTS=OFF
       - name: Compile
         run: cmake --build guest-cpu-ios --config Release --target anyps5_guest_cpu
+      - name: Verify the arm64 slice
+        run: |
+          set -euo pipefail
+          LIB=$(find guest-cpu-ios -name 'libanyps5_guest_cpu.a' -print -quit)
+          test -n "$LIB"
+          lipo -info "$LIB"
+          lipo -info "$LIB" | grep -q arm64
