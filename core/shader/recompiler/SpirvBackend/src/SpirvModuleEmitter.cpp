@@ -452,7 +452,12 @@ std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::u
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), value, color, component);
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
-        const auto field = EmitFormatStoreComponent(state, info, component, bits);
+        auto field = EmitFormatStoreComponent(state, info, component, bits);
+        if (format == IrBufferFormat::Format10_11_11Float) {
+            const auto mantissaBits = info.componentBits[component] - 5u;
+            const auto nan = EmitCompareU32Constant(state, spv::OpUGreaterThan, EmitAndConstant(state, bits, 0x7fffffffu), 0x7f800000u);
+            field = EmitSelectValueU32(state, nan, ConstantU32(state, (0x1fu << mantissaBits) | (1u << (mantissaBits - 1u))), field);
+        }
         packed = EmitOrU32(state, packed, info.componentBitOffset[component] == 0u ? field : EmitBinaryU32(state, spv::OpShiftLeftLogical, field, ConstantU32(state, info.componentBitOffset[component])));
     }
     return packed;
