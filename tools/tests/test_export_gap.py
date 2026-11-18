@@ -928,6 +928,24 @@ class ExportGapTests(unittest.TestCase):
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_export_table(missing)
 
+class MaskCodeTests(unittest.TestCase):
+    def test_comments_are_blanked_and_layout_is_preserved(self):
+        source = "int a; // note\nint b; /* block\nmore */ int c;\n"
+        masked = export_gap.mask_code(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("note", masked)
+        self.assertNotIn("block", masked)
+        self.assertNotIn("more", masked)
+        for kept in ("int a;", "int b;", "int c;"):
+            self.assertIn(kept, masked)
+
+    def test_string_literal_contents_are_blanked(self):
+        masked = export_gap.mask_code('call("hidden text");\n')
+        self.assertNotIn("hidden", masked)
+        self.assertTrue(masked.startswith("call("))
+        self.assertTrue(masked.endswith(");\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
