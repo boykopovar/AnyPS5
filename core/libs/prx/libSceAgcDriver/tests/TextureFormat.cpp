@@ -118,6 +118,20 @@ void scaledFormatTests() {
     Require(SampledTextureFormat(context, 128u) == VK_FORMAT_R8_SRGB, "a device without scaled-image support still samples sRGB");
 }
 
+void optionalFormatTests() {
+    Context context{};
+    context.optionalSampledFormats = OptionalSampledFormats(sampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32 && SampledTextureFormat(context, 55u) == VK_FORMAT_A2B10G10R10_SINT_PACK32, "10_10_10_2 SNORM and SINT must sample natively where the host supports them");
+    context.optionalSampledFormats = OptionalSampledFormats(noSampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : {51u, 55u}) reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format " + std::to_string(format));
+    Require(SampledTextureFormat(context, 50u) == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && SampledTextureFormat(context, 54u) == VK_FORMAT_A2B10G10R10_UINT_PACK32, "10_10_10_2 UNORM and UINT do not depend on the optional formats");
+    unsampledFormats[0] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    unsampledFormats[1] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    context.optionalSampledFormats = OptionalSampledFormats(unsampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32, "10_10_10_2 SNORM must sample where only SINT is missing");
+    reject([&] { SampledTextureFormat(context, 55u); }, "unsupported guest texture format 55");
+}
+
 void packedChannelTests() {
     constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 5> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}, {137u, {0, 4, -1, -1}}}};
     constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
@@ -311,6 +325,7 @@ void RunTextureFormatTests() {
     srgbDecodeTests();
     srgbTwinTests();
     scaledFormatTests();
+    optionalFormatTests();
     packedChannelTests();
     repackedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
