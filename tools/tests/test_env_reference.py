@@ -634,6 +634,16 @@ class EnvReferenceTests(unittest.TestCase):
         python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
+class UncommentedTests(unittest.TestCase):
+    def test_comments_are_blanked_keeping_length(self):
+        text = 'a /* c\nd */ b // e\n"//s" c'
+        result = env_reference.uncommented(text)
+        self.assertEqual(len(result), len(text))
+        self.assertEqual(result.split(), ["a", "b", '"//s"', "c"])
+
+    def test_text_without_comments_is_unchanged(self):
+        self.assertEqual(env_reference.uncommented('int x = 1; "//";'), 'int x = 1; "//";')
+
 
 if __name__ == "__main__":
     unittest.main()
