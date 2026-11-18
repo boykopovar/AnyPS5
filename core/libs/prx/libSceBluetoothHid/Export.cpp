@@ -150,8 +150,11 @@ int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::ui
 
 int APS5_VABI sceBluetoothHidParamInitialize(BluetoothHidParam* param, const BluetoothHidThreadParam* threadParam) {
     if (param == nullptr) return InvalidArgument;
-    BluetoothHidParam localParam{};
     const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(param, sizeof(*param));
+    errno = savedErrno;
+    if (!writable) return InvalidArgument;
+    BluetoothHidParam localParam{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
         errno = savedErrno;
         return InvalidArgument;
@@ -176,6 +179,9 @@ int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::u
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
     if (param == nullptr) return InvalidArgument;
     const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(param, sizeof(*param));
+    errno = savedErrno;
+    if (!writable) return InvalidArgument;
     if (!GuestCopyOut_nid_no_patch(&param->priority, &priority, sizeof(priority))) {
         errno = savedErrno;
         return InvalidArgument;
