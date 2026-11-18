@@ -1333,6 +1333,52 @@ static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultMediaHasAudio(ref));
     Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
 
+    Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
+    Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
+
+    auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    hit->nodeHandle = node;
+    hit->urlElementHandle = urlElem;
+    hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
+
+    auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
+    Require(copiedNode == node.Get());
+    WKRelease(copiedNode);
+
+    auto* copiedUrlElem = WKBundleHitTestResultCopyURLElementHandle(ref);
+    Require(copiedUrlElem == urlElem.Get());
+    WKRelease(copiedUrlElem);
+
+    auto rect = WKBundleHitTestResultGetImageRect(ref);
+    Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
+    Require(rect.size.width == 30.0 && rect.size.height == 40.0);
+
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto* createdHit = WKBundleFrameCreateHitTestResult(frame.Get(), NKWebKit::PointValue{15.0, 25.0});
+    Require(createdHit != nullptr);
+    Require(WKGetTypeID(createdHit) == WKBundleHitTestResultGetTypeID());
+    auto* hitNode = WKBundleHitTestResultCopyNodeHandle(createdHit);
+    Require(hitNode != nullptr);
+    auto* hitFrame = WKBundleNodeHandleCopyDocumentFrame(hitNode);
+    Require(hitFrame == frame.Get());
+    WKRelease(hitFrame);
+    WKRelease(hitNode);
+    Require(WKBundleHitTestResultCopyURLElementHandle(createdHit) == nullptr);
+    auto createdRect = WKBundleHitTestResultGetImageRect(createdHit);
+    Require(createdRect.origin.x == 15.0 && createdRect.origin.y == 25.0);
+    WKRelease(createdHit);
+
+    bool frameThrew = false;
+    try {
+        WKBundleFrameCreateHitTestResult(nullptr, NKWebKit::PointValue{0.0, 0.0});
+    } catch (const std::invalid_argument&) {
+        frameThrew = true;
+    }
+    Require(frameThrew);
+
     bool threw = false;
     try {
         WKBundleHitTestResultCopyLinkLabel(nullptr);

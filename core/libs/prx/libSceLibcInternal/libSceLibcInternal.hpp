@@ -22,3 +22,4 @@
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetOrder.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
+#include "prx/libSceLibcInternal/include/DinkumThreadErrors.hpp"
