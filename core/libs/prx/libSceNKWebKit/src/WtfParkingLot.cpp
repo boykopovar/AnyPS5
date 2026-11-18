@@ -243,6 +243,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -273,7 +274,14 @@ T& Checked(T* pointer, const char* caller) {
     return *pointer;
 }
 
-struct ThreadData {
+template<typename Lambda>
+const Lambda& CheckedLambda(const Lambda* lambda, const char* caller) {
+    const Lambda& checked = Checked(lambda, caller);
+    if (!checked.impl) throw std::invalid_argument(std::string("WTF::") + caller + ": null lambda function");
+    return checked;
+}
+
+struct ThreadData : std::enable_shared_from_this<ThreadData> {
     std::mutex parkingLock;
     std::condition_variable parkingCondition;
     const void* address{nullptr};
@@ -282,8 +290,8 @@ struct ThreadData {
 };
 
 ThreadData& MyThreadData() {
-    thread_local ThreadData data;
-    return data;
+    thread_local const std::shared_ptr<ThreadData> data = std::make_shared<ThreadData>();
+    return *data;
 }
 
 enum class DequeueResult {
@@ -476,19 +484,19 @@ ParkResult ParkConditionally(const void* address, const Validation& validation, 
 
 template<typename Callback>
 void UnparkOneWithCallback(const void* address, const Callback& callback) {
-    ThreadData* threadData = nullptr;
+    std::shared_ptr<ThreadData> threadData;
     bool timeToBeFair = false;
     DequeueThreads(
         address,
         [&](ThreadData* element, bool passedTimeToBeFair) {
             if (element->address != address) return DequeueResult::Ignore;
-            threadData = element;
+            threadData = element->shared_from_this();
             timeToBeFair = passedTimeToBeFair;
             return DequeueResult::RemoveAndStop;
         },
         [&](bool mayHaveMoreThreads) {
             UnparkResult result;
-            result.didUnparkThread = threadData;
+            result.didUnparkThread = threadData != nullptr;
             result.mayHaveMoreThreads = result.didUnparkThread && mayHaveMoreThreads;
             result.timeToBeFair = timeToBeFair;
             const std::intptr_t token = callback(result);
@@ -499,17 +507,17 @@ void UnparkOneWithCallback(const void* address, const Callback& callback) {
 
 unsigned UnparkCount(const void* address, unsigned count) {
     if (!count) return 0;
-    std::vector<ThreadData*> threadDatas;
+    std::vector<std::shared_ptr<ThreadData>> threadDatas;
     DequeueThreads(
         address,
         [&](ThreadData* element, bool) {
             if (element->address != address) return DequeueResult::Ignore;
-            threadDatas.push_back(element);
+            threadDatas.push_back(element->shared_from_this());
             if (threadDatas.size() == count) return DequeueResult::RemoveAndStop;
             return DequeueResult::RemoveAndContinue;
         },
         [](bool) {});
-    for (ThreadData* threadData : threadDatas) Wake(*threadData);
+    for (const auto& threadData : threadDatas) Wake(*threadData);
     return static_cast<unsigned>(threadDatas.size());
 }
 
@@ -635,13 +643,18 @@ void ConditionNotifyAll(Condition& condition) {
     UnparkCount(&condition.hasWaiters, UINT_MAX);
 }
 
-struct WordLockThreadData {
+struct WordLockThreadData : std::enable_shared_from_this<WordLockThreadData> {
     bool shouldPark{false};
     std::mutex parkingLock;
     std::condition_variable parkingCondition;
     WordLockThreadData* nextInQueue{nullptr};
     WordLockThreadData* queueTail{nullptr};
 };
+
+WordLockThreadData& MyWordLockThreadData() {
+    thread_local const std::shared_ptr<WordLockThreadData> data = std::make_shared<WordLockThreadData>();
+    return *data;
+}
 
 constexpr std::uintptr_t WordIsLockedBit = 1;
 constexpr std::uintptr_t WordIsQueueLockedBit = 2;
@@ -652,8 +665,8 @@ constexpr std::uintptr_t WordQueueHeadMask = 3;
 extern "C" {
 
 ParkResult APS5_VABI _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(const void* address, const ValidationLambda* validation, const BeforeSleepLambda* beforeSleep, const TimeWithDynamicClockType* timeout) {
-    const auto& validate = Checked(validation, "ParkingLot::parkConditionally");
-    const auto& sleep = Checked(beforeSleep, "ParkingLot::parkConditionally");
+    const auto& validate = CheckedLambda(validation, "ParkingLot::parkConditionally");
+    const auto& sleep = CheckedLambda(beforeSleep, "ParkingLot::parkConditionally");
     const auto& until = Checked(timeout, "ParkingLot::parkConditionally");
     return ParkConditionally(
         address,
@@ -672,7 +685,7 @@ UnparkResult APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv(const void* address) {
 }
 
 void APS5_VABI _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE(const void* address, const UnparkCallbackLambda* callback) {
-    const auto& call = Checked(callback, "ParkingLot::unparkOne");
+    const auto& call = CheckedLambda(callback, "ParkingLot::unparkOne");
     UnparkOneWithCallback(address, [&](UnparkResult result) { return call.impl(call.argument, result); });
 }
 
@@ -711,7 +724,10 @@ void APS5_VABI _ZN3WTF8WordLock8lockSlowEv(WordLock* self) {
             std::this_thread::yield();
             continue;
         }
-        WordLockThreadData me;
+        WordLockThreadData& me = MyWordLockThreadData();
+        me.shouldPark = false;
+        me.nextInQueue = nullptr;
+        me.queueTail = nullptr;
         currentWordValue = word.load();
         if ((currentWordValue & WordIsQueueLockedBit) || !(currentWordValue & WordIsLockedBit) || !word.compare_exchange_weak(currentWordValue, currentWordValue | WordIsQueueLockedBit)) {
             std::this_thread::yield();
@@ -756,6 +772,7 @@ void APS5_VABI _ZN3WTF8WordLock10unlockSlowEv(WordLock* self) {
     }
     std::uintptr_t currentWordValue = word.load();
     auto* queueHead = reinterpret_cast<WordLockThreadData*>(currentWordValue & ~WordQueueHeadMask);
+    const std::shared_ptr<WordLockThreadData> keepAlive = queueHead->shared_from_this();
     WordLockThreadData* newQueueHead = queueHead->nextInQueue;
     if (newQueueHead) newQueueHead->queueTail = queueHead->queueTail;
     currentWordValue = word.load();

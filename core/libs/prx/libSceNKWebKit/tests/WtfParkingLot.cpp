@@ -366,6 +366,13 @@ static void RefusesNull() {
     Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(&address, &validation, nullptr, &Infinity); }));
     Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(&address, &validation, &beforeSleep, nullptr); }));
     Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE(&address, nullptr); }));
+    const ValidationLambda noValidation{nullptr, &context};
+    const BeforeSleepLambda noBeforeSleep{nullptr, &context};
+    const UnparkCallbackLambda noCallback{nullptr, &context};
+    Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(&address, &noValidation, &beforeSleep, &Infinity); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(&address, &validation, &noBeforeSleep, &Infinity); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE(&address, &noCallback); }));
+    Require(context.validations == 0);
     Require(ThrowsInvalidArgument([] { _ZN3WTF4Lock8lockSlowEv(nullptr); }));
     Require(ThrowsInvalidArgument([] { _ZN3WTF4Lock10unlockSlowEv(nullptr); }));
     Require(ThrowsInvalidArgument([] { _ZN3WTF4Lock13safepointSlowEv(nullptr); }));
@@ -379,22 +386,29 @@ static void RefusesNull() {
     Require(context.validations == 0);
 }
 
+template<typename Case>
+static void Run(const char* name, Case test) {
+    std::fprintf(stderr, "case %s\n", name);
+    std::fflush(stderr);
+    test();
+}
+
 int main() {
-    ParkRefusedByValidation();
-    ParkTimesOut();
-    UnparkOneHandsOverTheToken();
-    UnparkOneReportsMoreThreads();
-    UnparkCountAndAll();
-    CountsUnderContention<Lock>();
-    CountsUnderContention<WordLock>();
-    LockParksAndIsHandedOver();
-    SafepointWithoutWaitersKeepsTheLock();
-    WordLockQueuesWaiters();
-    ReadWriteLockSharesAndExcludes();
-    ReadWriteLockCounts();
-    BinarySemaphoreSignalsOnce();
-    BinarySemaphoreWakesAWaiter();
-    RefusesNull();
+    Run("ParkRefusedByValidation", ParkRefusedByValidation);
+    Run("ParkTimesOut", ParkTimesOut);
+    Run("UnparkOneHandsOverTheToken", UnparkOneHandsOverTheToken);
+    Run("UnparkOneReportsMoreThreads", UnparkOneReportsMoreThreads);
+    Run("UnparkCountAndAll", UnparkCountAndAll);
+    Run("CountsUnderContention<Lock>", CountsUnderContention<Lock>);
+    Run("CountsUnderContention<WordLock>", CountsUnderContention<WordLock>);
+    Run("LockParksAndIsHandedOver", LockParksAndIsHandedOver);
+    Run("SafepointWithoutWaitersKeepsTheLock", SafepointWithoutWaitersKeepsTheLock);
+    Run("WordLockQueuesWaiters", WordLockQueuesWaiters);
+    Run("ReadWriteLockSharesAndExcludes", ReadWriteLockSharesAndExcludes);
+    Run("ReadWriteLockCounts", ReadWriteLockCounts);
+    Run("BinarySemaphoreSignalsOnce", BinarySemaphoreSignalsOnce);
+    Run("BinarySemaphoreWakesAWaiter", BinarySemaphoreWakesAWaiter);
+    Run("RefusesNull", RefusesNull);
     std::puts("WtfParkingLot passed");
     return 0;
 }
