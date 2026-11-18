@@ -172,8 +172,8 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     const Key none;
     VkPipelineRenderingCreateInfoKHR shaderRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
     shaderRendering.viewMask = rendering.viewMask;
-    shaderRendering.depthAttachmentFormat = rendering.depthAttachmentFormat;
-    shaderRendering.stencilAttachmentFormat = rendering.stencilAttachmentFormat;
+    shaderRendering.depthAttachmentFormat = keys.narrow ? VK_FORMAT_UNDEFINED : rendering.depthAttachmentFormat;
+    shaderRendering.stencilAttachmentFormat = keys.narrow ? VK_FORMAT_UNDEFINED : rendering.stencilAttachmentFormat;
     const std::array<std::uint32_t, 3> attachments{shaderRendering.viewMask, static_cast<std::uint32_t>(shaderRendering.depthAttachmentFormat), static_cast<std::uint32_t>(shaderRendering.stencilAttachmentFormat)};
     const auto attachmentBytes = std::as_bytes(std::span(attachments));
     const Key attachmentKey(attachmentBytes.begin(), attachmentBytes.end());
@@ -216,7 +216,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         case VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT:
             create.stageCount = 1;
             create.pStages = fragment;
-            create.pMultisampleState = info.pMultisampleState;
+            create.pMultisampleState = keys.narrow && !keys.fragmentPerSample ? nullptr : info.pMultisampleState;
             create.pDepthStencilState = info.pDepthStencilState != nullptr ? info.pDepthStencilState : &dynamicDepth;
             break;
         default:
