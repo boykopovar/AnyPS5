@@ -458,14 +458,15 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     std::unique_ptr<EcGroup, GroupDeleter> group = DecodeGroup(cursor, length);
     std::unique_ptr<EcKey, KeyDeleter> created;
     if (group && current == nullptr) created.reset(EC_KEY_new_nid_postfix());
-    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     if (!group) {
+        if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
         PutError(EcLibrary);
         return nullptr;
     }
     EcKey* result = created ? created.get() : current;
-    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) {
-        if (cursor != start) GuestPtr<const unsigned char*>(in).CopyOut(start);
+    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) APS5_INVALID_ARG_EX;
+    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
+        if (key != nullptr) GuestPtr<EcKey*>(key).CopyOut(current);
         APS5_INVALID_ARG_EX;
     }
     EC_GROUP_free_nid_postfix(result->group);

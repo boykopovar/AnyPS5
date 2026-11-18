@@ -292,6 +292,14 @@ void RejectsCallerPointersThatCannotBeWritten() {
         threw = true;
     }
     Require(threw && none == nullptr && *cursorSlot == P256.data());
+    EcKey* kept = existing;
+    threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&kept, cursorSlot, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && kept == existing && existing->group == group && *cursorSlot == P256.data());
     EC_KEY_free_nid_postfix(existing);
 #ifdef _WIN32
     VirtualFree(base, 0, MEM_RELEASE);
