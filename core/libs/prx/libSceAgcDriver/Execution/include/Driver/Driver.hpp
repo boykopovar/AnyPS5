@@ -180,6 +180,7 @@ private:
     void deferCompletion(const Submission& submission);
     void submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress = {});
     void wakeQueueZeroForCompletions();
+    bool noteResultsForIdleStore();
     void completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, const std::shared_ptr<FlipWork>& flipWork);
     static bool waitFree(const Submission& submission);
     bool queue0Before(std::uint64_t received) const;
