@@ -1,0 +1,5 @@
+# libSceCffMgr
+
+## change [14 exports (7 without a known name, bound by NID)]
+
+- [8 exports: sceConsoleFeatureFlagManagerSetOn and 7 unknown-name entries (bound by NID)](../../../core/libs/prx/libSceCffMgr/Export.cpp) (libSceCffMgr) - these eight still throw. Every function export of `libSceCffMgr.sprx` was taken from the firmware 13.60 export table, names from aerolib.csv only where `tools/nid_names.py` `compute_nid` reproduces the NID. Signatures, parameter layouts and behaviour of the named entries are unverified; the seven NID-only exports have no published name or shape. `sceConsoleFeatureFlagManagerIsOn`, `sceConsoleFeatureFlagManagerIsWaitingReboot`, `sceConsoleFeatureFlagManagerGetVersion`, `sceConsoleFeatureFlagManagerEventOpen`, `sceConsoleFeatureFlagManagerEventClose` and `sceConsoleFeatureFlagManagerDebugInit` return 0: the retail unit reports no console feature flag on and no reboot pending, open and close of the event channel are no-ops because no host state is kept, and the version query returns 0 as the retail baseline. This is a scene-source baseline, not a PS5 10.6 console measurement.
