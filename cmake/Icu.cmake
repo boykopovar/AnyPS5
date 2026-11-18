@@ -148,6 +148,28 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 add_library(icu_i18n STATIC EXCLUDE_FROM_ALL
+    ${ICU_SOURCE_DIR}/i18n/bocsu.cpp
+    ${ICU_SOURCE_DIR}/i18n/coleitr.cpp
+    ${ICU_SOURCE_DIR}/i18n/coll.cpp
+    ${ICU_SOURCE_DIR}/i18n/collation.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationbuilder.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationcompare.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationdata.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationdatabuilder.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationdatareader.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationdatawriter.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationfastlatin.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationfastlatinbuilder.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationfcd.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationiterator.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationkeys.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationroot.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationrootelements.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationruleparser.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationsets.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationsettings.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationtailoring.cpp
+    ${ICU_SOURCE_DIR}/i18n/collationweights.cpp
     ${ICU_SOURCE_DIR}/i18n/csdetect.cpp
     ${ICU_SOURCE_DIR}/i18n/csmatch.cpp
     ${ICU_SOURCE_DIR}/i18n/csr2022.cpp
@@ -157,8 +179,16 @@ add_library(icu_i18n STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/i18n/csrucode.cpp
     ${ICU_SOURCE_DIR}/i18n/csrutf8.cpp
     ${ICU_SOURCE_DIR}/i18n/inputext.cpp
+    ${ICU_SOURCE_DIR}/i18n/rulebasedcollator.cpp
+    ${ICU_SOURCE_DIR}/i18n/sortkey.cpp
     ${ICU_SOURCE_DIR}/i18n/ucln_in.cpp
-    ${ICU_SOURCE_DIR}/i18n/ucsdet.cpp)
+    ${ICU_SOURCE_DIR}/i18n/ucol.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucol_res.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucoleitr.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucsdet.cpp
+    ${ICU_SOURCE_DIR}/i18n/uitercollationiterator.cpp
+    ${ICU_SOURCE_DIR}/i18n/utf16collationiterator.cpp
+    ${ICU_SOURCE_DIR}/i18n/utf8collationiterator.cpp)
 target_include_directories(icu_i18n SYSTEM PUBLIC ${ICU_SOURCE_DIR}/i18n)
 target_compile_definitions(icu_i18n PRIVATE U_I18N_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
 target_link_libraries(icu_i18n PUBLIC icu_common)
