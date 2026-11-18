@@ -131,6 +131,24 @@ void TestNullFrame() {
     RequireThrows<std::invalid_argument>([] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(nullptr); });
 }
 
+void TestUnmappedFrame() {
+    auto* const unmapped = reinterpret_cast<WebRtcAudioFrame*>(std::uintptr_t{0x10});
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(unmapped); });
+    const std::int16_t samples[2] = {1, 2};
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(unmapped, 0, samples, 1, 48000, 0, 0, 2);
+    });
+    auto frame = Filled();
+    const auto* const unreadable = reinterpret_cast<const std::int16_t*>(std::uintptr_t{0x10});
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(frame.get(), 0, unreadable, 1, 48000, 0, 0, 2);
+    });
+    Require(AllSamples(frame->data, 0x5A5A));
+}
+
 }
 
 void UpdateFrame(WebRtcAudioFrame* frame, std::uint32_t timestamp, const std::int16_t* data, std::size_t samplesPerChannel, std::int32_t sampleRateHz, std::int32_t speechType,
@@ -211,6 +229,7 @@ void TestDataView() {
 int main() {
     TestConstructor();
     TestMutedData();
+    TestUnmappedFrame();
     TestMute();
     TestOperationsMute();
     TestNullFrame();

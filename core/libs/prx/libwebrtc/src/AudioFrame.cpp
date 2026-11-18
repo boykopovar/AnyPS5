@@ -41,14 +41,44 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
 const std::int16_t ZeroedData[WebRtcAudioFrameMaxDataSizeSamples] = {};
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* message) {
+    ErrnoGuard guard;
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* message) {
+    ErrnoGuard guard;
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+template<typename T> T Load(const T* field, const char* message) {
+    T value{};
+    CopyIn(&value, field, sizeof(value), message);
+    return value;
+}
+
+template<typename T> void Store(T* field, T value, const char* message) {
+    CopyOut(field, &value, sizeof(value), message);
+}
 
 std::int32_t GuessChannelLayout(int channels) {
     switch (channels) {
@@ -105,21 +135,21 @@ void APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(WebRtcAudioFrame* frame
 bool APS5_VABI _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(const WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrame::muted requires a frame");
-    return frame->muted;
+    return Load(&frame->muted, "AudioFrame::muted requires a readable frame");
 }
 
 const std::int16_t* APS5_VABI _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(const WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrame::data requires a frame");
-    return frame->muted ? ZeroedData : frame->data;
+    return Load(&frame->muted, "AudioFrame::data requires a readable frame") ? ZeroedData : frame->data;
 }
 
 std::int16_t* APS5_VABI _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrame::mutable_data requires a frame");
-    if (frame->muted) {
-        std::memset(frame->data, 0, sizeof(frame->data));
-        frame->muted = false;
+    if (Load(&frame->muted, "AudioFrame::mutable_data requires a readable frame")) {
+        CopyOut(frame->data, ZeroedData, sizeof(frame->data), "AudioFrame::mutable_data requires a writable frame");
+        Store(&frame->muted, false, "AudioFrame::mutable_data requires a writable frame");
     }
     return frame->data;
 }
@@ -129,30 +159,36 @@ void APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11
         throw std::invalid_argument("AudioFrame::UpdateFrame requires a frame");
     if (numChannels > WebRtcAudioFrameMaxConcurrentChannels)
         throw std::invalid_argument("AudioFrame::UpdateFrame: more channels than kMaxConcurrentChannels");
-    frame->timestamp = timestamp;
-    frame->samplesPerChannel = samplesPerChannel;
-    frame->sampleRateHz = sampleRateHz;
-    frame->speechType = speechType;
-    frame->vadActivity = vadActivity;
-    frame->numChannels = numChannels;
-    frame->channelLayout = GuessChannelLayout(static_cast<int>(numChannels));
+    const char* unwritable = "AudioFrame::UpdateFrame requires a writable frame";
+    Store(&frame->timestamp, timestamp, unwritable);
+    Store(&frame->samplesPerChannel, samplesPerChannel, unwritable);
+    Store(&frame->sampleRateHz, sampleRateHz, unwritable);
+    Store(&frame->speechType, speechType, unwritable);
+    Store(&frame->vadActivity, vadActivity, unwritable);
+    Store(&frame->numChannels, numChannels, unwritable);
+    Store(&frame->channelLayout, GuessChannelLayout(static_cast<int>(numChannels)), unwritable);
     const std::size_t length = samplesPerChannel * numChannels;
     if (length > WebRtcAudioFrameMaxDataSizeSamples)
         throw std::invalid_argument("AudioFrame::UpdateFrame: more samples than the frame holds");
     if (data) {
-        std::memcpy(frame->data, data, sizeof(std::int16_t) * length);
-        frame->muted = false;
+        std::vector<std::int16_t> samples(length);
+        CopyIn(samples.data(), data, sizeof(std::int16_t) * length, "AudioFrame::UpdateFrame requires readable samples");
+        CopyOut(frame->data, samples.data(), sizeof(std::int16_t) * length, unwritable);
+        Store(&frame->muted, false, unwritable);
     } else {
-        frame->muted = true;
+        Store(&frame->muted, true, unwritable);
     }
 }
 
 WebRtcInterleavedView APS5_VABI _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(const WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrame::data_view requires a frame");
-    const std::size_t size = frame->numChannels * frame->samplesPerChannel;
-    const std::int16_t* data = frame->muted ? ZeroedData : frame->data;
-    return {frame->numChannels, frame->samplesPerChannel, size == 0 ? nullptr : data, size};
+    const char* unreadable = "AudioFrame::data_view requires a readable frame";
+    const std::size_t numChannels = Load(&frame->numChannels, unreadable);
+    const std::size_t samplesPerChannel = Load(&frame->samplesPerChannel, unreadable);
+    const std::size_t size = numChannels * samplesPerChannel;
+    const std::int16_t* data = Load(&frame->muted, unreadable) ? ZeroedData : frame->data;
+    return {numChannels, samplesPerChannel, size == 0 ? nullptr : data, size};
 }
 
 }
