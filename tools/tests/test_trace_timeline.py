@@ -47,6 +47,21 @@ class TimelineTests(unittest.TestCase):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
 
+    def test_cli_thread_filter_preserves_the_default_window_end(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        for start, expected in ((0, "window 0.000 to 9.000 ms, 1 threads, 2 bars"),
+                                (8, "window 8.000 to 9.000 ms, 0 threads, 0 bars")):
+            with self.subTest(start=start):
+                out = path.with_name(f"capture-{start}.html")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", str(start)],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                page = out.read_text(encoding="utf-8")
+                self.assertIn(expected, page)
+                self.assertNotIn("Driver.Present", page)
+
     def test_cli_reports_event_loss_in_plain_and_compressed_captures(self):
         capture = document(self.items + [
             {"name": "thread_name", "ph": "M", "tid": 3, "args": {"name": "<worker&>"}},
