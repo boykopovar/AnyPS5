@@ -136,7 +136,7 @@ int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* u
 }
 
 int APS5_VABI sceVideoOutAddSetModeEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -160,7 +160,7 @@ int APS5_VABI sceVideoOutDeleteOutputModeEvent(KernelEqueue eq, int handle) try 
 }
 
 int APS5_VABI sceVideoOutDeleteSetModeEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -192,8 +192,13 @@ int APS5_VABI sceVideoOutSysAddSetModeEvent2(KernelEqueue eq, int index, void* u
 
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
     if (ev == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
-    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
-    const uintptr_t ident = ev->ident;
+    KernelEvent localEv{};
+    const int savedErrno = errno;
+    const bool evCopied = GuestCopyIn_nid_no_patch(&localEv, ev, sizeof(localEv));
+    errno = savedErrno;
+    if (!evCopied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (localEv.filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    const uintptr_t ident = localEv.ident;
     if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) return VIDEO_OUT_ERROR_INVALID_EVENT;
     return static_cast<int>(ident);
 }

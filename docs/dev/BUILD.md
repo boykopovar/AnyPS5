@@ -31,6 +31,8 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 
 `relinker_fuzz_seeds.py` writes the executables built by the relinker's Python tests as seeds, one per target system. With `BUILD_TESTING=ON`, CTest runs 20000 inputs from an empty corpus as `relinker_conversion_fuzzer`. Findings are written to the working directory as `crash-*`, `timeout-*` or `oom-*`; reproduce one with `build-fuzz/tests/relinker_conversion_fuzzer <file>`.
 
+`tools/relinker_seed_manifest.py <corpus>` describes each file of a flat fuzz corpus as one JSON object: its name, its size, the SHA-256 of its content and its first byte, which selects the target system.
+
 ## Full build
 
 ```sh
@@ -49,7 +51,9 @@ ninja -C build -f select.ninja selected
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
-`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+
+[`tools/build_changed_guest_tests.py`](../../tools/build_changed_guest_tests.py) builds and runs the guest and host-only `core/libs` tests that a change touches, from the build directory and an optional changed-paths argument; `--output-log` writes its log to a file. [`tools/build_mingw_host_only_tests.py`](../../tools/build_mingw_host_only_tests.py) builds the `core/libs` test executables that do not link guest libc. It prints the executables it selects, and `--list-only` stops there without building them.
 
 ## Requirements
 
@@ -59,13 +63,10 @@ python3 tools/select_tests.py ctest build --output-on-failure
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
 - Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can block or quarantine the executables that the relinker tests create and run, which fails `optional_plt`, `empty_tls`, `windows_address_space`, `windows_bss`, `windows_fixed_base`, `windows_icon`, `loadexec_arguments`, `exec_arguments` and `exec_sys_*_arguments`. CTest sets `TMPDIR`, `TEMP` and `TMP` of the relinker tests to `core/relinker/test-temp` in the build directory, so setting them before running `ctest` does not move these files; add that directory (or the build directory if `relinker.exe` itself is quarantined) to the scanner's exclusions instead.
+- On Windows, Microsoft Defender quarantines some AGC test executables as `Trojan:Win64/ShellCode.MKA!MTB`, because they carry generated machine code: 34 targets in one full build on Windows 11, `agc_shader_replay.exe` and 33 `tests/agc_*_tests.exe`. The `objcopy` post-step of those targets then fails with `Invalid argument`, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
 - Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
-- FFmpeg binaries are downloaded during configuration unless `FFMPEG_PREBUILT_DIR` is set. With the WinLibs CMake, the download fails with status 60 (`SSL peer certificate or SSH remote key was not OK`) unless `SSL_CERT_FILE` names a CA bundle, for example `C:\Program Files\Git\ucrt64\etc\ssl\certs\ca-bundle.crt` from Git for Windows 2.56 and later (`mingw64` instead of `ucrt64` before 2.56), as in CI.
-- Windows: libusb's `version_describe.h` is generated by `build-aux/gen-describe.ps1`, which CMake runs with `-ExecutionPolicy Bypass`. An execution policy set by Group Policy (`MachinePolicy` or `UserPolicy` in `Get-ExecutionPolicy -List`) takes precedence over that switch ([about_Execution_Policies](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1)); with `Restricted` or `AllSigned` the build stops at `version_describe.h` with `running scripts is disabled on this system`. The script only starts `build-aux/gen-describe.sh` with the `bash.exe` of Git for Windows, so a `.cmd` file that runs the shell script directly can replace PowerShell for this step without changing the policy. CMake passes it the `.ps1` path as the fifth argument and the source and output paths as the sixth and seventh; configure with `-DLIBUSB_POWERSHELL_EXECUTABLE=<path of the .cmd file>`:
 
-  ```bat
-  @"C:\Program Files\Git\bin\bash.exe" "%~dpn5.sh" %6 %7
-  ```
+`tools/package_release.py --output <dir>` writes the release packages. With `--docs <dir>` it collects the documentation into the output folder. Otherwise `--platform` picks the package: `headers` writes the public header package for `--version` (and takes no `--build` or `--revision`); `linux`, `windows` and `web` package the build tree given by `--build` for `--version`, and `web` also needs `--revision`, which the other platforms refuse.
 
 ## Web converter releases
 
@@ -74,6 +75,8 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
 Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+
+`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
 ## Commands
 
@@ -92,11 +95,15 @@ therefore tests the previous binaries and can show no effect at all.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
+`tools/public_headers_manifest.py [--root <dir>]` inventories the inputs of the public header package, with a content hash for each file, without creating an archive. `--root` defaults to the repository that contains the script.
+
 ## Windows setup and troubleshooting
 
 The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
 
 For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
+
+Checking out another branch changes the timestamps of every file that differs, so the next build compiles those files again even if they were built before. With MSYS2, install `mingw-w64-ucrt-x86_64-ccache` and configure with `-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache`. On a Ryzen 5 5600 with 12 jobs, switching a build directory back to a branch it had built before took 126 s with 98.5 % of 1,638 compilations served from the cache, against 622 s without it; the first build of a tree is not faster. LLD cannot replace the default linker here: the runtime libraries link against each other's `.prx` files directly, which GNU ld accepts and `ld.lld` rejects with `unknown file type`.
 
 Configuration rejects MinGW libstdc++ builds that combine atomic `weak_ptr::lock()` with mutex-based reference-count updates ([GCC PR125312](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125312)). Concurrent ownership changes can otherwise destroy live objects. Use a corrected distribution or the supported WinLibs GCC 15.2.0 release above, and configure in a new build directory.
 
@@ -117,8 +124,6 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -
 ```
 
 The documentation runs the Python tools as `python3`. With the python.org installer for Windows, which provides `python.exe` and the `py` launcher but no `python3.exe`, `python3` resolves to the Microsoft Store alias in `WindowsApps`, which prints `Python was not found` and exits with code 9009 (49 in Git Bash). Installs that provide `python3.exe`, such as the Python Install Manager, are not affected. In that case run these commands with `python` or `py -3`, for example `py -3 tools/check_conventions.py --base origin/main`.
-
-If `gen-describe.ps1` fails while generating libusb's `version_describe.h`, check the Bash path printed in the build output. A WindowsApps or System32 `bash.exe` can launch WSL and fail with `WSL_E_DEFAULT_DISTRO_NOT_FOUND` when no distribution is installed. Install Git for Windows with Bash, or use Portable Git, and put its `cmd` and `usr\bin` directories on `PATH` before retrying the build. Use Bash and `cygpath.exe` from the same Git installation.
 
 If the build stops with `fatal error: opening dependency file ...\*.cpp.obj.d: No such file or directory` for a few sources with long names, the path of an object or dependency file under `build` is at or near the 260-character Windows limit. A checkout whose path was 92 characters failed this way with `LongPathsEnabled` set to 1 in the registry; the same tree at `C:\a5` built. Clone the repository to a short path such as `C:\a5` and configure in a new build directory: a CMake build tree stores absolute paths, so moving an existing `build` directory does not help.
 
@@ -150,10 +155,13 @@ Project switches accept `ON` or `OFF`:
 | `-DAPS5_ENABLE_TIMING_LOG=ON`    | `OFF`   | Compile frame timing logging.                    |
 | `-DAPS5_ENABLE_TRACY=ON`         | `OFF`   | Build the [Tracy](#tracy) profiler client into the agc driver. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
+| `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | Stop logging the status of successful `sceAgcCreateShader` calls (`libSceAgcVsh`). |
 | `-DANYPS5_REQUIRE_CPU_LEAD_TEST=ON` | `OFF` | With `BUILD_TESTING=ON`, also register `agc_driver_sparse_dma_buf_cpu_lead`, which runs `agc_driver_sparse_dma_buf_import_tests --require-cpu-lead` and fails instead of skipping when the nonzero-lead dma-buf CPU publish is not exercised, such as on Windows or without an accessible `/dev/udmabuf`. |
 | `-DANYPS5_LIBRESSL_ORACLE=ON`    | `OFF`   | With `BUILD_TESTING=ON`, download LibreSSL 2.5.4 from ftp.openbsd.org at build time, check its SHA-256 and register `guest_libressl_oracle`, which compares `libSceLibreSsl` and `libSceLibreSsl3` exports with it and prints the cases and differences per function. Without the flag nothing is downloaded. |
 
 GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Toolchains that default to x86-64-v3, such as GCC 15 on Ubuntu 26.04, would otherwise fuse `a * b + c` into FMA instructions, which changes the last bit of math results that must match the console.
+
+GCC compiles the project's own sources, but not those under `3rdparty/`, with `-fzero-init-padding-bits=all` when it accepts the option. Since GCC 15, `T value{}` no longer zeroes the padding of every structure, so copying such a structure into guest memory would expose host stack bytes to the guest.
 
 The [Sanitizers workflow](../../.github/workflows/sanitizers.yml) builds the full runtime on Ubuntu with `-DANYPS5_ENABLE_ASAN=ON` and UBSan (`-fsanitize=undefined -fno-sanitize=vptr`) nightly at 03:41 UTC, runs every test and can be started manually with `workflow_dispatch`. It builds only the `F16ToF32Unpack`, `F64FmaSubnormals` and `RegistrationPrepareShutdown` AGC execution tests, like the Windows MSYS2 workflow. A test that fails because of the sanitizers themselves, or because of a bug whose fix is still open, is listed with the reason in [sanitizer-known-failures.txt](../../.github/sanitizer-known-failures.txt), one test per line with its sanitizers and the reason. The job summary, written by `tools/sanitizer_report.py`, separates unexpected failures from known ones and names listed tests that passed or did not run, so their entries can be removed. To repeat a run locally, set `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`, so that undefined behavior fails the test.
 
@@ -166,7 +174,6 @@ Build configuration parameters:
 | `-DCMAKE_CXX_COMPILER=g++`             | C++ compiler name or absolute path.                                |
 | `-DCMAKE_C_COMPILER_LAUNCHER=ccache`   | Optional C compiler cache; requires `ccache`.                      |
 | `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache` | Optional C++ compiler cache; requires `ccache`.                    |
-| `-DFFMPEG_PREBUILT_DIR=<path>`         | Unpacked FFmpeg package for the target platform; empty by default. |
 | `-DANYPS5_NODE=<path>`                 | Node.js 26 or newer that runs the memory64 Emscripten tests `guest_long_double` and `emscripten_module_unwind`; `node` by default, Emscripten builds only. |
 | `-DANYPS5_VIDEO_OUT_TEST_DRIVER=<driver>` | SDL video driver for the VideoOut flip tests; `windows` on Windows and `offscreen` elsewhere. |
 | `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
@@ -174,6 +181,8 @@ Build configuration parameters:
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg`, `vorbis`, `opus`, `libusb-cmake`, `mbedtls`, `vgmstream`, `zstd`, `ZArchive` and, on Windows, `mimalloc` always stay bundled and still need `git submodule update --init`.
+
+`tools/configure_seed.py` writes the configure check results of a configured tree's `CMakeCache.txt` as an initial cache file for `cmake -C`. `--include` and `--exclude` take glob patterns on the check names, and `--stdout` prints the seed instead of writing a file. `tools/check_configure_seed.py` checks an unfiltered seed against its cache without writing anything.
 
 ## HTTP locale tests
 
@@ -192,6 +201,49 @@ python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
+
+`tools/compile_database_inventory.py` reads a saved compilation database and prints JSON that groups its records by source directory and file, with the number of variants of each file. It does not invoke a compiler or a build tool.
+
+## Pinned frame replay comparisons
+
+`python tools/frame_replay_compare.py run recipe.json --output replay-results` runs two explicitly supplied Windows or Linux replay runtimes against one capture. The output directory must not exist or overlap an input. Each runtime directory must contain its replay executable, capture-filter executable and project libraries, with ordinary files rather than symlinks, junctions or hardlinks. Keep library search directories inside that runtime. Paths in the recipe resolve relative to the recipe file; tool and library paths inside a runtime use forward slashes.
+
+```json
+{
+  "format": "aps5-frame-replay-recipe/1",
+  "capture": "capture",
+  "arms": {
+    "baseline": {
+      "runtime": "baseline-runtime",
+      "replay": "agc_frame_replay.exe",
+      "inspect": "agc_frame_capture_filter.exe",
+      "commit": "0123456789012345678901234567890123456789",
+      "library_dirs": [".", "libs"]
+    },
+    "candidate": {
+      "runtime": "candidate-runtime",
+      "replay": "agc_frame_replay.exe",
+      "inspect": "agc_frame_capture_filter.exe",
+      "commit": "1234567890123456789012345678901234567890",
+      "library_dirs": [".", "libs"],
+      "environment": {}
+    }
+  },
+  "environment": {},
+  "trials": 3,
+  "warmups": 1,
+  "timeout": 120,
+  "log_mib": 16
+}
+```
+
+Use each runtime's full compiled AGC commit, not the current source checkout's commit. On Linux omit `.exe`. Shared `environment` records GPU/driver selection, Vulkan layers and other declared `APS5_*`, `ANYPS5_*` or `VK_*` settings. Per-arm environments record experimental differences; GPU selection belongs in the shared environment. The runner clears inherited settings in those namespaces and loader overrides, stages the runtime files, sets its library paths, and forces `ANYPS5_REQUIRE_VULKAN=1`, `ANYPS5_HOST_REPORT=1` and its private `ANYPS5_SHADER_CACHE_DIR`. It does not change existing validation gates or infer a source build's cleanliness from a binary hash.
+
+Each invocation uses `--strict --no-synthesize --repeat 1`. Capture inspection rejects truncated or obsolete captures before GPU replay. Each arm warms its own application cache; the resulting seed is copied into a fresh cache directory for every measured trial. Zero warmups starts every trial with an empty application cache. Trials alternate baseline/candidate and candidate/baseline order. Capture and runtime hashes are checked before and after execution. Original logs, process receipts, host reports, cache contents and every attempt remain in the bundle. Commands have a timeout and per-stream log byte bound; their owned Windows job or POSIX process group is terminated on completion, timeout or interruption.
+
+`report.md` and `report.json` show per-arm observations, paired changes and repeatability when no known evidence problem prevents comparison. `python tools/frame_replay_compare.py report replay-results` verifies retained file hashes and regenerates the report from original logs; `--json` prints JSON. Exit 0 means the declared experiment completed without a recorded evidence problem, 2 means setup, execution or evidence was incomplete, and 130 means interrupted. None is a correctness or performance pass threshold.
+
+Replay throughput measures the captured driver workload, not title FPS. The native result rounds `skipped_mib` to 0.1 MiB and truncates its `frame_ms.each` values to whole milliseconds; zero reported skips cannot prove zero skipped bytes. Reference comparisons cover final recorded display buffers, not every frame. Capture omissions, original scheduling and mapping history can remain unknown even when all reported checks match. Fresh processes do not retain in-process draw/resource caches, and per-arm application-cache seeds do not control driver caches, GPU clocks or equal cache warmness across builds. Host reports identify the selected GPU and compiled AGC commit, but do not provide a physical-device UUID or dirty state. Staged file hashes do not independently enumerate every library the OS loaded. Live-title performance claims still need the project's same-machine, same-scene summaries and traces.
 
 ## Repeated Vulkan validation
 
@@ -216,6 +268,8 @@ The gate compares VUID, synchronization-hazard and bracketed `UNASSIGNED-` valid
 `report.json` records the comparison and execution order. Exit 0 means the comparison completed with no detected regression, 1 means a test/coverage/layer or new diagnostic failure, 2 means setup, attribution or incomplete evidence, and 130 means interrupted. `--test-timeout` supplies CTest's default timeout; explicit test timeout properties still apply. `--timeout` bounds each configure/build/CTest command. The active POSIX process group or Windows job object is killed on completion, timeout or interruption. Repetitions report observed outcomes; they do not prove absence of intermittent faults or statistical significance.
 
 ## Write watch tests
+
+On Linux the guest write watch needs the kernel's asynchronous `userfaultfd` write protection (`UFFD_FEATURE_WP_ASYNC`), available from Linux 6.7. On an older kernel the runtime falls back to comparing guest memory, and the tests that need the watch fail by design instead of skipping. WSL 2's default 5.15 kernel is such a host: run `wsl --update` before treating those failures as regressions.
 
 The macOS write watch can be built and tested separately, without submodules or the prx libraries:
 
@@ -284,6 +338,9 @@ On Windows use `agc_frame_replay.exe` and prepend `build/core/libs/libs/unpatche
 `agc_driver_frame_capture_rewind` makes the six EOP flips from REWIND tails and checks that they start the capture and that it holds the same three frames. `agc_driver_frame_capture_rewind_held` releases each REWIND only after its thread's next call returns and checks that no call waits at a busy frame boundary and that the capture starts at the first idle one.
 
 Six tests with the driver's Vulkan device set a REWIND control word only after the next flip, so the delta before that flip is read while the REWIND waits, and check that the capture holds its frames: `agc_driver_frame_replay_rewind_store` overwrites the result of a copy gated by a `WAIT_REG_MEM` before the REWIND and checks that the replay keeps the CPU store, `agc_driver_frame_replay_rewind_copy` stores into the first page of a 128 MiB copy still running ahead of the REWIND and checks that the replayed delta holds the store and the copied bytes, and skips when the copy finished before the delta was read, `agc_driver_frame_replay_rewind_compute` parks a compute queue's `WAIT_REG_MEM` on a label the REWIND tail writes and checks that the replay runs the compute queue past it, `agc_driver_frame_replay_rewind_release` opens a queue's `WAIT_REG_MEM` gate from another thread 20 ms into a 256 MiB delta and checks that the delta holds the store, not the copy the queue makes after the gate, and `agc_driver_frame_replay_rewind_fill` submits a REWIND whose tail jumps to address 0 in the snapshot, fills the jump and sets the control word together, and checks that the replay runs the filled tail, and `agc_driver_frame_replay_rewind_split` fills the buffer a REWIND tail jumps to 64 MiB past the control word it sets in the same delta and checks that the replay resumes the REWIND only after both are restored. `agc_driver_frame_replay_rewind` parks a queue on a REWIND whose tail the CPU fills while it waits and checks that the strict replay runs the copy the tail chains to, `agc_driver_frame_replay_fence_reuse` releases and re-arms a fence between two recorded calls in each of two frames and checks that the strict replay runs both copies behind it, and `agc_driver_frame_replay_busy_queue` gates 64 MiB of graphics copies and a label on a fence a delta releases, parks a compute queue on that label, and checks that a replay with a 1 ms pacing timeout neither gives up nor releases the compute queue while the copies run. `agc_driver_frame_replay_wait_label` is the game-independent reproducer from #11157: a compute queue waits on a label, the CPU dirties an unrelated byte once the wait is registered, and a later graphics submission writes the label; it checks that the producer's submission does not wait for the capture and that the replay runs the compute queue past the label.
+- `tools/frame_capture_minimize.py --capture C --replay R --filter F --output O --match-regex RE --expect-exit-code N` minimizes a frame capture while the replay failure that `--match-regex` identifies stays reproducible. `--max-trials`, `--confirm-runs`, `--replay-timeout` and `--temp-dir` bound the search.
+
+`tools/frame_capture_minimize.py` shrinks a frame capture from `--capture` while a replay failure stays reproducible. It runs `--replay` on the capture first, `--confirm-runs` times (at least 2), to make sure the failure reproduces, then tries removing calls and chunks of the capture with the `--filter` program and keeps a removal only when the replay still matches `--match-regex` in its output and exits with `--expect-exit-code`. It stops after `--max-trials` replays (default 1000); `--replay-arg` passes an extra argument to the replay (`{trial_dir}` expands to a fresh folder per run). The result is written to `--output`, which must not exist yet.
 
 ## Pipeline statistics
 
@@ -410,4 +467,21 @@ ctest --test-dir build/register-context --output-on-failure
 ```
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
- 
+
+
+## Test selection tools
+
+- `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
+- `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
+
+## Checker scripts
+
+- `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
+- `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
+- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
+
+## Public-header archives
+
+`python3 tools/package_release.py --platform headers --version v1 --output dist` packages the public headers, their project includes and `LICENSE` without a build directory. To reproduce the ZIP and TAR.GZ archives with the same Python and zlib versions, set [`SOURCE_DATE_EPOCH`](https://reproducible-builds.org/specs/source-date-epoch/) to the same ASCII decimal integer from `0` through `4294967295`. Invalid values fail before staging or replacing outputs. Without the variable, archive metadata keeps its existing behavior.
+
+With the variable set, archive members have mode `0644`, TAR ownership is zero with empty owner names, and TAR and gzip timestamps use the selected epoch. ZIP timestamps use UTC, round down to two-second precision and clamp dates before 1980 to 1980-01-01. The gzip header omits the original filename. Source bytes, permissions and modification times remain unchanged. This controls header archive metadata; it does not establish reproducible native binaries or identical compressed bytes across Python or zlib versions.

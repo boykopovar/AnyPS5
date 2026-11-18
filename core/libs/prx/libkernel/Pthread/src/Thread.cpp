@@ -80,7 +80,7 @@ struct ThreadArgs {
     PthreadEntry entry;
     void* arg;
     PthreadPrivate* self;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     std::uint64_t gsBase = 0;
 #endif
 #ifndef _WIN32
@@ -982,7 +982,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
 #endif
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     GuestGsSet_nid_no_patch(args->gsBase);
 #endif
     args.reset();
@@ -1245,8 +1245,10 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
     sigprocmask_nid_postfix(1, nullptr, &args->guestSignalMask);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     args->gsBase = GuestGsGet_nid_no_patch();
+#endif
+#ifdef _WIN32
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<unsigned>::max() - HOST_STACK_MARGIN - system.dwPageSize)
@@ -1392,15 +1394,15 @@ int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const Kerne
 #ifdef _WIN32
     if (WaitForSingleObject(thread->nativeHandle, INFINITE) != WAIT_OBJECT_0)
         throw std::system_error(GetLastError(), std::system_category(), "Joining guest thread");
-    if (retval) *retval = thread->_retval;
 #else
     if (const int result = pthread_join(thread->hostThread, nullptr); result != 0)
         throw std::system_error(result, std::generic_category(), "Joining guest thread");
     FreeGuestStack(thread);
-    if (retval) *retval = thread->_retval;
 #endif
+    void* const returned = thread->_retval;
+    const bool stored = !retval || GuestCopyOut_nid_no_patch(retval, &returned, sizeof(returned));
     RetainJoinedThread(thread);
-    return SCE_OK;
+    return stored ? SCE_OK : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
@@ -1573,7 +1575,8 @@ int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
     if (!thread || !mask) return SCE_KERNEL_ERROR_EINVAL;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    *mask = thread->affinity.load(std::memory_order_relaxed);
+    const KernelCpumask affinity = thread->affinity.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(mask, &affinity, sizeof(affinity))) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 
@@ -1594,9 +1597,9 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
 }
 
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
-    if (!thread || !prio) return SCE_KERNEL_ERROR_EINVAL;
-    auto registered = LockRegisteredGuestThread(thread);
-    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
+    if (!prio) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
     *prio = thread->priority.load(std::memory_order_relaxed);
     return SCE_OK;
 }

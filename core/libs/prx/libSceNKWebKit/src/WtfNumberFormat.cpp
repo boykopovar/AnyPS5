@@ -27,6 +27,28 @@
 
 // Derived from Source/WTF/wtf/dtoa/double-conversion.cc (WebKit c55364d53f97)
 
+// Derived from Source/WTF/wtf/dtoa.cpp@e12a212a531aeddc11259e8515671cf5188e038d
+/*
+ *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
+ *
+ *  This library is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU Library General Public
+ *  License as published by the Free Software Foundation; either
+ *  version 2 of the License, or (at your option) any later version.
+ *
+ *  This library is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  Library General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Library General Public License
+ *  along with this library; see the file COPYING.LIB.  If not, write to
+ *  the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ *  Boston, MA 02110-1301, USA.
+ *
+ */
+
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <stdexcept>
@@ -41,6 +63,9 @@ constexpr int DecimalInShortestLow = -6;
 constexpr int DecimalInShortestHigh = 21;
 constexpr int MaxFixedDigitsAfterPoint = 100;
 constexpr double FirstNonFixed = 1e21;
+constexpr unsigned MaxPrecisionDigits = 120;
+constexpr int MaxLeadingPaddingZeroesInPrecisionMode = 6;
+constexpr int MaxTrailingPaddingZeroesInPrecisionMode = 0;
 
 std::string SpecialValue(double value) {
     if (std::isnan(value)) return "NaN";
@@ -140,6 +165,57 @@ std::string NumberToFixedWidthString(double number, unsigned decimalPlaces) {
     if (digits.empty()) decimalPoint = -static_cast<int>(decimalPlaces);
     std::string result = std::signbit(number) && number != 0.0 ? "-" : "";
     CreateDecimalRepresentation(result, digits, decimalPoint, static_cast<int>(decimalPlaces));
+    return result;
+}
+
+std::string NumberToFixedPrecisionString(double number, unsigned significantFigures) {
+    if (!std::isfinite(number)) return SpecialValue(number);
+    if (significantFigures < 1 || significantFigures > MaxPrecisionDigits) return std::string();
+    const int precision = static_cast<int>(significantFigures);
+    std::string digits = "0";
+    int decimalPoint = 1;
+    if (number != 0) {
+        char buffer[1024];
+        auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(number), std::chars_format::scientific, 800);
+        if (converted.ec != std::errc{}) throw std::runtime_error("WTF precision formatting failed");
+        digits.clear();
+        const char* cursor = buffer;
+        for (; cursor != converted.ptr && *cursor != 'e'; ++cursor) {
+            if (*cursor != '.') digits += *cursor;
+        }
+        int exponent = 0;
+        if (cursor == converted.ptr || std::from_chars(cursor + (cursor[1] == '+' ? 2 : 1), converted.ptr, exponent).ec != std::errc{})
+            throw std::runtime_error("WTF precision exponent formatting failed");
+        const bool roundUp = digits[static_cast<std::size_t>(precision)] >= '5';
+        digits.resize(static_cast<std::size_t>(precision));
+        decimalPoint = exponent + 1;
+        if (roundUp) {
+            std::size_t index = digits.size();
+            while (index && digits[index - 1] == '9') digits[--index] = '0';
+            if (index) {
+                ++digits[index - 1];
+            } else {
+                digits[0] = '1';
+                ++decimalPoint;
+            }
+        }
+    }
+    std::string result = std::signbit(number) && number != 0.0 ? "-" : "";
+    if (-decimalPoint + 1 > MaxLeadingPaddingZeroesInPrecisionMode || decimalPoint - precision > MaxTrailingPaddingZeroesInPrecisionMode) {
+        digits.resize(static_cast<std::size_t>(precision), '0');
+        CreateExponentialRepresentation(result, digits, decimalPoint - 1);
+    } else {
+        CreateDecimalRepresentation(result, digits, decimalPoint, std::max(0, precision - decimalPoint));
+    }
+    auto point = result.find('.');
+    if (point == std::string::npos) return result;
+    auto pastMantissa = result.find('e', point + 1);
+    if (pastMantissa == std::string::npos) pastMantissa = result.size();
+    auto truncated = pastMantissa;
+    while (truncated > point + 1 && result[truncated - 1] == '0') --truncated;
+    if (truncated == pastMantissa) return result;
+    if (truncated == point + 1) truncated = point;
+    result.erase(truncated, pastMantissa - truncated);
     return result;
 }
 
