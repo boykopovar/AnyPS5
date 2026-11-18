@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureRepack_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImageWords_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileWords_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/Bc1Decode_spv.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -108,6 +109,7 @@ TextureDetiler::~TextureDetiler() {
 }
 
 void TextureDetiler::release() noexcept {
+    if (bc1DecodePipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, bc1DecodePipeline, nullptr);
     for (const auto pool : readbackDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
     for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
@@ -482,6 +484,53 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
+}
+
+void TextureDetiler::DispatchBc1Decode(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout) {
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "BC1 decode needs a command buffer and both buffers");
+    Require(sourceOffset % 4u == 0u && destinationOffset % 4u == 0u, "BC1 decode needs word-aligned buffers");
+    const auto pitch = static_cast<std::uint64_t>(layout.pitchBytes);
+    const auto decodedPitch = pitch * 8u;
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto range = context.limits.maxStorageBufferRange;
+    Require(pitch % 8u == 0 && layout.width != 0 && layout.width <= pitch / 8u && layout.height != 0, "BC1 decode needs a valid block layout");
+    Require(decodedPitch + alignment - 1u <= range, "a decoded BC1 block row exceeds the device's storage buffer range");
+    const auto maxRows = static_cast<std::uint32_t>(std::min<VkDeviceSize>((range - alignment + 1u) / decodedPitch, context.limits.maxComputeWorkGroupCount[1]));
+
+    if (bc1DecodePipeline == VK_NULL_HANDLE) {
+        const auto create = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
+        const auto destroy = context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule");
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        const auto shader = CreateShaderModule(context, BC1_DECODE_SPV, sizeof(BC1_DECODE_SPV), "vkCreateShaderModule BC1 decode");
+        VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shader, "main", nullptr};
+        info.layout = pipelineLayout;
+        const auto result = create(context.device, context.pipelineCache, 1, &info, nullptr, &bc1DecodePipeline);
+        destroy(context.device, shader, nullptr);
+        Check(result, "vkCreateComputePipelines BC1 decode");
+    }
+
+    context.BindComputePipeline(commands, bc1DecodePipeline);
+    for (std::uint32_t row = 0; row < layout.height;) {
+        const auto rows = std::min(layout.height - row, maxRows);
+        const auto src = sourceOffset + row * pitch;
+        const auto dst = destinationOffset + row * decodedPitch;
+        const std::array<VkDescriptorBufferInfo, 2> buffers{{
+            {source, src - src % alignment, src % alignment + rows * pitch},
+            {destination, dst - dst % alignment, dst % alignment + rows * decodedPitch},
+        }};
+        const auto set = allocateSet();
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (std::uint32_t index = 0; index < writes.size(); ++index) {
+            writes[index] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, index, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffers[index], nullptr};
+        }
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+        const std::array<std::uint32_t, 4> push{static_cast<std::uint32_t>(src % alignment), static_cast<std::uint32_t>(dst % alignment), layout.width, layout.pitchBytes / 8u};
+        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+        context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (layout.width + 63u) / 64u, rows, 1);
+        row += rows;
+    }
 }
 
 }
