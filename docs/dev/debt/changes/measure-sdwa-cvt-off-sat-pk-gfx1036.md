@@ -1,0 +1,5 @@
+# shader
+
+## change [SDWA `v_cvt_off_f32_i4` and `v_sat_pk_u8_i16`]
+
+- [SDWA `v_cvt_off_f32_i4` and `v_sat_pk_u8_i16`](../../../core/shader/recompiler/RdnaDecoder/src/RdnaVectorOpDecoder.cpp) - the PS5's gfx1013 is not measured. `v_cvt_off_f32_i4` accepts all source selects, sign extension and byte/word destinations with pad, sign-extend or preserve; signed 4-bit nibble converts to float * 1/16. `v_sat_pk_u8_i16` accepts dwords and word destinations with pad, sign-extend or preserve, saturating two i16 to u8 in bits 0..15; sub-dword sources and invalid selectors/modes are refused. Sources: [RDNA2 ISA](https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf) §§6.8, 12.8 (opcodes 14, 98), Table 88; LLVM 19.1.0 VOP1Instructions.td and SIPeepholeSDWA.cpp. Verified in SdwaCvtOffSatPk.cpp, and on RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) both plain results follow that model and every SDWA result is the plain result of the selected source, placed; gfx1013 is unmeasured.

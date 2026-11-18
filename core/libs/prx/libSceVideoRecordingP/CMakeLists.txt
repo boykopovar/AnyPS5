@@ -1,5 +1,6 @@
 add_library(libSceVideoRecordingP SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVideoRecordingP PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVideoRecordingP PRIVATE libkernel_sys)
 configure_windows_unwind(libSceVideoRecordingP)
 
 if(BUILD_TESTING)

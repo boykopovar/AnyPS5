@@ -28,6 +28,12 @@ bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::siz
     return ok;
 }
 
+const void* ReadCertificatePointer(const LibreSsl3ValidityX509* certificate, const void* const LibreSsl3ValidityX509::*field, const char* function) {
+    const void* value = nullptr;
+    if (!CopyGuestInPreservingErrno(&value, &(certificate->*field), sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
 bool ReadValidity(const LibreSsl3ValidityX509* certificate, LibreSsl3X509Validity& outValidity, const char* caller) {
     if (!certificate) return false;
     const LibreSsl3ValidityCertInfo* certInfo = nullptr;
@@ -69,26 +75,22 @@ void APS5_VABI X509_get0_signature_nid_postfix(const void** signature, const voi
     if (!certificate) return;
     const void* guestSignature = nullptr;
     const void* guestAlgorithm = nullptr;
-    if (signature && !CopyGuestInPreservingErrno(&guestSignature, &certificate->signature, sizeof(guestSignature))) {
-        NotImplemented_nid_no_patch(__func__);
-    }
-    if (algorithm && !CopyGuestInPreservingErrno(&guestAlgorithm, &certificate->sigAlg, sizeof(guestAlgorithm))) {
-        NotImplemented_nid_no_patch(__func__);
-    }
+    if (signature) guestSignature = ReadCertificatePointer(certificate, &LibreSsl3ValidityX509::signature, __func__);
+    if (algorithm) guestAlgorithm = ReadCertificatePointer(certificate, &LibreSsl3ValidityX509::sigAlg, __func__);
     const void* previousSignature = nullptr;
     bool hasPreviousSignature = false;
     if (signature) {
         if (!CopyGuestInPreservingErrno(&previousSignature, signature, sizeof(previousSignature))) {
-            NotImplemented_nid_no_patch(__func__);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         }
         hasPreviousSignature = true;
         if (!CopyGuestOutPreservingErrno(signature, &guestSignature, sizeof(guestSignature))) {
-            NotImplemented_nid_no_patch(__func__);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         }
     }
     if (algorithm && !CopyGuestOutPreservingErrno(algorithm, &guestAlgorithm, sizeof(guestAlgorithm))) {
         if (hasPreviousSignature) CopyGuestOutPreservingErrno(signature, &previousSignature, sizeof(previousSignature));
-        NotImplemented_nid_no_patch(__func__);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
 }
 

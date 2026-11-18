@@ -9,7 +9,7 @@ extern "C" {
 int APS5_VABI sceIduGetDiscTitleInfo(void* info, std::uint32_t count);
 int APS5_VABI sceIduGetFsStats(void* stats);
 int APS5_VABI sceIduGetHardwareId(void* id);
-int APS5_VABI sceIduGetPkgInstallStatus();
+int APS5_VABI sceIduGetPkgInstallStatus(const char* id, void* status, std::uint32_t size);
 int APS5_VABI sceIduGetTitleList(void* list, std::int32_t count);
 int APS5_VABI sceIduInstallRif(const char* name, const void* data, std::uint32_t size);
 int APS5_VABI sceIduNotificationHide(const char* id);
