@@ -183,6 +183,35 @@ void CaseConversion() {
     Require(mixed == "ABCD-ZZ [\\]^_` @09\tI-I", "uppercase traverses complete strings");
 }
 
+void StringHashes() {
+    for (std::uint32_t unit = 0; unit <= 0xffff; ++unit) {
+        const auto expected = unit >= u'a' && unit <= u'z' ? unit - 0x20 : unit;
+        Require(u_asciiToUpper_nid_postfix(static_cast<char16_t>(unit)) == expected, "only ASCII lowercase units become uppercase");
+    }
+    const char16_t units[] = u"ab";
+    Require(ustr_hashUCharsN_nid_postfix(units, 2) == 97 * 37 + 98, "UTF-16 hash multiplies by 37 per unit");
+    Require(ustr_hashUCharsN_nid_postfix(units, 0) == 0 && ustr_hashUCharsN_nid_postfix(units, -1) == 0, "empty and negative lengths hash to zero");
+    Require(ustr_hashUCharsN_nid_postfix(nullptr, 5) == 0 && ustr_hashCharsN_nid_postfix(nullptr, 5) == 0 && ustr_hashICharsN_nid_postfix(nullptr, 5) == 0, "null strings hash to zero");
+    const char16_t high[] = {0xffff, 0x8000};
+    Require(ustr_hashUCharsN_nid_postfix(high, 2) == std::bit_cast<std::int32_t>(0xffffu * 37u + 0x8000u), "UTF-16 units are unsigned");
+    const char bytes[] = "\xc0" "Ab";
+    const auto byteHash = std::bit_cast<std::int32_t>((0xc0u * 37u + 'A') * 37u + 'b');
+    Require(ustr_hashCharsN_nid_postfix(bytes, 3) == byteHash, "byte hash treats bytes as unsigned and keeps case");
+    Require(ustr_hashICharsN_nid_postfix(bytes, 3) == std::bit_cast<std::int32_t>((0xc0u * 37u + 'a') * 37u + 'b'), "case-insensitive hash folds only ASCII uppercase");
+    Require(ustr_hashICharsN_nid_postfix("ABCXYZ@[", 8) == ustr_hashCharsN_nid_postfix("abcxyz@[", 8), "case-insensitive hash folds A-Z and keeps neighbours");
+    std::uint32_t wrapped = 0;
+    std::string longText(100, 'x');
+    for (int index = 0; index < 100; index += 3) wrapped = wrapped * 37 + 'x';
+    std::string sampled = longText;
+    for (int index = 1; index < 100; index += 3) sampled[index] = 'q';
+    Require(ustr_hashCharsN_nid_postfix(longText.data(), 100) == std::bit_cast<std::int32_t>(wrapped), "100-byte hash samples every third byte and wraps");
+    Require(ustr_hashCharsN_nid_postfix(sampled.data(), 100) == ustr_hashCharsN_nid_postfix(longText.data(), 100), "bytes between samples do not change the hash");
+    std::u16string boundary(63, u'z');
+    std::uint32_t every = 0;
+    for (char16_t unit : boundary) every = every * 37 + unit;
+    Require(ustr_hashUCharsN_nid_postfix(boundary.data(), 63) == std::bit_cast<std::int32_t>(every), "strings shorter than 64 units hash every unit");
+}
+
 }
 
 int main() {
@@ -190,4 +219,5 @@ int main() {
     InvalidFormatting();
     Parsing();
     CaseConversion();
+    StringHashes();
 }

@@ -33,6 +33,15 @@ std::int32_t FormatInteger(char* buffer, TValue value, std::uint32_t radix) {
     return length;
 }
 
+template<class TUnit, class TFold>
+std::int32_t Hash(const TUnit* units, std::int32_t length, TFold fold) {
+    std::uint32_t hash = 0;
+    if (!units || length <= 0) return 0;
+    const std::int32_t step = (length - 32) / 32 + 1;
+    for (std::int64_t index = 0; index < length; index += step) hash = hash * 37 + fold(units[index]);
+    return std::bit_cast<std::int32_t>(hash);
+}
+
 char* ConvertCase(char* text, char first, char last, int offset) {
     if (!text) return nullptr;
     for (char* cursor = text;; ++cursor) {
@@ -68,6 +77,24 @@ char* APS5_VABI T_CString_toLowerCase_nid_postfix(char* text) {
 
 char* APS5_VABI T_CString_toUpperCase_nid_postfix(char* text) {
     return ConvertCase(text, 'a', 'z', 'A' - 'a');
+}
+
+char16_t APS5_VABI u_asciiToUpper_nid_postfix(char16_t unit) {
+    return unit >= u'a' && unit <= u'z' ? static_cast<char16_t>(unit - (u'a' - u'A')) : unit;
+}
+
+std::int32_t APS5_VABI ustr_hashUCharsN_nid_postfix(const char16_t* units, std::int32_t length) {
+    return Hash(units, length, [](char16_t unit) { return unit; });
+}
+
+std::int32_t APS5_VABI ustr_hashCharsN_nid_postfix(const char* chars, std::int32_t length) {
+    return Hash(reinterpret_cast<const std::uint8_t*>(chars), length, [](std::uint8_t byte) { return byte; });
+}
+
+std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char* chars, std::int32_t length) {
+    return Hash(reinterpret_cast<const std::uint8_t*>(chars), length, [](std::uint8_t byte) {
+        return static_cast<std::uint8_t>(byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte);
+    });
 }
 
 }
