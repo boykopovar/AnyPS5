@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuardSpans.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PackedFloatResolve.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -818,6 +819,12 @@ public:
         return twinFormat != VK_FORMAT_UNDEFINED && use.format == twinFormat && sameTarget(target, twin);
     }
 
+    PackedFloatResolve& PackedResolver() {
+        Require(sampleable, "the device cannot sample the multisampled color target's format at its sample count");
+        if (packedFloatResolve == nullptr) packedFloatResolve = std::make_unique<PackedFloatResolve>(context);
+        return *packedFloatResolve;
+    }
+
     VkRenderPass ResolvePass(VkFormat format) {
         auto& resolvePass = resolvePasses[format];
         if (resolvePass != VK_NULL_HANDLE) return resolvePass;
@@ -948,6 +955,7 @@ private:
     std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
     std::vector<std::shared_ptr<Texture>> retiredTextures;
     std::unique_ptr<FirstSampleCopy> firstSampleCopy;
+    std::unique_ptr<PackedFloatResolve> packedFloatResolve;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
     struct ReinterpretCopy {
         Allocation allocation;
@@ -1170,6 +1178,7 @@ private:
         retiredTextures.clear();
         firstSampleTextures.clear();
         firstSampleCopy.reset();
+        packedFloatResolve.reset();
         for (auto& [format, copy] : reinterpretCopies) {
             copy.textures.clear();
             destroy(copy.allocation);
@@ -1972,6 +1981,23 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
     TargetsLock lock;
     auto& target = acquire(context, source);
     target.Keep();
+    if (source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10) {
+        auto& resolver = target.PackedResolver();
+        const std::array<VkImageView, 1> views{destinationView};
+        auto framebuffer = std::make_shared<Framebuffer>(context, resolver.RenderPass(), views, source.extent);
+        std::shared_ptr<void> descriptors;
+        recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            resolver.Record(commands, recorder, target.View(source.format), framebuffer->Handle(), source.extent, source.samples, descriptors);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            if (recorder != nullptr) {
+                Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+                recorder->Keep(framebuffer);
+            }
+        });
+        destination.MarkDirty();
+        return;
+    }
     const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
     auto framebuffer = std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
     recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {

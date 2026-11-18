@@ -1307,6 +1307,133 @@ bool InitialCountSupported(const AgcDriver::Graphics::Context& context, VkFormat
     return false;
 }
 
+constexpr std::array<std::uint32_t, 3> PackedFloatOffsets{0u, 10u, 21u};
+constexpr std::array<std::uint32_t, 3> PackedFloatMantissas{5u, 6u, 6u};
+
+std::uint32_t packedFloatWord(std::uint32_t low, std::uint32_t middle, std::uint32_t high) {
+    return low | (middle << PackedFloatOffsets[1]) | (high << PackedFloatOffsets[2]);
+}
+
+std::uint32_t packedFloatResolveReference(std::span<const std::uint32_t> samples) {
+    std::uint32_t resolved = 0;
+    for (std::size_t channel = 0; channel < PackedFloatOffsets.size(); ++channel) {
+        const auto offset = PackedFloatOffsets[channel];
+        const auto mantissa = PackedFloatMantissas[channel];
+        const auto unit = 1u << mantissa;
+        const auto mask = unit - 1u;
+        bool infinity = false;
+        bool nan = false;
+        double sum = 0;
+        for (const auto word : samples) {
+            const auto field = word >> offset;
+            const auto exponent = (field >> mantissa) & 31u;
+            const auto fraction = field & mask;
+            if (exponent == 31u) {
+                infinity |= fraction == 0u;
+                nan |= fraction != 0u;
+            } else {
+                sum += std::ldexp(fraction + (exponent == 0u ? 0u : unit), static_cast<int>(std::max(exponent, 1u)) - 15 - static_cast<int>(mantissa));
+            }
+        }
+        std::uint32_t code;
+        if (nan || infinity) {
+            code = (31u << mantissa) | (nan ? unit / 2u : 0u);
+        } else {
+            const auto mean = sum / static_cast<double>(samples.size());
+            if (mean < 0x1p-14) {
+                code = static_cast<std::uint32_t>(std::ldexp(mean, 14 + static_cast<int>(mantissa)));
+            } else {
+                int exponent = 0;
+                const auto significand = std::frexp(mean, &exponent);
+                const auto bits = static_cast<std::uint32_t>(std::ldexp(significand, 1 + static_cast<int>(mantissa)));
+                code = (static_cast<std::uint32_t>(exponent + 14) << mantissa) | (bits & mask);
+            }
+        }
+        resolved |= code << offset;
+    }
+    return resolved;
+}
+
+int PackedFloatResolveTests(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const ColorTargetLayout destinationLayout(Side, Side, ColorTileMode::RenderTarget);
+    constexpr auto format = VK_FORMAT_R32_UINT;
+    constexpr auto packing = ShaderRecompiler::ColorExportPacking::Float11_11_10;
+    constexpr std::array boundary4{0x780u, 0x63fu, 0x47fu, 0x2bfu};
+    constexpr std::array boundary8{0x781u, 0x6c8u, 0x5ffu, 0x43eu, 0x2bcu, 0x135u, 0xcbu, 0x6eu};
+    bool exercised = false;
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (!InitialCountSupported(context, format, samples)) continue;
+        const MultisampleTextureLayout sourceLayout(TextureTileMode::kR64KBX, 4u, samples, Side, Side, 1u, 0u);
+        Block sourceBlock(static_cast<std::size_t>(sourceLayout.Bytes()));
+        Block destinationBlock(destinationLayout.Bytes());
+        ColorTarget source{};
+        source.address = source.surfaceAddress = sourceBlock.Address();
+        source.extent = source.surfaceExtent = {Side, Side};
+        source.format = format;
+        source.bytes = destinationLayout.Bytes();
+        source.tileMode = ColorTileMode::RenderTarget;
+        source.componentMapping = 0xe4u;
+        source.samples = samples;
+        source.packing = packing;
+        auto destination = source;
+        destination.address = destination.surfaceAddress = destinationBlock.Address();
+        destination.samples = 1;
+        std::vector<std::uint32_t> input(static_cast<std::size_t>(Side) * Side * samples);
+        std::uint32_t random = 829u;
+        for (auto& word : input) {
+            random = random * 1664525u + 1013904223u;
+            word = random;
+        }
+        const auto packSamples = [&](std::size_t pixel) { return std::span(input).subspan(pixel * samples, samples); };
+        auto exceptional = packSamples(0);
+        std::ranges::fill(exceptional, packedFloatWord(0x3e0u, 0x7c0u, 0x7c0u));
+        exceptional[1] = packedFloatWord(0x3e1u, 1u, 0x7c1u);
+        Require(packedFloatResolveReference(exceptional) == packedFloatWord(0x3f0u, 0x7c0u, 0x7e0u), "packed float resolve reference lost the measured NaN precedence");
+        auto midpoints = packSamples(1);
+        std::ranges::fill(midpoints, packedFloatWord(1u, 0x3c1u, 0x40du));
+        midpoints[0] = packedFloatWord(2u, 0x3c2u, 0x40eu);
+        Require(packedFloatResolveReference(midpoints) == packedFloatWord(1u, 0x3c1u, 0x40du), "packed float resolve reference rounded a finite fraction upward");
+        if (samples == 4u || samples == 8u) {
+            auto boundary = packSamples(2);
+            for (std::uint32_t index = 0; index < samples; ++index) {
+                boundary[index] = packedFloatWord(0u, 0u, samples == 4u ? boundary4[index] : boundary8[index]);
+            }
+            const auto expected = samples == 4u ? 0x701u : 0x6cau;
+            Require(packedFloatResolveReference(boundary) == packedFloatWord(0u, 0u, expected), "packed float resolve reference missed a precision boundary");
+        }
+        const auto bytes = std::as_bytes(std::span(input));
+        sourceLayout.Tile(bytes, std::as_writable_bytes(std::span(sourceBlock.data, sourceBlock.bytes)));
+        {
+            std::lock_guard gpu(GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, source);
+            MultisampleTargetView(context, source);
+        }
+        const auto seeded = ReadMultisampleTargetSamples_nid_no_patch(context, source);
+        Require(std::ranges::equal(seeded, bytes), "packed float resolve source did not preserve the input sample bits");
+        {
+            std::lock_guard gpu(GuestMemory::GpuMutex());
+            RunColorMetadataPass(context, {ColorMetadataPass::Mode::Resolve, {destination}, source});
+        }
+        device.WaitIdle();
+        std::vector<std::byte> output(destinationLayout.Bytes());
+        GuestMemory::Read(destination.address, output);
+        std::vector<std::uint32_t> linear(static_cast<std::size_t>(Side) * Side);
+        destinationLayout.Detile(output, std::as_writable_bytes(std::span(linear)));
+        for (std::size_t pixel = 0; pixel < linear.size(); ++pixel) {
+            const auto expected = packedFloatResolveReference(packSamples(pixel));
+            if (linear[pixel] == expected) continue;
+            std::fprintf(stderr, "11_11_10 resolve %ux pixel %zu: got 0x%08x, expected 0x%08x\n", samples, pixel, linear[pixel], expected);
+            throw std::runtime_error("packed float resolve did not match the reference");
+        }
+        std::printf("11_11_10 resolve %ux: %zu packed texels matched the reference\n", samples, linear.size());
+        exercised = true;
+    }
+    return exercised ? 0 : VulkanTestSkipped;
+}
+
 PFN_vkGetPhysicalDeviceImageFormatProperties imageFormatProperties = nullptr;
 
 VKAPI_ATTR VkResult VKAPI_CALL NoReadbackImage(VkPhysicalDevice physical, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
@@ -2095,6 +2222,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
+        if (argc == 2 && std::string_view(argv[1]) == "--packed_float_resolve") return PackedFloatResolveTests(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot") { ColorSnapshots(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot_refusals") { ColorSnapshotRefusals(*device); return 0; }
