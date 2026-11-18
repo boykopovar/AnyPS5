@@ -125,6 +125,10 @@ int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(
     std::unique_lock lock(mutex);
     changed.wait(lock, [&] { return *flag != 0 || !running.contains(flag); });
     if (*flag != 0) return 1;
+    constexpr int unset = 0;
+    const bool writable = GuestCopyOut_nid_no_patch(flag, &unset, sizeof(unset));
+    errno = savedErrno;
+    if (!writable) return 1;
     running.insert(flag);
     lock.unlock();
     bool initialized;

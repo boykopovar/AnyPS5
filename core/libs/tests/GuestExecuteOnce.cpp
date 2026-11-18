@@ -6,6 +6,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using Callback = int (APS5_VABI *)(void*, void*, void**);
 
@@ -15,7 +22,7 @@ static int ExecuteOnce(int* flag, Callback callback, void* arg) {
 static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0}, arrived{0};
-static int nullCalls = -7, unmappedCalls = -7;
+static int nullCalls = -7, unmappedCalls = -7, readOnlyCalls = -7;
 static int control = 0, nested = 0, failing = 0, throwing = 0;
 static int published = 0, nestedValue = 0, failures = 0, throws = 0;
 static void* seenFirst = &control;
@@ -50,6 +57,28 @@ static int APS5_VABI Unreachable(void*, void*, void**) {
 }
 static int APS5_VABI NullProbe(void*, void*, void**) { ++nullCalls; return 1; }
 static int APS5_VABI UnmappedProbe(void*, void*, void**) { ++unmappedCalls; return 1; }
+static int APS5_VABI ReadOnlyProbe(void*, void*, void**) { ++readOnlyCalls; return 1; }
+
+static int* MapReadOnlyZero() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<int*>(page);
+}
+
+static void UnmapPage(int* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
 
 int main() {
     int token = 0;
@@ -78,4 +107,9 @@ int main() {
     Require(ExecuteOnce(nullptr, NullProbe, nullptr) == 1);
     Require(ExecuteOnce(reinterpret_cast<int*>(0x1), UnmappedProbe, nullptr) == 1);
     Require(nullCalls == -7 && unmappedCalls == -7 && errno == ESRCH);
+
+    int* readOnly = MapReadOnlyZero();
+    Require(ExecuteOnce(readOnly, ReadOnlyProbe, nullptr) == 1);
+    Require(readOnlyCalls == -7 && *readOnly == 0 && errno == ESRCH);
+    UnmapPage(readOnly);
 }
