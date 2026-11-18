@@ -803,6 +803,18 @@ long long APS5_VABI llrintl_nid_postfix(long double x) {
 }
 
 long double APS5_VABI sqrtl_nid_postfix(long double x) {
+    const auto bits = Bits(x);
+    const bool negativeFinite = (bits.signExponent & 0x8000u) != 0 && (bits.signExponent & 0x7fffu) != 0x7fffu
+        && ((bits.signExponent & 0x7fffu) != 0 || bits.mantissa != 0);
+    if (negativeFinite) {
+        std::fenv_t environment;
+        std::fegetenv(&environment);
+        const long double result = std::sqrt(x);
+        std::fesetenv(&environment);
+        std::feraiseexcept(FE_INVALID);
+        errno = EDOM;
+        return result;
+    }
     return std::sqrt(x);
 }
 

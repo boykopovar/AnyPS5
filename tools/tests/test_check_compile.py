@@ -1115,7 +1115,7 @@ class CheckCompileResponseTests(CheckCompileFixture):
         prefix = "error: no such file or directory: '"
         response = self.build / "flags.rsp"
         for content in (r'a\\"b c"', 'a\\\\\\"b', "x\\ y", '"', '""', '"""', '""""', 'a""b', '"a""b"',
-                        'x"y z', '\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
+                        'x"y z', 'q\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
             with self.subTest(content=content):
                 response.write_bytes(("-- " + content).encode("utf-8"))
                 result = subprocess.run([compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", "@flags.rsp"],
