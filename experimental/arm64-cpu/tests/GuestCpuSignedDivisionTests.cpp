@@ -173,6 +173,13 @@ static bool fitsSigned64(std::uint64_t low, std::uint64_t high) {
     return high == UINT64_MAX && (low >> 63) != 0;
 }
 
+static void addWide(std::uint64_t& low, std::uint64_t& high,
+                    std::uint64_t addLow, std::uint64_t addHigh) {
+    const auto sum = low + addLow;
+    high += addHigh + (sum < low ? 1 : 0);
+    low = sum;
+}
+
 int main() {
     bool ok = true;
 
@@ -315,6 +322,19 @@ int main() {
         idiv64(0x8000000000000000ULL, 0, 1));
     ok &= expectThrow("idiv64 divisor zero", idiv64(1, 0, 0));
 
+    ok &= check("idiv64 wide positive dividend", idiv64(0, 1, 3),
+        0x5555555555555555ULL, 1);
+    ok &= check("idiv64 wide exact division",
+        idiv64(0, 1, 0x4000000000000000ULL), 4, 0);
+    ok &= check("idiv64 wide negative boundary",
+        idiv64(0, UINT64_MAX, 2), 0x8000000000000000ULL, 0);
+    ok &= check("idiv64 wide negative dividend",
+        idiv64(0, UINT64_MAX, 3), 0xAAAAAAAAAAAAAAABULL, UINT64_MAX);
+    ok &= expectThrow("idiv64 wide positive quotient overflow",
+        idiv64(0, 1, 2));
+    ok &= expectThrow("idiv64 wide negative quotient overflow",
+        idiv64(0, UINT64_MAX, 1));
+
     ok &= check("mul32 small", multiply32(7, 6, 4), 42, 0, 0, 0);
     ok &= check("mul32 high half", multiply32(0x10000u, 0x10000u, 4),
         0, 1, 1, 1);
@@ -406,6 +426,37 @@ int main() {
                 static_cast<std::uint32_t>(divisor)),
             static_cast<std::uint32_t>(quotient),
             static_cast<std::uint32_t>(remainder));
+    }
+
+    for (unsigned i = 0; i < 256; ++i) {
+        seed = seed * UINT64_C(6364136223846793005) + 1;
+        const auto quotient = static_cast<std::int64_t>(seed);
+        seed = seed * UINT64_C(6364136223846793005) + 1;
+        auto divisor = static_cast<std::int64_t>(seed);
+        if (divisor == 0) divisor = 1;
+        seed = seed * UINT64_C(6364136223846793005) + 1;
+        const auto divisorMagnitude = divisor < 0
+            ? std::uint64_t{0} - static_cast<std::uint64_t>(divisor)
+            : static_cast<std::uint64_t>(divisor);
+        const auto remainderMagnitude = seed % divisorMagnitude;
+        std::uint64_t low = 0;
+        std::uint64_t high = 0;
+        referenceSignedMultiply(static_cast<std::uint64_t>(quotient),
+            static_cast<std::uint64_t>(divisor), low, high);
+        std::int64_t remainder = 0;
+        if (low != 0 || high != 0) {
+            remainder = (high >> 63) != 0
+                ? -static_cast<std::int64_t>(remainderMagnitude)
+                : static_cast<std::int64_t>(remainderMagnitude);
+        } else {
+            remainder = static_cast<std::int64_t>(remainderMagnitude);
+        }
+        addWide(low, high, static_cast<std::uint64_t>(remainder),
+            remainder < 0 ? UINT64_MAX : 0);
+        ok &= check("idiv64 wide random",
+            idiv64(low, high, static_cast<std::uint64_t>(divisor)),
+            static_cast<std::uint64_t>(quotient),
+            static_cast<std::uint64_t>(remainder));
     }
 
     for (unsigned i = 0; i < 256; ++i) {
