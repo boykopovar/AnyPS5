@@ -5,6 +5,8 @@
 
 #include FT_MULTIPLE_MASTERS_H
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -14,6 +16,20 @@
 using namespace FreeType;
 
 namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return ok;
+}
+
+FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
+    if (!library) return nullptr;
+    FT_Library host = nullptr;
+    if (!CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    return host;
+}
 
 void RequireLp64(const char* function) {
     if (sizeof(FT_Long) != 8) {
@@ -58,7 +74,7 @@ int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec* face, void** master) {
 }
 
 int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary* library, void* master) {
-    return FT_Done_MM_Var(library ? library->host : nullptr, static_cast<FT_MM_Var*>(master));
+    return FT_Done_MM_Var(ReadGuestLibrary(library, __func__), static_cast<FT_MM_Var*>(master));
 }
 
 int APS5_VABI FreeTypeSetVarDesignCoordinates_nid_no_patch(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
