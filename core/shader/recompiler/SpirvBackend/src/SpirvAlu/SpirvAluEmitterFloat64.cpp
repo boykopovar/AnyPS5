@@ -734,7 +734,7 @@ public:
         const Product total{pick(subtract, differenceHigh, sumHigh), pick(subtract, differenceLow, sumLow)};
         const auto sign = pick(logical(spv::OpLogicalOr, productLarger, Unary(state, spv::OpLogicalNot, boolean, subtract)), productSign, addendSign);
         const auto cancelled = testConstant(spv::OpIEqual, op(spv::OpBitwiseOr, total.high, total.low), 0u);
-        const auto zeros = pick(testConstant(spv::OpIEqual, total.high, 0u), withConstant(spv::OpIAdd, leadingZeros(total.low), 64u), leadingZeros(total.high));
+        const auto zeros = pick(testConstant(spv::OpIEqual, total.high, 0u), withConstant(spv::OpIAdd, leadingZerosWide(total.low), 64u), leadingZerosWide(total.high));
         const auto top = testConstant(spv::OpIEqual, zeros, 0u);
         const auto leftShift = pick(top, constant(0u), withConstant(spv::OpISub, zeros, 1u));
         const auto raised = shiftLeft128(total, leftShift);
@@ -876,6 +876,17 @@ private:
         const auto highMsb = Binary(state, spv::OpIAdd, u32, Glsl(state, u32, GLSLstd450FindUMsb, high), ConstantU32(state, 32u));
         const auto msb = Select(state, u32, highZero, Glsl(state, u32, GLSLstd450FindUMsb, narrow(value)), highMsb);
         return widen(Binary(state, spv::OpISub, u32, ConstantU32(state, 63u), msb));
+    }
+
+    std::uint32_t leadingZerosWide(std::uint32_t value) const {
+        auto count = constant(0u);
+        auto bits = value;
+        for (const std::uint64_t step : {32u, 16u, 8u, 4u, 2u, 1u}) {
+            const auto clear = testConstant(spv::OpIEqual, withConstant(spv::OpShiftRightLogical, bits, 64u - step), 0u);
+            count = pick(clear, withConstant(spv::OpIAdd, count, step), count);
+            bits = pick(clear, withConstant(spv::OpShiftLeftLogical, bits, step), bits);
+        }
+        return count;
     }
 
     std::uint32_t shiftRightJam(std::uint32_t value, std::uint32_t count) const {
