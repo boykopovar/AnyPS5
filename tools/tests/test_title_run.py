@@ -83,6 +83,14 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
 
+    def test_duplicate_titles_and_fields_are_refused(self):
+        path = self.root / "titles.json"
+        for text, name in (('{"PPSA00001": {"relink": ["--registry"]}, "PPSA00001": {"seconds": 45}}', "PPSA00001"),
+                           ('{"PPSA00001": {"seconds": 30, "seconds": 90}}', "seconds")):
+            path.write_text(text, encoding="utf-8")
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"titles.json: duplicate field '{name}'"):
+                title_run.load_titles(path)
+
     def test_files_refuse_colons_in_every_path_component(self):
         cases = [{f"{root}/asset.bin:note": {"text": ""}} for root in ("app0", "data", "download0")]
         cases += [
@@ -114,6 +122,18 @@ class TitlesTests(unittest.TestCase):
     def test_fixed_base_on_macos_is_refused(self):
         with self.assertRaisesRegex(ValueError, "fixed_base is not supported on macos"):
             title_run.relink_args({"fixed_base": "0x400000"}, "macos")
+
+    def test_intel_host_gets_to_intel(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({}, "windows", intel_host=True), ["--windows", "--to-intel"])
+
+    def test_amd_host_keeps_the_entry_flags(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=False), [])
+
+    def test_an_explicit_conversion_is_not_duplicated(self):
+        self.assertEqual(title_run.relink_args({"relink": ["--to-intel"]}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--to-rosetta"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--to-avx"])
 
 
 def bmp(path, width, height, color):

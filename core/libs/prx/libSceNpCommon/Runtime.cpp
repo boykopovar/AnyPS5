@@ -42,6 +42,39 @@ constexpr std::size_t NP_ID_OPT_OFFSET = 0x14;
 constexpr std::size_t NP_ID_PLATFORM_OFFSET = 0x18;
 constexpr std::size_t NP_ID_TERMINATOR_FLAG_OFFSET = 0x1C;
 
+bool GuestTextLength(const char* text, std::size_t maximum, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < maximum;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = std::min(sizeof(chunk) - address % sizeof(chunk), maximum - offset);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
+        errno = savedErrno;
+        if (!copied) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
+    length = maximum;
+    return true;
+}
+
+char* DuplicateGuestText(NpAllocatorEx* allocator, const char* text, std::size_t length) {
+    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
+    if (copy == nullptr) return nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy, text, length);
+    errno = savedErrno;
+    if (!copied) {
+        _sceNpAllocatorExFree(allocator, copy);
+        return nullptr;
+    }
+    copy[length] = '\0';
+    return copy;
+}
+
 std::uint32_t NpIdWord(const std::uint8_t* npId, std::size_t offset) {
     std::uint32_t value;
     std::memcpy(&value, npId + offset, sizeof(value));
@@ -854,19 +887,15 @@ void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer) {
 }
 
 char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text) {
-    const std::size_t size = std::strlen(text) + 1;
-    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, size));
-    if (copy != nullptr) std::memcpy(copy, text, size);
-    return copy;
+    std::size_t length = 0;
+    if (!GuestTextLength(text, SIZE_MAX - 1, length)) return nullptr;
+    return DuplicateGuestText(allocator, text, length);
 }
 
 char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* text, std::size_t maxLength) {
-    const std::size_t length = strnlen(text, maxLength);
-    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
-    if (copy == nullptr) return nullptr;
-    std::memcpy(copy, text, length);
-    copy[length] = '\0';
-    return copy;
+    std::size_t length = 0;
+    if (!GuestTextLength(text, std::min(maxLength, SIZE_MAX - 1), length)) return nullptr;
+    return DuplicateGuestText(allocator, text, length);
 }
 
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
@@ -1137,10 +1166,15 @@ int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* coun
     std::fill(std::begin(registered.user_id), std::end(registered.user_id), USER_ID_INVALID);
     const int result = sceUserServiceGetRegisteredUserIdList(&registered);
     if (result < 0) return result;
+    std::array<int, std::size(registered.user_id)> ids{};
     int found = 0;
     for (const int user : registered.user_id)
-        if (user != USER_ID_INVALID) users[found++] = user;
-    *count = found;
+        if (user != USER_ID_INVALID) ids[found++] = user;
+    const int savedErrno = errno;
+    const bool copied = (found == 0 || GuestCopyOut_nid_no_patch(users, ids.data(), found * sizeof(int))) &&
+        GuestCopyOut_nid_no_patch(count, &found, sizeof(found));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

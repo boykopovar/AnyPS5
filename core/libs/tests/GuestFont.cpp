@@ -382,6 +382,13 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     Require(sceFontCharacterGetTextOrder(characters, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
     Require(sceFontCharacterGetTextOrder(characters, &textOrder) == SCE_FONT_OK && textOrder == characters->textOrder);
+    int bidiLevel = -1;
+    Require(sceFontCharacterGetBidiLevel(characters, &bidiLevel) == SCE_FONT_OK && bidiLevel >= 0);
+    errno = 71;
+    Require(sceFontCharacterGetBidiLevel(characters, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextFontCode(characters, reinterpret_cast<FontHandle*>(0x10), &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextOrder(characters, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontStringGetWritingForm(string) == 0x12);
     Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
     ParsedText line{"AV\nA", 0, font};
@@ -570,6 +577,11 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
     Require(sceFontSetupRenderEffectSlant(font, 2.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 1.0f);
+    Require(sceFontGetRenderEffectSlant(nullptr, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetRenderEffectSlant(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderEffectSlant(font, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && approximately(weightX, 1.02f) && approximately(weightY, 0.98f) && mode == 0);

@@ -1475,6 +1475,8 @@ export function translate(locale, key, values = {}) {
 
 const diagnostics = {
     'ar-EG': [
+        [/Unknown SDL controller button '(.*)'\./u, "زرار وحدة تحكم SDL '$1' مش معروف."],
+        ['expected a PlayStation button or None.', 'القيمة لازم تكون زرار PlayStation أو None.'],
         [/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.'],
         [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.'],
         [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.'],
@@ -1496,6 +1498,9 @@ const diagnostics = {
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.'],
     ],
     'sv': [
+        [/Unknown SDL controller button '(.*)'\./u, "Okänd SDL-handkontrollknapp '$1'."],
+        [/SDLButton:(\w+) is set more than once\./u, 'SDLButton:$1 anges mer än en gång.'],
+        ['expected a PlayStation button or None.', 'Förväntade en PlayStation-knapp eller None.'],
         ['Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.'],
         ['Unknown or empty action.', 'Okänd eller tom åtgärd.'],
         ['Input type must be KEY, MOUSE, WHEEL or PAD.', 'Indatatypen måste vara KEY, MOUSE, WHEEL eller PAD.'],
@@ -1512,6 +1517,8 @@ const diagnostics = {
         ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.'],
     ],
     'pt-BR': [
+        [/Unknown SDL controller button '(.*)'\./u, "Botão de controle SDL desconhecido: '$1'."],
+        ['expected a PlayStation button or None.', 'O valor deve ser um botão do PlayStation ou None.'],
         [/(\w+) is set more than once\./gu, '$1 está definido mais de uma vez.'],
         [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 deve ser uma porcentagem inteira de 0 a 90.'],
         [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 deve ser um número maior que 0 e no máximo 10.'],
