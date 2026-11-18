@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <cerrno>
+#include <climits>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -209,19 +210,19 @@ std::error_code MatchNames(const std::filesystem::path& directory, std::span<Nam
     if (!stem && CaseInsensitiveDirectoryWindows(directory)) return MatchNamesWindows(directory, names);
 #endif
     std::error_code error;
-    std::filesystem::directory_iterator entry(directory, error), end;
+    std::filesystem::directory_iterator entry(directory.empty() ? std::filesystem::path(".") : directory, error), end;
     for (; !error && entry != end; entry.increment(error)) {
         const auto filename = entry->path().filename().string();
         for (auto& name : names) {
             if (name.stem) {
                 std::error_code status;
                 if (!SameRelinkedStem(filename, name.name) || !entry->is_regular_file(status) || status) continue;
-                if (!name.path || filename.size() < name.path->filename().string().size()) name.path = entry->path();
+                if (!name.path || filename.size() < name.path->filename().string().size()) name.path = directory / entry->path().filename();
                 continue;
             }
             if (!SameName(filename, name.name)) continue;
             name.ambiguous = name.ambiguous || name.path.has_value();
-            name.path = entry->path();
+            name.path = directory / entry->path().filename();
         }
     }
     return error;
@@ -360,9 +361,22 @@ std::optional<std::filesystem::path> ProvidedPath(const WorkingDirectory& state,
     if (provided.empty()) return std::nullopt;
     return provided.make_preferred();
 }
+bool FitsHostPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return true;
+#else
+    return path.native().size() < PATH_MAX;
+#endif
+}
+std::filesystem::path ShortHostPath(const WorkingDirectory& state, const std::filesystem::path& path) {
+    if (FitsHostPath(path)) return path;
+    const auto relative = path.lexically_relative(state.root);
+    return relative.empty() || *relative.begin() == ".." ? path : relative;
+}
 std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::string>& names, bool module = false) {
     if (auto aliased = ResolveAlias(JoinNames(names), module)) return *aliased;
     if (auto provided = ProvidedPath(state, names)) return *provided;
+    if (!FitsHostPath(Child(state.root, JoinNames(names)))) return ResolveHostPath({}, names, module);
     return ResolveHostPath(state.root, names, module).make_preferred();
 }
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
@@ -528,11 +542,30 @@ int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::too_many_symbolic_link_levels) return 62;
     return 5;
 }
+std::filesystem::path CanonicalHostPath(const WorkingDirectory& state, std::filesystem::path resolved, std::error_code& error) {
+    if (resolved.is_absolute()) return std::filesystem::canonical(resolved, error);
+    while (!resolved.has_filename() && resolved.has_relative_path()) resolved = resolved.parent_path();
+    auto prefix = resolved;
+    std::vector<std::filesystem::path> tail;
+    while (!FitsHostPath(state.root / prefix) && prefix.has_parent_path()) {
+        tail.push_back(prefix.filename());
+        prefix = prefix.parent_path();
+    }
+    auto canonical = std::filesystem::canonical(state.root / prefix, error);
+    for (auto name = tail.rbegin(); !error && name != tail.rend(); ++name) {
+        prefix /= *name;
+        const auto status = std::filesystem::symlink_status(prefix, error);
+        if (!error && !std::filesystem::exists(status)) error = std::make_error_code(std::errc::no_such_file_or_directory);
+        if (!error && std::filesystem::is_symlink(status)) error = std::make_error_code(std::errc::filename_too_long);
+        canonical /= *name;
+    }
+    return canonical;
+}
 int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved) {
     std::error_code error;
-    const auto canonical = std::filesystem::canonical(resolved, error);
+    const auto canonical = CanonicalHostPath(state, resolved, error);
     if (error) return DirectoryFailure(error);
-    if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
+    if (!std::filesystem::is_directory(ShortHostPath(state, canonical), error)) return error ? DirectoryFailure(error) : 20;
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
     if (relative.empty() || *relative.begin() == "..") {
@@ -1066,7 +1099,7 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
         std::error_code error;
-        if (!std::filesystem::is_directory(state.current, error)) {
+        if (!std::filesystem::is_directory(ShortHostPath(state, state.current), error)) {
             errno = error ? DirectoryFailure(error) : 2; return nullptr;
         }
         const auto relative = state.current.lexically_relative(state.root);
