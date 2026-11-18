@@ -152,7 +152,8 @@ def fold(root, write):
         texts[operation.library] = apply(texts[operation.library], operation)
     if write:
         for library, text in texts.items():
-            (root / debt_file(library)).write_text(text, encoding="utf-8", newline="\n")
+            with (root / debt_file(library)).open("w", encoding="utf-8", newline="\n") as output:
+                output.write(text)
         for path in fragments:
             path.unlink()
     return texts, fragments
