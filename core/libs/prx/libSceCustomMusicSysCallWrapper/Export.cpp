@@ -1,68 +1,16 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceCustomMusicSysCallWrapper/include/InventoryExports.hpp"
 #include "prx/libSceCustomMusicSysCallWrapper/include/Api.hpp"
+#include "prx/libSceAudiodec/libSceAudiodec.hpp"
+#include "prx/libSceAudiodecCpu/libSceAudiodecCpu.hpp"
+#include "prx/libSceNet/libSceNet.hpp"
+#include "prx/libSceNetCtl/libSceNetCtl.hpp"
+#include "prx/libkernel/libkernel.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceAudiodecClearContext(int32_t handle);
-int APS5_VABI sceAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, std::uint32_t type);
-int APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl* ctrl, uint32_t codecType);
-int APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl);
-int APS5_VABI sceAudiodecDeleteDecoder(int32_t handle);
-int APS5_VABI sceKernelClose(int d);
-int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp);
-std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes);
-int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen);
-int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen);
-int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen);
-int APS5_VABI sceNetEpollAbort(int eid, int flags);
-int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event);
-int APS5_VABI sceNetEpollCreate(const char* name, int flags);
-int APS5_VABI sceNetEpollDestroy(int eid);
-int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout);
-int* APS5_VABI sceNetErrnoLoc(void);
-const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_t size);
-int APS5_VABI sceNetInetPton(int af, const char* src, void* dst);
-int APS5_VABI sceNetListen(int s, int backlog);
-int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags);
-int APS5_VABI sceNetPoolDestroy(int memid);
-std::int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags);
-int APS5_VABI sceNetResolverAbort(int rid, int flags);
-int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags);
-int APS5_VABI sceNetResolverDestroy(int rid);
-std::int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags);
-int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen);
-int APS5_VABI sceNetShutdown(int s, int how);
-int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol);
-int APS5_VABI sceNetSocketAbort(int s, int flags);
-int APS5_VABI sceNetSocketClose(int s);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadDetach(Pthread thread);
-void APS5_VABI scePthreadExit(void* retval);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
-Pthread APS5_VABI scePthreadSelf();
-void APS5_VABI scePthreadYield();
-int APS5_VABI sceNetCtlInit(void);
-void APS5_VABI sceNetCtlTerm(void);
-int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout);
-}
 
 extern "C" {
 

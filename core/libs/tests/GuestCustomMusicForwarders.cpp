@@ -12,52 +12,12 @@
 #include <utility>
 #include <stdexcept>
 
-struct AudiodecCtrl;
-struct AudiodecCpuMemory;
-
-extern "C" {
-int APS5_VABI sceCustomMusicAudiodecClearContext(int32_t handle);
-int APS5_VABI sceCustomMusicFileOpenRead(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceCustomMusicKernelGettimeofday(KernelTimeval* tp);
-int APS5_VABI sceCustomMusicNetPoolCreate(const char* name, int size, int flags);
-int APS5_VABI sceCustomMusicPthreadMutexLock(PthreadMutex* mutex);
-Pthread APS5_VABI sceCustomMusicPthreadSelf();
-void APS5_VABI sceCustomMusicPthreadYield();
-int APS5_VABI sceCustomMusicNetCtlInit();
-void APS5_VABI sceCustomMusicNetCtlTerm();
-
-int32_t APS5_VABI sceAudiodecClearContext(int32_t handle);
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp);
-int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI sceCustomMusicNetShutdown(int s, int how);
-int APS5_VABI sceCustomMusicNetSocketAbort(int s, int flags);
-int APS5_VABI sceCustomMusicAudiodecDeleteDecoder(int32_t handle);
-int APS5_VABI sceCustomMusicAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, uint32_t type);
-int APS5_VABI sceCustomMusicKernelNanosleep(const KernelTimespec* rq, KernelTimespec* rm);
-int APS5_VABI sceCustomMusicPthreadSetprio(Pthread thread, int prio);
-int APS5_VABI sceCustomMusicNetBind(int s, const void* addr, uint32_t addrlen);
-int APS5_VABI sceCustomMusicSelect(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout);
-int* APS5_VABI sceCustomMusicNetErrnoLoc();
-const char* APS5_VABI sceCustomMusicNetInetNtop(int af, const void* src, char* dst, uint32_t size);
-const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_t size);
-int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen);
-int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout);
-int* APS5_VABI sceNetErrnoLoc(void);
-int APS5_VABI sceNetShutdown(int s, int how);
-int APS5_VABI sceNetSocketAbort(int s, int flags);
-int32_t APS5_VABI sceAudiodecDeleteDecoder(int32_t handle);
-int32_t APS5_VABI sceAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, uint32_t type);
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rq, KernelTimespec* rm);
-int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
-int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
-Pthread APS5_VABI scePthreadSelf();
-void APS5_VABI scePthreadYield();
-int APS5_VABI sceNetCtlInit(void);
-void APS5_VABI sceNetCtlTerm(void);
-}
+#include "prx/libSceCustomMusicSysCallWrapper/libSceCustomMusicSysCallWrapper.hpp"
+#include "prx/libSceAudiodec/libSceAudiodec.hpp"
+#include "prx/libSceAudiodecCpu/libSceAudiodecCpu.hpp"
+#include "prx/libSceNet/libSceNet.hpp"
+#include "prx/libSceNetCtl/libSceNetCtl.hpp"
+#include "prx/libkernel/libkernel.hpp"
 
 namespace {
 
