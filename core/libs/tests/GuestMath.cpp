@@ -3628,11 +3628,11 @@ static void RequireExtendedBitCases(const char* name, long double(APS5_VABI* fun
     }
 }
 
-static bool RaisesOnly(long double (APS5_VABI* function)(long double), long double input, int flag, std::uint64_t mantissa, std::uint16_t signExponent) {
+static bool RaisesOnly(long double (APS5_VABI* function)(long double), long double input, int flag, std::uint64_t mantissa, std::uint16_t signExponent, int error = 0) {
     std::feclearexcept(FE_ALL_EXCEPT);
     *__error_nid_postfix() = 0;
     const long double result = function(input);
-    return ExtendedBits(result, mantissa, signExponent) && std::fetestexcept(flag) != 0 && *__error_nid_postfix() == 0;
+    return ExtendedBits(result, mantissa, signExponent) && std::fetestexcept(flag) != 0 && *__error_nid_postfix() == error;
 }
 
 static void CheckLongDoubleExponentialHyperbolic() {
@@ -3645,12 +3645,12 @@ static void CheckLongDoubleExponentialHyperbolic() {
     Require(ExtendedBits(expl_nid_postfix(0.0L), one, 0x3fff) && ExtendedBits(expl_nid_postfix(-0.0L), one, 0x3fff));
     Require(ExtendedBits(expl_nid_postfix(MakeExtended(one, 0x3fb4)), one, 0x3fff));
     Require(ExtendedBits(expl_nid_postfix(MakeExtended(one, 0x3fb3)), one, 0x3fff));
-    Require(ExtendedBits(expl_nid_postfix(MakeExtended(0xb17217f7d1cf79abull, 0x400c)), 0xffffffffffffcd87ull, 0x7ffe));
+    Require(ExtendedBits(expl_nid_postfix(MakeExtended(0xb17217f7d1cf79abull, 0x400c)), 0xffffffffffffcd88ull, 0x7ffe));
     Require(ExtendedBits(expl_nid_postfix(MakeExtended(0xb21dfe7f09e2baa9ull, 0xc00c)), 1, 0));
-    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb17217f7d1cf79acull, 0x400c), FE_OVERFLOW, one, 0x7fff));
-    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb21dfe7f09e2baaaull, 0xc00c), FE_UNDERFLOW, 0, 0));
-    Require(RaisesOnly(expl_nid_postfix, 20000.0L, FE_OVERFLOW, one, 0x7fff));
-    Require(RaisesOnly(expl_nid_postfix, -20000.0L, FE_UNDERFLOW, 0, 0));
+    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb17217f7d1cf79acull, 0x400c), FE_OVERFLOW, one, 0x7fff, ERANGE));
+    Require(RaisesOnly(expl_nid_postfix, MakeExtended(0xb21dfe7f09e2baaaull, 0xc00c), FE_UNDERFLOW, 0, 0, ERANGE));
+    Require(RaisesOnly(expl_nid_postfix, 20000.0L, FE_OVERFLOW, one, 0x7fff, ERANGE));
+    Require(RaisesOnly(expl_nid_postfix, -20000.0L, FE_UNDERFLOW, 0, 0, ERANGE));
     Require(ExtendedBits(sinhl_nid_postfix(0.0L), 0, 0) && ExtendedBits(sinhl_nid_postfix(-0.0L), 0, 0x8000));
     Require(ExtendedBits(sinhl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(sinhl_nid_postfix(-infinity), one, 0xffff));
     Require(std::isnan(sinhl_nid_postfix(nan)));
@@ -3671,9 +3671,9 @@ static void CheckLongDoubleExponentialHyperbolic() {
     Require(ExtendedBits(tanhl_nid_postfix(MakeExtended(one, 0x3fb0)), one, 0x3fb0));
     Require(ExtendedBits(tanhl_nid_postfix(MakeExtended(one, 0xbfb0)), one, 0xbfb0));
     const ExtendedBitCase explCases[] = {
-        {0x8000000000000000ull, 0x3fff, 0xadf85458a2bb4a9bull, 0x4000}, {0x8000000000000000ull, 0xbfff, 0xbc5ab1b16779be35ull, 0x3ffd},
-        {0x8000000000000000ull, 0x3ffe, 0xd3094c70f034de4cull, 0x3fff}, {0x998ee0327ad43a68ull, 0x4003, 0xced063cb23a929e1ull, 0x401a},
-        {0xa200000000000000ull, 0xc003, 0xdc9ef0f13e51d696ull, 0x3fe1}, {0xaf08000000000000ull, 0x4008, 0x861276c1dc729571ull, 0x43f1},
+        {0x8000000000000000ull, 0x3fff, 0xadf85458a2bb4a9bull, 0x4000}, {0x8000000000000000ull, 0xbfff, 0xbc5ab1b16779be36ull, 0x3ffd},
+        {0x8000000000000000ull, 0x3ffe, 0xd3094c70f034de4dull, 0x3fff}, {0x998ee0327ad43a68ull, 0x4003, 0xced063cb23a929e1ull, 0x401a},
+        {0xa200000000000000ull, 0xc003, 0xdc9ef0f13e51d695ull, 0x3fe1}, {0xaf08000000000000ull, 0x4008, 0x861276c1dc729570ull, 0x43f1},
         {0xb172000000000000ull, 0x400c, 0xfa13dba329dd768dull, 0x7ffe}, {0xb172147ae147ae14ull, 0x400c, 0xff212516b14a9f13ull, 0x7ffe},
         {0xb21d99999999999aull, 0xc00c, 0x0000000000000001ull, 0x0000}, {0xb21df5c28f5c28f6ull, 0xc00c, 0x0000000000000001ull, 0x0000},
         {0xf000000000000000ull, 0x4000, 0xaa159685133737a3ull, 0x4004}, {0xba60000000000000ull, 0xc008, 0xb165ec0dd639d81eull, 0x3bcb},
@@ -3724,7 +3724,7 @@ static void CheckLongDoubleExponentialHyperbolic() {
     RequireExtendedBitCases("sinhl", sinhl_nid_postfix, sinhlCases);
     RequireExtendedBitCases("coshl", coshl_nid_postfix, coshlCases);
     RequireExtendedBitCases("tanhl", tanhl_nid_postfix, tanhlCases);
-    Require(ExtendedBitsAt53Bits(expl_nid_postfix, 0x998ee0327ad43a68ull, 0x4003, 0xb4fde6272f734000ull, 0x401d));
+    Require(ExtendedBitsAt53Bits(expl_nid_postfix, 0x998ee0327ad43a68ull, 0x4003, 0xced063cb23a92800ull, 0x401a));
     Require(ExtendedBitsAt53Bits(sinhl_nid_postfix, 0xa000000000000000ull, 0x4000, 0xbed27f7337a23800ull, 0x4001));
     Require(ExtendedBitsAt53Bits(coshl_nid_postfix, 0x8000000000000000ull, 0x3ffc, 0x81005560b6db7800ull, 0x3fff));
     Require(ExtendedBitsAt53Bits(tanhl_nid_postfix, 0xbd70a3d70a3d70a4ull, 0x3ffd, 0xb53dad0a7672c000ull, 0x3ffd));

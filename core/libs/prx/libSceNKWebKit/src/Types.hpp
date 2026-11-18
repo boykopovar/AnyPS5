@@ -234,6 +234,12 @@ public:
 class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
 public:
     mutable Retained<BundleInspector> inspector;
+    double backingScaleFactor = 1.0;
+    bool isControlledByAutomation = false;
+    bool isSuspended = false;
+    bool usesEphemeralSession = false;
+    std::uint64_t renderTreeSize = 0;
+    bool hasComposition = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
