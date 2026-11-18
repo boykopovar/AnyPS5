@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -46,7 +45,6 @@ static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
 static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
-static constexpr std::chrono::microseconds CLOSE_GRACE_US{50000};
 static constexpr int MONITOR_TYPE_HDMI = 1;
 static constexpr std::uint32_t HDMI_MONITOR_INFO_SIZE = 0x180;
 static constexpr std::uint32_t EX_MONITOR_INFO_SIZE = 0x400;
@@ -212,7 +210,7 @@ static bool openVibrationDevice(Port& port) {
 static void closeDevice(Port& port) {
     if (port.device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
         SDL_ClearQueuedAudio(port.device);
-        AudioOutRunInBackground([device = port.device] { SDL_CloseAudioDevice(device); }, CLOSE_GRACE_US);
+        SDL_CloseAudioDevice(port.device);
     }
     port.device = 0;
     port.spec = {};
