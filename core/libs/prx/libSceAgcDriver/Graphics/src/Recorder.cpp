@@ -4925,7 +4925,7 @@ std::unique_ptr<Recorder::Batch> Recorder::sealOpen() {
 void Recorder::unqueued(std::unique_ptr<Batch> batch, std::exception_ptr reason) noexcept {
     const auto serial = batch->sealedSerial;
     if (!latch.DeviceLost() && latch.FailedSerial() > serial) {
-        if (sealedThrough == serial) {
+        if (sealedThrough == serial && open == nullptr) {
             sealedThrough = serial - 1;
             if (submitHold == VK_NULL_HANDLE) {
                 submitHold = batch->hold;

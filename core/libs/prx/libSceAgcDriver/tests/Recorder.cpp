@@ -2182,6 +2182,23 @@ void sealedBatchTests(const Device& device) {
         Require(captures.size() == 1 && captures[0].signal == first && captures[0].wait == holds && captures[0].waitValue == 7, "the hold of a sealed batch that failed before it was queued did not pass to the next batch");
         recorder.Sync();
     }
+    {
+        Recorder recorder(failing, true, true, context.queueFamily);
+        const auto before = recorder.Submissions();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.HoldNextSubmit(holds, 7);
+        const auto first = recorder.Seal();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.HoldNextSubmit(holds, 9);
+        const auto submitted = countedSubmits.load();
+        Recorder::FailNextSubmitsForTest(1u);
+        const bool failed = failedWith([&] { recorder.QueueSealed(); }, "injected failure");
+        Recorder::FailNextSubmitsForTest(0u);
+        Require(failed, "the newest sealed batch's failure before it was queued did not surface while another batch was open");
+        Require(failedWith([&] { recorder.WaitSerialFor(first, 50'000'000); }, "injected failure"), "a waiter on a sealed batch that failed before it was queued, with a batch open, did not see its failure");
+        Require(failedWith([&] { recorder.Seal(); }, "injected failure"), "the batch open when an earlier sealed batch failed before it was queued was not refused with that failure");
+        Require(countedSubmits.load() == submitted && recorder.SealedBatches() == 0 && recorder.Submissions() == before, "a batch reached the queue after an earlier one failed before it was queued while it was open");
+    }
     context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, holds, nullptr);
     const char* recordInline = std::getenv("APS5_RECORD_INLINE");
     if ((recordInline != nullptr && std::strcmp(recordInline, "0") != 0) || RuntimeSwitches::Set(RuntimeSwitch::DirectBatches)) {
