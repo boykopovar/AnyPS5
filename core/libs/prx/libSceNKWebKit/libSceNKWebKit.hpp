@@ -12,6 +12,7 @@
 #include "prx/libSceNKWebKit/include/IsoBoxExports.hpp"
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
+#include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
@@ -20,6 +21,7 @@
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorFrontendRouterExports.hpp"
+#include "prx/libSceNKWebKit/include/FourCCExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
@@ -71,6 +73,7 @@
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/SVGPathStringBuilderExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
+#include "prx/libSceNKWebKit/include/DisplayListItemExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
