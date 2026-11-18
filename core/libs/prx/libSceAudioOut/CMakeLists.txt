@@ -371,6 +371,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
+    add_test_executable(guest_audio_out_mastering_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutMastering.cpp)
+    target_include_directories(guest_audio_out_mastering_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_mastering_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_mastering_tests)
+    add_test(NAME guest_audio_out_mastering COMMAND guest_audio_out_mastering_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_mastering PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(guest_audio_out_ports_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPorts.cpp)
     target_include_directories(guest_audio_out_ports_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audio_out_ports_tests PRIVATE libSceAudioOut libc)
@@ -421,5 +431,16 @@ endif()
     if(WIN32)
         set_tests_properties(guest_audio_out_port_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(guest_audio_out_system_state_output_time_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutSystemStateOutputTimeBounds.cpp)
+    target_include_directories(guest_audio_out_system_state_output_time_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_system_state_output_time_bounds_tests PRIVATE libSceAudioOut libkernel libc)
+    configure_windows_unwind(guest_audio_out_system_state_output_time_bounds_tests)
+    add_test(NAME guest_audio_out_system_state_output_time_bounds COMMAND guest_audio_out_system_state_output_time_bounds_tests)
+    set_tests_properties(guest_audio_out_system_state_output_time_bounds PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_system_state_output_time_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 

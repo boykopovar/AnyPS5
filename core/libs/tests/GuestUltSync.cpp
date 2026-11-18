@@ -18,6 +18,8 @@ namespace {
 
 constexpr int Ok = 0;
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
+constexpr int Range = -2139029501;
 constexpr int Invalid = -2139029500;
 constexpr int Permission = -2139029499;
 constexpr int Again = -2139029496;
@@ -762,6 +764,26 @@ void WaitForInfoWaiters(TQuery query, void* object) {
     CHECK(false);
 }
 
+void SemaphoreValidation() {
+    Object pool{};
+    Object semaphore{};
+    Object unknown{};
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "validation-pool", 4, 4, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltSemaphoreCreate(&semaphore, "validation-semaphore", 1, &pool, nullptr, 0) == Ok);
+    using Call = decltype(&sceUltSemaphoreAcquire);
+    for (const Call call : {sceUltSemaphoreAcquire, sceUltSemaphoreTryAcquire, sceUltSemaphoreRelease}) {
+        CHECK(call(nullptr, 0) == Null);
+        CHECK(call(semaphore.bytes + 1, 0) == Alignment);
+        CHECK(call(&semaphore, 0) == Range);
+        CHECK(call(&semaphore, -1) == Range);
+        CHECK(call(&unknown, 1) == State);
+    }
+    CHECK(sceUltSemaphoreTryAcquire(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreRelease(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
 void InfoWaiters() {
     Object pool{};
     Object mutex{};
@@ -939,6 +961,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else if (std::strcmp(argv[1], "info-waiters") == 0) InfoWaiters();
+    else if (std::strcmp(argv[1], "semaphore-validation") == 0) SemaphoreValidation();
     else if (std::strcmp(argv[1], "guest-pointers") == 0) UnreadableNamesAndObjects();
     else return 2;
     CHECK(sceUltFinalize() == Ok);

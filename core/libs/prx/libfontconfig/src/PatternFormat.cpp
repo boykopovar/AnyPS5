@@ -141,7 +141,7 @@ namespace {
 
 constexpr FcBool FcTrue = 1;
 constexpr FcBool FcFalse = 0;
-using PatternOwner = std::unique_ptr<FcPattern, decltype([](FcPattern* p) { FcPatternDestroy(p); })>;
+using PatternOwner = std::unique_ptr<FcPattern, decltype([](FcPattern* p) { FcPatternDestroy_nid_postfix(p); })>;
 
 struct FcStrBuf {
     std::vector<FcChar8> storage;
@@ -677,7 +677,7 @@ interpret_filter_in(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
 static FcBool
 interpret_filter_out(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     if (!expect_char(c, '-')) return FcFalse;
-    PatternOwner subpat(FcPatternDuplicate(pat));
+    PatternOwner subpat(FcPatternDuplicate_nid_postfix(pat));
     if (!subpat) return FcFalse;
     do {
         if (!read_word(c)) return FcFalse;
@@ -754,7 +754,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     const bool isLanguages = names.size() == 1 &&
         FcPatternGetLangSet(pat, names[0].c_str(), 0, &langset) == FcResultMatch;
     if (isLanguages) languages = FontconfigLanguages_nid_no_patch(langset, true);
-    PatternOwner subpat(FcPatternDuplicate(pat));
+    PatternOwner subpat(FcPatternDuplicate_nid_postfix(pat));
     if (!subpat) return FcFalse;
     const auto* saved = c->format;
     for (int index = 0;; ++index) {

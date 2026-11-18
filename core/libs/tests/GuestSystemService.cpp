@@ -171,6 +171,35 @@ void TestRunningAppState() {
     Require(errno == 71);
 }
 
+template <typename Error>
+bool LncLaunchAppThrows(const char* titleId, const char* const* arguments, const LncLaunchParam* param) {
+    try {
+        static_cast<void>(sceLncUtilLaunchApp(titleId, arguments, param));
+    } catch (const Error&) {
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+void TestLncUtilLaunchApp() {
+    LncLaunchParam param{};
+    param.size = sizeof(param);
+    Require(sceLncUtilLaunchApp(nullptr, nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000000000000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA00000", nullptr, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(LncLaunchAppThrows<std::logic_error>(reinterpret_cast<const char*>(0x10), nullptr, &param));
+    Require(errno == 71);
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00000", nullptr, &param));
+    const char* arguments[] = {"--backup", nullptr};
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00001", arguments, &param));
+}
+
 void TestRunningBigApp() {
     Require(sceLncUtilGetAppIdOfRunningBigApp() == sceSystemServiceGetAppIdOfRunningBigApp());
     TestBigAppList(sceLncUtilGetAppIdListOfBigApp);
@@ -295,6 +324,7 @@ int main() {
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == browserUnavailable);
     browserUri += 'a';
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == static_cast<int>(0x80a10007));
+    TestLncUtilLaunchApp();
     Require(LaunchAppThrows("PPSA99109", nullptr, nullptr));
     Require(LaunchAppThrows(nullptr, nullptr, nullptr));
     const char* launchArguments[] = {"--backup", nullptr};
