@@ -1523,6 +1523,36 @@ static void CheckIoctl() {
     Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
+    std::array<unsigned char, 8> untouched{};
+    untouched.fill(0x5a);
+    const auto unchanged = [&untouched] { return std::all_of(untouched.begin(), untouched.end(), [](unsigned char byte) { return byte == 0x5a; }); };
+    for (const std::uint32_t request : {0x40087468u, 0x80047801u, 0xc0047801u, 0x20047801u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 49) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x40087468, nullptr), 49));
+    Require(Failed(sceNetIoctl(socket, 0x20047801, nullptr), 49));
+    Require(Failed(sceNetIoctl(socket, 0x80047801, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x80047801, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
+    for (const std::uint32_t request : {0x80007801u, 0x40007801u, 0x20087801u, 0x00047801u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 25) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x80007801, reinterpret_cast<void*>(std::uintptr_t{0x10})), 25));
+    Require(ioctl_nid_postfix(socket, 0x40087468, untouched.data()) == -1 && *__error_nid_postfix() == 49 && unchanged());
+    for (const std::uint32_t request : {0x20006601u, 0x20006602u, 0x8004667du, 0x8004667cu, 0x4004667bu, 0x40046677u, 0x40046676u,
+             0x40047307u, 0x80047308u, 0x40047309u}) {
+        Require(Failed(sceNetIoctl(socket, request, untouched.data()), 25) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(socket, 0x80047308, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x4004667a, untouched.data()), 25) && unchanged());
+    std::array<unsigned char, 72> policy{};
+    Require(Failed(sceNetIoctl(socket, 0x8048756c, policy.data()), 49));
+    const int inet6 = sceNetSocket("ioctl6", 28, 2, 17);
+    Require(inet6 >= 0);
+    for (const std::uint32_t request : {0x40087468u, 0x80047801u, 0x20047801u}) {
+        Require(Failed(sceNetIoctl(inet6, request, untouched.data()), 45) && unchanged());
+    }
+    Require(Failed(sceNetIoctl(inet6, 0x8048756c, policy.data()), 25));
+    Require(sceNetSocketClose(inet6) == 0);
     for (const int value : {0, 3}) {
         int request = value;
         Require(ioctl_nid_postfix(socket, 0x8004667e, &request) == 0);
