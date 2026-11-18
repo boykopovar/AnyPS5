@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -544,8 +545,17 @@ int APS5_VABI sceFiosOverlayResolveSync(std::int32_t flag, const char* path, cha
     const std::string normalized = NormalizeOverlayPath(input);
     for (const OverlayRecord& overlay : overlays) {
         const std::string destination = NormalizeOverlayPath(overlay.destination);
-        if (normalized != destination && !(normalized.size() > destination.size() && normalized.compare(0, destination.size(), destination) == 0 && normalized[destination.size()] == '/')) continue;
-        const std::string candidate = NormalizeOverlayPath(overlay.source) + normalized.substr(destination.size());
+        if (!normalized.starts_with(destination)) continue;
+        std::string_view suffix = std::string_view(normalized).substr(destination.size());
+        if (!suffix.empty() && destination != "/") {
+            if (suffix.front() != '/') continue;
+            suffix.remove_prefix(1);
+        }
+        std::string candidate = NormalizeOverlayPath(overlay.source);
+        if (!suffix.empty()) {
+            if (candidate != "/") candidate += '/';
+            candidate += suffix;
+        }
         if (!OverlayTakesSource(overlay.type, flag, candidate, normalized)) continue;
         if (candidate.size() + 1 > capacity) return SCE_FIOS_ERROR_PATH_TOO_LONG;
         if (!Fios::CopyOut(result, candidate.c_str(), candidate.size() + 1)) return SCE_FIOS_ERROR_BAD_PTR;
