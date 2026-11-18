@@ -286,7 +286,7 @@ const LibreSsl3::DigestMethod* APS5_VABI EVP_sha224_nid_postfix();
 int APS5_VABI OBJ_cmp_nid_postfix(const void* first, const void* second);
 int APS5_VABI OBJ_txt2obj_nid_postfix(void);
 void APS5_VABI OCSP_CERTID_free_nid_postfix(OCSP_CERTID* id);
-int APS5_VABI OCSP_cert_to_id_nid_postfix(void);
+OCSP_CERTID* APS5_VABI OCSP_cert_to_id_nid_postfix(const EvpMd* digest, const LibreSsl3Certificate* subject, const LibreSsl3Certificate* issuer);
 int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResponse* bs, OCSP_CERTID* id, int* status, int* reason, Asn1String** revtime, Asn1String** thisupd, Asn1String** nextupd);
 const char* APS5_VABI OpenSSL_version_nid_postfix(int type);
 int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void);
@@ -331,7 +331,7 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(
     LibreSsl::Bio* bio, LibreSsl3Pkcs8PrivKeyInfo** output);
 LibreSsl3EvpPkey* APS5_VABI d2i_PrivateKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey** output);
 LibreSsl3Rsa* APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3Rsa** output);
-int APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(void);
+LibreSsl3Rsa* APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(LibreSsl3Rsa** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI d2i_X509_bio_nid_postfix(void);
 EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** in, std::int64_t length);
 unsigned char* APS5_VABI MD5_nid_postfix(const unsigned char* data, std::size_t length, unsigned char* digest);
@@ -444,7 +444,8 @@ int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned 
     std::size_t* signatureLength, const unsigned char* content, std::size_t contentLength);
 int APS5_VABI X509_get_signature_nid_nid_postfix(const LibreSsl3Certificate* certificate);
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context);
-int APS5_VABI X509V3_EXT_conf_nid_nid_postfix();
+LibreSsl3X509Extension* APS5_VABI X509V3_EXT_conf_nid_nid_postfix(void* conf,
+    LibreSsl3X509V3Context* ctx, int ext_nid, const char* value);
 int APS5_VABI X509_sign_nid_postfix();
 int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix();
 void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio);
