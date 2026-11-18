@@ -1795,7 +1795,10 @@ bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, con
     for (const auto& memory : plan.memoryInfo) {
         if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
         if (memory.typed || memory.gpuDescriptor) return false;
-        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
+        if (measuredOnly && memory.d16) return false;
+        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) {
+            if (!buffer.read || buffer.written || memory.formatted || memory.dataBits != 32u || memory.dataDwords < 2u || memory.dataDwords > 4u || memory.componentCount != memory.dataDwords) return false;
+        }
         accessed = true;
     }
     return accessed;
