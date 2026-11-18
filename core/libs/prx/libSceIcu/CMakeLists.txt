@@ -823,6 +823,7 @@ set(ICU_RECOVERED_SOURCES
     StringSearch.cpp
     UText.cpp)
 target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
+target_sources(libSceIcu PRIVATE CollatorHost.cpp)
 
 if(BUILD_TESTING)
     set(ICU_RECOVERED_TESTS
