@@ -1333,6 +1333,20 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
+class ValidateArgumentsTests(unittest.TestCase):
+    def test_accepts_nonempty_list_of_strings(self):
+        check_compile.validate_arguments(["cc", "-c", "a.c"])
+
+    def test_rejects_non_lists_empty_lists_and_empty_executable(self):
+        for arguments in ("cc -c", ("cc",), [], [""], None):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.validate_arguments(arguments)
+
+    def test_rejects_non_string_elements(self):
+        with self.assertRaises(ValueError):
+            check_compile.validate_arguments(["cc", 1])
+
 
 if __name__ == "__main__":
     unittest.main()
