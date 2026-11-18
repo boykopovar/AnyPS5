@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from check_conventions import cmake_comments
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1022,6 +1023,14 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
+class CmakeCommentsTests(unittest.TestCase):
+    def test_line_and_bracket_comments_cover_every_line_they_span(self):
+        text = 'set(A 1) # c\nmessage("# no")\n#[[ multi\nline ]]\nset(B 2)\n'
+        self.assertEqual(cmake_comments(text), {1, 3, 4})
+
+    def test_text_without_comments_has_none(self):
+        self.assertEqual(cmake_comments('message("# a")\n'), set())
 
 
 if __name__ == "__main__":
