@@ -88,7 +88,8 @@ struct FontRecord {
     std::uint32_t tail;
 };
 
-bool Throws(int (*call)(const void*, char*, std::uint32_t), const void* font, char* out, std::uint32_t size) {
+template <typename Call>
+bool Throws(Call call, const void* font, char* out, std::uint32_t size) {
     try {
         call(font, out, size);
     } catch (const std::runtime_error&) {
