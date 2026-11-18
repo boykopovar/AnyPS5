@@ -3208,37 +3208,34 @@ void StorageTexture::readBaseline(std::uint32_t unit) {
 
 void StorageTexture::rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven) {
     if (released || !proven || !anyBaselineDue.load(std::memory_order_relaxed) || generationBaseline.size() != guestBytes) return;
-    auto* recorder = recorderFor(context);
     std::vector<std::byte> copy;
-    bool due = false;
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (!baselineDue[unit]) continue;
         const auto begin = layerBegin(unit);
         const auto unitBytes = static_cast<std::size_t>(layerBytes(unit));
-        if (begin >= address + bytes || address >= begin + unitBytes) {
-            due = true;
-            continue;
-        }
-        if (layerPending[unit] || layerOriginal[unit] || savedTicket[unit] != 0 || layerGeneration[unit] == 0 || rebaseTicket[unit] != 0 || AnyShadowedOverlaps(begin, unitBytes)) continue;
-        const bool storing = recorder != nullptr && recorder->PendingWriteOverlaps(begin, unitBytes);
-        if (!storing) {
+        if (begin >= address + bytes || address >= begin + unitBytes) continue;
+        if (layerPending[unit] || layerOriginal[unit] || savedTicket[unit] != 0 || layerGeneration[unit] == 0 || rebaseTicket[unit] != 0) continue;
+        if (AnyShadowedOverlaps(begin, unitBytes)) PublishShadow(begin, unitBytes, PublishScope::Whole, PublishReason::Hook);
+        if (AnyShadowedOverlaps(begin, unitBytes)) continue;
+        auto* recorder = recorderFor(context);
+        const bool deferred = recorder != nullptr && (!recorder->Idle() || Recorder::InCompletion());
+        if (!deferred) {
             copy.resize(unitBytes);
             GuestMemory::ReadCommittedUnsynced(begin, copy);
         }
         if (GuestMemory::CollectWritesUncached(begin, unitBytes) == 0 || !GuestMemory::UnchangedSince(begin, unitBytes, layerGeneration[unit])) continue;
-        if (storing) {
+        if (deferred) {
             const auto ticket = ++lastRebaseTicket;
             rebaseTicket[unit] = ticket;
-            recorder->OnWriteComplete(begin, unitBytes, [texture = weak_from_this(), ticket, unit] {
+            recorder->OnComplete([texture = weak_from_this(), ticket, unit] {
                 if (auto alive = texture.lock()) alive->applyRebase(ticket, unit);
             });
-            due = true;
             continue;
         }
         std::memcpy(generationBaseline.data() + static_cast<std::size_t>(begin - descriptor.baseAddress), copy.data(), unitBytes);
         baselineDue[unit] = false;
     }
-    anyBaselineDue.store(due, std::memory_order_relaxed);
+    anyBaselineDue.store(std::find(baselineDue.begin(), baselineDue.end(), true) != baselineDue.end(), std::memory_order_relaxed);
 }
 
 void StorageTexture::applyRebase(std::uint64_t ticket, std::uint32_t unit) {
