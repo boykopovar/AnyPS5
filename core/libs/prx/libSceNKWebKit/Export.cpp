@@ -2252,10 +2252,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer26computeTransformsRecursiveEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS0_6VectorImLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11MessagePort18isLocallyReachableEv() {
     NotImplemented_nid_no_patch(__func__);
 }
