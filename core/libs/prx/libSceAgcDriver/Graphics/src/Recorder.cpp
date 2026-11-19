@@ -5030,7 +5030,8 @@ std::uint64_t Recorder::queue(std::unique_ptr<Batch> batch) {
     const auto submitStart = std::chrono::steady_clock::now();
     batch->submitStarted.store(true, std::memory_order_release);
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
-    if (batch->sealed != nullptr) batch->sealed->Returned(result);
+    const bool queuedNothing = result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST;
+    if (batch->sealed != nullptr && !queuedNothing) batch->sealed->Returned(result);
     std::exception_ptr refused;
     if (result != VK_SUCCESS) {
         try {
@@ -5038,16 +5039,14 @@ std::uint64_t Recorder::queue(std::unique_ptr<Batch> batch) {
         } catch (...) {
             refused = std::current_exception();
         }
-        if (batch->sealed == nullptr) {
-            if (result == VK_ERROR_DEVICE_LOST) latch.LoseDevice(refused);
-            else latch.Fail(serial, refused);
-        }
+        if (batch->sealed == nullptr && result == VK_ERROR_DEVICE_LOST) latch.LoseDevice(refused);
     }
     if (result == VK_ERROR_DEVICE_LOST) {
         const auto idle = context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device);
         if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
         if (batch->sealed != nullptr) batch->sealed->DeviceIdleAfterLoss();
     }
+    if (queuedNothing) unqueued(std::move(batch), refused);
     if (refused != nullptr) std::rethrow_exception(refused);
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;

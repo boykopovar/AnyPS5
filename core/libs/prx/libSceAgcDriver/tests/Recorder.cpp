@@ -2448,21 +2448,66 @@ void deferredBatchTests(const Device& device) {
         }
         refusedSubmits.store(false);
         Require(failed, "the refused submission of a direct batch did not surface at submit");
+        Require(waited.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready, "a wait on the serial of a refused submission ended before a batch completed that serial");
+        recordBarrierThrough(failing, recorder.Commands());
+        Require(recorder.OpenBatchSerial() == serial, "the batch after a refused submission did not take back its serial");
+        const auto submitted = countedSubmits.load();
+        recorder.Submit();
+        Require(countedSubmits.load() == submitted + 1, "the batch after a refused submission did not reach vkQueueSubmit");
+        recorder.Sync();
         if (waited.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
-            std::fprintf(stderr, "a wait on the serial of a direct batch whose submission failed did not end\n");
+            std::fprintf(stderr, "a wait on the serial of a refused submission did not end after the next batch completed it\n");
             std::fflush(stderr);
             std::_Exit(1);
         }
-        Require(waited.get(), "a wait on the serial of a direct batch whose submission failed returned as if the batch completed");
+        Require(!waited.get(), "a wait on the serial of a refused submission failed after the next batch completed it");
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, true);
+        Recorder recorder(failing, true, true, context.queueFamily);
         recordBarrierThrough(failing, recorder.Commands());
+        const auto first = recorder.Seal();
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto second = recorder.Seal();
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
+        Require(recorder.SealedBatches() == 2 && second == first + 1, "two direct batches were not sealed in order");
+        std::atomic<bool> waiting{false};
+        auto waited = std::async(std::launch::async, [&] {
+            waiting.store(true);
+            try {
+                recorder.WaitSerial(first);
+            } catch (const std::exception&) {
+                return true;
+            }
+            return false;
+        });
+        while (!waiting.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        refusedSubmits.store(true);
+        bool failed = false;
+        try {
+            recorder.QueueSealed();
+        } catch (const std::exception&) {
+            failed = true;
+        }
+        refusedSubmits.store(false);
+        Require(failed, "the refused submission of a sealed batch with a newer one behind it did not surface");
+        if (waited.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+            std::fprintf(stderr, "a wait on a refused batch with a newer sealed batch behind it did not end\n");
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        Require(waited.get(), "a wait on a refused batch with a newer sealed batch behind it returned as if the batch completed");
         const auto submitted = countedSubmits.load();
         bool refused = false;
         try {
-            recorder.Submit();
+            recorder.QueueSealed();
         } catch (const std::exception&) {
             refused = true;
         }
-        Require(refused && countedSubmits.load() == submitted, "a batch reached vkQueueSubmit after a direct batch's submission failed");
+        Require(refused && countedSubmits.load() == submitted, "a sealed batch reached vkQueueSubmit after the batch before it was refused");
     }
     {
         Context failing = context;
