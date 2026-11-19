@@ -112,7 +112,7 @@ void Run() {
 
 } // namespace UplrulesOpenForType
 
-namespace GuestPointers {
+namespace PluralRulesGuestPointers {
 
 void Run() {
     auto rejectsRuntime = [](auto&& call) {
@@ -170,5 +170,5 @@ void Run() {
 void CheckIcuPluralRules() {
     UplrulesClose::Run();
     UplrulesOpenForType::Run();
-    GuestPointers::Run();
+    PluralRulesGuestPointers::Run();
 }

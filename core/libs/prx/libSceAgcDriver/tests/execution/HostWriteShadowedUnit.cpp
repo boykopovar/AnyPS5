@@ -232,6 +232,7 @@ int main() {
             device->WaitIdle();
         }
         if (!adopted) return Skip("the device does not import guest memory");
+        if (SkipOnLlvmpipe(*device, "host write over a shadowed unit: the import made without the GPU lock was refused")) return VulkanTestSkipped;
 
         backing = memfd_create("anyps5-host-write-shadowed-unit", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         Require(backing >= 0 && ftruncate(backing, static_cast<off_t>(MappingBytes)) == 0, "host write over a shadowed unit: cannot make the backing file");

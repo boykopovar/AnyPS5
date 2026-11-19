@@ -87,6 +87,9 @@ int main() {
     Require(sceNpWebApi2SetRequestTimeout(request, 30000000) == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2AddWebTraceTag(request, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2DeleteRequest(request) == 0);
     Require(sceNpWebApi2Terminate(-1) == invalidContext);
     Require(sceNpWebApi2Terminate(context) == 0);
@@ -201,7 +204,12 @@ int main() {
     const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nonNullCallback, &userArg);
     Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
     NpWebApi2PushContextId pushContext{};
+    Require(sceNpWebApi2PushEventCreatePushContext(pushUser, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, nullptr) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, reinterpret_cast<const NpWebApi2PushContextId*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, &pushContext) == 0);
     Require(sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
     Require(sceNpWebApi2PushEventUnregisterCallback(pushUser, callback) == 0);
