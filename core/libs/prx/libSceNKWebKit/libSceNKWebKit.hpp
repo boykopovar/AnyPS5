@@ -86,3 +86,4 @@
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/LiftedLeafFunctionsExports.hpp"
 #include "prx/libSceNKWebKit/include/LiftedBranchingFunctionsExports.hpp"
+#include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"

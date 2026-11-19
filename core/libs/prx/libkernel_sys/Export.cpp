@@ -943,14 +943,14 @@ static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
         if (code == ERROR_PRIVILEGE_NOT_HELD) return static_cast<int>(Fail(GuestEperm));
         if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) return static_cast<int>(Fail(GuestEexist));
         if (code == ERROR_PATH_NOT_FOUND) return static_cast<int>(Fail(GuestEnoent));
-        throw std::system_error(static_cast<int>(code), std::system_category(), "symlink");
+        return static_cast<int>(Fail(GuestError(std::error_code(static_cast<int>(code), std::system_category()))));
     }
 #else
     if (directory)
         std::filesystem::create_directory_symlink(contents, native, error);
     else
         std::filesystem::create_symlink(contents, native, error);
-    if (error) throw std::system_error(error, "symlink");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
