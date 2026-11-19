@@ -4,9 +4,13 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 
 namespace {
@@ -55,6 +59,34 @@ static_assert(offsetof(BioSslData, lastTime) == 40);
 int queueError(int library, int reason, int result) {
     LibreSslPutError_nid_no_patch(library, 0xfff, reason, __FILE__, __LINE__);
     return result;
+}
+
+bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
+    constexpr std::uintptr_t Chunk = 4096;
+    char bytes[Chunk];
+    destination.clear();
+    for (auto address = reinterpret_cast<std::uintptr_t>(source);;) {
+        const std::size_t count = Chunk - address % Chunk;
+        if (!CopyGuestInPreservingErrno(bytes, reinterpret_cast<const void*>(address), count)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(bytes, 0, count));
+        destination.append(bytes, end ? static_cast<std::size_t>(end - bytes) : count);
+        if (end) return true;
+        address += count;
+    }
 }
 
 void clearBuffer(BioBuffer& buffer) {
@@ -108,7 +140,9 @@ int APS5_VABI writeSsl(Bio*, const char* source, int) {
 
 int APS5_VABI putsSsl(Bio* bio, const char* source) {
     if (!source) throw std::invalid_argument("SSL BIO puts: null string");
-    return writeSsl(bio, source, static_cast<int>(std::strlen(source)));
+    std::string text;
+    if (!CopyGuestStringPreservingErrno(source, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return writeSsl(bio, text.c_str(), static_cast<int>(text.size()));
 }
 
 std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, void* pointer) {
@@ -124,7 +158,7 @@ std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, 
         return 0;
     case SslBioGetSsl:
         if (!pointer) return 0;
-        *static_cast<void**>(pointer) = state.ssl;
+        if (!CopyGuestOutPreservingErrno(pointer, &state.ssl, sizeof(state.ssl))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     case SslBioGetClose:
         return bio->shutdown;
@@ -163,15 +197,21 @@ std::int64_t APS5_VABI callbackControlSsl(Bio*, int, LibreSsl::BioInfoCallback) 
     NotImplemented_nid_no_patch(__func__);
 }
 
+void consumeMemory(Bio* bio, BioBuffer& buffer, std::size_t count) {
+    buffer.length -= count;
+    if (bio->flags & ReadOnly) buffer.data += count;
+    else std::memmove(buffer.data, buffer.data + count, buffer.length);
+}
+
 int APS5_VABI readMemory(Bio* bio, char* destination, int size) {
     auto& buffer = memoryBuffer(bio);
     bio->flags &= ~RetryFlags;
     const int count = size >= 0 ? static_cast<int>(std::min<std::size_t>(size, buffer.length)) : size;
     if (destination && count > 0) {
-        std::memcpy(destination, buffer.data, count);
-        buffer.length -= count;
-        if (bio->flags & ReadOnly) buffer.data += count;
-        else std::memmove(buffer.data, buffer.data + count, buffer.length);
+        std::vector<char> bytes(static_cast<std::size_t>(count));
+        if (!CopyGuestInPreservingErrno(bytes.data(), buffer.data, bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!CopyGuestOutPreservingErrno(destination, bytes.data(), bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        consumeMemory(bio, buffer, static_cast<std::size_t>(count));
         return count;
     }
     if (buffer.length != 0) return count;
@@ -193,14 +233,24 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
         const std::size_t capacity = (length + 3) / 3 * 4;
         auto* data = static_cast<char*>(calloc_nid_postfix(capacity, 1));
         if (!data) return queueError(BufferLibrary, AllocationFailure, -1);
+        if (count != 0 && !CopyGuestInPreservingErrno(data + buffer.length, source, count)) {
+            BioBuffer rejected{0, data, capacity};
+            clearBuffer(rejected);
+            free_nid_postfix(data);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
         if (buffer.length != 0) std::memcpy(data, buffer.data, buffer.length);
-        if (count != 0) std::memcpy(data + buffer.length, source, count);
         clearBuffer(buffer);
         free_nid_postfix(buffer.data);
         buffer.data = data;
         buffer.capacity = capacity;
     } else if (count != 0) {
-        std::memmove(buffer.data + buffer.length, source, count);
+        const auto start = reinterpret_cast<std::uintptr_t>(source);
+        const auto begin = reinterpret_cast<std::uintptr_t>(buffer.data);
+        if (start >= begin && start - begin <= buffer.capacity && count <= buffer.capacity - (start - begin))
+            std::memmove(buffer.data + buffer.length, buffer.data + (start - begin), count);
+        else if (!CopyGuestInPreservingErrno(buffer.data + buffer.length, source, count))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     buffer.length = length;
     return size;
@@ -208,25 +258,30 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
 
 int APS5_VABI putsMemory(Bio* bio, const char* source) {
     if (!source) throw std::invalid_argument("BIO_puts: null string");
-    const std::size_t size = std::strlen(source);
-    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
-    return writeMemory(bio, source, static_cast<int>(size));
+    std::string text;
+    if (!CopyGuestStringPreservingErrno(source, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return writeMemory(bio, text.data(), static_cast<int>(text.size()));
 }
 
 int APS5_VABI getsMemory(Bio* bio, char* destination, int size) {
     auto& buffer = memoryBuffer(bio);
     if (!destination || size == std::numeric_limits<int>::min()) throw std::invalid_argument("BIO: invalid line buffer");
     bio->flags &= ~RetryFlags;
+    constexpr char Terminator = '\0';
     if (size <= 1 || buffer.length == 0) {
-        *destination = '\0';
+        if (!CopyGuestOutPreservingErrno(destination, &Terminator, 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 0;
     }
     const auto limit = std::min<std::size_t>(size - 1, buffer.length);
-    const void* newline = std::memchr(buffer.data, '\n', limit);
-    const std::size_t count = newline ? static_cast<const char*>(newline) - buffer.data + 1 : limit;
-    const int result = readMemory(bio, destination, static_cast<int>(count));
-    destination[result] = '\0';
-    return result;
+    std::vector<char> line(limit + 1);
+    if (!CopyGuestInPreservingErrno(line.data(), buffer.data, limit)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const void* newline = std::memchr(line.data(), '\n', limit);
+    const std::size_t count = newline ? static_cast<const char*>(newline) - line.data() + 1 : limit;
+    line[count] = Terminator;
+    if (!CopyGuestOutPreservingErrno(destination, line.data(), count + 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    consumeMemory(bio, buffer, count);
+    return static_cast<int>(count);
 }
 
 std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argument, void* pointer) {
@@ -249,7 +304,7 @@ std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argumen
     case 2:
         return memoryBuffer(bio).length == 0;
     case 3:
-        if (pointer) *static_cast<char**>(pointer) = memoryBuffer(bio).data;
+        if (pointer && !CopyGuestOutPreservingErrno(pointer, &memoryBuffer(bio).data, sizeof(char*))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return static_cast<std::int64_t>(memoryBuffer(bio).length);
     case 8:
         return bio->shutdown;
@@ -269,7 +324,7 @@ std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argumen
         bio->shutdown = static_cast<int>(argument);
         return 1;
     case 115:
-        if (pointer) std::memcpy(pointer, &bio->data, sizeof(bio->data));
+        if (pointer && !CopyGuestOutPreservingErrno(pointer, &bio->data, sizeof(bio->data))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     case 130:
         bio->number = static_cast<int>(argument);
@@ -319,11 +374,17 @@ LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int siz
         queueError(BioLibrary, NullParameter, 0);
         return nullptr;
     }
+    auto length = static_cast<std::size_t>(size);
+    if (size < 0) {
+        std::string text;
+        if (!CopyGuestStringPreservingErrno(static_cast<const char*>(source), text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        length = text.size();
+    }
     auto* bio = BIO_new_nid_postfix(&MemoryMethod);
     if (!bio) return nullptr;
     auto& buffer = memoryBuffer(bio);
     buffer.data = const_cast<char*>(static_cast<const char*>(source));
-    buffer.length = size < 0 ? std::strlen(buffer.data) : static_cast<std::size_t>(size);
+    buffer.length = length;
     buffer.capacity = buffer.length;
     bio->flags |= ReadOnly;
     bio->number = 0;

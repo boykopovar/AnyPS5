@@ -8,6 +8,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import errno
 from pathlib import Path
 from unittest.mock import patch
 
@@ -619,6 +620,45 @@ class PatchAdvisorTests(unittest.TestCase):
     def test_invalid_timeout_is_rejected_before_relinker(self, run):
         self.assertEqual(self.advise("--timeout-seconds", "0"), 2)
         run.assert_not_called()
+
+
+    def test_relative_path_rejects_unsafe_names(self):
+        self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
+        for name in ("", "/abs/x", "../x", "a/../x", "a\\b", "C:/x", None, "a\x00b"):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                suggest_patches.relative_path(name)
+
+
+    def test_unique_json_keys_rejects_duplicate_keys(self):
+        self.assertEqual(suggest_patches.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
+
+
+    def test_confined_keeps_files_under_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "inside.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
+            with self.assertRaises(ValueError):
+                suggest_patches.confined(root, "../outside.txt")
+
+class PathErrorTests(unittest.TestCase):
+    def test_symlink_loop_error_names_the_path(self):
+        error = suggest_patches.path_error("a/b", OSError(errno.ELOOP, "too many levels"))
+        self.assertIsInstance(error, ValueError)
+        self.assertTrue(str(error).startswith("Symlink loop from 'a/b': "))
+
+    def test_other_errors_keep_their_own_text(self):
+        original = OSError(errno.ENOENT, "missing file")
+        error = suggest_patches.path_error("a/b", original)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), str(original))
+
+    def test_windows_symlink_loop_code_is_a_loop(self):
+        original = OSError(errno.EINVAL, "loop")
+        original.winerror = 1921
+        self.assertTrue(str(suggest_patches.path_error("p", original)).startswith("Symlink loop from 'p'"))
 
 
 if __name__ == "__main__":

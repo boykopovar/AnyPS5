@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <limits>
+#include <stdexcept>
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/OcspResponse.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -57,12 +58,12 @@ LibreSslStack* NewCertificateStack() {
 
 bool PushCertificate(LibreSslStack* stack, LibreSslX509* certificate) {
     if (stack->num < 0 || stack->num == std::numeric_limits<std::int32_t>::max() || stack->numAlloc <= 0)
-        NotImplemented_nid_no_patch(__func__);
+        throw std::invalid_argument("sk_push: corrupt stack");
     if (stack->numAlloc <= stack->num + 1) {
         auto* const grown = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc) * 2 * sizeof(char*)));
         if (!grown) return false;
         stack->data = grown;
-        if (stack->numAlloc > std::numeric_limits<std::int32_t>::max() / 2) NotImplemented_nid_no_patch(__func__);
+        if (stack->numAlloc > std::numeric_limits<std::int32_t>::max() / 2) throw std::invalid_argument("sk_push: corrupt stack");
         stack->numAlloc *= 2;
     }
     stack->data[stack->num] = reinterpret_cast<char*>(certificate);
@@ -73,7 +74,7 @@ bool PushCertificate(LibreSslStack* stack, LibreSslX509* certificate) {
 
 const Stack* Responses(const void* basicResponse, const char* function) {
     const ResponseData* data = static_cast<const ResponseData*>(static_cast<const void*>(static_cast<const LibreSslOcspBasicResponse*>(basicResponse)->tbsResponseData));
-    if (!data) NotImplemented_nid_no_patch(function);
+    if (!data) throw std::invalid_argument(function);
     return data->responses;
 }
 
@@ -90,13 +91,13 @@ bool LibreSslStackPush_nid_no_patch(LibreSslStack* stack, void* element) {
 extern "C" {
 
 int APS5_VABI OCSP_basic_add1_cert_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslX509* certificate) {
-    if (!response) NotImplemented_nid_no_patch(__func__);
+    if (!response) throw std::invalid_argument("OCSP_basic_add1_cert: null response");
     if (!response->certs) {
         response->certs = NewCertificateStack();
         if (!response->certs) return 0;
     }
     if (!PushCertificate(response->certs, certificate)) return 0;
-    if (!certificate) NotImplemented_nid_no_patch(__func__);
+    if (!certificate) throw std::invalid_argument("OCSP_basic_add1_cert: null certificate");
     std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1);
     return 1;
 }
@@ -111,7 +112,7 @@ void* APS5_VABI OCSP_resp_get0_nid_postfix(const void* basicResponse, std::int32
     if (!basicResponse) return nullptr;
     const Stack* responses = Responses(basicResponse, __func__);
     if (!responses || index < 0 || index >= responses->num) return nullptr;
-    if (!responses->data) NotImplemented_nid_no_patch(__func__);
+    if (!responses->data) throw std::invalid_argument("OCSP_resp_get0: null response array");
     return responses->data[index];
 }
 
