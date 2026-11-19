@@ -1006,7 +1006,9 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         Require(!depthCompare, "FMASK depth comparison sampling is not implemented");
         Require(resource.baseArray == 0u && resource.depthOrLastArray == 0u, "native FMASK array sampling is not implemented");
         CompletePendingCpuWrites(context, resource.fmaskCmaskAddress, CmaskBytes(resource.width, resource.height));
-        auto native = MultisampleTargetFmaskTexture_nid_no_patch(context, resource, components);
+        const auto layout = ShaderRecompiler::FmaskLayoutOf(static_cast<ShaderRecompiler::IrBufferFormat>((words[1] >> 20u) & 0x1ffu));
+        Require(layout.has_value() && layout->samples == layout->fragments, "compressed FMASK sampling requires one fragment per sample");
+        auto native = MultisampleTargetFmaskTexture_nid_no_patch(context, resource, components, layout->samples);
         Require(native != nullptr, "compressed FMASK sampling without a matching resident native target is not implemented");
         return native;
     }
