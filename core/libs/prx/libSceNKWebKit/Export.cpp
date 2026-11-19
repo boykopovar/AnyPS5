@@ -1276,10 +1276,6 @@ int APS5_VABI _ZN7WebCore8Document20updateIsPlayingMediaEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore4Path6isNullEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBox12peekSystemIDERN3JSC8DataViewEj() {
     NotImplemented_nid_no_patch(__func__);
 }
