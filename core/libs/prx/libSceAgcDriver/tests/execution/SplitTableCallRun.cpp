@@ -35,6 +35,7 @@ alignas(256) std::array<std::uint32_t, MaxLanes * Groups> Output{};
 alignas(256) std::array<std::uint32_t, MaxLanes * 4> Table{};
 alignas(256) std::array<std::uint32_t, TableOffset / 4 + 4> Block{};
 alignas(256) std::array<std::uint32_t, 4> Arguments{Groups, 1, 1, 0};
+alignas(256) std::array<std::uint32_t, 4> ThreadArguments{};
 
 const std::vector<ShaderRecompiler::TableCallee>& Callees() {
     static const std::vector<ShaderRecompiler::TableCallee> callees{
@@ -62,6 +63,12 @@ std::vector<std::uint32_t> Caller() {
     code.insert(code.end(), {0xbefe0428u, 0x7daa6080u});
     code.push_back(0xbf890000u | (static_cast<std::uint32_t>(loop - static_cast<std::int32_t>(code.size() + 1u)) & 0xffffu));
     code.insert(code.end(), {0xbefe042au, 0xe0701000u, 0x80010102u, 0xbf810000u});
+    return code;
+}
+
+std::vector<std::uint32_t> FullExecCaller() {
+    auto code = Caller();
+    code.insert(code.begin(), Lanes == 64u ? 0xbefe04c1u : 0xbefe03c1u);
     return code;
 }
 
@@ -122,19 +129,20 @@ void Prepare() {
     Output.fill(0xdeadbeefu);
 }
 
-ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> code, std::span<const std::uint32_t> fallbacks, std::span<const std::uint32_t> plan, std::uint64_t address, const ShaderRecompiler::SpirvTarget& target) {
+ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> code, std::span<const std::uint32_t> fallbacks, std::span<const std::uint32_t> plan, std::uint64_t address, const ShaderRecompiler::SpirvTarget& target, bool threadDimensions = false) {
     const auto userData = UserDataWords();
     const std::array<ShaderRecompiler::MemoryRegion, 3> memory{{
         {address, std::as_bytes(code)},
         {reinterpret_cast<std::uintptr_t>(Block.data()), std::as_bytes(std::span(Block))},
         {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
     }};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
+    if (threadDimensions) compute.partialThreads = {~0u, ~0u, ~0u};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, address, code, 0, {}},
         {Lanes, 0, userData, compute, std::nullopt, std::nullopt, memory},
         target,
-        {0, 0, 0, 128}
+        {0, 0, 0, threadDimensions ? 0u : 128u}
     };
     request.context.linkedCallFallbacks = fallbacks;
     request.context.splitState = plan;
@@ -208,21 +216,22 @@ void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spirv
     Check("continued", ExpectedLoop);
 }
 
-void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs, bool indirect, bool stuck = false) {
+void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs, bool indirect, bool stuck = false, std::uint32_t threads = 0, bool fullExec = false) {
     Prepare();
     std::vector<const ShaderRecompiler::SplitTableCallProgram*> parts{&programs.entry};
     for (const auto& callee : programs.callees) parts.push_back(&callee);
     parts.push_back(&programs.resume);
     std::vector<ShaderRecompiler::RecompileResult> results;
     for (std::size_t part = 0; part < parts.size(); ++part) {
-        results.push_back(Compile(parts[part]->code, {}, parts[part]->plan, 0x710000u + part * 0x1000u, target));
+        results.push_back(Compile(parts[part]->code, {}, parts[part]->plan, 0x710000u + part * 0x1000u, target, threads != 0));
         Require(results.back().splitStateLanes == Lanes, "split part " + std::to_string(part) + " reports " + std::to_string(results.back().splitStateLanes) + " lanes per workgroup");
     }
     const auto slices = indirect ? (Groups + SliceGroups - 1u) / SliceGroups + 1u : (Groups + SliceGroups - 1u) / SliceGroups;
     for (std::uint32_t slice = 0; slice < slices; ++slice) {
         for (std::size_t part = 0; part < results.size(); ++part) {
             device.SetSplitSlice(AgcDriver::VulkanDevice::SplitSlice{SliceGroups * Lanes, slice * SliceGroups, SliceGroups, ShaderRecompiler::SplitStateAbi::TotalSlots(programs.stateVectors)});
-            if (indirect) device.DispatchIndirect(results[part], reinterpret_cast<std::uintptr_t>(Arguments.data()), {}, 0x710000u + part * 0x1000u);
+            if (threads != 0) device.DispatchIndirect(results[part], reinterpret_cast<std::uintptr_t>(ThreadArguments.data()), {}, 0x710000u + part * 0x1000u, nullptr, nullptr, {Lanes, 1, 1});
+            else if (indirect) device.DispatchIndirect(results[part], reinterpret_cast<std::uintptr_t>(Arguments.data()), {}, 0x710000u + part * 0x1000u);
             else device.Dispatch(results[part], Groups, 1, 1, {}, 0x710000u + part * 0x1000u);
             device.SetSplitSlice(std::nullopt);
         }
@@ -232,7 +241,14 @@ void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarg
         Require(AgcDriver::Graphics::LoopGuardTripped(), "a split callee that keeps its lanes in the waterfall did not trip the loop guard");
         return;
     }
-    Check(indirect ? "split indirect" : "split");
+    if (threads == 0) {
+        Check(indirect ? "split indirect" : "split");
+        return;
+    }
+    for (std::uint32_t index = 0; index < Lanes * Groups; ++index) {
+        const auto expected = index < threads || fullExec ? Expected(index) : 0xdeadbeefu;
+        if (Output[index] != expected) throw std::runtime_error("split thread-dimension indirect: invocation " + std::to_string(index) + " holds " + std::to_string(Output[index]) + ", expected " + std::to_string(expected));
+    }
 }
 
 }
@@ -256,6 +272,17 @@ int main() {
             const auto programs = ShaderRecompiler::BuildSplitTableCallPrograms(program, calls[0], Callees(), *split, Vectors);
             RunSplit(*device, target, programs, false);
             RunSplit(*device, target, programs, true);
+            ThreadArguments = {Lanes * Groups - 5u, 1, 1, 0};
+            RunSplit(*device, target, programs, true, false, ThreadArguments[0]);
+            const auto fullExecCaller = FullExecCaller();
+            const auto fullExecProgram = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(fullExecCaller);
+            const auto fullExecCalls = ShaderRecompiler::FindTableCalls(fullExecProgram, swappc);
+            Require(fullExecCalls.size() == 1u, "the full exec caller holds " + std::to_string(fullExecCalls.size()) + " table calls");
+            std::string fullExecRefusal;
+            const auto fullExecSplit = ShaderRecompiler::SplitTableCall(fullExecProgram, fullExecCalls[0], Callees(), Lanes, fullExecRefusal);
+            Require(fullExecSplit.has_value(), "the full exec caller cannot split: " + fullExecRefusal);
+            RunLinked(*device, target, fullExecProgram, fullExecCalls[0]);
+            RunSplit(*device, target, ShaderRecompiler::BuildSplitTableCallPrograms(fullExecProgram, fullExecCalls[0], Callees(), *fullExecSplit, Vectors), true, false, ThreadArguments[0], true);
             std::string stuckRefusal;
             const auto stuck = ShaderRecompiler::SplitTableCall(program, calls[0], StuckCallees(), Lanes, stuckRefusal);
             Require(stuck.has_value(), "the waterfall caller cannot split with a stuck callee: " + stuckRefusal);

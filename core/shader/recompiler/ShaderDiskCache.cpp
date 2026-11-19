@@ -549,6 +549,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.fullSubgroups);
     writer.Value(result.functionLdsBuffer);
     writer.Value(result.meshWindowBuffer);
+    writer.Value(result.dispatchThreadLimit);
     writer.Value(result.splitStateLanes);
     writer.Value(result.scratchPoolSlotDwords);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
@@ -617,6 +618,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.fullSubgroups);
     reader.Value(result.functionLdsBuffer);
     reader.Value(result.meshWindowBuffer);
+    reader.Value(result.dispatchThreadLimit);
     reader.Value(result.splitStateLanes);
     reader.Value(result.scratchPoolSlotDwords);
     reader.Values(result.parameterExports);
