@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +49,15 @@ void Check(std::string_view systemId, std::string_view defaultName) {
     Require(uloc_getDefault() == name);
 }
 
+void CheckName(std::int32_t (APS5_VABI* function)(const char*, char*, std::int32_t, std::int32_t*),
+               const char* locale, std::string_view expected) {
+    std::array<char, 64> buffer{};
+    std::int32_t status = 0;
+    const auto length = function(locale, buffer.data(), static_cast<std::int32_t>(buffer.size()), &status);
+    Require(status == 0);
+    Require(std::string_view(buffer.data(), static_cast<std::size_t>(length)) == expected);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -71,6 +81,19 @@ int main(int argc, char** argv) {
     } else if (scenario == "long") {
         SetEnvironment("LANG", "abcdefghijkl_US");
         Check("abcdefghijkl_US", "");
+    } else if (scenario == "i-default") {
+        SetEnvironment("LANG", "fr_FR");
+        Check("fr_FR", "fr_FR");
+        CheckName(uloc_getBaseName, "i-default", "fr_FR");
+        CheckName(uloc_getBaseName, "i-default.utf8", "fr_FR.utf8");
+        CheckName(uloc_canonicalize, "i-default", "fr_FR");
+        CheckName(uloc_canonicalize, "i-default@currency=EUR", "fr_FR@currency=EUR");
+    } else if (scenario == "i-default-system") {
+        SetEnvironment("LANG", "i-default");
+        Check("i-default", "i-default");
+        CheckName(uloc_getBaseName, "i-default", "i-default");
+        CheckName(uloc_getBaseName, "i-default.utf8", "i-default.utf8");
+        CheckName(uloc_canonicalize, "i-default", "i-default");
     } else {
         std::fprintf(stderr, "unknown default locale scenario\n");
         return 1;
