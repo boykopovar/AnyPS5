@@ -114,6 +114,10 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 
+#include "prx/libc/include/General.hpp"
+
+#include <array>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -129,11 +133,84 @@ constexpr int AnyFunction = 0xfff;
 constexpr int BadBlockLength = 136;
 constexpr int TooLarge = 164;
 
-const LibreSslEvpCipher& Checked(const LibreSslEvpCipherCtx* context, const int* written, const char* function) {
+bool CopyGuestIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestWritable(void* destination, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestReadableBytes(const void* source, std::size_t bytes) {
+    std::array<unsigned char, 4096> scratch{};
+    const auto* cursor = static_cast<const unsigned char*>(source);
+    std::size_t remaining = bytes;
+    while (remaining > 0) {
+        const std::size_t chunk = remaining < scratch.size() ? remaining : scratch.size();
+        if (!CopyGuestIn(scratch.data(), cursor, chunk)) return false;
+        cursor += chunk;
+        remaining -= chunk;
+    }
+    return true;
+}
+
+LibreSslEvpCipher Checked(LibreSslEvpCipherCtx* context, int* written, const char* function) {
     if (!context) throw std::invalid_argument(std::string(function) + ": null context");
-    if (!context->cipher) throw std::invalid_argument(std::string(function) + ": no cipher set");
+    LibreSslEvpCipherCtx guestContext{};
+    if (!CopyGuestIn(&guestContext, context, sizeof(guestContext)) || !GuestWritable(context, sizeof(*context))) {
+        throw std::invalid_argument(std::string(function) + ": invalid context");
+    }
+    if (!guestContext.cipher) throw std::invalid_argument(std::string(function) + ": no cipher set");
+    LibreSslEvpCipher guestCipher{};
+    if (!CopyGuestIn(&guestCipher, guestContext.cipher, sizeof(guestCipher))) {
+        throw std::invalid_argument(std::string(function) + ": unreadable cipher");
+    }
     if (!written) throw std::invalid_argument(std::string(function) + ": null output length");
-    return *context->cipher;
+    if (!GuestWritable(written, sizeof(*written))) {
+        throw std::invalid_argument(std::string(function) + ": unwritable output length");
+    }
+    return guestCipher;
+}
+
+void ValidateCustomBuffers(const unsigned char* out, const unsigned char* in, int length, const char* function) {
+    if (length <= 0) return;
+    if (in && !GuestReadableBytes(in, static_cast<std::size_t>(length))) {
+        throw std::invalid_argument(std::string(function) + ": unreadable input");
+    }
+    if (out && !GuestWritable(const_cast<unsigned char*>(out), static_cast<std::size_t>(length))) {
+        throw std::invalid_argument(std::string(function) + ": unwritable output");
+    }
+}
+
+void ValidateBlockBuffers(const LibreSslEvpCipherCtx* context, const LibreSslEvpCipher& cipher, unsigned char* out, const unsigned char* in, int length, bool decrypt, const char* function) {
+    if (length <= 0) return;
+    const int blockSize = cipher.blockSize;
+    const int blockMask = static_cast<int>(static_cast<unsigned>(blockSize) - 1u);
+    if ((blockSize & blockMask) != 0) return;
+    if (!in) throw std::invalid_argument(std::string(function) + ": null buffer");
+    if (!GuestReadableBytes(in, static_cast<std::size_t>(length))) {
+        throw std::invalid_argument(std::string(function) + ": unreadable input");
+    }
+    if (context->bufLen < 0 || context->bufLen >= blockSize || static_cast<std::size_t>(blockSize) > sizeof(context->buf)) return;
+    const int available = context->bufLen + length;
+    int outputBytes = available - (available & blockMask);
+    if (decrypt && !(context->flags & CipherFlagNoPadding) && context->finalUsed) {
+        if (static_cast<std::size_t>(blockSize) > sizeof(context->final)) return;
+        if (outputBytes > INT_MAX - blockSize) return;
+        outputBytes += blockSize;
+    }
+    if (outputBytes > 0) {
+        if (!out) throw std::invalid_argument(std::string(function) + ": null buffer");
+        if (!GuestWritable(out, static_cast<std::size_t>(outputBytes))) {
+            throw std::invalid_argument(std::string(function) + ": unwritable output");
+        }
+    }
 }
 
 int Mask(int blockSize) {
@@ -162,7 +239,12 @@ int Run(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const u
 }
 
 int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
-    const auto& cipher = Checked(context, written, function);
+    const auto cipher = Checked(context, written, function);
+    if (cipher.flags & CipherFlagCustomCipher) {
+        ValidateCustomBuffers(out, in, length, function);
+    } else {
+        ValidateBlockBuffers(context, cipher, out, in, length, false, function);
+    }
     const int blockSize = cipher.blockSize;
     const int blockMask = Mask(blockSize);
     int partial = context->bufLen;
@@ -212,7 +294,12 @@ int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
 }
 
 int Decrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
-    const auto& cipher = Checked(context, written, function);
+    const auto cipher = Checked(context, written, function);
+    if (cipher.flags & CipherFlagCustomCipher) {
+        ValidateCustomBuffers(out, in, length, function);
+    } else {
+        ValidateBlockBuffers(context, cipher, out, in, length, true, function);
+    }
     const int blockSize = cipher.blockSize;
     const int blockMask = Mask(blockSize);
     int total = 0;
@@ -264,7 +351,11 @@ int APS5_VABI EVP_DecryptUpdate_nid_disambig1_nid_postfix(LibreSslEvpCipherCtx* 
 
 int APS5_VABI EVP_CipherUpdate_nid_disambig1_nid_postfix(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length) {
     if (!context) throw std::invalid_argument(std::string(__func__) + ": null context");
-    return context->encrypt ? Encrypt(context, out, written, in, length, __func__) : Decrypt(context, out, written, in, length, __func__);
+    LibreSslEvpCipherCtx guestContext{};
+    if (!CopyGuestIn(&guestContext, context, sizeof(guestContext))) {
+        throw std::invalid_argument(std::string(__func__) + ": invalid context");
+    }
+    return guestContext.encrypt ? Encrypt(context, out, written, in, length, __func__) : Decrypt(context, out, written, in, length, __func__);
 }
 
 }

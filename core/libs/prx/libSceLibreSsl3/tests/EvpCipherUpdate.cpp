@@ -1,14 +1,23 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -175,6 +184,114 @@ void CheckInvalidState() {
     Require(threw);
 }
 
+void CheckGuestPointerValidation() {
+    struct ProtectedPages {
+        std::size_t pageSize = 0;
+        std::uint8_t* base = nullptr;
+        ProtectedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize;
+            base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096u;
+            void* mapped = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<std::uint8_t*>(mapped);
+#endif
+        }
+        ~ProtectedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, 2 * pageSize);
+#endif
+        }
+        void ProtectReadOnly() {
+#ifdef _WIN32
+            DWORD previous = 0;
+            Require(VirtualProtect(base, pageSize, PAGE_READONLY, &previous) != 0);
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+            Require(mprotect(base, pageSize, PROT_READ) == 0);
+            Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+        }
+    } pages;
+
+    const auto block = Cipher(16, CipherModeCbc, BlockCipher);
+    const auto plain = Plain(16);
+    auto validContext = Context(block, 1);
+
+    std::memcpy(pages.base, &block, sizeof(block));
+    std::memcpy(pages.base + 256, &validContext, sizeof(validContext));
+    std::memcpy(pages.base + 512, plain.data(), plain.size());
+    std::memset(pages.base + 768, 0xa5, 32);
+    int roWritten = 0x5a5a5a5a;
+    std::memcpy(pages.base + 1024, &roWritten, sizeof(roWritten));
+    pages.ProtectReadOnly();
+
+    const auto* roCipher = reinterpret_cast<const LibreSslEvpCipher*>(pages.base);
+    auto* roContext = reinterpret_cast<LibreSslEvpCipherCtx*>(pages.base + 256);
+    const auto* roIn = reinterpret_cast<const unsigned char*>(pages.base + 512);
+    auto* roOut = reinterpret_cast<unsigned char*>(pages.base + 768);
+    int* roWrittenPtr = reinterpret_cast<int*>(pages.base + 1024);
+    auto* noAccess = pages.base + pages.pageSize;
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{1});
+
+    std::array<unsigned char, 32> out{};
+    out.fill(0xa5);
+    int written = 0x5a5a5a5a;
+
+    auto ctxWithRoCipher = Context(*roCipher, 1);
+    Reset();
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctxWithRoCipher, out.data(), &written, roIn, 16) == 1);
+    Require(written == 16 && record.calls == 1);
+    for (std::size_t i = 0; i < 16; ++i) Require(out[i] == static_cast<unsigned char>(plain[i] ^ XorByte));
+
+    auto expectInvalid = [&](auto&& fn) {
+        out.fill(0xa5);
+        written = 0x5a5a5a5a;
+        errno = E2BIG;
+        bool threw = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(errno == E2BIG);
+        Require(written == 0x5a5a5a5a);
+        Require(std::all_of(out.begin(), out.end(), [](unsigned char b) { return b == 0xa5; }));
+    };
+
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(reinterpret_cast<LibreSslEvpCipherCtx*>(unmapped), out.data(), &written, roIn, 16); });
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(reinterpret_cast<LibreSslEvpCipherCtx*>(noAccess), out.data(), &written, roIn, 16); });
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(roContext, out.data(), &written, roIn, 16); });
+
+    auto badCipherCtx = Context(block, 1);
+    badCipherCtx.cipher = reinterpret_cast<const LibreSslEvpCipher*>(unmapped);
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&badCipherCtx, out.data(), &written, roIn, 16); });
+    badCipherCtx.cipher = reinterpret_cast<const LibreSslEvpCipher*>(noAccess);
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&badCipherCtx, out.data(), &written, roIn, 16); });
+
+    auto ctx = Context(block, 1);
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), reinterpret_cast<int*>(unmapped), roIn, 16); });
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), reinterpret_cast<int*>(noAccess), roIn, 16); });
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), roWrittenPtr, roIn, 16); });
+
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), &written, reinterpret_cast<const unsigned char*>(unmapped), 16); });
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), &written, noAccess, 16); });
+
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, reinterpret_cast<unsigned char*>(unmapped), &written, roIn, 16); });
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&ctx, noAccess, &written, roIn, 16); });
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctx, roOut, &written, roIn, 16); });
+}
+
 }
 
 int main() {
@@ -182,5 +299,6 @@ int main() {
     CheckEncryptBuffering();
     CheckDecryptHeldBlock();
     CheckInvalidState();
+    CheckGuestPointerValidation();
     std::puts("LibreSSL3 EVP_*Update: ok");
 }
