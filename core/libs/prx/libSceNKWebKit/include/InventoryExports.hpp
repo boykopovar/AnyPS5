@@ -1333,7 +1333,6 @@ int APS5_VABI _ZN3WTF3URL7setHostENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL7setPathENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL7setUserENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL8setQueryENS_10StringViewE();
-int APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE();
 int APS5_VABI _ZN3WTF4Lock10unlockSlowEv();
 int APS5_VABI _ZN3WTF4Lock13safepointSlowEv();
 int APS5_VABI _ZN3WTF4Lock8lockSlowEv();
