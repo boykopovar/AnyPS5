@@ -33,6 +33,20 @@ static bool FaultsAsNotImplemented(Function function, const char* name) {
 }
 
 template <typename T>
+static T Garbage() {
+    T value;
+    std::memset(&value, 0xab, sizeof(value));
+    return value;
+}
+
+template <typename T, typename Construct>
+static bool Constructs(Construct construct, const T& expected) {
+    T out = Garbage<T>();
+    construct(&out);
+    return std::memcmp(&out, &expected, sizeof(out)) == 0;
+}
+
+template <typename T>
 static T& Good() {
     static T value{};
     return value;
@@ -96,6 +110,28 @@ int main() {
     WebCore::LayoutRect layout{};
     _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(&layout, WebCore::FloatRect{{1.0f, 2.0f}, {3.0f, 4.0f}});
     Require(layout.m_location.m_x.m_value == 64 && layout.m_size.m_height.m_value == 256);
+    const WebCore::FloatRect floatRect{{1.0f, 2.0f}, {3.0f, 4.0f}};
+    const WebCore::FloatRoundedRect::Radii floatRadii{{1.0f, 1.0f}, {2.0f, 2.0f}, {3.0f, 3.0f}, {4.0f, 4.0f}};
+    const WebCore::LayoutRect layoutRect{{{64}, {128}}, {{192}, {256}}};
+    const WebCore::LayoutSize topLeft{{64}, {64}}, topRight{{128}, {128}}, bottomLeft{{192}, {192}}, bottomRight{{256}, {256}};
+    const WebCore::RoundedRect roundedRect{layoutRect, {topLeft, topRight, bottomLeft, bottomRight}};
+    Require(Constructs([](WebCore::FloatPoint* out) { _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(out, WebCore::IntPoint{3, -4}); }, WebCore::FloatPoint{3.0f, -4.0f}));
+    Require(Constructs([](WebCore::FloatPoint* out) { _ZN7WebCore10FloatPointC2ERKNS_8IntPointE(out, WebCore::IntPoint{3, -4}); }, WebCore::FloatPoint{3.0f, -4.0f}));
+    Require(Constructs([](WebCore::FloatRect* out) { _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(out, WebCore::IntRect{{1, 2}, {3, 4}}); }, floatRect));
+    Require(Constructs([](WebCore::FloatRect* out) { _ZN7WebCore9FloatRectC2ERKNS_7IntRectE(out, WebCore::IntRect{{1, 2}, {3, 4}}); }, floatRect));
+    Require(Constructs([&](WebCore::FloatRoundedRect* out) { _ZN7WebCore16FloatRoundedRectC1ERKNS_9FloatRectERKNS0_5RadiiE(out, floatRect, floatRadii); }, WebCore::FloatRoundedRect{floatRect, floatRadii}));
+    Require(Constructs([&](WebCore::FloatRoundedRect* out) { _ZN7WebCore16FloatRoundedRectC2ERKNS_9FloatRectERKNS0_5RadiiE(out, floatRect, floatRadii); }, WebCore::FloatRoundedRect{floatRect, floatRadii}));
+    Require(Constructs([](WebCore::IntPoint* out) { _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(out, WebCore::FloatPoint{2.5f, -3.5f}); }, WebCore::IntPoint{2, -3}));
+    Require(Constructs([](WebCore::IntSize* out) { _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(out, WebCore::FloatSize{5.75f, -1.25f}); }, WebCore::IntSize{5, -1}));
+    Require(Constructs([](WebCore::IntSize* out) { _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(out, WebCore::FloatSize{5.75f, -1.25f}); }, WebCore::IntSize{5, -1}));
+    Require(Constructs([&](WebCore::IntRect* out) { _ZN7WebCore7IntRectC1ERKNS_10LayoutRectE(out, layoutRect); }, WebCore::IntRect{{1, 2}, {3, 4}}));
+    Require(Constructs([&](WebCore::IntRect* out) { _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(out, layoutRect); }, WebCore::IntRect{{1, 2}, {3, 4}}));
+    Require(Constructs([](WebCore::IntRect* out) { _ZN7WebCore7IntRectC1ERKNS_9FloatRectE(out, WebCore::FloatRect{{1.5f, 2.5f}, {3.5f, 4.5f}}); }, WebCore::IntRect{{1, 2}, {3, 4}}));
+    Require(Constructs([](WebCore::IntRect* out) { _ZN7WebCore7IntRectC2ERKNS_9FloatRectE(out, WebCore::FloatRect{{1.5f, 2.5f}, {3.5f, 4.5f}}); }, WebCore::IntRect{{1, 2}, {3, 4}}));
+    Require(Constructs([&](WebCore::LayoutRect* out) { _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(out, floatRect); }, layoutRect));
+    Require(Constructs([&](WebCore::LayoutRect* out) { _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(out, floatRect); }, layoutRect));
+    Require(Constructs([&](WebCore::RoundedRect* out) { _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(out, layoutRect, topLeft, topRight, bottomLeft, bottomRight); }, roundedRect));
+    Require(Constructs([&](WebCore::RoundedRect* out) { _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(out, layoutRect, topLeft, topRight, bottomLeft, bottomRight); }, roundedRect));
     Require(_ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(WebCore::FloatRect{{0.0f, 0.0f}, {4.0f, 4.0f}}, WebCore::FloatRect{{0.0f, 0.0f}, {4.0f, 4.0f}}) != 0);
 
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore10FloatPoint9normalizeEv(reinterpret_cast<WebCore::FloatPoint*>(std::uintptr_t{0x10}))); return 0; }, "_ZN7WebCore10FloatPoint9normalizeEv"));
