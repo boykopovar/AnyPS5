@@ -163,10 +163,6 @@ int APS5_VABI ucnv_fromUnicode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_getCanonicalName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_getName() {
     NotImplemented_nid_no_patch(__func__);
 }
