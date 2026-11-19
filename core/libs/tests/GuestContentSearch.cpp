@@ -1,9 +1,13 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #ifdef __APPLE__
 #include <initializer_list>
 #endif
@@ -16,16 +20,6 @@ void ClobberErrno(std::uintptr_t, std::size_t) {
 }
 
 void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TAction>
-bool ThrowsRuntimeError(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 template <typename TAction>
 bool Throws(TAction action) {
@@ -41,10 +35,23 @@ constexpr int ErrorNotInitialized = static_cast<int>(0x809D1001u);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
 constexpr int ErrorAlreadyInitialized = static_cast<int>(0x809D1002u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
+constexpr int ErrorLegacyServiceUnavailable = static_cast<int>(0x809D100Du);
+constexpr int ErrorServiceUnavailable = static_cast<int>(0x809D0002u);
+alignas(16) std::array<std::byte, 0x40> processParameters{};
+
+void SetSdkVersion(std::uint32_t version) {
+    std::memcpy(processParameters.data() + 0x10, &version, sizeof(version));
+}
 
 }
 
 int main() {
+    const std::uint64_t processSize = processParameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(processParameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
+    SetSdkVersion(0x064fffff);
+    Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()));
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     ContentSearchInitParam param{3 * 1024 * 1024};
@@ -58,7 +65,9 @@ int main() {
     std::int64_t updateId = -1;
     std::int32_t metadataId = -1;
     std::int32_t applicationIndex = -1;
+    unsigned char applicationInfos[16] = {};
 
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, &count, applicationInfos, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
@@ -86,6 +95,33 @@ int main() {
     Require(sceContentSearchInit(&param) == 0);
     Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
     Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
+
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchSearchApplication(&columnSet, 0, nullptr, 0, nullptr, 0, 0, 1, &count, applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, &orderBy, 0, nullptr, 0, 0, 1, &count, applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, &columnSet, 0, 0, 1, &count, applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 0, &count, applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 93, nullptr, nullptr, nullptr) == ErrorLimitTooBig);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, nullptr, applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, &count, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, &count, applicationInfos, nullptr) == ErrorInvalidArgument);
+    Require(count == -1 && updateId == -1);
+    errno = 71;
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 7, 92, &count, applicationInfos, &updateId) == ErrorLegacyServiceUnavailable);
+    Require(count == 0 && updateId == 0 && errno == 71);
+    SetSdkVersion(0x06500000);
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchSearchApplication(&columnSet, 1, &orderBy, 1, &columnSet, 1, 7, 92, &count, applicationInfos, &updateId) == ErrorServiceUnavailable);
+    Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, reinterpret_cast<std::int64_t*>(0x10), applicationInfos, &updateId) == ErrorInvalidArgument);
+    Require(count == -1 && updateId == -1 && errno == 71);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, &count, applicationInfos, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
 
     const auto* invalidSets = reinterpret_cast<const ContentSearchContentColumnSet*>(0x10);
     const auto* invalidOrders = reinterpret_cast<const ContentSearchContentOrderByCondition*>(0x10);
@@ -248,6 +284,7 @@ int main() {
     Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchSearchApplication(nullptr, 0, nullptr, 0, nullptr, 0, 0, 1, &count, applicationInfos, &updateId) == ErrorNotInitialized);
     Require(updateId == -1);
     constexpr int binderResult = static_cast<int>(0x809D000F);
     Require(sceContentBinderInitialize() == binderResult);
@@ -259,7 +296,6 @@ int main() {
     Require(sceContentBinderEnd() == binderResult);
     Require(sceContentBinderTerminate() == binderResult);
 
-    Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

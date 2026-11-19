@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import re
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -356,6 +357,7 @@ class Main(unittest.TestCase):
         ]})
         testfile = build / "core" / "libs" / "CTestTestfile.cmake"
         testfile.parent.mkdir(parents=True)
+        (build / "CTestTestfile.cmake").write_text('subdirs("core/libs")\n', encoding="utf-8")
         testfile.write_text('add_test("guest_pad" "C:/b/tests/guest_pad_tests.exe")\n'
                             'add_test("nid_buffer_validation" "C:/b/tests/nid_buffer_validation_tests.exe")\n'
                             'set_tests_properties("nid_buffer_validation" PROPERTIES TIMEOUT "10")\n'
@@ -372,12 +374,16 @@ class Main(unittest.TestCase):
         builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
         self.assertTrue(ran and builds and max(builds) < min(ran))
 
-    def test_registered_commands_come_from_every_testfile_without_a_built_executable(self):
+    def test_registered_commands_ignore_stale_testfiles(self):
         build = Path(self.temporary.name) / "tree"
         (build / "sub").mkdir(parents=True)
-        (build / "CTestTestfile.cmake").write_text('add_test("a b" "/x/a_tests" "arg \\"q\\"")\n', encoding="utf-8")
+        (build / "stale").mkdir()
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test("a b" "/x/a_tests" "arg \\"q\\"")\nsubdirs("sub")\n', encoding="utf-8")
         (build / "sub" / "CTestTestfile.cmake").write_text(
             '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
+        (build / "stale" / "CTestTestfile.cmake").write_text(
+            'add_test("nid_one" "/old/nid_one_tests")\nadd_test("removed" "/old/removed_tests")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
@@ -637,6 +643,33 @@ class ChangeClassification(unittest.TestCase):
 
     def test_test_owner_of_an_empty_command_is_none(self):
         self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
+
+class ScriptTestOwnersTests(unittest.TestCase):
+    TARGETS = {"alpha": "Alpha", "beta": "beta", "gamma": "gamma"}
+
+    def owners(self, tests, registered, patterns):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run, \
+                mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value=registered):
+            run.return_value.stdout = json.dumps({"tests": tests})
+            return build_changed_guest_tests.script_test_owners(Path("build"), self.TARGETS, patterns)
+
+    def test_only_tests_matching_a_pattern_contribute_owners_sorted_case_insensitively(self):
+        tests = [
+            {"name": "py_beta", "command": ["python", "bin/beta.exe"]},
+            {"name": "py_alpha", "command": ["python", "bin/alpha.exe"]},
+            {"name": "other_gamma", "command": ["python", "bin/gamma.exe"]},
+        ]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha", "beta"])
+
+    def test_registered_commands_are_used_when_the_listed_command_has_no_owner(self):
+        tests = [{"name": "py_beta", "command": ["python", "script.py"]}]
+        self.assertEqual(self.owners(tests, {"py_beta": ["python", "bin/beta.exe"]}, [re.compile("py_")]), ["beta"])
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), [])
+
+    def test_owner_is_reported_once(self):
+        tests = [{"name": "py_a", "command": ["bin/alpha.exe"]}, {"name": "py_b", "command": ["bin/alpha.exe", "--x"]}]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha"])
+
 
 class CtestResolutionsTests(unittest.TestCase):
     TARGETS = {"alpha": "alpha", "beta": "beta"}

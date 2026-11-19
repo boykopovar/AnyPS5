@@ -733,7 +733,7 @@ static int LinkNative(const std::filesystem::path& source, const std::filesystem
 #endif
     if (!error) std::filesystem::create_hard_link(target, destination, error);
     if (error == std::errc::cross_device_link) return static_cast<int>(Fail(GuestExdev));
-    if (error) throw std::system_error(error, "link");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
     RecordWrittenPath_nid_no_patch(destination);
     return 0;
 }
@@ -746,12 +746,12 @@ static int LinkSymbolicLinkItself(const std::filesystem::path& source, const std
     if (!CreateHardLinkW(destination.c_str(), source.c_str(), nullptr)) {
         const DWORD error = GetLastError();
         if (error == ERROR_NOT_SAME_DEVICE) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(static_cast<int>(error), std::system_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({static_cast<int>(error), std::system_category()})));
     }
 #else
     if (::linkat(AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 0) != 0) {
         if (errno == EXDEV) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(errno, std::generic_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({errno, std::generic_category()})));
     }
 #endif
     RecordWrittenPath_nid_no_patch(destination);
