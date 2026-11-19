@@ -27,6 +27,8 @@
 //*@@@---@@@@******************************************************************
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include "prx/libSceJxr/Stream.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -34,57 +36,83 @@
 
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
+
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
 }
 
 extern "C" {
 
 std::int64_t APS5_VABI attach_SB_nid_postfix(Jxr::SimpleBitIo* io, Jxr::Stream* stream) {
-    if (!io) APS5_INVALID_ARG_EX;
-    io->stream = stream;
-    io->bytesRead = 0;
-    io->accumulator = 0;
-    io->bitsLeft = 0;
+    Jxr::SimpleBitIo local{};
+    if (!CopyIn(&local, io, sizeof(local))) APS5_INVALID_ARG_EX;
+    local.stream = stream;
+    local.bytesRead = 0;
+    local.accumulator = 0;
+    local.bitsLeft = 0;
+    if (!CopyOut(io, &local, sizeof(local))) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 
 std::uint32_t APS5_VABI getBit32_SB_nid_postfix(Jxr::SimpleBitIo* io, std::uint32_t bits) {
-    if (!io || io->bitsLeft > 8) APS5_INVALID_ARG_EX;
+    Jxr::SimpleBitIo local{};
+    if (!CopyIn(&local, io, sizeof(local)) || local.bitsLeft > 8) APS5_INVALID_ARG_EX;
     std::uint32_t result = 0;
-    while (io->bitsLeft < bits) {
-        result <<= io->bitsLeft;
-        result |= static_cast<std::uint32_t>(io->accumulator) >> (8 - io->bitsLeft);
-        bits -= io->bitsLeft;
-        auto* stream = io->stream;
-        if (!stream || !stream->read) APS5_INVALID_ARG_EX;
+    while (local.bitsLeft < bits) {
+        result <<= local.bitsLeft;
+        result |= static_cast<std::uint32_t>(local.accumulator) >> (8 - local.bitsLeft);
+        bits -= local.bitsLeft;
+        auto* stream = local.stream;
+        decltype(Jxr::Stream::read) read = nullptr;
+        if (!stream || !CopyIn(&read, &stream->read, sizeof(read)) || !read) APS5_INVALID_ARG_EX;
+        auto* const accumulator = reinterpret_cast<std::uint8_t*>(io) + offsetof(Jxr::SimpleBitIo, accumulator);
         {
-            GuestArena::HostWrite access(&io->accumulator, sizeof(io->accumulator));
+            GuestArena::HostWrite access(accumulator, sizeof(local.accumulator));
             if (!access.Open()) APS5_INVALID_ARG_EX;
-            stream->read(stream, &io->accumulator, 1);
+            read(stream, accumulator, 1);
         }
-        ++io->bytesRead;
-        io->bitsLeft = 8;
+        if (!CopyIn(&local.accumulator, accumulator, sizeof(local.accumulator))) APS5_INVALID_ARG_EX;
+        ++local.bytesRead;
+        local.bitsLeft = 8;
     }
     result <<= bits;
-    result |= static_cast<std::uint32_t>(io->accumulator) >> (8 - bits);
-    io->accumulator = static_cast<std::uint8_t>(io->accumulator << bits);
-    io->bitsLeft -= bits;
+    result |= static_cast<std::uint32_t>(local.accumulator) >> (8 - bits);
+    local.accumulator = static_cast<std::uint8_t>(local.accumulator << bits);
+    local.bitsLeft -= bits;
+    if (!CopyOut(io, &local, sizeof(local))) APS5_INVALID_ARG_EX;
     return result;
 }
 
 void APS5_VABI flushToByte_SB_nid_postfix(Jxr::SimpleBitIo* io) {
-    if (!io) APS5_INVALID_ARG_EX;
-    io->accumulator = 0;
-    io->bitsLeft = 0;
+    Jxr::SimpleBitIo local{};
+    if (!CopyIn(&local, io, sizeof(local))) APS5_INVALID_ARG_EX;
+    local.accumulator = 0;
+    local.bitsLeft = 0;
+    if (!CopyOut(io, &local, sizeof(local))) APS5_INVALID_ARG_EX;
 }
 
 std::uint32_t APS5_VABI getByteRead_SB_nid_postfix(Jxr::SimpleBitIo* io) {
-    if (!io) APS5_INVALID_ARG_EX;
-    return io->bytesRead;
+    Jxr::SimpleBitIo local{};
+    if (!CopyIn(&local, io, sizeof(local))) APS5_INVALID_ARG_EX;
+    return local.bytesRead;
 }
 
 std::int64_t APS5_VABI detach_SB_nid_postfix(Jxr::SimpleBitIo* io) {
-    if (!io || io->bitsLeft != 0) APS5_INVALID_ARG_EX;
-    io->stream = nullptr;
+    Jxr::SimpleBitIo local{};
+    if (!CopyIn(&local, io, sizeof(local)) || local.bitsLeft != 0) APS5_INVALID_ARG_EX;
+    local.stream = nullptr;
+    if (!CopyOut(io, &local, sizeof(local))) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 
