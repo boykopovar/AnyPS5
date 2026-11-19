@@ -34,7 +34,13 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {redact_report(key, identity): redact_report(item, identity) for key, item in value.items()}
+        result = {}
+        for key, item in value.items():
+            redacted_key = redact_report(key, identity)
+            if redacted_key in result:
+                raise ValueError("duplicate JSON object keys after redaction")
+            result[redacted_key] = redact_report(item, identity)
+        return result
     return value
 
 
