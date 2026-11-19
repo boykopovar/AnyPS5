@@ -2,7 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,6 +25,7 @@
 #include <iostream>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -56,6 +59,7 @@ constexpr std::size_t FillBytes = 4096u;
 constexpr std::size_t FillPast = 0x10000u;
 constexpr std::size_t ShadowUnitBytes = 0x10000u;
 constexpr std::uint32_t Standard256B = 1u;
+constexpr std::uint32_t SlabWord = 0x5ad0beefu;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Stored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> RestoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Restored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
@@ -213,6 +217,74 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
     Require(flushedWords[FarDword] == Stored, what + "the flushed image's texel was not stored");
 }
 
+void ShadowSpansAndPublish(const AgcDriver::Graphics::Context& context, std::uint64_t unit, std::span<const std::pair<std::size_t, std::size_t>> spans, std::uint32_t word, const std::string& what) {
+    using namespace AgcDriver::Graphics;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = ExistingHostImportFor(context, unit, ShadowUnitBytes);
+    Require(import != nullptr, what + "the guest block has no host import after the write-back");
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, what + "no active recorder");
+    AgcDriver::GuestMemory::CollectWritesUncached(unit, ShadowUnitBytes);
+    const auto destination = ShadowDestinationFor(context, *import, unit + spans.front().first, unit + spans.front().second);
+    Require(destination.has_value(), what + "the import has no unit shadow for the unit");
+    const auto commands = recorder->Commands();
+    recorder->Keep(destination->slab);
+    const auto slabUnit = destination->offset - spans.front().first;
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, slabUnit, ShadowUnitBytes, word);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    std::vector<ShadowedRange> ranges;
+    for (const auto& [from, to] : spans) ranges.push_back({unit + from, unit + to, destination->slab});
+    MarkShadowed(*import, ranges, AgcDriver::GuestMemory::TrackerGeneration());
+    Require(PublishShadow(unit, ShadowUnitBytes, PublishScope::Whole, PublishReason::Address) == 1, what + "the publish selected no unit");
+    recorder->Sync();
+}
+
+void RequireQuarters(std::uint64_t unit, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
+    const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(unit));
+    constexpr auto quarter = ShadowUnitBytes / 16u;
+    for (std::size_t part = 0; part < expected.size(); ++part) {
+        const auto matching = std::count(words + part * quarter, words + (part + 1u) * quarter, expected[part]);
+        if (matching == static_cast<std::ptrdiff_t>(quarter)) continue;
+        std::cout << what << "FAILED, quarter " << part << " has " << quarter - static_cast<std::size_t>(matching) << " dwords that are not 0x" << std::hex << expected[part] << std::dec << '\n';
+        throw std::runtime_error(what + "the publish copied slab bytes no retile produced over the guest's, or left out retiled ones");
+    }
+}
+
+void RunPartlyShadowedUnitPublish(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
+    using namespace AgcDriver::Graphics;
+    const std::string what = "storage flush ordering, publish of a unit retiled only in part: ";
+    if (!UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the partly shadowed unit case is skipped");
+        return;
+    }
+    const auto image = StoreImage(device, guest, 0, Standard256B);
+    Require(StorageTexture::FlushPending(image, ImageBytes, nullptr, "test", PublishScope::None), what + "the image's store left no results pending");
+    if (!AnyShadowedOverlaps(image, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the partly shadowed unit case is skipped");
+        return;
+    }
+    device.WaitIdle();
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    constexpr std::size_t quarter = ShadowUnitBytes / 4u;
+    const auto half = guest.Address() + 4u * ShadowUnitBytes;
+    const std::array halfSpan{std::pair{std::size_t{0}, 2u * quarter}};
+    ShadowSpansAndPublish(context, half, halfSpan, SlabWord, what);
+    device.WaitIdle();
+    RequireQuarters(half, {SlabWord, SlabWord, Initial, Initial}, what);
+    const auto apart = guest.Address() + 5u * ShadowUnitBytes;
+    const std::string disjoint = "storage flush ordering, publish of a unit retiled in two disjoint spans: ";
+    const std::array apartSpans{std::pair{std::size_t{0}, quarter}, std::pair{3u * quarter, 4u * quarter}};
+    ShadowSpansAndPublish(context, apart, apartSpans, SlabWord, disjoint);
+    device.WaitIdle();
+    RequireQuarters(apart, {SlabWord, Initial, Initial, SlabWord}, disjoint);
+    const std::string again = "storage flush ordering, publish of another span of a published unit: ";
+    const std::array againSpan{std::pair{quarter, 2u * quarter}};
+    ShadowSpansAndPublish(context, apart, againSpan, Overwritten, again);
+    device.WaitIdle();
+    RequireQuarters(apart, {SlabWord, Overwritten, Initial, SlabWord}, again);
+}
+
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
     const auto* words = guest.Words() + offset / 4u;
     const auto image = guest.Address() + offset;
@@ -326,6 +398,8 @@ int main(int argc, char** argv) {
         RunWriterInsideLayer(*device, guest, 3u * BlockBytes / 4u);
         GuestBlock shadowed(watched);
         RunShadowedUnitUnderWriter(*device, shadowed);
+        GuestBlock partly(watched);
+        RunPartlyShadowedUnitPublish(*device, partly);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

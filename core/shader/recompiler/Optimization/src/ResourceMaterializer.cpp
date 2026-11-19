@@ -99,6 +99,15 @@ bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& desc
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
+bool gcnUnboundSampledImage(const ImageResource& image, const DescriptorValue& descriptor) {
+    if (image.resourceClass != ImageResourceClass::Sampled || !image.read || image.written || image.atomic) return false;
+    if (((descriptor.dwords[1] >> 20u) & 0x3fu) != 0u) return false;
+    for (std::uint32_t shift = 0u; shift < 12u; shift += 3u) {
+        if (((descriptor.dwords[3] >> shift) & 7u) == 1u) return false;
+    }
+    return true;
+}
+
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
     return static_cast<IrBufferFormat>((descriptor.dwords[1] >> 20u) & 0x1ffu);
 }
@@ -157,6 +166,17 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
 
 bool multisamplePlaneRead(const ImageResource& image) {
     return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+}
+
+DescriptorValue gcnTableImageWords(DescriptorValue descriptor) {
+    if (!GcnGuestShaders() || (descriptor.availableDwordMask & (1u << 3u)) == 0u) return descriptor;
+    if ((descriptor.availableDwordMask & 0x3eu) != 0x3eu) {
+        descriptor.availableDwordMask = 0u;
+        return descriptor;
+    }
+    const auto words = GcnImageWords(std::span<const std::uint32_t, 8>(descriptor.dwords.data(), 8u));
+    std::copy(words.begin(), words.end(), descriptor.dwords.begin());
+    return descriptor;
 }
 
 bool undefinedImageWords(const DescriptorValue& descriptor) {
@@ -1545,6 +1565,7 @@ private:
             auto effectiveWords = records.contents.words.Copy();
             std::vector<RegisteredImageView> identities;
             identities.reserve(effectiveWords.size());
+            for (auto& words : effectiveWords) words = gcnTableImageWords(words);
             for (std::uint32_t record = 0; record < effectiveWords.size(); ++record) normalizeRegisteredImageView(image, runtime, plan.maxImageArrayLayers, resource, record, effectiveWords[record], identities);
             out.resourceViews.push_back({resource, SharedValues<DescriptorValue>(std::move(effectiveWords)), std::move(identities)});
         }
@@ -1633,7 +1654,10 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         if (descriptor.dwordCount != 8u) {
             throw std::runtime_error("image descriptor has an invalid width");
         }
-        if (GcnGuestShaders()) {
+        if (GcnGuestShaders() && gcnUnboundSampledImage(image, descriptor)) {
+            descriptor = DescriptorValue{};
+            descriptor.dwordCount = 8u;
+        } else if (GcnGuestShaders()) {
             const auto words = GcnImageWords(std::span<const std::uint32_t, 8>(descriptor.dwords.data(), 8u));
             std::copy(words.begin(), words.end(), descriptor.dwords.begin());
         }
@@ -2203,7 +2227,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 } else {
                     const auto& rawWords = column.words.at(code);
                     const auto view = sampler ? column.resourceViews.end() : std::find_if(column.resourceViews.begin(), column.resourceViews.end(), [resource](const auto& candidate) { return candidate.resource == resource; });
-                    const auto& words = !sampler && view != column.resourceViews.end() ? view->words.at(code) : rawWords;
+                    const auto words = sampler ? rawWords : view != column.resourceViews.end() ? view->words.at(code) : gcnTableImageWords(rawWords);
                     if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) mapped = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
                     records.Set(code, mapped);
                 }
