@@ -62,6 +62,20 @@ def log():
 
 
 class AbSplitTests(unittest.TestCase):
+    def test_cli_rejects_unmatched_settlement_at_end_of_log(self):
+        lines = log() + ["[ab] phase A 3 settled at present 222 (t 102.000 s)\n"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mismatched-final.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                with self.subTest(script=script, flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(run.returncode, 2)
+                    self.assertEqual(run.stdout, "")
+                    self.assertIn("phase A 3 settled does not match active phase B 3", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+
     def test_noise_uses_only_consecutive_phase_indices(self):
         for indices, expected in (((0, 1, 2), 30.0), ((0, 3, 4), 20.0),
                                   ((0, 1, 4), 40.0), ((0, 3, 6), None),
@@ -137,17 +151,16 @@ class AbSplitTests(unittest.TestCase):
             "[ab] phase B 0 settled at present 102 (t 12.000 s)\n",
         ]
 
-        _, phases = ab_split.read_log(lines)
-
-        self.assertEqual(len(phases), 1)
-        self.assertEqual(phases[0]["kind"], "A")
-        self.assertIsNone(phases[0]["settled"])
+        with self.assertRaisesRegex(ValueError, "phase B 0 settled does not match active phase A 0"):
+            ab_split.read_log(lines)
 
         lines.append(
             "[ab] phase A 0 settled at present 103 (t 13.000 s)\n"
         )
 
         _, phases = ab_split.read_log(lines)
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0]["kind"], "A")
         self.assertEqual(phases[0]["settled"], (103, 13.0))
 
     def test_notices_after_a_settled_line_do_not_start_a_report_window(self):
