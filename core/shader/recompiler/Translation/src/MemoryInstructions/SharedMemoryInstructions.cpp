@@ -1,4 +1,3 @@
-#include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <stdexcept>
@@ -245,9 +244,6 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
 }
 
 bool TranslationContext::dsCondxchg32(const RdnaInstruction& inst) {
-    if (inst.gds) {
-        throw std::runtime_error("DS conditional exchange GDS mode is not supported");
-    }
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.dataDwords = 1u;
     memory.componentCount = 1u;

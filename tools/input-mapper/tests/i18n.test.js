@@ -4,16 +4,24 @@ import {diagnostic, initialLocale, locales, messages, translate} from '../i18n.j
 import {captureKey} from '../capture.js';
 import {parseIni, serialize} from '../validation.js';
 
-test('every selectable language supplies the main interface and every FAQ', () => {
+test('every selectable language supplies the primary interface and English fallbacks are complete', () => {
     assert.equal(locales[0].code, 'ar-EG');
     assert.equal(new Set(locales.map(item => item.code)).size, locales.length);
     const required = ['controls', 'configuration', 'help', 'settings', 'language', 'close', 'intro', 'search', 'import', 'reset', 'select', 'add', 'capture', 'remove', 'download', 'copy', 'backControls', 'helpIntro', 'configIntro'];
     for (let index = 0; index < 6; index++) required.push(`group${index}`);
     for (let index = 0; index < 4; index++) required.push(`faq${index}Question`, `faq${index}Answer`);
+    for (const [key, message] of Object.entries(messages.en)) {
+        assert.equal(typeof message, 'string', `en: ${key}`);
+        assert.notEqual(message.trim(), '', `en: ${key}`);
+    }
     for (const locale of locales) {
         assert.doesNotThrow(() => new Intl.DateTimeFormat(locale.code));
         assert.equal(locale.direction, ['ar-EG', 'ur', 'fa'].includes(locale.code) ? 'rtl' : 'ltr');
-        for (const key of required) assert.ok(messages[locale.code][key], `${locale.code}: ${key}`);
+        assert.ok(messages[locale.code], locale.code);
+        for (const key of required) {
+            assert.equal(typeof messages[locale.code][key], 'string', `${locale.code}: ${key}`);
+            assert.notEqual(messages[locale.code][key].trim(), '', `${locale.code}: ${key}`);
+        }
     }
 });
 
@@ -40,6 +48,13 @@ test('translated diagnostics retain action tokens and unknown technical details'
     assert.equal(diagnostic('sv', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('ar-EG', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
+});
+
+test('translated controller diagnostics preserve button names and None', () => {
+    assert.equal(diagnostic('sv', "Unknown SDL controller button 'leftx'."), "Okänd SDL-handkontrollknapp 'leftx'.");
+    assert.equal(diagnostic('sv', 'SDLButton:a is set more than once.'), 'SDLButton:a anges mer än en gång.');
+    assert.equal(diagnostic('pt-BR', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: O valor deve ser um botão do PlayStation ou None.');
+    assert.equal(diagnostic('ar-EG', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: القيمة لازم تكون زرار PlayStation أو None.');
 });
 
 test('capture diagnostics are fully translated', () => {

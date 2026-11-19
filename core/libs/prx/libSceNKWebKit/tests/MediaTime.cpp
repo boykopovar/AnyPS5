@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
@@ -7,6 +8,40 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+
+
+extern "C" {
+int APS5_VABI CallMediaTimeTaggedPlacement(void* storage);
+int APS5_VABI CallPlatformTimeRangesTaggedPlacement(void* storage);
+}
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("CallMediaTimeTaggedPlacement")
+    "    push %rbx\n"
+    "    mov %rdi, %rbx\n"
+    "    mov %rdi, %rdx\n"
+    "    mov $64, %edi\n"
+    "    xor %esi, %esi\n"
+    "    call " APS5_ASM_SYMBOL("_ZN3WTF9MediaTimenwEm10NotNullTagPv") "\n"
+    "    cmp %rbx, %rax\n"
+    "    sete %al\n"
+    "    movzbl %al, %eax\n"
+    "    pop %rbx\n"
+    "    ret\n");
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("CallPlatformTimeRangesTaggedPlacement")
+    "    push %rbx\n"
+    "    mov %rdi, %rbx\n"
+    "    mov %rdi, %rdx\n"
+    "    mov $64, %edi\n"
+    "    xor %esi, %esi\n"
+    "    call " APS5_ASM_SYMBOL("_ZN7WebCore18PlatformTimeRangesnwEm10NotNullTagPv") "\n"
+    "    cmp %rbx, %rax\n"
+    "    sete %al\n"
+    "    movzbl %al, %eax\n"
+    "    pop %rbx\n"
+    "    ret\n");
 
 namespace {
 
@@ -610,7 +645,39 @@ void TestTimeRanges() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        void* storage = std::malloc(64);
+        Require(storage != nullptr);
+        bool matches = false;
+        if (std::strcmp(argv[1], "media-time-tag-register") == 0) {
+            matches = CallMediaTimeTaggedPlacement(storage);
+        } else if (std::strcmp(argv[1], "time-ranges-tag-register") == 0) {
+            matches = CallPlatformTimeRangesTaggedPlacement(storage);
+        } else {
+            std::fprintf(stderr, "unknown MediaTime ABI case: %s\n", argv[1]);
+            std::free(storage);
+            return 2;
+        }
+        std::free(storage);
+        if (!matches) {
+            std::fprintf(stderr, "tagged placement register ABI mismatch: %s\n", argv[1]);
+            return 1;
+        }
+        return 0;
+    }
+    if (argc != 1) return 2;
+    void* mediaTimeStorage = std::malloc(64);
+    Require(mediaTimeStorage != nullptr);
+    bool mediaTimeMatches = CallMediaTimeTaggedPlacement(mediaTimeStorage);
+    std::free(mediaTimeStorage);
+    void* rangesStorage = std::malloc(64);
+    Require(rangesStorage != nullptr);
+    bool rangesMatch = CallPlatformTimeRangesTaggedPlacement(rangesStorage);
+    std::free(rangesStorage);
+    if (!mediaTimeMatches) std::fprintf(stderr, "tagged placement register ABI mismatch: media-time-tag-register\n");
+    if (!rangesMatch) std::fprintf(stderr, "tagged placement register ABI mismatch: time-ranges-tag-register\n");
+    if (!mediaTimeMatches || !rangesMatch) return 1;
     TestMediaTimeGuestReturnShape();
     TestMediaTimeBasics();
     TestMediaTimeCreationAndConversions();

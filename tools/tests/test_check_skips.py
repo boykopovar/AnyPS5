@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,13 @@ LIMITATIONS = [
     "skipped, the host has not enough free disk space for a file of more than 2 GiB",
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
+    "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
+    "skipped, host imports unavailable: carried shadows not tested",
+    "skipped, host import of the test block refused: carried shadows not tested",
+    "skipped, host imports are compared, not watched: carried shadows not tested",
+    "skipped, the surface's host import is compared, not write-watched",
+    "skipped, the device has no settle or sparse queue; nothing to check",
 ]
 
 HOST_LIMITATIONS = [
@@ -50,6 +58,7 @@ OTHER = [
     "skipped, the device imports shared memory",
     "skipped, the device imports shared memory through host pointersX",
     "skipped, the host has no interface",
+    "skipped, the host mounts /dev/shm",
 ]
 
 
@@ -124,6 +133,37 @@ class SkipJsonTests(unittest.TestCase):
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_environment_loader_retention_is_only_expected_for_linux_unload(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, job, expected in (
+                ("guest_environment_binding_unload", reason, "linux", 0),
+                ("guest_environment_binding_unload", "host CPU has SSE2\n" + reason + "\nnormal library shutdown", "linux", 0),
+                ("guest_environment_binding", reason, "linux", 1),
+                ("guest_other", reason, "linux", 1),
+                ("guest_environment_binding_unload", reason, "windows", 1),
+                ("guest_environment_binding_unload", "", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipped, flaky", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipping: flaky", "linux", 1),
+            ):
+                with self.subTest(name=name, output=output, job=job):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+            for report, expected in (
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-err>{reason}</system-err>', 0),
+                (f'<skipped message="unexpected reason"/><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77">unexpected reason</skipped><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}</system-out><system-err>skipped, flaky</system-err>', 1),
+            ):
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_environment_binding_unload">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
     def test_windows_symlink_creation_privilege_skip_is_narrow(self):
         reason = "SKIP: Windows symbolic-link privileges unavailable"
         names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
@@ -157,6 +197,8 @@ class CheckSkipsTests(unittest.TestCase):
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
+
+class CtestSkipPolicyTests(unittest.TestCase):
     def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
@@ -190,6 +232,8 @@ class CheckSkipsTests(unittest.TestCase):
                                                 capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_probe skipped", result.stdout)
+                        if "skipped, flaky" in report:
+                            self.assertIn("error: guest_probe skipped: skipped, flaky", result.stdout)
 
     def test_ctest_status_preserves_high_refresh_policy(self):
         reason = "skipped, current display does not provide 120 Hz"
@@ -268,6 +312,8 @@ class CheckSkipsTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr)
                         self.assertNotIn("all expected", result.stdout)
 
+
+class DeviceSkipPolicyTests(unittest.TestCase):
     def test_missing_high_refresh_display_is_expected_in_both_jobs(self):
         reason = "current display does not provide 120 Hz"
         reports = (
@@ -368,6 +414,8 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertFalse(check_skips.DEVICE_LIMITATION.search(message))
 
+
+class SkipCliOutputTests(unittest.TestCase):
     def test_only_unexpected_skip_is_reported(self):
         xml = (
             '<testsuites><testsuite>'
@@ -608,6 +656,56 @@ class NotRunTests(unittest.TestCase):
 
 
 
+
+
+class DeviceLimitationsTests(unittest.TestCase):
+    PATTERNS = [re.compile("no display"), re.compile("no gpu")]
+
+    def test_all_skip_reasons_matching_a_pattern_is_a_limitation(self):
+        output = "a: skipped, no display\nb: Skipped, NO GPU found\nc: ok\n"
+        self.assertTrue(check_skips.device_limitations(output, [re.compile("no display", re.I), re.compile("no gpu", re.I)]))
+
+    def test_one_unmatched_reason_is_not_a_limitation(self):
+        output = "a: skipped, no display\nb: skipped, flaky\n"
+        self.assertFalse(check_skips.device_limitations(output, self.PATTERNS))
+
+    def test_no_skips_or_no_patterns_is_not_a_limitation(self):
+        self.assertFalse(check_skips.device_limitations("all passed\n", self.PATTERNS))
+        self.assertFalse(check_skips.device_limitations("a: skipped, no display\n", []))
+
+
+class SymlinkPrivilegeLimitationTests(unittest.TestCase):
+    REASON = "SKIP: Windows symbolic-link privileges unavailable"
+    NAMES = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+
+    def test_exact_reason_for_the_symlink_tests_is_a_limitation(self):
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                self.assertTrue(check_skips.symlink_privilege_limitation(name, "noise\n  " + self.REASON + "  \n"))
+
+    def test_other_tests_are_never_a_limitation(self):
+        self.assertFalse(check_skips.symlink_privilege_limitation("guest_kernel_sys_paths_open", self.REASON))
+
+    def test_any_other_reason_or_no_reason_is_not_a_limitation(self):
+        name = self.NAMES[0]
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "ok\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, self.REASON + "\nSKIP: disk full\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "test skipped, Windows symbolic-link privileges unavailable"))
+
+
+class EnvironmentLoaderRetentionTests(unittest.TestCase):
+    def test_single_exact_skip_line_is_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertTrue(check_skips.environment_loader_retention("ok\n  " + reason + "  \nok\n"))
+
+    def test_other_or_extra_skips_are_not_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\n" + reason))
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\nskipping another check"))
+        self.assertFalse(check_skips.environment_loader_retention("skipped for another reason"))
+
+    def test_no_skip_is_not_a_limitation(self):
+        self.assertFalse(check_skips.environment_loader_retention("all passed\n"))
 
 
 if __name__ == "__main__":

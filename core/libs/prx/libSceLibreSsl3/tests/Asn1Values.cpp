@@ -4,15 +4,24 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -24,11 +33,13 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 std::unordered_map<void*, std::size_t> allocations;
 bool failAllocation = false;
+std::function<void()> onAllocation;
 void* clearing = nullptr;
 std::size_t clearingLength = 0;
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     if (std::exchange(failAllocation, false)) return nullptr;
+    if (onAllocation) std::exchange(onAllocation, nullptr)();
     void* result = std::malloc(size);
     Require(result != nullptr);
     Require(allocations.emplace(result, size).second);
@@ -200,6 +211,124 @@ void Destruction() {
     Require(borrowed[0] == 9 && borrowed[1] == 8 && borrowed[2] == 7 && allocations.empty());
 }
 
+LibreSsl3X509 CertificateWith(LibreSsl3X509CertInfo& info) {
+    LibreSsl3X509 certificate;
+    std::memset(&certificate, 0xA5, sizeof(certificate));
+    certificate.certInfo = &info;
+    return certificate;
+}
+
+void X509Versions() {
+    Require(X509_set_version_nid_postfix(nullptr, 1) == 0);
+    LibreSsl3X509CertInfo info{};
+    auto certificate = CertificateWith(info);
+    for (std::int64_t version : {std::int64_t{-1}, std::int64_t{3}}) {
+        Require(X509_set_version_nid_postfix(&certificate, version) == 0);
+        Require(info.version == nullptr && info.encModified == 0);
+    }
+    Require(X509_set_version_nid_postfix(&certificate, 2) == 1);
+    Require(info.version != nullptr && info.version->type == 2);
+    Require(info.encModified == 1);
+    Require(X509_get_version_nid_postfix(&certificate) == 2);
+    auto* allocated = info.version;
+    info.encModified = 0;
+    Require(X509_set_version_nid_postfix(&certificate, 3) == 0);
+    Require(info.encModified == 0 && X509_get_version_nid_postfix(&certificate) == 2);
+    Require(X509_set_version_nid_postfix(&certificate, 1) == 1);
+    Require(info.version == allocated && info.encModified == 1);
+    Require(X509_get_version_nid_postfix(&certificate) == 1);
+    Require(X509_set_version_nid_postfix(&certificate, 0) == 1);
+    Require(info.version == allocated && X509_get_version_nid_postfix(&certificate) == 0);
+    ASN1_INTEGER_free_nid_postfix(info.version);
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename Function>
+void Rejects(Function function, std::source_location location = std::source_location::current()) {
+    errno = EINVAL;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && errno == EINVAL, location);
+}
+
+void X509VersionGuestPointers() {
+    auto* const unmapped = reinterpret_cast<LibreSsl3X509*>(std::uintptr_t{0x10});
+    Rejects([&] { X509_get_version_nid_postfix(unmapped); });
+    Rejects([&] { X509_set_version_nid_postfix(unmapped, 1); });
+    LibreSsl3X509 certificate;
+    std::memset(&certificate, 0xA5, sizeof(certificate));
+    certificate.certInfo = reinterpret_cast<LibreSsl3X509CertInfo*>(std::uintptr_t{0x10});
+    Rejects([&] { X509_get_version_nid_postfix(&certificate); });
+    Rejects([&] { X509_set_version_nid_postfix(&certificate, 1); });
+
+    LibreSsl3X509CertInfo info{};
+    ReadOnlyPage page;
+    auto* const readOnly = page.Set(info);
+    page.Protect();
+    auto readOnlyCertificate = CertificateWith(*readOnly);
+    Require(X509_get_version_nid_postfix(&readOnlyCertificate) == 0);
+    Rejects([&] { X509_set_version_nid_postfix(&readOnlyCertificate, 1); });
+    Require(std::memcmp(readOnly, &info, sizeof(info)) == 0);
+
+    ReadOnlyPage protectedOnAllocation;
+    auto* const lateReadOnly = protectedOnAllocation.Set(info);
+    auto lateCertificate = CertificateWith(*lateReadOnly);
+    onAllocation = [&] { protectedOnAllocation.Protect(); };
+    Rejects([&] { X509_set_version_nid_postfix(&lateCertificate, 1); });
+    Require(!onAllocation && std::memcmp(lateReadOnly, &info, sizeof(info)) == 0);
+    Require(allocations.empty());
+}
+
 } // namespace
 
 int main() {
@@ -212,6 +341,8 @@ int main() {
     Integers();
     Compare();
     Destruction();
+    X509Versions();
+    X509VersionGuestPointers();
     Require(allocations.empty());
     std::puts("LibreSSL3 ASN.1 value tests passed");
 }

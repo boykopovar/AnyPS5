@@ -722,8 +722,8 @@ void testInvalidInputIsRejected() {
     }
 }
 
-void testSpecializedSelectionExitSpirv16() {
-    const std::string source = R"(OpCapability Shader
+void testSpecializedSelectionExitSpirv16(bool maximal = false) {
+    std::string source = R"(OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint GLCompute %main "main" %index %output
 OpExecutionMode %main LocalSize 8 1 1
@@ -763,15 +763,21 @@ OpStore %output %value
 OpReturn
 OpFunctionEnd
 )";
+    if (maximal) {
+        source.insert(source.find("OpMemoryModel"), "OpExtension \"SPV_KHR_maximal_reconvergence\"\n");
+        source.insert(source.find("OpDecorate"), "OpExecutionMode %main MaximallyReconvergesKHR\n");
+    }
+    const std::string variant = maximal ? "SPIR-V 1.4 MaximallyReconvergesKHR" : "SPIR-V 1.6";
     try {
         auto words = assemble(source);
-        words[1] = Spirv16;
-        static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, Vulkan13, Spirv16, false, false));
+        const auto version = maximal ? 0x00010400u : Spirv16;
+        words[1] = version;
+        static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, Vulkan13, version, false, false));
         const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
-        static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specialized, Vulkan13, Spirv16, false, false));
-        check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "SPIR-V 1.6 selection exit specialization is not stable");
+        static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specialized, Vulkan13, version, false, false));
+        check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, variant + " selection exit specialization is not stable");
     } catch (const std::exception& error) {
-        check(false, std::string("specialized SPIR-V 1.6 selection exit: ") + error.what());
+        check(false, "specialized " + variant + " selection exit: " + error.what());
     }
 }
 
@@ -1034,6 +1040,7 @@ int main() {
     testNarrowConversions(optimizationEnabled);
     testLargeFunctionArray();
     testSpecializedSelectionExitSpirv16();
+    testSpecializedSelectionExitSpirv16(true);
     testInvalidInputIsRejected();
     testSpecializedSelectionExit();
     testSpecializedDeadContinue();
