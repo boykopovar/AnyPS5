@@ -467,6 +467,82 @@ void TestReceiveConfigInvalid() {
     Require(live.empty());
 }
 
+void TestSendConfigConstructor() {
+    int transport = 0;
+    WebRtcAudioSendStreamConfig config;
+    std::memset(&config, 0xAA, sizeof(config));
+    errno = 38;
+    _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(&config, &transport);
+    Require(errno == 38);
+    Require(config.rtp.ssrc == 0);
+    Require(config.rtp.rid.size == 0 && config.rtp.rid.capacity == WebRtcGuestStringInlineCapacity && ReadGuestString(config.rtp.rid).empty());
+    Require(config.rtp.mid.size == 0 && config.rtp.mid.capacity == WebRtcGuestStringInlineCapacity && ReadGuestString(config.rtp.mid).empty());
+    Require(!config.rtp.extmapAllowMixed);
+    Require(!config.rtp.extensions.begin && !config.rtp.extensions.end && !config.rtp.extensions.capacityEnd);
+    Require(config.rtp.cName.size == 0 && config.rtp.cName.capacity == WebRtcGuestStringInlineCapacity && ReadGuestString(config.rtp.cName).empty());
+    Require(config.rtp.rtcpMode == 1);
+    Require(config.rtcpReportIntervalMs == 5000);
+    Require(config.sendTransport == &transport);
+    Require(config.minBitrateBps == -1 && config.maxBitrateBps == -1);
+    Require(config.bitratePriority == 1.0 && !config.hasDscp);
+    Require(!config.audioNetworkAdaptorConfig.engaged && !config.sendCodecSpec.engaged);
+    Require(!config.encoderFactory && !config.codecPairId.engaged);
+    Require(config.trackId.size == 0 && config.trackId.capacity == WebRtcGuestStringInlineCapacity && ReadGuestString(config.trackId).empty());
+    Require(config.cryptoOptions.srtp.enableGcmCryptoSuites);
+    Require(!config.cryptoOptions.srtp.enableAes128Sha1_32CryptoCipher);
+    Require(config.cryptoOptions.srtp.enableAes128Sha1_80CryptoCipher);
+    Require(config.cryptoOptions.srtp.enableEncryptedRtpHeaderExtensions);
+    Require(!config.cryptoOptions.sframe.requireFrameEncryption);
+    Require(!config.frameEncryptor && !config.frameTransformer);
+    releases.clear();
+    _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(&config);
+    Require(releases.empty() && live.empty());
+
+    std::memset(&config, 0x55, sizeof(config));
+    _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(&config, nullptr);
+    Require(config.sendTransport == nullptr);
+    _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(&config);
+    Require(live.empty());
+
+    ReadOnlyPage readOnly;
+    errno = 39;
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(nullptr, &transport); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(reinterpret_cast<WebRtcAudioSendStreamConfig*>(static_cast<std::uintptr_t>(0x10)), &transport); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(static_cast<WebRtcAudioSendStreamConfig*>(readOnly.address), &transport); }));
+    Require(errno == 39);
+}
+
+void TestReceiveConfigConstructor() {
+    WebRtcAudioReceiveStreamConfig config;
+    std::memset(&config, 0xAA, sizeof(config));
+    errno = 40;
+    _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(&config);
+    Require(errno == 40);
+    Require(config.remoteSsrc == 0 && config.localSsrc == 0);
+    Require(config.nackRtpHistoryMs == 0 && config.rtcpMode == 1);
+    Require(!config.enableNonSenderRtt && config.rtcpSendTransport == nullptr);
+    Require(config.jitterBufferMaxPackets == 200 && !config.jitterBufferFastAccelerate && config.jitterBufferMinDelayMs == 0);
+    Require(config.syncGroup.size == 0 && config.syncGroup.capacity == WebRtcGuestStringInlineCapacity && ReadGuestString(config.syncGroup).empty());
+    Require(config.decoderMap.beginNode == EndNode(config.decoderMap) && config.decoderMap.root == nullptr && config.decoderMap.size == 0);
+    Require(!config.decoderFactory && !config.codecPairId.engaged);
+    Require(config.cryptoOptions.srtp.enableGcmCryptoSuites);
+    Require(!config.cryptoOptions.srtp.enableAes128Sha1_32CryptoCipher);
+    Require(config.cryptoOptions.srtp.enableAes128Sha1_80CryptoCipher);
+    Require(config.cryptoOptions.srtp.enableEncryptedRtpHeaderExtensions);
+    Require(!config.cryptoOptions.sframe.requireFrameEncryption);
+    Require(!config.frameDecryptor && !config.frameTransformer);
+    releases.clear();
+    _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(&config);
+    Require(releases.empty() && live.empty());
+
+    ReadOnlyPage readOnly;
+    errno = 41;
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(nullptr); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(reinterpret_cast<WebRtcAudioReceiveStreamConfig*>(static_cast<std::uintptr_t>(0x10))); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(static_cast<WebRtcAudioReceiveStreamConfig*>(readOnly.address)); }));
+    Require(errno == 41);
+}
+
 }
 
 int main() {
@@ -480,9 +556,11 @@ int main() {
     TestSendStats();
     TestSendConfig();
     TestSendConfigInvalid();
+    TestSendConfigConstructor();
     TestReceiveStats();
     TestReceiveConfig();
     TestReceiveConfigInvalid();
+    TestReceiveConfigConstructor();
     std::puts("libwebrtc AudioStreamConfig tests passed");
     return 0;
 }

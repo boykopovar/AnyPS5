@@ -120,6 +120,12 @@ void Set(UCalendar* handle, double time, bool cutover, std::int32_t* error) {
 
 } // namespace
 
+namespace {
+
+constexpr std::int32_t AttributeCount = 5;
+
+}
+
 extern "C" {
 
 UCalendar* APS5_VABI ucal_open_nid_postfix(const char16_t* zone, std::int32_t length, const char* locale,
@@ -189,6 +195,11 @@ void APS5_VABI ucal_setGregorianChange_nid_postfix(UCalendar* handle, UDate time
     Set(handle, time, true, status);
 }
 
+std::int32_t APS5_VABI ucal_getAttribute_nid_postfix(const UCalendar*, std::int32_t attr) {
+    if (attr < 0 || attr >= AttributeCount) return -1;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 std::int32_t APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix(
     const char16_t* id,
     std::int32_t len,
@@ -209,6 +220,11 @@ std::int32_t APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix(
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI ucal_getDayOfWeekType_nid_postfix(const UCalendar*, std::int32_t, std::int32_t* status) {
+    if (Icu::Failure(status)) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 std::int32_t APS5_VABI ucal_getDefaultTimeZone_nid_postfix(char16_t*, std::int32_t, std::int32_t* ec) {
     if (!ec || *ec > 0) return 0;
     NotImplemented_nid_no_patch(__func__);
@@ -222,6 +238,16 @@ UEnumeration* APS5_VABI ucal_getKeywordValuesForLocale_nid_postfix(const char*, 
 std::int32_t APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix(const void*, std::int32_t, const char*, char16_t*,
                                                                std::int32_t, std::int32_t* status) {
     if (Icu::Failure(status)) return -1;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+UEnumeration* APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix(std::int32_t, const char*, const std::int32_t*, std::int32_t* ec) {
+    if (Icu::Failure(ec)) return nullptr;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+UEnumeration* APS5_VABI ucal_openTimeZones_nid_postfix(std::int32_t* ec) {
+    if (Icu::Failure(ec)) return nullptr;
     NotImplemented_nid_no_patch(__func__);
 }
 

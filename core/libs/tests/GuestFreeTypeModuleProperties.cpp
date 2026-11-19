@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -42,6 +44,31 @@ static void Require(bool condition, std::source_location location = std::source_
         std::fprintf(stderr, "Module property check failed at line %u\n", location.line());
         std::abort();
     }
+}
+
+template <typename TCall>
+static bool RefusesUnreadable(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+static void UnreadableLibrary(const Api& api) {
+    auto* const unreadable = reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10});
+    std::uint32_t value = 0xA5A5A5A5;
+    Require(RefusesUnreadable([&] { api.get(unreadable, "truetype", "interpreter-version", &value); }));
+    Require(value == 0xA5A5A5A5);
+    const std::uint32_t version = 35;
+    Require(RefusesUnreadable([&] { api.set(unreadable, "truetype", "interpreter-version", &version); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(RefusesUnreadable([&] { api.get(misaligned, "truetype", "interpreter-version", &value); }));
+    Require(value == 0xA5A5A5A5);
+    Require(RefusesUnreadable([&] { api.set(misaligned, "truetype", "interpreter-version", &version); }));
 }
 
 template <typename TValue>
@@ -197,6 +224,7 @@ static void Run(const Api& api) {
     FT_Library nativeOther = nullptr;
     Require(api.initialize(&library) == 0 && api.initialize(&other) == 0);
     Require(FT_Init_FreeType(&native) == 0 && FT_Init_FreeType(&nativeOther) == 0);
+    UnreadableLibrary(api);
     Query<std::uint32_t>(api, library, native, "truetype", "interpreter-version");
     for (const auto version : {35u, 40u, 38u, 0u, 0xFFFFFFFFu}) {
         Change(api, library, native, other, nativeOther, "truetype", "interpreter-version", version);
