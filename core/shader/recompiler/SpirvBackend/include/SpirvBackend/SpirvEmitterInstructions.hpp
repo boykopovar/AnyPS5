@@ -26,7 +26,7 @@ std::uint32_t EmitSMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::ui
 std::uint32_t EmitSMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUMin16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitUMax16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
-std::uint32_t EmitFPSaturate32(SpirvEmitterState& state, std::uint32_t arg0);
+std::uint32_t EmitFPSaturate32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitIAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitISub64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitIMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);

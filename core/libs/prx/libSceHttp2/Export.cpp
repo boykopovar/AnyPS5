@@ -417,7 +417,8 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         std::lock_guard lock(g_completionsMutex);
         const auto pending = g_completions.find(req_id);
         if (pending != g_completions.end() && !pending->second.empty()) {
-            *result = pending->second.front();
+            const Http2AsyncResult completed = pending->second.front();
+            if (!Http2Guest::Store(result, completed)) return ERROR_NULL_POINTER;
             pending->second.pop_front();
             return 0;
         }
