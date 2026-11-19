@@ -7,22 +7,6 @@ int APS5_VABI u_strToTitle_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucal_getAttribute_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucal_getDayOfWeekType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucal_openTimeZones_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucol_countAvailable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -64,14 +48,6 @@ int APS5_VABI ucol_strcollIter_nid_postfix() {
 }
 
 int APS5_VABI ucol_strcollUTF8_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udat_countSymbols_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udat_getCalendar_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

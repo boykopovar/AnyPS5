@@ -3,10 +3,6 @@
 
 extern "C" {
 int APS5_VABI u_strToTitle_nid_postfix();
-int APS5_VABI ucal_getAttribute_nid_postfix();
-int APS5_VABI ucal_getDayOfWeekType_nid_postfix();
-int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix();
-int APS5_VABI ucal_openTimeZones_nid_postfix();
 int APS5_VABI ucol_countAvailable_nid_postfix();
 int APS5_VABI ucol_getAvailable_nid_postfix();
 int APS5_VABI ucol_getContractionsAndExpansions_nid_postfix();
@@ -18,8 +14,6 @@ int APS5_VABI ucol_setStrength_nid_postfix();
 int APS5_VABI ucol_strcoll_nid_postfix();
 int APS5_VABI ucol_strcollIter_nid_postfix();
 int APS5_VABI ucol_strcollUTF8_nid_postfix();
-int APS5_VABI udat_countSymbols_nid_postfix();
-int APS5_VABI udat_getCalendar_nid_postfix();
 int APS5_VABI udtitvfmt_resultAsValue_nid_postfix();
 int APS5_VABI uldn_keyValueDisplayName_nid_postfix();
 int APS5_VABI uldn_localeDisplayName_nid_postfix();
