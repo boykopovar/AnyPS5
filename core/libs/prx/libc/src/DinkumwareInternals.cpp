@@ -384,7 +384,7 @@ short ScaledResult(short result, TFloat value, const std::fexcept_t& entryFlags,
 }
 
 template<typename TFloat>
-short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, long exponent) {
+short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, std::int64_t exponent) {
     std::fexcept_t saved;
     std::fegetexceptflag(&saved, FE_ALL_EXCEPT);
     const int savedErrno = errno;
@@ -492,8 +492,9 @@ std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char*
     return VersionedUnsigned<std::uint32_t>(text, end, base, error);
 }
 
-short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
+short APS5_VABI _Exp_nid_postfix(double* value, double y, std::int64_t offset) {
     if (value == nullptr) throw std::invalid_argument("_Exp: null value");
+    offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
@@ -580,8 +581,9 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
     return ScaledResult(result, *value, entryFlags, entryErrno);
 }
 
-short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
+short APS5_VABI _FExp_nid_postfix(float* value, float y, std::int64_t offset) {
     if (value == nullptr) throw std::invalid_argument("_FExp: null value");
+    offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
