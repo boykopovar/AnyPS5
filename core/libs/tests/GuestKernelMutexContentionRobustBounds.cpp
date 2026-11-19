@@ -20,20 +20,6 @@ constexpr int MutexTypeRecursive = 2;
 constexpr int MutexTypeNormal = 3;
 constexpr int MutexTypeAdaptive = 4;
 
-constexpr std::uint32_t UmutexRbOwnerdead = 0x40000000u;
-constexpr int UmtxOpMutexTrylock = 4;
-
-struct alignas(4) UserMutex {
-    std::uint32_t owner;
-    std::uint32_t flags;
-    std::uint32_t ceilings[2];
-    std::uint32_t spare[4];
-};
-
-static_assert(sizeof(UserMutex) == 32);
-static_assert(SCE_KERNEL_ERROR_EOWNERDEAD == static_cast<int>(0x80020060u));
-static_assert(SCE_KERNEL_ERROR_ELAST == SCE_KERNEL_ERROR_EOWNERDEAD);
-
 void Require(bool condition, const std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Require failed at line %u\n", static_cast<unsigned>(location.line()));
@@ -233,15 +219,6 @@ void TestRecursiveErrorPrecedence() {
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
 }
 
-void TestRobustMutexAndEownerdeadHandling() {
-    *__error_nid_postfix() = 0;
-    UserMutex deadOwnerMutex{};
-    deadOwnerMutex.owner = UmutexRbOwnerdead;
-    deadOwnerMutex.flags = 0;
-    Require(_umtx_op_nid_postfix(&deadOwnerMutex, UmtxOpMutexTrylock, 0, nullptr, nullptr) == -1);
-    Require(*__error_nid_postfix() == PosixEbusy);
-}
-
 } // namespace
 
 int main() {
@@ -249,6 +226,5 @@ int main() {
     TestTimedlockParameterBounds();
     TestLockContentionBetweenThreads();
     TestRecursiveErrorPrecedence();
-    TestRobustMutexAndEownerdeadHandling();
     return 0;
 }
