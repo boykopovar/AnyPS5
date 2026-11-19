@@ -673,6 +673,7 @@ void TestGuestPointers() {
     GuardedPage page;
     Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
     Require(bio != nullptr, "guest pointer BIO allocation");
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     RequireRejected([&] { BIO_write_nid_postfix(bio, unmapped, 4); }, "unmapped write into an empty BIO");
     RequireRejected([&] { BIO_puts_nid_postfix(bio, unmapped); }, "unmapped puts string");
     RequireData(bio, "");
@@ -688,6 +689,7 @@ void TestGuestPointers() {
     Require(BIO_puts_nid_postfix(bio, page.Tail("xy", 3)) == 2, "puts string ending at a page boundary");
     RequireRejected([&] { BIO_puts_nid_postfix(bio, page.Tail("zz", 2)); }, "unterminated puts string running into an unmapped page");
     RequireData(bio, "abcdefabxy");
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unmapped memory write was reported as an unimplemented export");
     char output[8]{};
     RequireRejected([&] { bio->method->read(bio, unmapped, 4); }, "unmapped read destination");
     RequireRejected([&] { bio->method->gets(bio, unmapped, 4); }, "unmapped line destination");

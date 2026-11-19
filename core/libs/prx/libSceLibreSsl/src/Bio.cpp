@@ -226,7 +226,7 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
     if (size < 0) throw std::invalid_argument("BIO: negative memory write size");
     bio->flags &= ~RetryFlags;
     const auto count = static_cast<std::size_t>(size);
-    if (buffer.length > std::numeric_limits<std::size_t>::max() - count) NotImplemented_nid_no_patch(__func__);
+    if (buffer.length > std::numeric_limits<std::size_t>::max() - count) throw std::overflow_error("BIO: memory write length overflow");
     const std::size_t length = buffer.length + count;
     if (length > buffer.capacity) {
         if (length > MaximumGrowth) return queueError(BufferLibrary, AllocationFailure, -1);
@@ -237,7 +237,7 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
             BioBuffer rejected{0, data, capacity};
             clearBuffer(rejected);
             free_nid_postfix(data);
-            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            throw std::runtime_error("BIO: unreadable memory write source");
         }
         if (buffer.length != 0) std::memcpy(data, buffer.data, buffer.length);
         clearBuffer(buffer);
@@ -250,7 +250,7 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
         if (start >= begin && start - begin <= buffer.capacity && count <= buffer.capacity - (start - begin))
             std::memmove(buffer.data + buffer.length, buffer.data + (start - begin), count);
         else if (!CopyGuestInPreservingErrno(buffer.data + buffer.length, source, count))
-            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            throw std::runtime_error("BIO: unreadable memory write source");
     }
     buffer.length = length;
     return size;
@@ -259,8 +259,8 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
 int APS5_VABI putsMemory(Bio* bio, const char* source) {
     if (!source) throw std::invalid_argument("BIO_puts: null string");
     std::string text;
-    if (!CopyGuestStringPreservingErrno(source, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!CopyGuestStringPreservingErrno(source, text)) throw std::runtime_error("BIO_puts: unreadable string");
+    if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::overflow_error("BIO_puts: string longer than INT_MAX bytes");
     return writeMemory(bio, text.data(), static_cast<int>(text.size()));
 }
 
