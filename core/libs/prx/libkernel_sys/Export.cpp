@@ -280,8 +280,9 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast,
         current = next;
     }
     if (resolved != nullptr) {
+        const bool trailingSeparator = !native.has_filename();
         *resolved = current;
-        if (!native.has_filename()) *resolved /= "";
+        if (trailingSeparator) *resolved /= "";
     }
     return 0;
 }
@@ -768,11 +769,11 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     if (const int error = CopyPath(existing, existingCopy)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
-    if (const int error = SymbolicLinkLimitError(source, true)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, true, &source)) return static_cast<int>(Fail(error));
     if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
     if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
-    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false, &destination)) return static_cast<int>(Fail(error));
     return LinkNative(source, destination);
 }
 
@@ -792,13 +793,13 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
-    if (const int error = SymbolicLinkLimitError(source, flag != 0)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, flag != 0, &source)) return static_cast<int>(Fail(error));
     const bool linkItself = flag == 0 && IsSymbolicLink(source);
     if (!linkItself)
         if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
-    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false, &destination)) return static_cast<int>(Fail(error));
     if (linkItself) return LinkSymbolicLinkItself(source, destination);
     return LinkNative(source, destination);
 }
