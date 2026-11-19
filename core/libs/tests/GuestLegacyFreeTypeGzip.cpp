@@ -1,5 +1,6 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libfreetype/include/GuestStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <algorithm>
@@ -462,6 +463,7 @@ int main() {
     auto* badLength = reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10});
     auto* badBuffer = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
     length = output.size();
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(badMemory, output.data(), &length, Gzip.data(), Gzip.size()); }));
     Require(length == output.size());
     Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), badLength, Gzip.data(), Gzip.size()); }));
@@ -479,5 +481,6 @@ int main() {
     length = output.size();
     Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, readOnlyOutput.As<std::uint8_t>(), &length, Gzip.data(), Gzip.size()); }));
     Require(length == output.size() && counter.allocations == counter.frees);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
     return 0;
 }

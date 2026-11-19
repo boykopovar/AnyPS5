@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -39,14 +40,14 @@ void CopyGuestInBytesPreservingErrno(const void* guestAddress, void* hostBuffer,
     const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(hostBuffer, guestAddress, bytes);
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 void CopyGuestOutBytesPreservingErrno(void* guestAddress, const void* hostBuffer, std::size_t bytes, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(guestAddress, hostBuffer, bytes);
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 }
