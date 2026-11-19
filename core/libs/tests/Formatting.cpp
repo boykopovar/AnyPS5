@@ -460,6 +460,10 @@ static void CheckSecureFormat() {
     Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
     Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
+    Require(printf_s_nid_postfix(nullptr) == -1);
+    Require(printf_s_nid_postfix("ab%n", &written) == -1 && written == -7);
+    Require(printf_s_nid_postfix("a%s", static_cast<const char*>(nullptr)) == -1);
+    Require(printf_s_nid_postfix("printf_s: %d %.1f\n", 7, 2.5) == 16);
 }
 
 static void CheckScanInputFailureErrno() {
@@ -978,6 +982,11 @@ static void CheckDecimalFloat() {
     RequireFloat("[%.17g]", 0x1.e5dec6655f463p+50, "[2136879802973464.7]");
     RequireFloat("[%.0f]", 67108865.5, "[67108865]");
     RequireFloat("[%.0f]", 33554433.5, "[33554434]");
+    RequireFloat("[%f]", 1e23, "[99999999999999991611391.000000]");
+    RequireFloat("[%.33e]", 1e23, "[9.999999999999999161139100000000000e+22]");
+    RequireFloat("[%.17F]", 0x1.18dc8cc0c0e6p+67, "[161905644679952596991.00000000000000000]");
+    RequireFloat("[%#f]", -0x1.c00a1facf75a4p+56, "[-126111920728529471.999900]");
+    RequireFloat("[%.15f]", 0x1.9b722742acdbp+37, "[220893341781.606933593749000]");
     RequireFloat("[%+08.1f]", 2.25, "[+00002.3]");
     RequireFloat("[%#.0e]", 2.5, "[3.e+00]");
     RequireFloat("[%g]", 0.0001, "[0.0001]");

@@ -5,12 +5,14 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <iterator>
 #include <initializer_list>
+#include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -32,6 +34,21 @@ constexpr int KIND_ADAPTIVE = 4;
 using MutexInit = int (APS5_VABI*)(PthreadMutex*, const PthreadMutexattr*);
 
 int failures = 0;
+
+struct StackQueryState {
+    std::atomic<bool> queried{false};
+    std::atomic<bool> release{false};
+    void* address = nullptr;
+    std::size_t size = 0;
+};
+
+void* APS5_VABI QueryStack(void* argument) {
+    auto* state = static_cast<StackQueryState*>(argument);
+    pthread_getstack_np_nid_postfix(&state->address, &state->size);
+    state->queried.store(true, std::memory_order_release);
+    while (!state->release.load(std::memory_order_acquire)) scePthreadYield();
+    return argument;
+}
 
 template<typename TCall>
 void Case(const char* name, TCall call) {
@@ -129,6 +146,31 @@ void TestRwlockattr() {
     });
 }
 
+void TestStack() {
+    Case("pthread_getstack_np", [] {
+        void* address = nullptr;
+        std::size_t size = 0;
+        pthread_getstack_np_nid_postfix(&address, &size);
+        if (!address || size < 16384) return false;
+        if (pthread_getstack_np_nid_postfix(nullptr, &size) != GUEST_EFAULT) return false;
+        address = nullptr;
+        if (pthread_getstack_np_nid_postfix(&address, nullptr) != GUEST_EFAULT || !address) return false;
+        PthreadAttr attr = nullptr;
+        if (pthread_attr_init_nid_postfix(&attr) != 0) return false;
+        constexpr std::size_t ChildStackSize = 256 * 1024;
+        if (pthread_attr_setstacksize_nid_postfix(&attr, ChildStackSize) != 0) return false;
+        StackQueryState state;
+        Pthread child = nullptr;
+        if (pthread_create_nid_postfix(&child, &attr, QueryStack, &state) != 0) return false;
+        while (!state.queried.load(std::memory_order_acquire)) scePthreadYield();
+        if (!state.address || state.size != ChildStackSize) return false;
+        state.release.store(true, std::memory_order_release);
+        void* result = nullptr;
+        if (pthread_join_nid_postfix(child, &result) != 0 || result != &state) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+}
+
 void TestAttr() {
     Case("pthread_attr_setstackaddr", [] {
         PthreadAttr attr = nullptr;
@@ -216,6 +258,10 @@ void TestAttr() {
         if (pthread_get_specificarray_np_nid_postfix(1, -1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(513, 1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(512, 2, array) != GUEST_EINVAL) return false;
+        constexpr int IntMax = std::numeric_limits<int>::max();
+        for (const PthreadKey key : {2, 512, IntMax}) {
+            if (pthread_get_specificarray_np_nid_postfix(key, IntMax, nullptr) != GUEST_EINVAL) return false;
+        }
         if (pthread_get_specificarray_np_nid_postfix(1, 1, nullptr) != GUEST_EFAULT) return false;
         PthreadKey key1 = 0;
         PthreadKey key2 = 0;
@@ -256,6 +302,7 @@ int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "rwlockattr") TestRwlockattr();
     else if (mode == "kind") TestKind();
+    else if (mode == "stack") TestStack();
     else if (mode == "attr") TestAttr();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
