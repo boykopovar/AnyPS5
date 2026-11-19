@@ -27,6 +27,23 @@ class RedactTests(unittest.TestCase):
         out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
         self.assertEqual(out, "banana <user> <user>.txt ana-dir")
 
+    def test_posix_home_is_not_replaced_inside_a_longer_name(self):
+        out = bug_report.redact(
+            "opened /home/ana/title.elf, /home/anabel/title.elf and /home/ana-old/title.elf",
+            home="/home/ana", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf, /home/anabel/title.elf and /home/ana-old/title.elf")
+
+    def test_posix_home_before_a_period_is_redacted(self):
+        out = bug_report.redact("Home is /home/ana. Sibling is /home/ana.old.", home="/home/ana", user="", host="")
+        self.assertEqual(out, "Home is ~. Sibling is /home/ana.old.")
+
+    def test_posix_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact("opened /home/ana/title.elf", home="/home/ana/", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf")
+
+    def test_posix_root_home_is_not_replaced(self):
+        self.assertEqual(bug_report.redact("opened /games/title.elf", home="///", user="", host=""), "opened /games/title.elf")
+
     def test_windows_home_matches_mixed_case_and_separators(self):
         out = bug_report.redact(
             r"opened c:/PROFILES\Example/games/title.elf and C:\Profiles\Example-backup\title.elf",
