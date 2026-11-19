@@ -453,4 +453,15 @@ extern "C" const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLoc
 extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self);
 extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
 
+extern "C" char APS5_VABI NumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+
 #endif

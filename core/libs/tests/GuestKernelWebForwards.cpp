@@ -47,6 +47,15 @@ void TestDup2() {
             "closing the pipes failed");
 }
 
+void TestFstat() {
+    int fds[2]{-1, -1};
+    Require(pipe_nid_postfix(fds) == 0, "pipe creation failed");
+    FileStat status{};
+    Require(fstat_nid_disambig2_nid_postfix(fds[0], &status) == 0, "fstat through libkernel_web failed");
+    Require((status.st_mode & 0170000) == 0010000, "fstat through libkernel_web did not report a FIFO");
+    Require(close_nid_postfix(fds[0]) == 0 && close_nid_postfix(fds[1]) == 0, "closing the pipe failed");
+}
+
 void TestExec() {
     char argument[] = "kernel_web_missing.bin";
     char* argv[] = {argument, nullptr};
@@ -65,6 +74,7 @@ void TestExec() {
 
 int main() {
     TestDup2();
+    TestFstat();
     TestExec();
     return 0;
 }

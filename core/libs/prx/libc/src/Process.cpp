@@ -242,12 +242,20 @@ int* APS5_VABI libc_error_nid_postfix() {
     return &errno;
 }
 
-int* APS5_VABI __error_nid_postfix() {
+int* GuestError_nid_no_patch() {
     return &errno;
 }
 
-[[noreturn]] void __stack_chk_fail_nid_postfix() {
+int* APS5_VABI __error_nid_postfix() {
+    return GuestError_nid_no_patch();
+}
+
+[[noreturn]] void GuestStackChkFail_nid_no_patch() {
     std::abort();
+}
+
+[[noreturn]] void __stack_chk_fail_nid_postfix() {
+    GuestStackChkFail_nid_no_patch();
 }
 
 int APS5_VABI atexit_nid_postfix(GuestExitCallback func) {
