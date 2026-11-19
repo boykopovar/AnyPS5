@@ -34,7 +34,6 @@ constexpr std::uint32_t Type1D = 8;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type3D = 10;
 constexpr std::uint32_t OneZeroOneZero = 0x041u;
-constexpr std::uint8_t OtherLevelTexel = 0x40u;
 alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
 alignas(256) std::array<std::uint8_t, 16384> SingleLevel{};
 alignas(256) std::array<std::uint8_t, 16384> MultiLevel{};
@@ -167,6 +166,8 @@ std::vector<Coordinate> OffsetCoordinates() {
 
 std::array<double, 4> TexelOf(std::uint32_t level, std::int32_t x, std::int32_t y) {
     if (level == 1u) return {240.0 * ((x + y + 1) & 1), 32.0 * y + 48.0, 16.0 * x + 40.0, 200.0};
+    if (level == 2u) return {16.0 * x + 80.0, 32.0 * y + 144.0, 8.0 * x + 8.0 * y + 48.0, 176.0};
+    if (level >= 3u) return {8.0 * x + 120.0, 32.0 * y + 200.0, 16.0 * x + 16.0 * y + 96.0, 160.0};
     return {240.0 * ((x + y) & 1), 16.0 * x + 16.0, 32.0 * y + 32.0, 240.0};
 }
 
@@ -181,7 +182,7 @@ void FillTexture(std::span<std::uint8_t> texels, std::uint32_t levels) {
                 auto* texel = &texels[mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u];
                 const auto value = TexelOf(level, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
                 for (std::uint32_t component = 0; component < 4u; ++component) {
-                    texel[component] = level <= 1u ? static_cast<std::uint8_t>(value[component]) : static_cast<std::uint8_t>(OtherLevelTexel + level * 16u);
+                    texel[component] = static_cast<std::uint8_t>(value[component]);
                 }
             }
         }
@@ -273,7 +274,6 @@ std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std
         if ((clamp == 6u || clamp == 7u) && (texel[axis] < 0 || texel[axis] >= sizes[axis])) return BorderColor(sampler);
         texel[axis] = std::clamp(texel[axis], 0, sizes[axis] - 1);
     }
-    if (level > 1u) return {OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level, OtherLevelTexel + 16.0 * level};
     return TexelOf(level, texel[0], texel[1]);
 }
 
@@ -294,9 +294,8 @@ std::array<double, 4> Reference(const SamplerCase& sampler, std::uint32_t level,
 }
 
 bool ScaledUnnormalized(const std::array<std::uint32_t, 4>& words) {
-    const auto clampX = words[0] & 7u;
-    const auto clampY = (words[0] >> 3u) & 7u;
-    return clampX != 1u && clampX != 3u && clampY != 1u && clampY != 3u && (words[2] & 0x3fffu) == 0u && ((words[2] >> 26u) & 3u) == 1u && ((words[2] >> 20u) & 3u) == ((words[2] >> 22u) & 3u) && ((words[2] >> 20u) & 3u) <= 1u && ((words[0] >> 29u) & 3u) == 0u;
+    const auto mirrors = [](std::uint32_t clamp) { return clamp == 1u || clamp == 3u || clamp == 7u; };
+    return !mirrors(words[0] & 7u) && !mirrors((words[0] >> 3u) & 7u) && (words[2] & 0x3fffu) == 0u && ((words[2] >> 26u) & 3u) == 1u && ((words[2] >> 20u) & 3u) == ((words[2] >> 22u) & 3u) && ((words[2] >> 20u) & 3u) <= 1u && ((words[0] >> 29u) & 3u) == 0u;
 }
 
 void Check(const Program& program, const SamplerCase& sampler, const std::array<std::uint32_t, 3>& levels, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
@@ -351,7 +350,13 @@ int main() {
             const auto multiSamples = Run(*device, Plain, multi, sampler.words, coordinates);
             Check(Plain, sampler, {0u}, "first level of a 4-level image", coordinates, multiSamples);
             Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
-            if (ScaledUnnormalized(sampler.words)) Check(Plain, sampler, {0u, 3u, 0u}, "4-level view through a point-mip S#", coordinates, Run(*device, Plain, chain, sampler.words, coordinates));
+            if (ScaledUnnormalized(sampler.words)) {
+                Check(Plain, sampler, {0u, 3u, 0u}, "4-level view through a point-mip S#", coordinates, Run(*device, Plain, chain, sampler.words, coordinates));
+                auto lodOneCode = std::vector<std::uint32_t>(Plain.code.begin(), Plain.code.end());
+                lodOneCode[7] = std::bit_cast<std::uint32_t>(1.0f);
+                const Program lodOne{lodOneCode, {"image_sample_lz", "image_sample_l 1.0", "image_sample"}, Plain.offsets};
+                Check(lodOne, sampler, {0u, 1u, 0u}, "4-level view through a point-mip S# at LOD 1", levelOneCoordinates, Run(*device, lodOne, chain, sampler.words, levelOneCoordinates));
+            }
             Check(Offsets, sampler, {0u}, "1-level image", offsetCoordinates, Run(*device, Offsets, single, sampler.words, offsetCoordinates));
             Check(Gradient, sampler, {0u}, "1-level image", coordinates, Run(*device, Gradient, single, sampler.words, coordinates));
             Check(Gradient, sampler, {0u}, "first level of a 4-level image", coordinates, Run(*device, Gradient, multi, sampler.words, coordinates));
@@ -365,12 +370,21 @@ int main() {
         Check(Plain, Samplers[0], {0u, 2u, 0u}, "3-level view read by a selected LOD", coordinates, Run(*device, Plain, TextureDescriptor(MultiLevel.data(), 2u, StorageLevels - 1u), Samplers[0].words, coordinates));
         Check(Plain, Samplers[0], {0u, 3u, 0u}, "4-level view read by image_sample_l and image_sample", coordinates, Run(*device, Plain, chain, Samplers[0].words, coordinates));
         Check(Offsets, Samplers[0], {0u, 3u, 0u}, "4-level view read with texel offsets", offsetCoordinates, Run(*device, Offsets, chain, Samplers[0].words, offsetCoordinates));
+        for (const auto& entry : std::initializer_list<std::pair<float, std::uint32_t>>{{0.49f, 0u}, {0.5f, 1u}, {1.5f, 2u}, {2.7f, 3u}}) {
+            auto code = std::vector<std::uint32_t>(Plain.code.begin(), Plain.code.end());
+            code[7] = std::bit_cast<std::uint32_t>(entry.first);
+            const Program program{code, {"image_sample_lz", "image_sample_l (fractional)", "image_sample"}, Plain.offsets};
+            Check(program, Samplers[0], {0u, entry.second, 0u}, "4-level view read by a fractional LOD", coordinates, Run(*device, program, chain, Samplers[0].words, coordinates));
+        }
+        auto maxLodWords = Samplers[0].words;
+        maxLodWords[1] = 0x00100000u;
+        Check(Plain, Samplers[0], {0u, 1u, 0u}, "4-level view read by a LOD clamped by MAX_LOD", coordinates, Run(*device, Plain, chain, maxLodWords, coordinates));
         ExpectFailure(*device, Plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
         ExpectFailure(*device, Gradient, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_d");
         ExpectFailure(*device, Plain, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with linear mip filtering");
         Check(Plain, Samplers[4], {0u, 0u, 0u}, "4-level view through an S# without mip filtering", coordinates, Run(*device, Plain, chain, Samplers[4].words, coordinates));
         ExpectFailure(*device, Plain, chain, Samplers[5].words, "single-level", "a 4-level view through a mirrored S#");
-        Check(Plain, {"bilinear wrap on X, clamp-to-last-texel on Y, point mips", {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, true, false, true}, {0u, 3u, 0u}, "4-level view through an S# with wrap addressing on X", coordinates, Run(*device, Plain, chain, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates));
+        Check(Plain, {"bilinear wrap on X, clamp-to-last-texel on Y, point mips", {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, true, true}, {0u, 3u, 0u}, "4-level view through an S# with wrap addressing on X", coordinates, Run(*device, Plain, chain, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates));
         ExpectFailure(*device, Plain, chain, {0x00008092u, 0x00fff000u, 0x05500180u, 0u}, "single-level", "a 4-level view through an S# with a LOD bias");
         ExpectFailure(*device, LevelZero, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with a minimum LOD and a LOD bias");
         const auto magFilterReference = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x01500000u, 0u}, coordinates);
