@@ -270,13 +270,19 @@ void CheckPosixLauncher() {
     const auto directory = MakeScratchDirectory();
     const auto opener = WriteOpener(directory);
     const std::string url = "https://example.com/$(touch_pwned);id&x=1#a*b";
+    const int saved = fcntl(200, F_DUPFD_CLOEXEC, 201);
+    Require(saved >= 0 || errno == EBADF);
     const int source = open("/dev/null", O_RDONLY);
-    Require(source >= 0 && dup2(source, 200) == 200 && close(source) == 0);
+    Require(source >= 0);
+    if (source != 200) Require(dup2(source, 200) == 200 && close(source) == 0);
     {
         HostBrowserLauncher launcher(opener.string());
         Require(launcher.Launch(url));
     }
-    Require(close(200) == 0);
+    if (saved >= 0)
+        Require(dup2(saved, 200) == 200 && close(saved) == 0);
+    else
+        Require(close(200) == 0);
     const auto lines = WaitForRecord(directory);
     Require(lines.size() == 4);
     Require(lines[0] == "1");
