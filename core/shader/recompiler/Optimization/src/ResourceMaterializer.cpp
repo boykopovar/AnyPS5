@@ -793,6 +793,15 @@ public:
                 if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
             }
         }
+        for (const auto& buffer : plan.info.buffers) {
+            if (buffer.table != NoTable) {
+                count = std::max(count, buffer.table + 1u);
+                if (buffer.source < plan.descriptorSources.size() && plan.descriptorSources[buffer.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[buffer.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
+            }
+        }
         if (count == 0u) {
             return;
         }
@@ -820,6 +829,9 @@ public:
             }
             for (const auto& sampler : plan.info.samplers) {
                 if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+            }
+            for (const auto& buffer : plan.info.buffers) {
+                if (buffer.table != NoTable) Snapshot(buffer.source, buffer.table);
             }
             if (!checkEpoch || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
                 completed = true;
@@ -1598,17 +1610,32 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
     if (MaterializeProfiled()) evaluateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - evaluateStarted).count()), std::memory_order_relaxed);
 
     std::size_t cursor = 0;
-    if (values.size() < plan.info.buffers.size()) {
-        throw std::runtime_error("materialization sources are missing buffer descriptors");
-    }
-    snapshot.buffers.assign(values.begin(), values.begin() + plan.info.buffers.size());
-    if (GcnGuestShaders()) {
-        for (auto& buffer : snapshot.buffers) {
-            buffer.dwords[1] &= GcnBufferWord1Mask;
-            buffer.dwords[3] = GcnBufferWord3(buffer.dwords[1], buffer.dwords[3]);
+    snapshot.buffers.resize(plan.info.buffers.size());
+    for (std::uint32_t i = 0; i < plan.info.buffers.size(); i++) {
+        const auto& buffer = plan.info.buffers[i];
+        if (buffer.table != NoTable) {
+            snapshot.buffers[i] = {};
+            snapshot.buffers[i].dwordCount = 4u;
+            snapshot.buffers[i].availableDwordMask = 0xfu;
+            continue;
         }
+        if (buffer.source >= plan.descriptorSources.size()) {
+            throw std::runtime_error("buffer resource references an unknown descriptor source");
+        }
+        if (cursor >= values.size()) {
+            throw std::runtime_error("materialization sources are missing buffer descriptors");
+        }
+        auto descriptor = values[cursor];
+        cursor++;
+        if (descriptor.dwordCount != 4u) {
+            throw std::runtime_error("buffer descriptor has an invalid width");
+        }
+        if (GcnGuestShaders()) {
+            descriptor.dwords[1] &= GcnBufferWord1Mask;
+            descriptor.dwords[3] = GcnBufferWord3(descriptor.dwords[1], descriptor.dwords[3]);
+        }
+        snapshot.buffers[i] = descriptor;
     }
-    cursor += plan.info.buffers.size();
 
     snapshot.images.resize(plan.info.images.size());
     for (std::uint32_t i = 0; i < plan.info.images.size(); i++) {
@@ -1816,6 +1843,7 @@ bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, con
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
+        if (buffer.table != NoTable) continue;
         if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i))) {
             auto& words = snapshot.buffers.at(i).dwords;
             std::fill(words.begin(), words.begin() + 4, 0u);
@@ -1970,7 +1998,7 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
 }
 
 std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
-    std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
+    std::size_t footprint = resolved.map.size() + resolved.bufferRecordOffsets.size() + (resolved.bufferElements.size() * sizeof(ImageTableBufferElement) + resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
     for (const auto& table : tables) {
         footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u;
         for (const auto& view : table.resourceViews) footprint += view.words.size() * 9u + view.identities.size() * (sizeof(RegisteredImageView) / sizeof(std::uint32_t));
@@ -1989,6 +2017,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     }
     for (const auto& sampler : info.samplers) {
         if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
+    }
+    for (const auto& buffer : info.buffers) {
+        if (buffer.table != NoTable) count = std::max(count, buffer.table + 1u);
     }
     if (count == 0u) return out;
     const auto& tables = snapshot.tables;
@@ -2046,6 +2077,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
     HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
+    const auto staticBufferCount = static_cast<std::uint32_t>(std::count_if(info.buffers.begin(), info.buffers.end(), [](const auto& b) { return b.table == NoTable; }));
     std::vector<std::uint64_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= std::uint64_t{1} << pair.sampler;
@@ -2145,13 +2177,51 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         out.map.insert(out.map.end(), record.begin(), record.end());
         return offset;
     };
+    const auto bufferRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
+        std::array<std::uint32_t, BufferTableAbi::BufferRecordWords> record{};
+        record[BufferTableAbi::BufferRecordWord0] = words.dwords[0];
+        record[BufferTableAbi::BufferRecordWord1] = words.dwords[1];
+        record[BufferTableAbi::BufferRecordWord2] = words.dwords[2];
+        record[BufferTableAbi::BufferRecordWord3] = words.dwords[3];
+        const auto& buffer = info.buffers[resource];
+        const ShaderBufferResource desc{{words.dwords[0], words.dwords[1] & ~0x40000000u, words.dwords[2], words.dwords[3]}};
+        if ((words.availableDwordMask & 0xfu) == 0xfu && desc.Type() == 0u && (desc.Base48() == 0u || desc.GetSize() == 0u)) return Abi::NullCode;
+        if ((words.availableDwordMask & 0xfu) != 0xfu) {
+            record[BufferTableAbi::BufferRecordFlags] = poison(resource, PoisonReason::OutsideSnapshot, &words);
+        } else if (desc.Type() != 0u) {
+            record[BufferTableAbi::BufferRecordFlags] = poison(resource, PoisonReason::NotBuffer, &words);
+        } else if (desc.GetSize() > BufferTableAbi::MaxDirectBufferBytes || (desc.GetSize() & 3u) != 0u || (desc.Base48() & 3u) != 0u) {
+            record[BufferTableAbi::BufferRecordFlags] = BufferTableAbi::BdaFallbackFlag;
+        } else {
+            const std::array<std::uint32_t, 4> elementWords{words.dwords[0], words.dwords[1], words.dwords[2], words.dwords[3]};
+            const auto hash = hashWords(elementWords, 0);
+            auto index = elementIndex.Find(hash, [&](std::uint32_t known) { return out.bufferElements[known].words == elementWords; });
+            if (!index.has_value() && out.bufferElements.size() >= BufferTableAbi::MaxBufferElements) {
+                record[BufferTableAbi::BufferRecordFlags] = BufferTableAbi::BdaFallbackFlag;
+            } else {
+                if (!index.has_value()) {
+                    index = static_cast<std::uint32_t>(out.bufferElements.size());
+                    out.bufferElements.push_back({elementWords, buffer.maxByteExtent});
+                    elementIndex.Insert(hash, *index);
+                } else {
+                    out.bufferElements[*index].maxByteExtent = std::max(out.bufferElements[*index].maxByteExtent, buffer.maxByteExtent);
+                }
+                record[BufferTableAbi::BufferRecordElement] = staticBufferCount + *index;
+            }
+        }
+        const auto offset = static_cast<std::uint32_t>(out.map.size());
+        growMap(record.size());
+        out.map.insert(out.map.end(), record.begin(), record.end());
+        out.bufferRecordOffsets.push_back(offset);
+        return offset;
+    };
     std::vector<bool> outside(count, false);
     std::size_t recordCodes = 0;
     for (const auto& column : tables.tables) recordCodes = std::max(recordCodes, column.words.size());
     for (const auto& column : tables.nested) recordCodes = std::max(recordCodes, column.words.size());
     DenseScratchMap records(threadScratch<DenseSlot, TableRecordsTag>(), recordCodes);
     DenseScratchMap nestedRecords(threadScratch<DenseSlot, NestedRecordsTag>(), tables.nested.size());
-    const auto fill = [&](auto&& self, std::uint32_t resource, std::uint32_t table, bool sampler, const ImageTableColumnSnapshot& column, std::uint32_t header) -> void {
+    const auto fill = [&](auto&& self, std::uint32_t resource, std::uint32_t table, std::uint32_t kind, const ImageTableColumnSnapshot& column, std::uint32_t header) -> void {
         out.map[header + Abi::TableKeyCount] = column.keys;
         out.map[header + Abi::TableSizeLow] = static_cast<std::uint32_t>(column.size);
         out.map[header + Abi::TableSizeHigh] = static_cast<std::uint32_t>(column.size >> 32u);
@@ -2160,7 +2230,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         if (column.codes.size() != column.keys) throw std::runtime_error("image table snapshot has a truncated map");
         if (column.fault != 0u) {
             out.map[header + Abi::TableFault] = poison(resource, static_cast<PoisonReason>(column.fault & ~Abi::PoisonFlag), nullptr);
-        } else if (!sampler && (info.images[resource].tableOperation == TableOperation::Unsupported || info.runtimeImageModes[resource].empty())) {
+        } else if (kind == 0u && (info.images[resource].tableOperation == TableOperation::Unsupported || info.runtimeImageModes[resource].empty())) {
             out.map[header + Abi::TableFault] = poison(resource, PoisonReason::UnsupportedOperation, nullptr);
         }
         outside[table] = outside[table] || column.outside;
@@ -2192,16 +2262,18 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                     growMap(Abi::TableWords);
                     out.map.resize(out.map.size() + Abi::TableWords, 0u);
                     nestedRecords.Set(code, mapped);
-                    self(self, resource, table, sampler, child, mapped);
+                    self(self, resource, table, kind, child, mapped);
                 }
             } else if (out.map[header + Abi::TableFault] == 0u) {
                 if (const auto known = records.Find(code)) {
                     mapped = *known;
                 } else {
                     const auto& rawWords = column.words.at(code);
-                    const auto view = sampler ? column.resourceViews.end() : std::find_if(column.resourceViews.begin(), column.resourceViews.end(), [resource](const auto& candidate) { return candidate.resource == resource; });
-                    const auto words = sampler ? rawWords : view != column.resourceViews.end() ? view->words.at(code) : gcnTableImageWords(rawWords);
-                    if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) mapped = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
+                    const auto view = kind != 0u ? column.resourceViews.end() : std::find_if(column.resourceViews.begin(), column.resourceViews.end(), [resource](const auto& candidate) { return candidate.resource == resource; });
+                    const auto words = kind != 0u ? rawWords : view != column.resourceViews.end() ? view->words.at(code) : gcnTableImageWords(rawWords);
+                    if (kind == 1u) mapped = samplerRecord(resource, words);
+                    else if (kind == 2u) mapped = bufferRecord(resource, words);
+                    else if ((words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) mapped = imageRecord(resource, words);
                     records.Set(code, mapped);
                 }
             }
@@ -2223,17 +2295,23 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 out.map.push_back(code);
             }
             out.map[header + Abi::TableOutsideCode] = poison(resource, PoisonReason::Unmapped, nullptr);
-        } else if (sampler && out.map[header + Abi::TableFault] == 0u) {
+        } else if (kind == 1u && out.map[header + Abi::TableFault] == 0u) {
             DescriptorValue zero;
             zero.dwordCount = 4u;
             out.map[header + Abi::TableOutsideCode] = samplerRecord(resource, zero);
+        } else if (kind == 2u && out.map[header + Abi::TableFault] == 0u) {
+            out.map[header + Abi::TableOutsideCode] = Abi::NullCode;
         }
     };
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
-        if (info.images[resource].table != NoTable) fill(fill, resource, info.images[resource].table, false, tables.tables.at(info.images[resource].table), Abi::TableHeader(info.images[resource].table));
+        if (info.images[resource].table != NoTable) fill(fill, resource, info.images[resource].table, 0u, tables.tables.at(info.images[resource].table), Abi::TableHeader(info.images[resource].table));
     }
     for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
-        if (info.samplers[resource].table != NoTable) fill(fill, resource, info.samplers[resource].table, true, tables.tables.at(info.samplers[resource].table), Abi::TableHeader(info.samplers[resource].table));
+        if (info.samplers[resource].table != NoTable) fill(fill, resource, info.samplers[resource].table, 1u, tables.tables.at(info.samplers[resource].table), Abi::TableHeader(info.samplers[resource].table));
+    }
+    if (std::ranges::any_of(info.buffers, [](const auto& b) { return b.table != NoTable; })) elementIndex.Clear();
+    for (std::uint32_t resource = 0; resource < info.buffers.size(); resource++) {
+        if (info.buffers[resource].table != NoTable) fill(fill, resource, info.buffers[resource].table, 2u, tables.tables.at(info.buffers[resource].table), Abi::TableHeader(info.buffers[resource].table));
     }
     out.map[Abi::HeaderElementCount] = static_cast<std::uint32_t>(out.elements.size());
     out.map[Abi::HeaderSamplerCount] = static_cast<std::uint32_t>(out.samplers.size());
@@ -2927,7 +3005,14 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         }
         plan.materializationSources.push_back(index);
     };
-    for (const auto& buffer : plan.info.buffers) addSource(buffer.source);
+    for (const auto& buffer : plan.info.buffers) {
+        if (buffer.table != NoTable) {
+            if (buffer.source >= plan.descriptorSources.size()) throw std::runtime_error("buffer table references an unknown descriptor source");
+            plan.requiresSpecializationMemory = true;
+        } else {
+            addSource(buffer.source);
+        }
+    }
     for (const auto& image : plan.info.images) {
         if (image.source >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan image references an unknown descriptor source");

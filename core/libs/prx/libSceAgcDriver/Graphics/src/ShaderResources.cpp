@@ -40,6 +40,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "ImageTableAbi.hpp"
+#include "BufferTableAbi.hpp"
 #include <cstring>
 #include <limits>
 #include <list>
@@ -2554,18 +2555,30 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
                         const bool read = element < binding.bufferRead.size() && binding.bufferRead[element];
                         const std::uint32_t extent = element < binding.bufferExtent.size() ? binding.bufferExtent[element] : 0u;
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, extent);
+                        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4u, 4u);
+                        const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
+                        const auto address = descriptor.Base48();
+                        const auto bytes = descriptor.GetSize();
+                        const auto readableEnd = element >= binding.firstTableBuffer && address != 0u && bytes != 0u ? RegisteredReadableEnd(address) : address;
+                        const bool fallback = element >= binding.firstTableBuffer && address != 0u && bytes != 0u &&
+                            (bytes > ShaderRecompiler::BufferTableAbi::MaxDirectBufferBytes || readableEnd <= address || bytes > readableEnd - address ||
+                             (target != nullptr && overlap(address, bytes, target->MemoryAddress(), target->bytes)));
+                        const std::array<std::uint32_t, 4> empty{};
+                        const auto index = addGuestBuffer(fallback ? std::span<const std::uint32_t>(empty) : words, target, indexAddress, indexBytes, written, atomic, read, extent);
+                        if (fallback) allocations[index].oversized = true;
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
-                        const auto& push = shader.program->pushConstants;
-                        const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
-                        if (pushDataBytes != 0u) {
-                            const auto position = shader.program->memoryOffsetDword * 4u + element;
-                            Require(position < pushDataBytes, "guest buffer offset lies outside the shader's push constants");
-                            allocations[index].pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
-                        } else {
-                            allocations[index].dataByte = shader.program->memoryOffsetDword * 4u + element;
-                            offsetsInData.push_back(index);
+                        if (element < binding.firstTableBuffer) {
+                            const auto& push = shader.program->pushConstants;
+                            const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
+                            if (pushDataBytes != 0u) {
+                                const auto position = shader.program->memoryOffsetDword * 4u + element;
+                                Require(position < pushDataBytes, "guest buffer offset lies outside the shader's push constants");
+                                allocations[index].pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
+                            } else {
+                                allocations[index].dataByte = shader.program->memoryOffsetDword * 4u + element;
+                                offsetsInData.push_back(index);
+                            }
                         }
                         item.allocations.push_back(index);
                     }
@@ -6831,6 +6844,21 @@ void ShaderResources::finishImageTables() {
             faultChecks = true;
         }
         map[Abi::HeaderPoisonCount] = static_cast<std::uint32_t>(table.poison.size());
+        if (!table.program->imageTableBufferRecordOffsets.empty()) {
+            const auto descriptor = std::ranges::find_if(table.program->bindings, [](const auto& item) { return item.role == ShaderRecompiler::DescriptorRole::GuestBuffers; });
+            Require(descriptor != table.program->bindings.end(), "buffer table has no descriptor binding");
+            const auto binding = std::ranges::find_if(bindings, [&](const auto& item) { return item.layout.binding == descriptor->binding && setOf(item) == table.set; });
+            Require(binding != bindings.end(), "buffer table descriptor binding was not prepared");
+            for (const auto offset : table.program->imageTableBufferRecordOffsets) {
+                Require(offset <= map.size() && ShaderRecompiler::BufferTableAbi::BufferRecordWords <= map.size() - offset, "buffer record lies outside its table map");
+                auto& flags = map[offset + ShaderRecompiler::BufferTableAbi::BufferRecordFlags];
+                if ((flags & (Abi::PoisonFlag | ShaderRecompiler::BufferTableAbi::BdaFallbackFlag)) != 0u) continue;
+                const auto element = map[offset + ShaderRecompiler::BufferTableAbi::BufferRecordElement];
+                Require(element < binding->allocations.size(), "buffer record refers outside its descriptor binding");
+                const auto& view = allocations.at(binding->allocations[element]);
+                flags = view.oversized || view.adjustment > ShaderRecompiler::BufferTableAbi::ByteOffsetMask ? ShaderRecompiler::BufferTableAbi::BdaFallbackFlag : view.adjustment;
+            }
+        }
         auto& allocation = allocations.at(table.mapAllocation);
         Require(allocation.buffer != nullptr && allocation.size == map.size() * sizeof(std::uint32_t), "image table map buffer disagrees with the map");
         std::memcpy(allocation.buffer->Bytes().data(), map.data(), allocation.size);

@@ -1,6 +1,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "BdaAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "BufferTableAbi.hpp"
 #include "StencilReplay.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
@@ -516,7 +517,20 @@ void DefineDescriptors(SpirvEmitterState& state) {
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const auto count = static_cast<std::uint32_t>(binding.resources.size());
+            auto count = static_cast<std::uint32_t>(binding.resources.size());
+            if (binding.kind == DescriptorBindingKind::Buffers) {
+                const auto staticBuffers = static_cast<std::uint32_t>(std::ranges::count_if(state.program.Info().buffers, [](const BufferResource& buffer) { return buffer.table == NoTable; }));
+                if (count != staticBuffers) {
+                    FailEmit("buffer binding resource count does not match static buffer resources");
+                }
+                const bool bufferTables = std::ranges::any_of(state.program.Info().buffers, [](const BufferResource& buffer) { return buffer.table != NoTable; });
+                if (bufferTables) {
+                    count += BufferTableAbi::MaxBufferElements;
+                }
+            }
+            if (count == 0u) {
+                FailEmit("array descriptor binding has zero elements");
+            }
             const auto length = heap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
         };

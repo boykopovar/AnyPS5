@@ -158,7 +158,7 @@ std::uint32_t byteExtent(const MemoryInfo& memory) {
 
 class Tracker {
 public:
-    explicit Tracker(IrProgram& program) : m_program(program), m_info(program.Resources().info), m_builder(program) {
+    explicit Tracker(IrProgram& program, bool bufferIndexing = false) : m_program(program), m_info(program.Resources().info), m_builder(program), m_bufferIndexing(bufferIndexing) {
         m_info.buffers.clear();
         m_info.images.clear();
         m_info.samplers.clear();
@@ -1163,13 +1163,24 @@ private:
         return found == m_tableColumns.end() ? nullptr : &*found;
     }
 
-    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128) {
+    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128, bool buffer = false) {
         if (FindTableColumn(handle) != nullptr) {
             return true;
         }
+        if (buffer && (m_program.Resources().stage != IrShaderStage::Compute || !std::ranges::all_of(handle.Uses(), [&](const IrValue* use) {
+            if (BufferAccessOf(use->Opcode()) != BufferAccess::Read) return false;
+            const auto index = use->Flags<MemoryFlags>().index;
+            if (index >= m_program.Resources().memoryInfo.size()) return false;
+            const auto& memory = m_program.Resources().memoryInfo[index];
+            return !memory.coherent && !memory.formatted && memory.dataBits == 32u;
+        }))) return false;
         TableColumnPlan plan;
-        if (!TryMakeTableColumn(handle, sampler, r128, plan)) {
+        if (!TryMakeTableColumn(handle, sampler, r128, plan, buffer)) {
             return false;
+        }
+        if (buffer) {
+            const auto& column = m_sources[plan.source].tableColumn;
+            if (!column.has_value() || column->indirect || column->dwordCount != 4u) return false;
         }
         m_tableColumns.push_back(std::move(plan));
         return true;
@@ -2007,6 +2018,13 @@ private:
         const auto directImages = DirectImageHandles();
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
+                const auto bufferAccess = BufferAccessOf(inst->Opcode());
+                if (m_bufferIndexing && bufferAccess == BufferAccess::Read && inst->ArgumentCount() != 0u) {
+                    IrValue& handle = *inst->Argument(0)->Resolve();
+                    if (std::ranges::none_of(m_unselectedHandles, [&](const IrValue* unselected) { return SameHandle(*unselected, handle); })) {
+                        static_cast<void>(PlanTableColumn(handle, false, false, true));
+                    }
+                }
                 const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
                 if (imageInfo.access == ImageAccess::None || inst->ArgumentCount() == 0u) {
                     continue;
@@ -2219,6 +2237,11 @@ private:
                 sampler.table = next++;
             }
         }
+        for (auto& buffer : m_info.buffers) {
+            if (TableSource(buffer.source)) {
+                buffer.table = next++;
+            }
+        }
     }
 
     void GetHandle(IrValue* value, IrOpcode expected, std::uint32_t width, IrValue*& handle, std::uint32_t& source, bool sampler = false, bool sampleAdjust = false) {
@@ -2245,6 +2268,20 @@ private:
         std::uint32_t badDword = 0;
         auto& memory = m_program.Resources().memoryInfo[memoryIndex];
         const auto access = BufferAccessOf(inst.Opcode());
+        if (m_bufferIndexing && m_program.Resources().stage == IrShaderStage::Compute && access == BufferAccess::Read) {
+            if (const auto* column = FindTableColumn(*handle)) {
+                const auto& col = m_sources[column->source].tableColumn;
+                if (col.has_value() && col->buffer && !col->indirect && col->dwordCount == 4u) {
+                    const auto resource = AddBuffer(column->source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc);
+                    if (resource != std::numeric_limits<std::uint32_t>::max()) {
+                        AddMemoryPatch(memoryIndex, resource, 0u, false);
+                        memory.gpuDescriptor = false;
+                        m_info.usesDma = true;
+                        return true;
+                    }
+                }
+            }
+        }
         if (ValidateSource(descriptor, badDword)) {
             const auto source = InternSource(descriptor);
             const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc);
@@ -2616,12 +2653,13 @@ private:
     std::vector<EdgeSelectorEntry> m_edgeSelectors;
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
     bool m_foldedWeb = false;
+    bool m_bufferIndexing = false;
 };
 
 }
 
-void ResourceTracker::Track(IrProgram& program) const {
-    Tracker(program).Run();
+void ResourceTracker::Track(IrProgram& program, bool bufferIndexing) const {
+    Tracker(program, bufferIndexing).Run();
 }
 
 }

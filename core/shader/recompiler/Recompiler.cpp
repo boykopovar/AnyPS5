@@ -395,7 +395,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     dumpIr("srt");
 
     constexpr ResourceTracker resourceTracker;
-    resourceTracker.Track(program);
+    const bool bufferIndexing = std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStorageBufferArrayNonUniformIndexing)) != request.target.supportedCapabilities.end();
+    resourceTracker.Track(program, bufferIndexing);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
@@ -1580,6 +1581,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.shaderDataUserWords = std::move(bindings.shaderDataUserWords);
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
     if (!tables.map.empty()) {
+        result.imageTableBufferRecordOffsets = tables.bufferRecordOffsets;
         result.imageTablePoison.reserve(tables.poison.size());
         for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
         result.imageTableRanges = snapshot.tables.ranges;
@@ -1911,7 +1913,7 @@ std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
 
 std::uint64_t resultBytes(const RecompileResult& result) {
     const auto bytes = [](const auto& values) { return vectorBytes(values); };
-    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableBufferRecordOffsets) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
     for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
     for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
     return total;
