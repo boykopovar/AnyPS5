@@ -1,11 +1,18 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "ustr_cnv.h"
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <unordered_set>
 
 namespace {
+
+std::mutex DefaultConverterMutex;
+std::unordered_set<UConverter*> CheckedOutDefaultConverters;
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
     const int savedErrno = errno;
@@ -85,6 +92,35 @@ constexpr Signature Signatures[] = {
 }
 
 extern "C" {
+
+void APS5_VABI u_flushDefaultConverter_nid_postfix() {
+    const std::lock_guard lock(DefaultConverterMutex);
+    u_flushDefaultConverter();
+}
+
+UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode) {
+    if (!errorCode) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
+    if (incoming > 0) return nullptr;
+    if (incoming < U_ERROR_WARNING_START) APS5_INVALID_ARG_EX;
+    auto status = static_cast<UErrorCode>(incoming);
+
+    const std::lock_guard lock(DefaultConverterMutex);
+    std::unique_ptr<UConverter, decltype(&u_releaseDefaultConverter)> converter(
+        u_getDefaultConverter(&status), u_releaseDefaultConverter);
+    const auto outgoing = static_cast<std::int32_t>(status);
+    if (outgoing != incoming) CopyOut(errorCode, &outgoing, sizeof(outgoing), __func__);
+    if (converter) CheckedOutDefaultConverters.insert(converter.get());
+    return converter.release();
+}
+
+void APS5_VABI u_releaseDefaultConverter_nid_postfix(UConverter* converter) {
+    if (!converter) return;
+    const std::lock_guard lock(DefaultConverterMutex);
+    if (CheckedOutDefaultConverters.erase(converter) == 0) APS5_INVALID_ARG_EX;
+    u_releaseDefaultConverter(converter);
+}
 
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;

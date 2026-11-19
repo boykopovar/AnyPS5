@@ -3,11 +3,16 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -15,6 +20,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -24,6 +32,13 @@
 extern "C" const char* __progname_nid_postfix;
 
 namespace {
+
+template<typename T, typename Evaluate>
+T ErfcTail(T x, Evaluate evaluate, const char* caller) {
+    constexpr auto tailStart = static_cast<T>(1.523L);
+    if (!std::isfinite(x) || x < tailStart) NotImplemented_nid_no_patch(caller);
+    return evaluate(x);
+}
 
 template<typename Slot>
 Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, const char* function) {
@@ -116,54 +131,6 @@ void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int ca
     (void)catalog;
 }
 APS5_EXPORT("AjkxQBlsOOY", sceLibcInternalPending4_014_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_036_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("T85u2sPrKOo", sceLibcInternalPending4_036_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_042_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("xzYpD5d24aA", sceLibcInternalPending4_042_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_045_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("Vw03kdKZUN0", sceLibcInternalPending4_045_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_046_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("E7UermPZVcw", sceLibcInternalPending4_046_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_047_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("8raXTYQ11cg", sceLibcInternalPending4_047_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_052_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("SYCwZXKZQ08", sceLibcInternalPending4_052_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_058_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("hGlkh5YpcKw", sceLibcInternalPending4_058_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_062_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("0MzJAexrlr4", sceLibcInternalPending4_062_nid_no_patch);
 
 GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
     return LibcTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
@@ -494,6 +461,81 @@ void RegisterThreadExitHook() {
     }();
 }
 
+struct GentimeTm {
+    std::int32_t sec;
+    std::int32_t min;
+    std::int32_t hour;
+    std::int32_t mday;
+    std::int32_t mon;
+    std::int32_t year;
+    std::int32_t wday;
+    std::int32_t yday;
+    std::int32_t isdst;
+};
+
+struct GentimeText {
+    const char* text;
+    int length;
+};
+
+GentimeText GentimeField(const char* guest, int index) {
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(guest, 0x10000, copy) != 0) throw std::invalid_argument("_Gentime: an unreadable time information string");
+    if (copy.empty()) return {guest, 0};
+    const char separator = copy[0];
+    std::size_t start = 1;
+    for (; index > 0; --index) {
+        const std::size_t next = copy.find(separator, start);
+        if (next == std::string::npos) return {guest + copy.size(), 0};
+        start = next + 1;
+    }
+    const std::size_t end = std::min(copy.find(separator, start), copy.size());
+    return {guest + start, static_cast<int>(end - start)};
+}
+
+int GentimeDigits(char* text, int value, int digits) {
+    if (value < 0) value = 0;
+    for (int index = digits - 1; index >= 0; --index, value /= 10) text[index] = static_cast<char>('0' + value % 10);
+    return digits;
+}
+
+bool GentimeLongIsoYear(int year) {
+    const auto weekdayOfDecember31 = [](int y) { return (y + y / 4 - y / 100 + y / 400) % 7; };
+    return weekdayOfDecember31(year) == 4 || weekdayOfDecember31(year - 1) == 3;
+}
+
+void GentimeIsoWeek(const GentimeTm& time, int* week, int* isoYear) {
+    const int weekday = time.wday == 0 ? 7 : time.wday;
+    int year = time.year + 1900;
+    int number = (time.yday + 1 - weekday + 10) / 7;
+    if (number < 1) {
+        --year;
+        number = GentimeLongIsoYear(year) ? 53 : 52;
+    } else if (number == 53 && !GentimeLongIsoYear(year)) {
+        ++year;
+        number = 1;
+    }
+    *week = number;
+    *isoYear = year;
+}
+
+std::int64_t GentimeSeconds(const GentimeTm& time) {
+    std::int64_t year = static_cast<std::int64_t>(time.year) + 1900 + time.mon / 12;
+    std::int64_t month = time.mon % 12;
+    if (month < 0) {
+        month += 12;
+        --year;
+    }
+    year -= month < 2;
+    const std::int64_t era = (year >= 0 ? year : year - 399) / 400;
+    const std::int64_t yearOfEra = year - era * 400;
+    const std::int64_t shifted = (month + 10) % 12;
+    const std::int64_t dayOfYear = (153 * shifted + 2) / 5;
+    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const std::int64_t days = era * 146097 + dayOfEra - 719468 + time.mday - 1;
+    return days * 86400 + static_cast<std::int64_t>(time.hour) * 3600 + static_cast<std::int64_t>(time.min) * 60 + time.sec;
+}
+
 }
 
 extern "C" {
@@ -645,9 +687,8 @@ int APS5_VABI _Deletegloballocale_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Erfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+double APS5_VABI _Erfc_nid_postfix(double x) {
+    return ErfcTail(x, erfc_nid_postfix, __func__);
 }
 
 int APS5_VABI _FAtan_nid_postfix() {
@@ -655,9 +696,8 @@ int APS5_VABI _FAtan_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+float APS5_VABI _FErfc_nid_postfix(float x) {
+    return ErfcTail(x, erfcf_nid_postfix, __func__);
 }
 
 int APS5_VABI _FHypot_nid_postfix() {
@@ -666,11 +706,6 @@ int APS5_VABI _FHypot_nid_postfix() {
 }
 
 int APS5_VABI _FLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FPow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -771,9 +806,100 @@ int APS5_VABI _Genld_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Gentime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Gentime_nid_postfix(const void* time, const void* info, char qualifier, char code, int* length, char* buffer) {
+    (void)qualifier;
+    static constexpr char Empty[] = "";
+    static constexpr char Zone[] = ":";
+    static constexpr char DateFormat[] = "%m/%d/%y";
+    static constexpr char IsoDateFormat[] = "%Y-%m-%d";
+    static constexpr char HourMinuteFormat[] = "%H:%M";
+    static constexpr char TimeFormat[] = "%H:%M:%S";
+    GentimeTm local{};
+    GuestLocale::TimeInfo names{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&local, time, sizeof(local)) && GuestCopyIn_nid_no_patch(&names, info, sizeof(names));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument("_Gentime: an unreadable time or time information");
+    char text[8]{};
+    GentimeText result{buffer, 0};
+    bool expand = false;
+    bool terminated = false;
+    const auto digits = [&](int value, int count) { result.length = GentimeDigits(text, value, count); };
+    switch (code) {
+    case 'a': result = GentimeField(names.days, 2 * local.wday); break;
+    case 'A': result = GentimeField(names.days, 2 * local.wday + 1); break;
+    case 'b':
+    case 'h': result = GentimeField(names.months, 2 * local.mon); break;
+    case 'B': result = GentimeField(names.months, 2 * local.mon + 1); break;
+    case 'p': result = GentimeField(names.amPm, local.hour < 12 ? 0 : 1); break;
+    case 'c': result = GentimeField(names.formats, 0), expand = true; break;
+    case 'x': result = GentimeField(names.formats, 1), expand = true; break;
+    case 'X': result = GentimeField(names.formats, 2), expand = true; break;
+    case 'r': result = GentimeField(names.formats, 3), expand = true; break;
+    case 'D': result = {DateFormat, sizeof(DateFormat) - 1}, expand = true; break;
+    case 'F': result = {IsoDateFormat, sizeof(IsoDateFormat) - 1}, expand = true; break;
+    case 'R': result = {HourMinuteFormat, sizeof(HourMinuteFormat) - 1}, expand = true; break;
+    case 'T': result = {TimeFormat, sizeof(TimeFormat) - 1}, expand = true; break;
+    case 'C': digits(19 + local.year / 100, 2); break;
+    case 'd': digits(local.mday, 2); break;
+    case 'e':
+        digits(local.mday, 2);
+        if (text[0] == '0') text[0] = ' ';
+        break;
+    case 'H': digits(local.hour, 2); break;
+    case 'I': digits((local.hour + 11) % 12 + 1, 2); break;
+    case 'j': digits(local.yday + 1, 3); break;
+    case 'm': digits(local.mon + 1, 2); break;
+    case 'M': digits(local.min, 2); break;
+    case 'S': digits(local.sec, 2); break;
+    case 'u': digits(local.wday == 0 ? 7 : local.wday, 1); break;
+    case 'w': digits(local.wday, 1); break;
+    case 'y': digits((local.year + 1900) % 100, 2); break;
+    case 'Y': digits(local.year + 1900, 4); break;
+    case 'U': digits((local.yday - local.wday + 7) / 7, 2); break;
+    case 'W': digits((local.yday - (local.wday + 6) % 7 + 7) / 7, 2); break;
+    case 'V':
+    case 'G':
+    case 'g': {
+        int week = 0;
+        int isoYear = 0;
+        GentimeIsoWeek(local, &week, &isoYear);
+        if (code == 'V') digits(week, 2);
+        else if (code == 'G') digits(isoYear, 4);
+        else digits(isoYear % 100, 2);
+        break;
+    }
+    case 'n': text[0] = '\n', result.length = 1; break;
+    case 't': text[0] = '\t', result.length = 1; break;
+    case '%': text[0] = '%', result.length = 1; break;
+    case 'Z': result = GentimeField(Zone, local.isdst > 0 ? 1 : 0); break;
+    case 'z': {
+        std::int64_t utc = 0;
+        KernelTimesec zone{};
+        std::int32_t daylight = 0;
+        if (sceKernelConvertLocaltimeToUtc(GentimeSeconds(local), local.isdst, &utc, &zone, &daylight) < 0) return Empty;
+        const std::int32_t offset = static_cast<std::int32_t>(zone.west_sec) + (local.isdst > 0 ? daylight : 0);
+        const int hours = offset / 3600;
+        result.length = std::min(std::snprintf(text, 6, "%+03d%02d", hours, std::abs(offset / 60) % 60), 5);
+        terminated = true;
+        break;
+    }
+    default:
+        text[0] = '%';
+        text[1] = code;
+        result.length = 2;
+        break;
+    }
+    if (result.text == buffer && result.length > 0) {
+        const bool written = GuestCopyOut_nid_no_patch(buffer, text, static_cast<std::size_t>(result.length) + (terminated ? 1 : 0));
+        errno = savedErrno;
+        if (!written) throw std::invalid_argument("_Gentime: an unwritable buffer");
+    }
+    const int reported = expand ? -result.length : result.length;
+    const bool stored = GuestCopyOut_nid_no_patch(length, &reported, sizeof(reported));
+    errno = savedErrno;
+    if (!stored) throw std::invalid_argument("_Gentime: an unwritable length");
+    return result.text;
 }
 
 int APS5_VABI _Getcloc_nid_postfix() {
@@ -786,9 +912,144 @@ int APS5_VABI _Getctyptab_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
+    if (s == nullptr || *s == '\0') {
+        return nullptr;
+    }
+    const char sep = *s;
+    ++s;
+    if (*s == '\0') {
+        return nullptr;
+    }
+
+    struct Rule {
+        std::uint8_t suffix;
+        std::uint8_t hour;
+        std::uint8_t day;
+        std::uint8_t month;
+        std::uint8_t year;
+    };
+
+    std::vector<Rule> rules;
+    std::uint8_t lastYear = 0;
+
+    while (*s != '\0') {
+        if (*s == sep) {
+            return nullptr;
+        }
+
+        std::uint8_t ruleYear = lastYear;
+        if (*s == '(') {
+            ++s;
+            int yearVal = 0;
+            int digits = 0;
+            while (*s >= '0' && *s <= '9') {
+                yearVal = yearVal * 10 + (*s - '0');
+                ++digits;
+                ++s;
+                if (digits > 4) {
+                    return nullptr;
+                }
+            }
+            if (digits != 4 || *s != ')' || yearVal < 1900) {
+                return nullptr;
+            }
+            ++s;
+            ruleYear = static_cast<std::uint8_t>((yearVal - 1900) & 0xff);
+            lastYear = ruleYear;
+        }
+
+        int dateDigits = 0;
+        char dateBuf[7] = {};
+        while (*s >= '0' && *s <= '9') {
+            if (dateDigits < 6) {
+                dateBuf[dateDigits] = *s;
+            }
+            ++dateDigits;
+            ++s;
+        }
+
+        if (dateDigits != 4 && dateDigits != 6) {
+            return nullptr;
+        }
+
+        int mm = (dateBuf[0] - '0') * 10 + (dateBuf[1] - '0');
+        int dd = (dateBuf[2] - '0') * 10 + (dateBuf[3] - '0');
+        int hh = 0;
+        if (dateDigits == 6) {
+            hh = (dateBuf[4] - '0') * 10 + (dateBuf[5] - '0');
+        }
+
+        if (mm < 1 || mm > 12) {
+            return nullptr;
+        }
+        if (dd < 1 || dd > 99) {
+            return nullptr;
+        }
+
+        std::uint8_t suffixByte = 0;
+        if (*s == '+' || *s == '-') {
+            char sign = *s;
+            ++s;
+            if (*s < '0' || *s > '6') {
+                return nullptr;
+            }
+            int w = *s - '0';
+            ++s;
+            int v = (w == 0) ? 7 : w;
+            if (sign == '+') {
+                suffixByte = static_cast<std::uint8_t>(v + 7);
+            } else {
+                suffixByte = static_cast<std::uint8_t>(v);
+            }
+        }
+
+        if (*s != '\0' && *s != sep) {
+            return nullptr;
+        }
+
+        Rule r;
+        r.suffix = suffixByte;
+        r.hour = static_cast<std::uint8_t>(hh);
+        r.day = static_cast<std::uint8_t>(dd - 1);
+        r.month = static_cast<std::uint8_t>(mm - 1);
+        r.year = ruleYear;
+        rules.push_back(r);
+
+        if (*s == sep) {
+            ++s;
+            if (*s == '\0') {
+                return nullptr;
+            }
+        }
+    }
+
+    if (rules.empty()) {
+        return nullptr;
+    }
+
+    std::size_t totalBytes = (rules.size() + 1) * 5;
+    char* buf = static_cast<char*>(std::malloc(totalBytes));
+    if (buf == nullptr) {
+        return nullptr;
+    }
+
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        buf[i * 5 + 0] = static_cast<char>(rules[i].suffix);
+        buf[i * 5 + 1] = static_cast<char>(rules[i].hour);
+        buf[i * 5 + 2] = static_cast<char>(rules[i].day);
+        buf[i * 5 + 3] = static_cast<char>(rules[i].month);
+        buf[i * 5 + 4] = static_cast<char>(rules[i].year);
+    }
+
+    std::size_t termOffset = rules.size() * 5;
+    buf[termOffset + 0] = static_cast<char>(0xff);
+    buf[termOffset + 1] = 0;
+    buf[termOffset + 2] = 0;
+    buf[termOffset + 3] = 0;
+    buf[termOffset + 4] = static_cast<char>(lastYear);
+
+    return buf;
 }
 
 int APS5_VABI _Getfld_nid_postfix() {
@@ -816,14 +1077,40 @@ int APS5_VABI _Getstr_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Gettime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Gettime_nid_postfix(const char* s, int n, int* len) {
+    if (s == nullptr) {
+        if (len != nullptr) *len = 0;
+        return "";
+    }
+    const char sep = *s;
+    if (sep == '\0' || n < 0) {
+        while (*s != '\0') ++s;
+        if (len != nullptr) *len = 0;
+        return s;
+    }
+    ++s;
+    for (; 0 < n; --n) {
+        while (*s != '\0' && *s != sep) {
+            ++s;
+        }
+        if (*s == '\0') {
+            if (len != nullptr) *len = 0;
+            return s;
+        }
+        ++s;
+    }
+    const char* start = s;
+    while (*s != '\0' && *s != sep) {
+        ++s;
+    }
+    if (len != nullptr) {
+        *len = static_cast<int>(s - start);
+    }
+    return start;
 }
 
-int APS5_VABI _Getzone_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getzone_nid_postfix() {
+    return ":";
 }
 
 int APS5_VABI _Hypot_nid_postfix() {
@@ -840,9 +1127,8 @@ int APS5_VABI _LAtan_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+long double APS5_VABI _LErfc_nid_postfix(long double x) {
+    return ErfcTail(x, erfcl_nid_postfix, __func__);
 }
 
 int APS5_VABI _LHypot_nid_postfix() {
@@ -851,11 +1137,6 @@ int APS5_VABI _LHypot_nid_postfix() {
 }
 
 int APS5_VABI _LLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LPow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -900,9 +1181,13 @@ int APS5_VABI _Litob_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Lock_spin_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _Lock_spin_lock_nid_postfix(volatile char* lock, int mode) {
+    if (lock == nullptr) return;
+    while (__atomic_exchange_n(lock, 1, __ATOMIC_ACQUIRE) != 0) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        _mm_pause();
+#endif
+    }
 }
 
 int APS5_VABI _Locsum_nid_postfix() {
@@ -946,11 +1231,6 @@ int APS5_VABI _Mbtowc_nid_postfix() {
 }
 
 int APS5_VABI _Nnl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Pow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
