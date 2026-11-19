@@ -329,6 +329,25 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x8e] = queue.context[0x8f] = 0xffffffffu;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound color target was skipped");
+    const std::uint32_t boundInfo = queue.context.at(0x31c);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) queue.context[0x31c + 0xfu * slot] = 0;
+    Require(PixelProgramSkipped(queue), "reset-value color masks ran an unused pixel program with no color target bound");
+    Require(DrawRejection(queue, true).empty(), "an unused pixel program under reset-value color masks with no color target bound was rejected");
+    queue.context[0x203] = 0x400;
+    Require(!PixelProgramSkipped(queue), "EXEC_ON_NOOP was skipped with no color target bound");
+    queue.context[0x203] = 0;
+    queue.context[0x31c + 0xfu * 7u] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound high color target was skipped");
+    queue.context[0x31c + 0xfu * 7u] = 0;
+    queue.context[0x31c] = boundInfo;
+    queue.context[0x8e] = queue.context[0x8f] = 0xf0u;
+    Require(PixelProgramSkipped(queue), "color masks enabling only a target without a format ran an unused pixel program beside a bound target");
+    queue.context[0x31c + 0xfu] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing the second bound color target was skipped");
+    queue.context[0x31c + 0xfu] = 0;
+    queue.context[0x8e] = queue.context[0x8f] = 0;
     queue.context[0x3] = 0;
     queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
@@ -2328,6 +2347,12 @@ void ReversedComponentOrderBlendTests() {
         const auto separate = DecodeState(constantQueue(0x60130001u));
         Require(separate.reversedBlend == 0u && separate.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && separate.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && separate.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && separate.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ZERO, "a constant alpha factor of the alpha equation did not reach the host color equation of the reversed target");
         Require(separate.blendConstants[0] == constants[3] && separate.blendConstants[1] == 1.0f && separate.blendConstants[2] == 1.0f, "the host blend constants of a constant alpha factor do not weigh the alpha channel alone");
+        auto nanRgb = constantQueue(0x60130001u);
+        for (std::uint32_t i = 0; i < 3; ++i) nanRgb.context[0x105 + i] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants[0] == constants[3], "a reversed target's constant alpha factor read unused RGB CB_BLEND registers");
+        nanRgb.context[0x1e0] = 0x40000504u;
+        nanRgb.context[0x108] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants == std::array<float, 4>{}, "a non-constant reversed target blend read CB_BLEND registers");
         const auto colored = DecodeState(constantQueue(0x40000e0du));
         Require(colored.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && colored.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR && colored.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_CONSTANT_ALPHA && colored.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA, "a constant color factor and its complement did not share the host blend constants");
         for (std::uint32_t component = 0; component < 4; ++component) Require(colored.blendConstants[component] == constantOf(component), "the blend constants of a reversed target did not follow its component mapping");
@@ -2501,12 +2526,49 @@ void Color565TargetTests() {
     Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 5_6_5 target with the standard component order did not exchange the constants of a ONE_MINUS_CONSTANT_COLOR destination factor");
     queue.context[0x8e] = 0x3u;
     const auto partial = AgcDriver::Graphics::DecodeState(queue).blendConstants;
-    Require(partial[1] == 0.25f && partial[2] == 0.125f && partial[3] == 0.5f, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    Require(partial == std::array<float, 4>{0.0f, 0.25f, 0.125f, 0.0f}, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+    queue.context[0x1e0] = 0x40000504u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending read unused CB_BLEND registers");
+    queue.context[0x1e0] = 0x40000d4du;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "MIN blending read unused CB_BLEND registers");
+    queue.context[0x8e] = 0x2u;
+    queue.context[0x1e0] = (1u << 30u) | 13u;
+    queue.context[0x106] = std::bit_cast<std::uint32_t>(0.25f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.25f, 0.0f, 0.0f}, "masked constant blending read masked-off CB_BLEND registers");
+    queue.context[0x8e] = 0x7u;
+    queue.context[0x107] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x1e0] = 0x40001413u;
+    queue.context[0x108] = std::bit_cast<std::uint32_t>(0.5f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.5f}, "constant alpha blending read unused RGB CB_BLEND registers");
+    queue.context[0x108] = 0x7f800000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 264");
     queue.context[0x8e] = 0xfu;
     queue.context[0x1e0] = 0;
     for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
         info(number, swap);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 16 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    }
+}
+
+void SingleChannelSwapBlendTests() {
+    auto queue = makeState();
+    for (const auto swap : {1u, 2u}) {
+        queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (1u << 2u) | (swap << 11u);
+        queue.context[0x8e] = 0xfu;
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+        queue.context[0x1e0] = (1u << 30u) | 13u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the constant-colour blend registers");
+        queue.context[0x1e0] = (1u << 30u) | (14u << 8u);
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the destination constant-colour blend registers");
+        queue.context[0x1e0] = 0x6001000du;
+        queue.context[0x105] = 0x7fc00000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+        queue.context[0x1e0] = 0x40000504u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending on a swapped one-channel target read unused CB_BLEND registers");
     }
 }
 
@@ -10608,7 +10670,8 @@ void rectListTests() {
     auto explicitInterpolation = BuildRectListShaders(vertex, fragment, target);
     Require(!explicitInterpolation.control.spirv.empty() && !explicitInterpolation.evaluation.spirv.empty(), "rect-list shaders for an explicitly interpolated parameter are empty");
     fragment.fragmentParameters[0].custom = true;
-    expectFailure([&] { static_cast<void>(BuildRectListShaders(vertex, fragment, target)); }, "per-vertex interpolation");
+    const auto passThrough = BuildRectListShaders(vertex, fragment, target);
+    Require(std::ranges::equal(passThrough.control.spirv.Words(), explicitInterpolation.control.spirv.Words()) && std::ranges::equal(passThrough.evaluation.spirv.Words(), explicitInterpolation.evaluation.spirv.Words()), "a pass-through parameter read per vertex does not pass the rectangle's corners like an explicitly interpolated one");
     fragment.fragmentParameters[0].perVertex = false;
     fragment.fragmentParameters[0].custom = false;
     vertex.parameterExports.clear();
@@ -15644,6 +15707,7 @@ int main(int argc, char** argv) {
         DisabledColorTests();
         OpaqueDestinationAlphaTests();
         Color565TargetTests();
+        SingleChannelSwapBlendTests();
         Color1555TargetTests();
         BlendBypassTests();
         UnclampedNormalizedColorTests();
