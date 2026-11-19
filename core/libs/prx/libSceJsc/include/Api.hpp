@@ -152,7 +152,6 @@ int APS5_VABI _ZN3JSC22EdenGCActivityCallback12doCollectionERNS_2VME();
 int APS5_VABI _ZN3JSC8JSObject26setIndexQuicklyToUndecidedERNS_2VMEjNS_7JSValueE();
 int APS5_VABI _ZN3WTF11ThreadGroup16addCurrentThreadEv();
 int APS5_VABI _ZN3WTF7RunLoop14initializeMainEv();
-int APS5_VABI _ZN9Inspector22RemoteAutomationTargetC2ERKS0_();
 int APS5_VABI _ZN9Inspector15ScriptCallStack6appendERKNS_15ScriptCallFrameE();
 int APS5_VABI _ZN3JSC16callCustomSetterEPNS_14JSGlobalObjectENS_7JSValueEbPNS_8JSObjectES2_S2_();
 int APS5_VABI _ZNK3WTF8JSONImpl5Value8asStringERNS_6StringE();

@@ -51,6 +51,7 @@ extern "C" {
 Jsc::InspectorAbi::AsyncCallIdentifier APS5_VABI _ZN9Inspector22InspectorDebuggerAgent19asyncCallIdentifierENS0_13AsyncCallTypeEi(std::uint32_t asyncCallType, std::int32_t callbackId);
 bool APS5_VABI _ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv(const Jsc::InspectorAbi::RemoteTarget* self);
 bool APS5_VABI _ZNK9Inspector22RemoteAutomationTarget20remoteControlAllowedEv(const Jsc::InspectorAbi::RemoteTarget* self);
+void APS5_VABI _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(Jsc::InspectorAbi::RemoteTarget* self, const Jsc::InspectorAbi::RemoteTarget* other);
 const Jsc::InspectorAbi::OptionalString* APS5_VABI _ZNK9Inspector18InjectedScriptHost16savedResultAliasEv(const Jsc::InspectorAbi::InjectedScriptHost* self);
 
 }

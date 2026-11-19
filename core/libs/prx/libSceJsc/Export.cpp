@@ -684,10 +684,6 @@ int APS5_VABI _ZN3WTF7RunLoop14initializeMainEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22RemoteAutomationTargetC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector15ScriptCallStack6appendERKNS_15ScriptCallFrameE() {
     NotImplemented_nid_no_patch(__func__);
 }
