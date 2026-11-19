@@ -450,6 +450,10 @@ bool IsCharacterAllowedInBase(char16_t character, int base) {
 
 unsigned ToUIntStrict(Text text, bool* ok, int base) {
     if (!base) throw std::invalid_argument("WTF::String::toUIntStrict: base 0 divides by zero in WebKit");
+    if (base < 0) {
+        if (ok) *ok = false;
+        return 0;
+    }
     constexpr unsigned integralMax = std::numeric_limits<unsigned>::max();
     const unsigned divisor = static_cast<unsigned>(base);
     const unsigned maxMultiplier = integralMax / divisor;
