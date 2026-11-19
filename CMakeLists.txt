@@ -320,6 +320,11 @@ if(BUILD_TESTING)
     target_include_directories(pad_input_script_tests PRIVATE core/libs)
     add_test(NAME pad_input_script COMMAND pad_input_script_tests)
     set_tests_properties(pad_input_script PROPERTIES TIMEOUT 20)
+    set(anyps5HostTestTemp ${CMAKE_BINARY_DIR}/test-temp)
+    file(MAKE_DIRECTORY ${anyps5HostTestTemp})
+    set_property(TEST shader_cache_file_read pad_command_file pad_recording pad_input_script APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION
+        "TMPDIR=set:${anyps5HostTestTemp};TEMP=set:${anyps5HostTestTemp};TMP=set:${anyps5HostTestTemp}")
     if(Python3_Interpreter_FOUND)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
