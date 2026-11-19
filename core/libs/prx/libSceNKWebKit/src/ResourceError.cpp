@@ -65,19 +65,16 @@ using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::URL;
 
-// The ResourceError members are raw StringImpl pointers; the copy owns one reference to each.
-StringImpl* IsolatedCopyString(StringImpl* value) {
+// The ResourceError members are raw StringImpl pointers. The source pointer is only borrowed:
+// the guard clears it before the wrapper's destructor runs, also when isolatedCopy throws.
+String IsolatedCopyString(StringImpl* value) {
     String source;
     source.impl = value;
-    String isolated = _ZNKR3WTF6String12isolatedCopyEv(&source);
-    std::exchange(source.impl, nullptr);
-    return std::exchange(isolated.impl, nullptr);
-}
-
-URL IsolatedCopyURL(const URL& value) {
-    URL result = value;
-    result.impl = IsolatedCopyString(value.impl);
-    return result;
+    struct Unborrow {
+        String& borrowed;
+        ~Unborrow() { borrowed.impl = nullptr; }
+    } unborrow{source};
+    return _ZNKR3WTF6String12isolatedCopyEv(&source);
 }
 
 }  // namespace
@@ -92,14 +89,20 @@ void APS5_VABI _ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE(ResourceError* 
 ResourceError APS5_VABI _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(const ResourceError* self) {
     if (!self) throw std::invalid_argument("ResourceErrorBase::isolatedCopy: null this");
     _ZNK7WebCore17ResourceErrorBase8lazyInitEv(self);
+    // All copies are made before any is handed out, so a throwing copy releases the earlier ones.
+    String domain = IsolatedCopyString(self->domain);
+    String failingURL = IsolatedCopyString(self->failingURL.impl);
+    String localizedDescription = IsolatedCopyString(self->localizedDescription);
+    String tlsVerificationErrorDescription = IsolatedCopyString(self->tlsVerificationErrorDescription);
     ResourceError copy{};
-    copy.domain = IsolatedCopyString(self->domain);
+    copy.domain = std::exchange(domain.impl, nullptr);
     copy.errorCode = self->errorCode;
-    copy.failingURL = IsolatedCopyURL(self->failingURL);
-    copy.localizedDescription = IsolatedCopyString(self->localizedDescription);
+    copy.failingURL = self->failingURL;
+    copy.failingURL.impl = std::exchange(failingURL.impl, nullptr);
+    copy.localizedDescription = std::exchange(localizedDescription.impl, nullptr);
     copy.type = self->type;
     copy.tlsVerificationError = self->tlsVerificationError;
-    copy.tlsVerificationErrorDescription = IsolatedCopyString(self->tlsVerificationErrorDescription);
+    copy.tlsVerificationErrorDescription = std::exchange(tlsVerificationErrorDescription.impl, nullptr);
     return copy;
 }
 
