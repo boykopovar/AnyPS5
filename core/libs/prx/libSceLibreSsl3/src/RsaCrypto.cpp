@@ -778,6 +778,12 @@ int PrimalityCheck(const Number& candidate, const char* function) {
     return -1;
 }
 
+bool Magnitude(Number& number, const char* function) {
+    if (mbedtls_mpi_cmp_int(&number.value, 0) >= 0) return true;
+    Number zero;
+    return Subtract(number, zero, number, function);
+}
+
 bool CheckedRemainder(Number& result, const Number& value, const Number& modulus, const char* function) {
     if (mbedtls_mpi_cmp_int(&modulus.value, 0) == 0) {
         QueueBigNumberError(BigNumberReasonDivisionByZero);
@@ -1818,6 +1824,14 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
 
 extern "C" {
 
+void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
+    if (rsa && rsa->method) {
+        LibreSslRsaFree_nid_no_patch(reinterpret_cast<LibreSslRsa*>(rsa));
+        return;
+    }
+    LibreSsl3::FreeRsa_nid_no_patch(rsa);
+}
+
 LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix() {
     auto* rsa = static_cast<LibreSsl3Rsa*>(calloc_nid_postfix(1, sizeof(LibreSsl3Rsa)));
     if (!rsa) {
@@ -1850,8 +1864,6 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     const auto n = ComponentNumber(RequireComponent(rsa->n, function, "n"), function);
     const auto e = ComponentNumber(RequireComponent(rsa->e, function, "e"), function);
     const auto d = ComponentNumber(RequireComponent(rsa->d, function, "d"), function);
-    if (mbedtls_mpi_cmp_int(&p.value, 0) == 0 || mbedtls_mpi_cmp_int(&q.value, 0) == 0)
-        NotImplemented_nid_no_patch("RSA_check_key of a key with a zero prime factor");
     auto result = 1;
     if (IsOne(e)) {
         result = 0;
@@ -1883,14 +1895,15 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     Number congruence;
     if (!HandleMbedtls(mbedtls_mpi_lset(&one.value, 1), function) || !Subtract(pMinusOne, p, one, function) ||
         !Subtract(qMinusOne, q, one, function) ||
-        !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &pMinusOne.value, &qMinusOne.value), function) ||
-        !HandleMbedtls(mbedtls_mpi_gcd(&divisor.value, &pMinusOne.value, &qMinusOne.value), function))
+        !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &pMinusOne.value, &qMinusOne.value), function))
         return -1;
-    if (mbedtls_mpi_cmp_int(&divisor.value, 0) == 0) {
+    if (mbedtls_mpi_cmp_int(&qMinusOne.value, 0) == 0) {
         QueueBigNumberError(BigNumberReasonDivisionByZero);
         return -1;
     }
-    if (!HandleMbedtls(mbedtls_mpi_div_mpi(&lcm.value, nullptr, &product.value, &divisor.value), function) ||
+    if (!HandleMbedtls(mbedtls_mpi_gcd(&divisor.value, &pMinusOne.value, &qMinusOne.value), function) ||
+        !HandleMbedtls(mbedtls_mpi_div_mpi(&lcm.value, nullptr, &product.value, &divisor.value), function) ||
+        !Magnitude(lcm, function) ||
         !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &d.value, &e.value), function) ||
         !CheckedRemainder(congruence, product, lcm, function))
         return -1;
@@ -1903,6 +1916,7 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     const auto dmq1 = ComponentNumber(RequireComponent(rsa->dmq1, function, "dmq1"), function);
     const auto iqmp = ComponentNumber(RequireComponent(rsa->iqmp, function, "iqmp"), function);
     Number reduced;
+    if (!Magnitude(pMinusOne, function) || !Magnitude(qMinusOne, function)) return -1;
     if (!CheckedRemainder(reduced, d, pMinusOne, function)) return -1;
     if (mbedtls_mpi_cmp_mpi(&reduced.value, &dmp1.value) != 0) {
         result = 0;
@@ -1912,6 +1926,10 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     if (mbedtls_mpi_cmp_mpi(&reduced.value, &dmq1.value) != 0) {
         result = 0;
         QueueError(ReasonDmq1NotCongruentToD);
+    }
+    if (mbedtls_mpi_cmp_int(&p.value, 0) == 0) {
+        QueueBigNumberError(BigNumberReasonDivisionByZero);
+        return -1;
     }
     const auto inverse = mbedtls_mpi_inv_mod(&reduced.value, &q.value, &p.value);
     if (inverse == MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) QueueBigNumberError(BigNumberReasonNoInverse);

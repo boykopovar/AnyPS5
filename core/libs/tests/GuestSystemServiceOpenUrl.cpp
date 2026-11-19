@@ -316,7 +316,8 @@ void CheckPosixOutstandingBound() {
     Require(launcher.Launch("https://example.com/1"));
     Require(launcher.Launch("https://example.com/2"));
     for (int index = 0; index < 20; ++index) Require(!launcher.Launch("https://example.com/3"));
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    for (int attempt = 0; attempt < 500 && CountStarted(directory) < 2; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     Require(CountStarted(directory) == 2);
 
     { std::ofstream release(directory / "release"); }
