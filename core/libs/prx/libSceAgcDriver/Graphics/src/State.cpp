@@ -2631,7 +2631,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         }
         const auto cmaskHigh = find(cx, 0x398 + slot);
         const auto cmask = ((cmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(cmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u);
-        Require((info & 0x2000u) == 0 || cmask != 0, "CMASK fast clears without a CMASK address are unsupported");
+        Require((info & 0x6000u) == 0 || cmask != 0, "CMASK fast clears or FMASK compression without a CMASK address are unsupported");
         if (cmask != 0) {
             std::size_t precedingBlocks = 0;
             std::size_t totalBlocks = static_cast<std::size_t>((color.surfaceExtent.width + 1023u) / 1024u) * ((color.surfaceExtent.height + 511u) / 512u);
