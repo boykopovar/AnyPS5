@@ -1657,7 +1657,7 @@ int APS5_VABI sceIcuLegacyUnknown_itL2333RCtE_nid_no_patch();
 int APS5_VABI _ZN6icu_6817StringTrieBuilder20createCompactBuilderEiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6823StringCharacterIterator7setTextERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZN6icu_6810ICUService21reInitializeFactoriesEv_nid_postfix();
-int APS5_VABI ucnv_openStandardNames_nid_postfix();
+UEnumeration* APS5_VABI ucnv_openStandardNames_nid_postfix(const char*, const char*, std::int32_t*);
 int APS5_VABI _ZN6icu_6810UnicodeSet13complementAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_iyqq4SUxrZs_nid_no_patch();
 int APS5_VABI ures_getStringByIndex_nid_postfix();
