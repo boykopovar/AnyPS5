@@ -291,10 +291,10 @@ std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, s
     auto resolved = native;
     if (const int error = SymbolicLinkLimitError(native, false, &resolved)) return Fail(error);
 #ifdef _WIN32
-    const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
+    const DWORD attributes = GetFileAttributesW(resolved.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         std::string target;
-        if (!File::WindowsSymbolicLink::Read(native, target, "readlink") && !File::WindowsSymbolicLink::ReadJunction(native, target, "readlink"))
+        if (!File::WindowsSymbolicLink::Read(resolved, target, "readlink") && !File::WindowsSymbolicLink::ReadJunction(resolved, target, "readlink"))
             return Fail(GuestEinval);
         return CopyLinkTarget(target, buffer, size);
     }
