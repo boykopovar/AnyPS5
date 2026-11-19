@@ -1,5 +1,8 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -9,6 +12,7 @@ constexpr int EngineLibrary = 38;
 constexpr int UnnamedFunction = 0xfff;
 constexpr int PassedNullParameter = 67;
 constexpr int NoSuchEngine = 116;
+constexpr unsigned int EngineMethodDefaultMask = 0x06FFu;
 
 void PutEngineError(int reason) {
     LibreSslPutError_nid_no_patch(EngineLibrary, UnnamedFunction, reason);
@@ -52,6 +56,16 @@ void* APS5_VABI ENGINE_get_first_nid_postfix(void) {
     return nullptr;
 }
 
+const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine) {
+    if (engine == nullptr) throw std::invalid_argument(std::string(__func__) + ": null engine");
+    const char* id = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&id, engine, sizeof(id));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable engine");
+    return id;
+}
+
 void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine) {
     RequireNoEngine(engine, "ENGINE_get_next of an ENGINE, which this library cannot create");
     return nullptr;
@@ -67,6 +81,13 @@ void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void) {
 void* APS5_VABI ENGINE_load_private_key_nid_postfix(void* engine, const char*, void*, void*) {
     RequireNoEngine(engine, "ENGINE_load_private_key of an ENGINE, which this library cannot create");
     return nullptr;
+}
+
+int APS5_VABI ENGINE_set_default_nid_postfix(void* engine, unsigned int flags) {
+    if ((flags & EngineMethodDefaultMask) == 0u) return 1;
+    if (engine == nullptr) throw std::invalid_argument(std::string(__func__) + ": null engine");
+    NotImplemented_nid_no_patch("ENGINE_set_default of an ENGINE, which this library cannot create");
+    return 0;
 }
 
 }
