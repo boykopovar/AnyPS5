@@ -429,6 +429,19 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
     RequireReadableGuest(sourceGroup, __func__, "unreadable source EC group");
     RequireReadableGuest(destinationKey, __func__, "unreadable destination EC key");
     RequireWritableGuest(destinationKey, __func__, "unwritable destination EC key");
+    const EcPoint* destinationPublicKey = ReadGuestValue(&destinationKey->publicKey, __func__, "unreadable destination EC public key pointer");
+    if (destinationPublicKey) {
+        RequireReadableGuest(destinationPublicKey, __func__, "unreadable destination EC public key");
+    }
+    const EcPrivateKey* destinationPrivateKey = ReadGuestValue(&destinationKey->privateKey, __func__, "unreadable destination EC private key pointer");
+    if (destinationPrivateKey) {
+        RequireReadableGuest(destinationPrivateKey, __func__, "unreadable destination EC private key");
+    }
+    EcGroup* destinationGroup = ReadGuestValue(&destinationKey->group, __func__, "unreadable destination EC group pointer");
+    if (destinationGroup) {
+        RequireReadableGuest(destinationGroup, __func__, "unreadable destination EC group");
+        RequireWritableGuest(destinationGroup, __func__, "unwritable destination EC group");
+    }
     return EC_KEY_set_group_nid_postfix(destinationKey, sourceGroup);
 }
 

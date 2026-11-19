@@ -130,6 +130,8 @@ int main(int argc, char** argv) {
     Resolve<void (*)()>(module, "PFxpQ6lkQP0");
     auto getError = Resolve<std::uint64_t (*)()>(module, "DJg+qWX1rwY", false);
     auto clearErrors = Resolve<void (*)()>(module, "sieQ--PINWg", false);
+    auto createEcGroup = Resolve<void* (*)(int)>(module, "47B8y-Mqy78", false);
+    auto freeEcGroup = Resolve<void (*)(void*)>(module, "hMV6sxdqoCE", false);
     Require(retain(key) == 1);
     auto retained = initial;
     retained[4] = 2;
@@ -239,6 +241,7 @@ int main(int argc, char** argv) {
     Require(roPage != MAP_FAILED);
 #endif
 
+    std::memset(roPage, 0, page);
     std::memset(roPage, 0xa5, sizeof(Pkey));
     auto* roPkey = reinterpret_cast<Pkey*>(roPage);
     roPkey->type = 6;
@@ -247,6 +250,7 @@ int main(int argc, char** argv) {
     roPkey->key = nullptr;
     Pkey roExpected{};
     std::memcpy(&roExpected, roPkey, sizeof(roExpected));
+    void* const roGroup = roPage + 64;
 
 #ifdef _WIN32
     Require(VirtualProtect(roPage, page, PAGE_READONLY, &previous) != 0);
@@ -265,6 +269,42 @@ int main(int argc, char** argv) {
     Require(getError() != 0);
     clearErrors();
     Require(std::memcmp(roPkey, &roExpected, sizeof(roExpected)) == 0);
+
+    void* const sourceGroup = createEcGroup(415);
+    Require(sourceGroup != nullptr);
+    FakeEcKey validSourceEc{};
+    validSourceEc.group = sourceGroup;
+    Pkey validEcFrom{};
+    validEcFrom.type = 408;
+    validEcFrom.key = &validSourceEc;
+
+    int nextErrno = 48;
+    for (void* FakeEcKey::* field : {&FakeEcKey::publicKey, &FakeEcKey::privateKey, &FakeEcKey::group}) {
+        FakeEcKey badDestEc{};
+        badDestEc.*field = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+        FakeEcKey badDestExpected = badDestEc;
+        ecTo.key = &badDestEc;
+        ecToExpected = ecTo;
+        errno = nextErrno;
+        RequireInvalidArgument([&] { (void)copyParameters(&ecTo, &validEcFrom); });
+        Require(errno == nextErrno);
+        Require(std::memcmp(&badDestEc, &badDestExpected, sizeof(badDestEc)) == 0);
+        Require(std::memcmp(&ecTo, &ecToExpected, sizeof(ecTo)) == 0);
+        ++nextErrno;
+    }
+
+    FakeEcKey roGroupDestEc{};
+    roGroupDestEc.group = roGroup;
+    FakeEcKey roGroupDestExpected = roGroupDestEc;
+    ecTo.key = &roGroupDestEc;
+    ecToExpected = ecTo;
+    errno = nextErrno;
+    RequireInvalidArgument([&] { (void)copyParameters(&ecTo, &validEcFrom); });
+    Require(errno == nextErrno);
+    Require(std::memcmp(&roGroupDestEc, &roGroupDestExpected, sizeof(roGroupDestEc)) == 0);
+    Require(std::memcmp(&ecTo, &ecToExpected, sizeof(ecTo)) == 0);
+
+    freeEcGroup(sourceGroup);
 
 #ifdef _WIN32
     Require(VirtualFree(roPage, 0, MEM_RELEASE) != 0);
