@@ -280,7 +280,7 @@ test('new utility actions import and round trip without accepting unsupported so
     }
 });
 
-test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+test('ShowPadStatus is an emulator action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
     assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');
