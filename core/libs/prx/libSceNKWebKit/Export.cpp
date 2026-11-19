@@ -13258,10 +13258,6 @@ int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }

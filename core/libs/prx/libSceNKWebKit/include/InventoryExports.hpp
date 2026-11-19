@@ -1178,7 +1178,6 @@ int APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE();
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPN3JSC9CodeBlockE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE();
