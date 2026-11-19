@@ -920,6 +920,7 @@ void verifyKeySensitivity() {
     changes("device-atomic workgroup memory barriers", [](SampleRequest& sample) { sample.request.target.deviceAtomicWorkgroupMemoryBarriers = true; });
     changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("mesh function inlining", [](SampleRequest& sample) { sample.request.target.meshInlineFunctions = true; });
+    changes("spanned shuffles through workgroup memory", [](SampleRequest& sample) { sample.request.target.spannedShuffleThroughMemory = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });

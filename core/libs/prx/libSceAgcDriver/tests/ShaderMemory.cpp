@@ -25,6 +25,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include "SavedExecMaskLoop.hpp"
 #include "ShaderDiskCache.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -12593,6 +12594,85 @@ void verifyGcnTableImageConversion() {
     }
 }
 
+void verifySpannedShuffleThroughMemory() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Lanes = 64u;
+    constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    alignas(256) static std::array<std::uint32_t, Lanes * 16u> output{};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> code{0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    std::array<std::uint32_t, 8> userData{};
+    userData[4] = static_cast<std::uint32_t>(address);
+    userData[5] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (64u << 16u);
+    userData[6] = Lanes;
+    userData[7] = 0x11016facu;
+    alignas(256) static constexpr std::array<std::uint32_t, 11> lanePredicated{0x7d880094u, 0xbe88246au, 0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+    const auto compile = [&](std::span<const std::uint32_t> program, std::uint32_t subgroupSize, bool spanned, bool throughMemory) {
+        const auto codeAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program.data()));
+        const std::array<MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(program)}}};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, codeAddress, program, 0, {}};
+        request.context.waveSize = Lanes;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{Lanes, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.context.memory = memory;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.spannedWaves = spanned;
+        request.target.spannedShuffleThroughMemory = throughMemory;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    struct Counts {
+        std::uint32_t shuffles = 0;
+        std::uint32_t workgroupBarriers = 0;
+        std::uint32_t subgroupBarriers = 0;
+        std::uint32_t workgroupVariables = 0;
+    };
+    const auto count = [](std::span<const std::uint32_t> spirv) {
+        Counts result;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpConstant && (spirv[cursor] >> 16u) == 4u) constants[spirv[cursor + 2u]] = spirv[cursor + 3u];
+            if (op == spv::OpGroupNonUniformShuffle) ++result.shuffles;
+            if (op == spv::OpVariable && spirv[cursor + 3u] == spv::StorageClassWorkgroup) ++result.workgroupVariables;
+            if (op == spv::OpControlBarrier) {
+                const auto scope = constants.find(spirv[cursor + 1u]);
+                if (scope != constants.end() && scope->second == spv::ScopeWorkgroup) ++result.workgroupBarriers;
+                if (scope != constants.end() && scope->second == spv::ScopeSubgroup) ++result.subgroupBarriers;
+            }
+        }
+        return result;
+    };
+    const std::span<const std::uint32_t> straight{code};
+    const auto native = compile(straight, 32u, true, false);
+    require(native.fullSubgroups, "spanned shuffle: the wave64 compute program did not span two 32-lane subgroups");
+    const auto nativeCounts = count(native.spirv);
+    require(nativeCounts.shuffles >= 1u && nativeCounts.subgroupBarriers == 0u, "spanned shuffle: without the flag the lane read is not the native subgroup shuffle");
+    const auto exchanged = compile(straight, 32u, true, true);
+    require(exchanged.fullSubgroups, "spanned shuffle: the flagged wave64 compute program did not span two 32-lane subgroups");
+    const auto exchangedCounts = count(exchanged.spirv);
+    require(exchangedCounts.shuffles == 0u, "spanned shuffle: with the flag the lane read still uses OpGroupNonUniformShuffle, which NVIDIA's compiler crashes on in the title's shader");
+    require(exchangedCounts.workgroupVariables >= 1u && exchangedCounts.workgroupBarriers >= nativeCounts.workgroupBarriers + 2u, "spanned shuffle: with the flag the lane read does not go through a workgroup array between two more workgroup-scope barriers");
+    require(exchangedCounts.subgroupBarriers == 0u, "spanned shuffle: with the flag the exchange uses a subgroup-scope barrier, which did not make LDS writes visible on NVIDIA");
+    const auto unspanned = compile(straight, 32u, false, true);
+    const auto unspannedNative = compile(straight, 32u, false, false);
+    require(!unspanned.fullSubgroups && unspanned.spirv == unspannedNative.spirv, "spanned shuffle: the flag changed a program that does not span subgroups");
+    const auto predicatedNative = compile(lanePredicated, 32u, true, false);
+    const auto predicated = compile(lanePredicated, 32u, true, true);
+    require(predicated.fullSubgroups && count(predicated.spirv).shuffles == 0u && count(predicated.spirv).workgroupBarriers >= count(predicatedNative.spirv).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
+    require(!SpannedBarrierInDivergentFlow(predicated.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
+    require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -13248,6 +13328,11 @@ int main(int argc, char** argv) {
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--spanned-shuffle-memory") {
+            verifySpannedShuffleThroughMemory();
+            std::cout << "Spanned wave64 shuffles go through workgroup memory only when the target asks for it\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
@@ -13485,6 +13570,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifySpannedShuffleThroughMemory();
         verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
