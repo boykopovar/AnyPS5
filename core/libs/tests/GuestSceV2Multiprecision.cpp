@@ -124,7 +124,7 @@ void CheckInvalidGuestPointers() {
     Require(page[0] == 3 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "unmapped rem", "words");
 
 #ifdef _WIN32
-    Require(VirtualFree(page, MEM_RELEASE) != 0, "unmapped page", "release");
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0, "unmapped page", "release");
 #else
     Require(munmap(page, pageSize) == 0, "unmapped page", "release");
 #endif
