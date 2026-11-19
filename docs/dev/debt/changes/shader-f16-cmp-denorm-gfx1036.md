@@ -1,0 +1,4 @@
+# shader
+
+## change [f16 compares]
+- [f16 compares](../../../core/shader/recompiler/Translation/src/CompareInstructions.cpp) (`v_cmp_X_f16` and `v_cmpx_X_f16` with X = eq, ge, gt, le, lg, lt, neq, nge, ngt, nle, nlg, nlt, o, u, tru, f) follow the hardware measured on RDNA2 (gfx1035) at IEEE=0 and IEEE=1 with f16 denormals kept: all 16 predicates match IEEE-754 ordering/unordered rules (with `eq/ge/gt/le/lg/lt/o` false and `neq/nge/ngt/nle/nlg/nlt/u` true for any NaN) and treat `-0.0` as equal to `+0.0`, without distinguishing quiet from signaling NaNs. Measured on RDNA2 (`gfx1036`) across `ieee={0,1}` and `denorm16={0,1,2,3}` (`v_cmp_eq_f16`, `v_cmp_lt_f16`, `v_cmpx_eq_f16`): when bit 0 of `denorm16` is clear (`0` and `2`), denormal inputs (`0x0001`, `0x8001`) flush to `±0.0` before comparing (`0x0001 == +0.0`), while `1` and `3` keep them; shaders with f16 denormals flushed still throw.
