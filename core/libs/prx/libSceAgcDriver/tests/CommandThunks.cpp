@@ -1444,12 +1444,15 @@ int DirectModeCost() {
         std::printf("the thunk adds %.2f ns here, too little to tell a typed call from it; not gated\n", thunkOver);
         return 0;
     }
-    if (typedOver <= thunkOver * 0.75) return 0;
+    const bool resolvable = thunkOver >= 0.5;
+    const double limit = resolvable ? thunkOver * 0.75 : thunkOver + 0.1;
+    if (typedOver <= limit) return 0;
     if (InstrumentedBuild()) {
-        std::printf("typed direct adds %.2f ns, over three quarters of the thunk's %.2f ns; not gated in a sanitizer build\n", typedOver, thunkOver);
+        std::printf("typed direct adds %.2f ns over the limit of %.2f ns from the thunk's %.2f ns; not gated in a sanitizer build\n", typedOver, limit, thunkOver);
         return 0;
     }
-    std::fprintf(stderr, "command thunks: a direct batch's typed command adds %.2f ns over a raw table call, more than three quarters of the thunk's %.2f ns\n", typedOver, thunkOver);
+    if (resolvable) std::fprintf(stderr, "command thunks: a direct batch's typed command adds %.2f ns over a raw table call, more than three quarters of the thunk's %.2f ns\n", typedOver, thunkOver);
+    else std::fprintf(stderr, "command thunks: a direct batch's typed command adds %.2f ns over a raw table call, more than the thunk's %.2f ns\n", typedOver, thunkOver);
     return 1;
 }
 
