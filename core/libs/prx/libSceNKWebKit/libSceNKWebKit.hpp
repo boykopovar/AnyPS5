@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreRegistrationSlotsExports.hpp"
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
+#include "prx/libSceNKWebKit/include/CrossOriginAccessControlExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyProtectionSpaceBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/CustomHeaderFieldsExports.hpp"
@@ -64,6 +65,7 @@
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
@@ -79,3 +81,4 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
+#include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"

@@ -242,6 +242,16 @@ struct LibreSslX509 {
     std::int32_t references;
 };
 
+inline constexpr int LibreSslX509LookupFail = 0;
+inline constexpr int LibreSslX509LookupX509 = 1;
+inline constexpr int LibreSslX509LookupCrl = 2;
+
+struct LibreSslX509Object {
+    int type;
+    int padding;
+    void* data;
+};
+
 using LibreSslPemPasswordCallback = int(APS5_VABI*)(char*, int, int, void*);
 
 struct LibreSslX509StoreContext {
@@ -991,7 +1001,7 @@ int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(LibreSslX509StoreContext* con
 int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContext* context);
 void* APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(LibreSslX509StoreContext* context, int index);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
-int APS5_VABI X509_STORE_add_cert_nid_postfix(void);
+int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate);
 int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store* store, void* crl);
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method);
 void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);
