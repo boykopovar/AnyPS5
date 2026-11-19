@@ -118,6 +118,34 @@ static void CheckSignalingNanPassThrough() {
     Require(SameBits(nanl_nid_postfix("123"), Extended(0x7fff, 0xc000000000000000ull)));
 }
 
+static void CheckModflPartsAndFlags() {
+    static constexpr struct {
+        std::uint16_t exponent;
+        std::uint64_t mantissa;
+        std::uint16_t wholeExponent;
+        std::uint64_t wholeMantissa;
+        std::uint16_t fractionExponent;
+        std::uint64_t fractionMantissa;
+    } cases[] = {
+        {0xc000, 0xc000000000000000ull, 0xc000, 0xc000000000000000ull, 0x8000, 0},
+        {0x4000, 0xc000000000000000ull, 0x4000, 0xc000000000000000ull, 0x0000, 0},
+        {0x4000, 0xa000000000000000ull, 0x4000, 0x8000000000000000ull, 0x3ffe, 0x8000000000000000ull},
+        {0xbffe, 0xc000000000000000ull, 0x8000, 0, 0xbffe, 0xc000000000000000ull},
+        {0x8000, 0, 0x8000, 0, 0x8000, 0},
+        {0xc03d, 0x8000000000000001ull, 0xc03d, 0x8000000000000000ull, 0xbffe, 0x8000000000000000ull},
+        {0xc03e, 0x8000000000000000ull, 0xc03e, 0x8000000000000000ull, 0x8000, 0},
+        {0xffff, 0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0x8000, 0},
+    };
+    for (const auto& item : cases) {
+        long double whole = 0;
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        const long double fraction = modfl_nid_postfix(Extended(item.exponent, item.mantissa), &whole);
+        Require(std::fetestexcept(FE_ALL_EXCEPT) == 0);
+        Require(SameBits(whole, Extended(item.wholeExponent, item.wholeMantissa)));
+        Require(SameBits(fraction, Extended(item.fractionExponent, item.fractionMantissa)));
+    }
+}
+
 static void CheckFiniteClassification() {
     for (const float value : {1.0f, 0.0f, -0.0f, 0x1p-149f, 0x1.fffffep127f}) Require(finitef_nid_postfix(value) != 0);
     for (const float value : {static_cast<float>(INFINITY), -static_cast<float>(INFINITY), static_cast<float>(NAN)}) Require(finitef_nid_postfix(value) == 0);
@@ -919,6 +947,7 @@ int main(int argc, char** argv) {
     CheckSqrtlNegativeFlags();
     CheckLogblLroundl();
     CheckSignalingNanPassThrough();
+    CheckModflPartsAndFlags();
     CheckErrno();
     CheckFiniteClassification();
     CheckConsoleQuirks();
