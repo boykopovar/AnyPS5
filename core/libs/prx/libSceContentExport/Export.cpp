@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -107,14 +108,25 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         const void* data = nullptr;
         std::size_t size = 0;
         std::size_t written = 0;
+        std::array<char, 4096> staging{};
         const bool modernCallback = sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion);
         for (;;) {
             const std::int32_t result = callback(&data, &size, userData);
             if (modernCallback && result != 0 && result != 1) return ErrorDataCallback;
             if (size != 0) {
                 if (data == nullptr) return ErrorStorage;
-                file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-                if (!file) return ErrorStorage;
+                const auto address = reinterpret_cast<std::uintptr_t>(data);
+                if (size > std::numeric_limits<std::uintptr_t>::max() - address) return ErrorStorage;
+                for (std::size_t offset = 0; offset < size;) {
+                    const std::size_t count = std::min(staging.size(), size - offset);
+                    const int savedErrno = errno;
+                    const bool copied = GuestCopyIn_nid_no_patch(staging.data(), reinterpret_cast<const void*>(address + offset), count);
+                    errno = savedErrno;
+                    if (!copied) return ErrorStorage;
+                    file.write(staging.data(), static_cast<std::streamsize>(count));
+                    if (!file) return ErrorStorage;
+                    offset += count;
+                }
                 written += size;
             }
             if (result == 1 || (!modernCallback && result < 0)) break;

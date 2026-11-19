@@ -2,8 +2,10 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -126,6 +128,12 @@ constexpr DigestName Names[] {
     {"ssl3-sha1", Digest::Sha1},
 };
 
+constexpr std::size_t LongestName = [] {
+    std::size_t longest = 0;
+    for (const auto& entry : Names) longest = std::max(longest, std::char_traits<char>::length(entry.name));
+    return longest;
+}();
+
 constexpr bool Sorted() {
     for (std::size_t index = 1; index < std::size(Names); ++index) {
         const char* previous = Names[index - 1].name;
@@ -189,6 +197,13 @@ extern "C" {
 
 const void* APS5_VABI EVP_get_digestbyname_nid_postfix(const char* name) {
     if (!name) return nullptr;
+    std::string guestName;
+    const int savedErrno = errno;
+    const int error = CopyGuestString_nid_no_patch(name, LongestName + 1, guestName);
+    errno = savedErrno;
+    if (error == 63) return nullptr;
+    if (error != 0) throw std::invalid_argument("EVP_get_digestbyname: unreadable name");
+    name = guestName.c_str();
     const auto* entry = std::lower_bound(std::begin(Names), std::end(Names), name,
         [](const DigestName& candidate, const char* key) { return std::strcmp(candidate.name, key) < 0; });
     if (entry == std::end(Names) || std::strcmp(entry->name, name) != 0) return nullptr;
