@@ -7797,10 +7797,6 @@ int APS5_VABI sceIcuLegacyUnknown_nlKvBmVpu_plus_4_nid_no_patch() {
 }
 APS5_EXPORT("nlKvBmVpu+4", sceIcuLegacyUnknown_nlKvBmVpu_plus_4_nid_no_patch);
 
-int APS5_VABI udata_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6817StringEnumerationeqERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

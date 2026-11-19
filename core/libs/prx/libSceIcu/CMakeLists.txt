@@ -674,6 +674,7 @@ endif()
 set(ICU_RECOVERED_SOURCES
     Calendar.cpp
     Collator.cpp
+    DataMemoryClose.cpp
     DateFormat.cpp
     DateIntervalFormat.cpp
     DateTimePatternGenerator.cpp
@@ -696,6 +697,7 @@ if(BUILD_TESTING)
     set(ICU_RECOVERED_TESTS
         tests/Calendar.cpp
         tests/Collator.cpp
+        tests/DataMemoryClose.cpp
         tests/DateFormat.cpp
         tests/DateIntervalFormat.cpp
         tests/DateTimePatternGenerator.cpp
@@ -716,7 +718,7 @@ if(BUILD_TESTING)
     list(TRANSFORM ICU_RECOVERED_TESTS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
     add_test_executable(guest_icu_recovered_signatures_tests ${ICU_RECOVERED_TESTS})
     target_include_directories(guest_icu_recovered_signatures_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu)
+    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu icu_common)
     configure_windows_unwind(guest_icu_recovered_signatures_tests)
     add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
     set_tests_properties(guest_icu_recovered_signatures PROPERTIES TIMEOUT 30)
