@@ -523,6 +523,26 @@ void TestUuidExtendedType() {
     guest.Destroy(0);
 }
 
+void TestOffsetPastView() {
+    Guest guest;
+    IsoDriver::Bytes bytes;
+    IsoDriver::Put32(bytes, 16);
+    IsoDriver::Put32(bytes, IsoDriver::Type("free"));
+    bytes.resize(16, 0);
+    guest.MakeView(bytes, 0, 12, IsoDriver::ViewPlain);
+    guest.Create(IsoDriver::KindBox, 0);
+    for (const unsigned start : {9u, 12u, 13u, 0xfffffffcu, 0xffffffffu}) {
+        unsigned offset = start;
+        Require(!guest.Parse(0, offset));
+        Require(offset == start);
+        Require(!_ZN7WebCore6ISOBox7peekBoxERN3JSC8DataViewEj(&guest.view, start).engaged);
+    }
+    unsigned offset = 0;
+    Require(guest.Parse(0, offset));
+    Require(offset == 8);
+    guest.Destroy(0);
+}
+
 void TestDetachedAndSharedViews() {
     Guest guest;
     IsoDriver::Bytes bytes;
@@ -568,6 +588,7 @@ void TestPlacementAndNulls() {
 int main() {
     TestTranscripts();
     TestUuidExtendedType();
+    TestOffsetPastView();
     TestDetachedAndSharedViews();
     TestPlacementAndNulls();
     return 0;
