@@ -1,0 +1,128 @@
+name: Container images
+
+on:
+  push:
+    paths:
+      - .dockerignore
+      - .gitmodules
+      - CMakeLists.txt
+      - cmake/**
+      - compose.yaml
+      - core/**
+      - tools/engine/**
+      - tools/launcher/**
+      - tools/import_audit.py
+      - tools/unwrap_self.py
+      - .github/workflows/images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    if: github.repository == 'Cramessar/AnyPS5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker buildx build --load -f tools/launcher/web/Dockerfile -t "ghcr.io/$owner/anyps5-web:$GITHUB_SHA" .
+          echo "IMAGE=ghcr.io/$owner/anyps5-web" >> "$GITHUB_ENV"
+      - name: Start and answer health checks
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/web-state"
+          mkdir -p "$state"
+          docker run --rm --user 0:0 -v "$state:/state" "$IMAGE:$GITHUB_SHA" python /app/state.py
+          docker run -d --name web --read-only --tmpfs /tmp --cap-drop ALL -p 127.0.0.1:8766:8765 \
+            -e ANYPS5_WEB_ORIGINS=http://127.0.0.1:8766 -e ANYPS5_WEB_STATE=/state/backend -e ANYPS5_WEB_TOKEN_FILE=/state/auth.token \
+            -v "$state:/state" "$IMAGE:$GITHUB_SHA"
+          for attempt in $(seq 30); do curl -fsS -H 'Host: 127.0.0.1:8766' http://127.0.0.1:8766/healthz && break; sleep 1; done
+          curl -fsS -H 'Host: 127.0.0.1:8766' http://127.0.0.1:8766/setup/status
+          docker rm -f web
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:main"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:main"
+          docker logout ghcr.io
+
+  engine:
+    if: github.repository == 'Cramessar/AnyPS5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune -af > /dev/null
+          df -h /
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE=ghcr.io/$owner/anyps5-engine" >> "$GITHUB_ENV"
+          started=$(date +%s)
+          docker buildx build --load --progress=plain --build-arg ANYPS5_BUILD_JOBS="$(nproc)" \
+            -f tools/engine/Dockerfile -t "ghcr.io/$owner/anyps5-engine:$GITHUB_SHA" . 2>&1 | tee "$RUNNER_TEMP/build.log"
+          echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
+      - name: Export and verify the Windows bundle
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          docker run --rm -v "$RUNNER_TEMP/artifacts:/artifacts" "$IMAGE:$GITHUB_SHA"
+          sudo python3 -c "import json, sys; value = json.load(open(sys.argv[1])); assert value['status'] == 'ready', value; print(value)" "$RUNNER_TEMP/artifacts/expected.json"
+      - name: Record measurements
+        if: always()
+        run: |
+          {
+            echo '## Engine image measurements'
+            echo
+            echo "- Runner: $(nproc) processors, $(free -g | awk '/Mem:/ {print $2}') GB memory"
+            echo "- Build wall time: ${BUILD_SECONDS:-not recorded} seconds"
+            echo "- Image size: $(docker image inspect -f '{{.Size}}' "$IMAGE:$GITHUB_SHA" 2>/dev/null || echo 'not built') bytes"
+            echo "- Exported artifacts: $(sudo du -sb "$RUNNER_TEMP/artifacts" 2>/dev/null | cut -f1 || echo 'not exported') bytes"
+            echo "- Docker disk use after build: $(docker system df --format '{{.Type}} {{.Size}}' | paste -sd ', ')"
+            echo "- Runner disk free after build: $(df -h / | awk 'NR==2 {print $4}')"
+            echo
+            echo '```'
+            grep -E 'UPSTREAM RESOLVED|FORK OVERLAY|ENGINE SOURCE SHA256|BUILD MEASUREMENTS|WINDOWS ENGINE BUILT' "$RUNNER_TEMP/build.log" | sed 's/^#[0-9]* [0-9.]* //' || echo 'No build markers found'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:main"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:main"
+          docker logout ghcr.io
