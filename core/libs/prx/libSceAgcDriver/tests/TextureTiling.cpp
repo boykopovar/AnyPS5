@@ -275,7 +275,80 @@ void gcnThickTilingTests() {
         const auto narrow = DescribeSurface(deep);
         Require(narrow.mips[5].tiledSize == 256u && narrow.mips[5].pitchBytes == 32u, "PS4 thin volume mip needs SI slice alignment at small element sizes");
     }
+}
 
+void gcnThickMacroTilingTests() {
+    const auto bit = [](std::uint32_t value, std::uint32_t index) { return (value >> index) & 1u; };
+    for (const std::uint32_t bytes : {1u, 2u, 4u}) {
+        const auto geometry = GcnTiling(TextureTileMode::kGcnThick2D, bytes);
+        const auto what = "PS4 2D thick tile mode at " + std::to_string(bytes) + " bytes";
+        const std::uint32_t microBytes = 256u * bytes;
+        const std::uint32_t macroMode = static_cast<std::uint32_t>(std::bit_width(microBytes / 64u)) - 1u;
+        constexpr std::uint32_t bankHeights[] = {4u, 2u, 1u, 1u, 1u}, bankCounts[] = {16u, 16u, 16u, 16u, 8u}, aspects[] = {4u, 2u, 2u, 2u, 1u};
+        const std::uint32_t pipes = 8u, bankHeight = bankHeights[macroMode], banks = bankCounts[macroMode], aspect = aspects[macroMode];
+        const std::uint32_t macroPitch = 8u * pipes * aspect, macroHeight = 8u * bankHeight * banks / aspect;
+        const std::uint32_t bankBits = static_cast<std::uint32_t>(std::countr_zero(banks));
+        const std::uint32_t macroBytes = microBytes * (macroPitch / 8u) * (macroHeight / 8u) / (pipes * banks);
+        Require(geometry.blockWidth == macroPitch && geometry.blockHeight == macroHeight && geometry.blockBytes == macroBytes * pipes * banks && geometry.splitSlices == 1u && geometry.layerThickness == 4u, what + ": macro tile extent differs from addrlib");
+        const std::uint32_t pitch = 3u * macroPitch, height = 2u * macroHeight, depth = 12u;
+        const std::uint64_t slabBytes = static_cast<std::uint64_t>(pitch) * height * 4u * bytes;
+        std::vector<std::uint8_t> seen(slabBytes * (depth / 4u) / bytes, 0u);
+        for (std::uint32_t z = 0; z < depth; ++z) {
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < pitch; ++x) {
+                    const std::uint32_t x0 = bit(x, 0), x1 = bit(x, 1), x2 = bit(x, 2), y0 = bit(y, 0), y1 = bit(y, 1), y2 = bit(y, 2), z0 = bit(z, 0), z1 = bit(z, 1);
+                    const std::array<std::uint32_t, 8> pixel = bytes <= 2u ? std::array<std::uint32_t, 8>{x0, y0, x1, y1, z0, z1, x2, y2} : std::array<std::uint32_t, 8>{x0, y0, x1, z0, y1, z1, x2, y2};
+                    std::uint32_t pixelIndex = 0;
+                    for (std::uint32_t index = 0; index < 8u; ++index) pixelIndex |= pixel[index] << index;
+                    const std::uint64_t macroOffset = (static_cast<std::uint64_t>(z / 4u) * (pitch / macroPitch) * (height / macroHeight) + static_cast<std::uint64_t>(y / macroHeight) * (pitch / macroPitch) + x / macroPitch) * macroBytes;
+                    const std::uint64_t total = macroOffset + static_cast<std::uint64_t>((y / 8u) % bankHeight) * microBytes + static_cast<std::uint64_t>(pixelIndex) * bytes;
+                    const std::uint32_t tx = x / 8u, ty = y / 8u;
+                    const std::uint32_t pipe = (bit(tx, 0) ^ bit(ty, 0) ^ bit(tx, 1)) | ((bit(tx, 1) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u);
+                    const std::uint32_t bx = tx / pipes, by = ty / bankHeight;
+                    std::uint32_t bank = banks == 16u ? (bit(bx, 0) ^ bit(by, 3)) | ((bit(bx, 1) ^ bit(by, 2) ^ bit(by, 3)) << 1u) | ((bit(bx, 2) ^ bit(by, 1)) << 2u) | ((bit(bx, 3) ^ bit(by, 0)) << 3u)
+                                                     : (bit(bx, 0) ^ bit(by, 2)) | ((bit(bx, 1) ^ bit(by, 1) ^ bit(by, 2)) << 1u) | ((bit(bx, 2) ^ bit(by, 0)) << 2u);
+                    bank = (bank ^ ((banks / 2u - 1u) * (z / 4u))) & (banks - 1u);
+                    const std::uint64_t expected = ((total >> 8u) << (11u + bankBits)) | (static_cast<std::uint64_t>(bank) << 11u) | (static_cast<std::uint64_t>(pipe) << 8u) | (total & 0xffu);
+                    std::uint32_t offset = 0;
+                    for (std::uint32_t index = 0; index < 16u; ++index) offset |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[index] & 0xfffu) ^ ((y << 12u) & geometry.equation[index] & 0xfff000u) ^ ((z << 24u) & geometry.equation[index] & 0xff000000u)) & 1) << index;
+                    const std::uint64_t address = static_cast<std::uint64_t>(z / 4u) * slabBytes + (static_cast<std::uint64_t>(y / macroHeight) * (pitch / macroPitch) + x / macroPitch) * geometry.blockBytes + (offset ^ GcnLayerBankXor(geometry, z));
+                    Require(address == expected, what + ": element (" + std::to_string(x) + ", " + std::to_string(y) + ", " + std::to_string(z) + ") is at " + std::to_string(address) + " instead of addrlib's " + std::to_string(expected));
+                    Require(address % bytes == 0 && address / bytes < seen.size() && seen[address / bytes]++ == 0, what + ": two elements share an address or one leaves the surface");
+                }
+            }
+        }
+    }
+    for (const std::uint32_t bytes : {8u, 16u}) {
+        bool refused = false;
+        try {
+            static_cast<void>(GcnTiling(TextureTileMode::kGcnThick2D, bytes));
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        Require(refused, "PS4 2D thick tile mode must refuse elements that split a micro tile");
+    }
+    GuestTextureResource volume{};
+    volume.width = 160u;
+    volume.height = 90u;
+    volume.depthOrLastArray = 127u;
+    volume.mipCount = 1u;
+    volume.tileMode = TextureTileMode::kGcnThick2D;
+    volume.dimension = TextureDimension::k3D;
+    volume.format = 20u;
+    volume.gcnPitch = 192u;
+    const auto geometry = DescribeSurface(volume);
+    Require(geometry.thick && !geometry.levelMajor && geometry.blockDepth == 4u && geometry.imageDepth == 128u, "PS4 2D thick volume is not a thick volume of four-slice slabs");
+    Require(geometry.mips[0].blocksPerRow == 3u && geometry.mips[0].tiledSize == 192u * 128u * 4u * 4u && geometry.guestBytes == geometry.mips[0].tiledSize * 32u, "PS4 2D thick volume is not padded to whole macro tiles");
+    Require(geometry.GuestOffset(7u, geometry.mips[0]) == geometry.mips[0].tiledSize && MipTileMode(volume.tileMode, geometry.mips[0]) == volume.tileMode, "PS4 2D thick volume slab offset is misplaced");
+    volume.mipCount = 2u;
+    volume.lastLevel = 1u;
+    bool refused = false;
+    try {
+        static_cast<void>(DescribeSurface(volume));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    Require(refused, "PS4 2D thick volume with a mip chain must be refused");
 }
 
 void gcnTilingTests() {
@@ -620,6 +693,7 @@ void sizeOnlySurfaceTests() {
 void RunTextureTilingTests() {
     gcnTilingTests();
     gcnThickTilingTests();
+    gcnThickMacroTilingTests();
     sizeOnlySurfaceTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
