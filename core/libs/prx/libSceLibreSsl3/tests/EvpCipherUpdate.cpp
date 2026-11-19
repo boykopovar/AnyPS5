@@ -290,6 +290,134 @@ void CheckGuestPointerValidation() {
     expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, reinterpret_cast<unsigned char*>(unmapped), &written, roIn, 16); });
     expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&ctx, noAccess, &written, roIn, 16); });
     expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctx, roOut, &written, roIn, 16); });
+
+    struct ThreePages {
+        std::size_t pageSize = 0;
+        std::uint8_t* base = nullptr;
+        ThreePages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize;
+            base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 3 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096u;
+            void* mapped = mmap(nullptr, 3 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<std::uint8_t*>(mapped);
+#endif
+        }
+        ~ThreePages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, 3 * pageSize);
+#endif
+        }
+        void SetPage(std::size_t index, bool read, bool write) {
+            auto* page = base + index * pageSize;
+#ifdef _WIN32
+            DWORD protect = PAGE_NOACCESS;
+            if (read && write) protect = PAGE_READWRITE;
+            else if (read) protect = PAGE_READONLY;
+            DWORD previous = 0;
+            Require(VirtualProtect(page, pageSize, protect, &previous) != 0);
+#else
+            int protect = PROT_NONE;
+            if (read && write) protect = PROT_READ | PROT_WRITE;
+            else if (read) protect = PROT_READ;
+            Require(mprotect(page, pageSize, protect) == 0);
+#endif
+        }
+    } region;
+
+    const std::size_t page = region.pageSize;
+    std::memset(region.base, 0xa5, 3 * page);
+    std::memcpy(region.base + page - 16, plain.data(), 16);
+    region.SetPage(1, false, false);
+
+    auto boundaryCtx = Context(block, 1);
+    Reset();
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&boundaryCtx, out.data(), &written, region.base + page - 16, 16) == 1);
+    Require(written == 16 && record.calls == 1);
+    for (std::size_t i = 0; i < 16; ++i) Require(out[i] == static_cast<unsigned char>(plain[i] ^ XorByte));
+
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), &written, region.base + page - 8, 16); });
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, out.data(), &written, region.base, static_cast<int>(3 * page)); });
+
+    region.SetPage(1, true, false);
+    std::memset(region.base, 0xa5, page);
+    Reset();
+    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&boundaryCtx, region.base + page - 16, &written, roIn, 16) == 1);
+    Require(written == 16 && record.calls == 1);
+    for (std::size_t i = 0; i < 16; ++i) Require(region.base[page - 16 + i] == static_cast<unsigned char>(plain[i] ^ XorByte));
+
+    std::memset(region.base, 0xa5, page);
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&ctx, region.base + page - 8, &written, roIn, 16); });
+    for (std::size_t i = 0; i < 8; ++i) Require(region.base[page - 8 + i] == 0xa5);
+
+    std::vector<unsigned char> threePageIn(3 * page, 0x3cu);
+    std::memset(region.base, 0xa5, page);
+    std::memset(region.base + 2 * page, 0xa5, page);
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&ctx, region.base, &written, threePageIn.data(), static_cast<int>(3 * page)); });
+    Require(region.base[0] == 0xa5 && region.base[2 * page] == 0xa5);
+
+    auto heldCtx = Context(block, 0);
+    heldCtx.finalUsed = 1;
+    std::memset(heldCtx.final, 0x77, 16);
+    std::memset(region.base + page - 16, 0xa5, 16);
+    expectInvalid([&] { EVP_DecryptUpdate_nid_disambig1_nid_postfix(&heldCtx, region.base + page - 16, &written, roIn, 16); });
+    Require(heldCtx.finalUsed == 1);
+    for (std::size_t i = 0; i < 16; ++i) Require(region.base[page - 16 + i] == 0xa5);
+
+    region.SetPage(1, true, true);
+    auto* straddlingCtx = reinterpret_cast<LibreSslEvpCipherCtx*>(region.base + page - 16);
+    std::memcpy(straddlingCtx, &validContext, sizeof(validContext));
+    region.SetPage(1, true, false);
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(straddlingCtx, out.data(), &written, roIn, 16); });
+
+    region.SetPage(1, true, true);
+    auto* straddlingCipher = reinterpret_cast<LibreSslEvpCipher*>(region.base + page - 16);
+    std::memcpy(straddlingCipher, &block, sizeof(block));
+    region.SetPage(1, false, false);
+    auto straddlingCipherCtx = Context(block, 1);
+    straddlingCipherCtx.cipher = straddlingCipher;
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&straddlingCipherCtx, out.data(), &written, roIn, 16); });
+
+    auto partialCtx = Context(block, 1);
+    Reset();
+    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&partialCtx, roOut, &written, roIn, 5) == 1);
+    Require(written == 0 && partialCtx.bufLen == 5 && record.calls == 0);
+    expectInvalid([&] { EVP_EncryptUpdate_nid_disambig1_nid_postfix(&partialCtx, roOut, &written, roIn + 5, 11); });
+    Require(partialCtx.bufLen == 5);
+
+    const auto custom = Cipher(1, CipherFlagCustomCipher, CustomCipher);
+    auto customCtx = Context(custom, 1);
+    Reset();
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&customCtx, nullptr, &written, roIn, 16) == 1 && written == 16 && record.calls == 1);
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&customCtx, nullptr, &written, noAccess, 16); });
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&customCtx, roOut, &written, roIn, 16); });
+
+    std::vector<unsigned char> bulk(16384);
+    for (std::size_t i = 0; i < bulk.size(); ++i) bulk[i] = static_cast<unsigned char>(i * 11 + 5);
+    auto inPlace = bulk;
+    auto bulkCtx = Context(block, 1);
+    Reset();
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&bulkCtx, inPlace.data(), &written, inPlace.data(), static_cast<int>(inPlace.size())) == 1);
+    Require(written == static_cast<int>(inPlace.size()) && record.calls == 1);
+    for (std::size_t i = 0; i < inPlace.size(); ++i) Require(inPlace[i] == static_cast<unsigned char>(bulk[i] ^ XorByte));
+    expectInvalid([&] { EVP_CipherUpdate_nid_disambig1_nid_postfix(&bulkCtx, roOut, &written, roOut, 16); });
+
+    std::vector<unsigned char> bulkDecOut(bulk.size() + 16, 0xa5u);
+    auto bulkDecCtx = Context(block, 0);
+    Reset();
+    Require(EVP_CipherUpdate_nid_disambig1_nid_postfix(&bulkDecCtx, bulkDecOut.data(), &written, inPlace.data(), static_cast<int>(inPlace.size())) == 1);
+    Require(written == static_cast<int>(inPlace.size() - 16) && bulkDecCtx.finalUsed == 1 && record.calls == 1);
+    for (std::size_t i = 0; i < bulk.size() - 16; ++i) Require(bulkDecOut[i] == bulk[i]);
+    for (std::size_t i = 0; i < 16; ++i) Require(bulkDecCtx.final[i] == bulk[bulk.size() - 16 + i]);
 }
 
 }
