@@ -322,7 +322,12 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;
         if (selector != 0u && selector != 1u && selector != 4u) return rejectImage(PoisonReason::Fmask, "FMASK destination channel selector is not implemented");
     }
-    if (base.packed) decoded.packedFormat = format;
+    if (base.packed) {
+        if (!storage && base.byElements == 0u && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle) {
+            return rejectImage(PoisonReason::InvalidFormat, "packed image access requires identity swizzle when sampled");
+        }
+        decoded.packedFormat = format;
+    }
     if (base.byElements != 0u) {
         const bool eightBit = format == IrBufferFormat::Format8UNorm || format == IrBufferFormat::Format8SNorm || format == IrBufferFormat::Format8UInt || format == IrBufferFormat::Format8SInt;
         const bool sixteenBit = format == IrBufferFormat::Format16UNorm || format == IrBufferFormat::Format16SNorm || format == IrBufferFormat::Format16UInt || format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format16Float;
