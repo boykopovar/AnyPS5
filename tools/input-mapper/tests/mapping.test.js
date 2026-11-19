@@ -1,12 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {actions, actionsForInput, chordButtons, defaults, emulatorActions, mouseValues, padButtons, typesForAction} from '../mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, emulatorActions, inputFilename, mouseValues, padButtons, typesForAction} from '../mapping.js';
 import {exportableKeys, keyNames} from '../keys.js';
 import {captureKey} from '../capture.js';
 import {parseIni, serialize, settings, validate, validateSettings} from '../validation.js';
 
 const binding = (action, type = 'KEY', value = 'F') => ({action, type, value});
+
+test('exports the shared name or the exact title profile name', () => {
+    assert.equal(inputFilename(''), 'anyps5-input.ini');
+    assert.equal(inputFilename('PPSA29802'), 'anyps5-input.PPSA29802.ini');
+    assert.equal(inputFilename('Demo-01_a'), 'anyps5-input.Demo-01_a.ini');
+});
+
+test('title names use the native length limit and reject invalid filename characters', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libScePad/include/InputMapping.hpp', import.meta.url), 'utf8');
+    const [, limit] = source.match(/MaxTitleIdLength = (\d+);/u);
+    const longestId = 'A'.repeat(Number(limit));
+    assert.equal(inputFilename(longestId), `anyps5-input.${longestId}.ini`);
+    for (const invalid of [`${longestId}A`, '../PPSA29802', 'foo\\bar', 'with space', ' ', 'C:demo', 'Títle', 'PPSA29802\n', null]) {
+        assert.equal(inputFilename(invalid), undefined);
+    }
+});
 
 test('search finds exact built-in keyboard and full input bindings', () => {
     assert.deepEqual(actionsForInput(' f7 ', []), new Set(['ToggleMouse']));
@@ -264,7 +280,7 @@ test('new utility actions import and round trip without accepting unsupported so
     }
 });
 
-test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+test('ShowPadStatus is an emulator action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
     assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');

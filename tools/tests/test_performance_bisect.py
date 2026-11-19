@@ -154,18 +154,23 @@ class MeasurementStabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
 
-class GitHistoryTests(unittest.TestCase):
+class GitHistoryCase(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.repo = Path(self.directory.name) / "repo"
         self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
-        self.commit("zero")
-        self.good = performance_bisect.git(self.repo, "rev-parse", "HEAD")
-        self.commits = [self.commit(f"step-{index}") for index in range(1, 8)]
+        stream = ""
+        for text in ["zero", *(f"step-{index}" for index in range(1, 8))]:
+            message = f"test: {text}"
+            stream += (f"commit refs/heads/main\ncommitter Test <test@example.invalid> 1700000000 +0000\n"
+                       f"data {len(message)}\n{message}\nM 100644 inline state\ndata {len(text)}\n{text}\n")
+        subprocess.run(["git", "-C", str(self.repo), "fast-import", "--quiet"], input=stream.encode(), check=True)
+        subprocess.run(["git", "-C", str(self.repo), "reset", "-q", "--hard"], check=True)
+        self.good, *self.commits = performance_bisect.git(self.repo, "rev-list", "--reverse", "HEAD").split()
 
     def commit(self, text):
         (self.repo / "state").write_text(text, encoding="utf-8")
@@ -173,6 +178,8 @@ class GitHistoryTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", f"test: {text}"], check=True)
         return performance_bisect.git(self.repo, "rev-parse", "HEAD")
 
+
+class GitHistoryTests(GitHistoryCase):
     def test_resolves_first_parent_range_and_checks_ancestry(self):
         good, bad, commits = performance_bisect.first_parent_commits(self.repo, self.good, self.commits[-1])
         self.assertEqual(good, self.good)
@@ -331,7 +338,7 @@ class BisectReportTests(unittest.TestCase):
         self.assertEqual(report["first_bad"]["median_fps"], 54.0)
 
 
-class EndToEndBisectTests(GitHistoryTests):
+class EndToEndBisectTests(GitHistoryCase):
     def test_bisects_with_real_measurement_directories_and_build_commands(self):
         root = Path(self.directory.name)
         tools = root / "tools"
@@ -498,7 +505,10 @@ class BuildSymlinkSafetyTests(unittest.TestCase):
             external.mkdir()
             marker = external / "keep.txt"
             marker.write_text("outside data", encoding="utf-8")
-            (repo / "build").symlink_to(external, target_is_directory=True)
+            try:
+                (repo / "build").symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symlinks unavailable: {error}")
             with self.assertRaisesRegex(ValueError, "resolves outside the worktree"):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")
@@ -514,7 +524,7 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("known-bad commit", result.stdout)
 
 
-class FirstParentMergeTests(GitHistoryTests):
+class FirstParentMergeTests(GitHistoryCase):
     def test_excludes_side_branch_commits_and_keeps_the_merge_commit(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "bisect-side")
@@ -541,7 +551,7 @@ class FirstParentMergeTests(GitHistoryTests):
         self.assertEqual(len(commits), len(set(commits)))
 
 
-class BisectCleanupTests(GitHistoryTests):
+class BisectCleanupTests(GitHistoryCase):
     def test_removes_temporary_worktree_when_a_measurement_fails(self):
         valid = {"median_fps": 60.0, "identity": IDENTITY}
         bad = {"median_fps": 54.0, "identity": IDENTITY}
@@ -570,7 +580,7 @@ class AtomicReportRaceTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
 
-class FirstParentEndpointTests(GitHistoryTests):
+class FirstParentEndpointTests(GitHistoryCase):
     def test_rejects_good_endpoint_reachable_only_through_a_merge_parent(self):
         default_branch = performance_bisect.git(self.repo, "symbolic-ref", "--short", "HEAD")
         performance_bisect.git(self.repo, "switch", "-c", "endpoint-side")
@@ -843,7 +853,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
 class GitFailureAndExitTests(unittest.TestCase):
     def test_git_failure_raises_with_stderr_or_command_fallback(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C"}):
             with self.assertRaisesRegex(RuntimeError, "not a git repository"):
                 performance_bisect.git(directory, "status")
             failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
@@ -865,6 +875,21 @@ class GitFailureAndExitTests(unittest.TestCase):
                                          "--recipe", str(Path(directory) / "missing.json")])
         self.assertEqual(error.exception.code, 2)
         self.assertTrue(stderr.getvalue().strip())
+
+
+class UniqueRecipeFieldsTests(unittest.TestCase):
+    def test_pairs_become_a_dict_in_order(self):
+        fields = performance_bisect.unique_recipe_fields([("b", 1), ("a", [2])])
+        self.assertEqual(list(fields.items()), [("b", 1), ("a", [2])])
+
+    def test_duplicate_field_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "recipe has a duplicate field: a"):
+            performance_bisect.unique_recipe_fields([("a", 1), ("b", 2), ("a", 3)])
+
+    def test_works_as_a_json_object_hook(self):
+        self.assertEqual(json.loads('{"a": 1}', object_pairs_hook=performance_bisect.unique_recipe_fields), {"a": 1})
+        with self.assertRaises(ValueError):
+            json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
 
 
 if __name__ == "__main__":

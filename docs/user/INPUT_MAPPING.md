@@ -19,7 +19,7 @@ The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`
 
 Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
-Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` accept only keyboard keys.
+Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
 
 ### Controller button remapping
 
@@ -41,7 +41,7 @@ Set `ANYPS5_INPUT_WATCH=1` to reload automatically when the file or the title's 
 
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
 
-Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They accept only keyboard keys too.
+Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They also accept `PAD:` chords.
 
 ### Default bindings
 
@@ -200,6 +200,8 @@ An invalid line stops the game when video output starts, with an error that name
 ## Web configurator
 
 The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. `PAD:` chords in an imported file are kept and exported, but new chords are written by hand. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+
+On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
 
 Add `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate controller entries are reported with their line number.
 
