@@ -1,0 +1,27 @@
+name: Engine dependency lock
+on:
+  pull_request:
+    paths:
+      - .gitmodules
+      - 3rdparty/**
+      - tools/engine/**
+      - .github/workflows/engine-lock.yml
+  push:
+    branches: [main]
+    paths:
+      - .gitmodules
+      - 3rdparty/**
+      - tools/engine/**
+      - .github/workflows/engine-lock.yml
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - run: python3 tools/engine/sources.py --check
+      - run: python3 tools/engine/tests.py

@@ -97,6 +97,104 @@ therefore tests the previous binaries and can show no effect at all.
 
 `tools/public_headers_manifest.py [--root <dir>]` inventories the inputs of the public header package, with a content hash for each file, without creating an archive. `--root` defaults to the repository that contains the script.
 
+## Windows launcher
+
+The normal full Windows build includes `launcher`, a native C++20 Win32 port of the
+user-supplied AnyPS5 Launcher 0.1 prototype. It uses Windows system libraries and
+has no Python or third-party GUI runtime dependency. Relinker-only and non-Windows
+builds do not configure this target.
+
+```powershell
+cmake --build b --target launcher launcher_tests --parallel 8
+ctest --test-dir b -R '^launcher_windows$' --output-on-failure
+.\b\tools\launcher\AnyPS5Launcher.exe
+```
+
+`ANYPS5_LAUNCHER_DATA_ROOT` defaults to `.local/launcher` in the source checkout.
+Set it to a persistent writable directory outside the build tree when configuring.
+Cleaning or replacing the build tree does not remove this collection. The source
+default and `.local/launcher-packages` are ignored by Git. Do not place persistent
+games or saves under the build directory.
+
+With Python available at build time, `launcher_portable` builds the launcher,
+converter and `libs`, then writes a unique new folder under
+`ANYPS5_LAUNCHER_PACKAGE_ROOT` (default `.local/launcher-packages`). The distributed
+launcher and converter need no Python installation. The package contains the
+configured converter, patched runtime libraries, DLLs from that compiler,
+licences and SHA-256 identities. A conflicting staged MinGW DLL fails packaging.
+
+```powershell
+cmake --build b --target launcher_portable --parallel 8
+```
+
+The default package has an empty collection. To copy registered prepared games,
+configure with `-DANYPS5_LAUNCHER_PACKAGE_GAMES=ON`. Close the launcher and games
+before packaging. Every complete working folder, including saves and its own
+runtime, is copied; existing game runtimes are not updated. Export rejects linked
+files, destinations inside a game folder, and launch files or custom driver
+installations outside their working folder. Existing scripts and environment
+strings are retained; review absolute paths before relocation. Partial output is
+retained on failure for diagnosis; existing collections are not overwritten.
+
+The native Windows test executes direct and batch subprocesses, checks special
+characters and Unicode in paths and arguments, child-only environments, corrupt
+library preservation, backups, locks, shallow discovery and export with saved data.
+
+The full Windows build also includes `desktop_helper`, producing
+`tools/launcher/AnyPS5DesktopHelper.exe` under the build directory. It links the same
+`anyps5_launcher_core` as the native UI and uses Windows WinHTTP for an outbound,
+authenticated loopback connection. Building does not install or start the helper.
+
+```powershell
+cmake --build b --target launcher desktop_helper launcher_tests --parallel 8
+ctest --test-dir b -R '^launcher_(windows|web_backend)$' --output-on-failure
+```
+
+`launcher_web_backend` uses only the build-time Python standard library and tests
+authentication, browser origin and Host validation, command restrictions, native
+ownership, persisted results and no command replay. No Python installation is
+required by either Windows executable.
+
+The optional web service uses the Python standard library in a pinned base image;
+there are no frontend or backend package dependencies. The Docker context is
+allowlisted to its Dockerfile, server, bundle verifier and three static files.
+The source checkout now builds the full engine before starting this service;
+see [DOCKER](../user/DOCKER.md). The separate Phase 1 prebuilt bundle uses its
+web-only Compose workflow after helper setup.
+`Start-AnyPS5.cmd` wraps prerequisite checks, helper installation, Compose readiness,
+browser opening and short-lived pairing. See [Getting started](../user/USAGE.md#getting-started).
+
+Build a fresh Phase 1 distribution without rebuilding the engine:
+
+```powershell
+cmake --build b --target launcher_web_package --parallel 8
+```
+
+This builds only `desktop_helper`, then writes a fresh folder and ZIP under
+`ANYPS5_LAUNCHER_PACKAGE_ROOT`. The allowlisted bundle includes the statically linked
+helper, Compose app, setup/start/pair scripts, licences, usage guide and SHA-256
+manifest. It excludes games, user state, credentials, engine/runtime and build
+caches. End users need Windows and Docker Desktop, with no development toolchain.
+This is distinct from `launcher_portable`, which packages the native engine.
+
+`tools/launcher/TestsBrowser.py` is an optional real Chromium integration test.
+Install its development dependency with `python -m pip install playwright==1.56.0`
+and `python -m playwright install chromium`. Pass `--helper <installed-exe>`,
+`--config <helper.conf>`, `--folder <prepared-root>` and `--screenshots <external-dir>`.
+It exercises first-run pairing through a new browser context, quoted paste, scan
+review, library/details/navigation, laptop/narrow layouts and keyboard focus.
+`--add` adds reviewed games; `--launch <title>...` launches and waits for each game
+while an operator verifies output and closes it. Use isolated collection state for
+fixture writes. Do not store screenshots or test logs in the repository.
+
+For isolated bundle startup testing, invoke its `tools/launcher/Start-Web.ps1` with
+`-NoBrowser -NoStartup -Port 8767 -ProjectName anyps5-phase1-test`, and explicit
+`-CollectionDirectory`, `-StateDirectory`, `-InstallDirectory` outside the checkout.
+This leaves the primary per-user helper, sign-in shortcut and real library intact.
+Remove only that test project's containers with `docker compose -p anyps5-phase1-test down`.
+Use the same explicit directories and `-NoStartup -Uninstall` for its helper.
+
+
 ## Windows setup and troubleshooting
 
 The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
@@ -485,9 +583,15 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
 - `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
+<<<<<<< Updated upstream
 
 ## Public-header archives
 
 `python3 tools/package_release.py --platform headers --version v1 --output dist` packages the public headers, their project includes and `LICENSE` without a build directory. To reproduce the ZIP and TAR.GZ archives with the same Python and zlib versions, set [`SOURCE_DATE_EPOCH`](https://reproducible-builds.org/specs/source-date-epoch/) to the same ASCII decimal integer from `0` through `4294967295`. Invalid values fail before staging or replacing outputs. Without the variable, archive metadata keeps its existing behavior.
 
 With the variable set, archive members have mode `0644`, TAR ownership is zero with empty owner names, and TAR and gzip timestamps use the selected epoch. ZIP timestamps use UTC, round down to two-second precision and clamp dates before 1980 to 1980-01-01. The gzip header omits the original filename. Source bytes, permissions and modification times remain unchanged. This controls header archive metadata; it does not establish reproducible native binaries or identical compressed bytes across Python or zlib versions.
+=======
+# Container-built Windows distribution
+
+This fork can build the full Windows engine, native launcher and desktop helper inside Linux containers. See [DOCKER](../user/DOCKER.md) for the Compose workflow, dependency lock and exported artifacts. The existing native build instructions remain available below.
+>>>>>>> Stashed changes

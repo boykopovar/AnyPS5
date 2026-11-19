@@ -2,6 +2,8 @@
 
 # About
 
+For this fork's local Windows library and complete engine build in Linux containers, see [AnyPS5 with Docker](docs/user/DOCKER.md).
+
 Tool for automatic executables porting to Linux and Windows.
 
 The relinker-only build runs on macOS, including Apple silicon.

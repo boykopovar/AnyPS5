@@ -1,0 +1,5 @@
+AnyPS5 Desktop Helper 1
+C:\path\to\AnyPS5\.local\launcher
+C:\path\to\AnyPS5\.local\launcher-web
+C:\path\to\AnyPS5\.local\launcher-web\auth.token
+http://127.0.0.1:8766

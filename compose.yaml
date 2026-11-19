@@ -1,0 +1,55 @@
+name: anyps5-launcher
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: tools/engine/Dockerfile
+      args:
+        ANYPS5_UPSTREAM_REF: ${ANYPS5_UPSTREAM_REF:-main}
+        ANYPS5_BUILD_JOBS: ${ANYPS5_BUILD_JOBS:-4}
+        ANYPS5_CACHE_SCOPE: ${ANYPS5_CACHE_SCOPE:-default}
+    volumes:
+      - ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}:/artifacts
+      - ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}:/web-state
+    restart: "no"
+  web:
+    depends_on:
+      engine:
+        condition: service_completed_successfully
+    build:
+      context: .
+      dockerfile: tools/launcher/web/Dockerfile
+    ports:
+      - "127.0.0.1:${ANYPS5_WEB_PORT:-8766}:8765"
+    environment:
+      ANYPS5_WEB_ORIGINS: "http://127.0.0.1:${ANYPS5_WEB_PORT:-8766},http://localhost:${ANYPS5_WEB_PORT:-8766}"
+      ANYPS5_WEB_STATE: /state/backend
+      ANYPS5_WEB_TOKEN_FILE: /state/auth.token
+      ANYPS5_ENGINE_ROOT: /engine
+    volumes:
+      - type: bind
+        source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}
+        target: /state
+      - type: bind
+        source: ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}
+        target: /engine
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=180)"]
+      interval: 10s
+      timeout: 185s
+      retries: 3
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

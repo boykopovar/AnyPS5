@@ -1,5 +1,207 @@
 # Relinker usage
 
+## Windows launcher
+
+The full Windows build produces `tools/launcher/AnyPS5Launcher.exe` under the
+build directory. It manages already converted games; it does not convert or
+decrypt inputs. **Getting started** in the launcher describes the controls.
+For the local `b` build, double-click `Start-Launcher.cmd` at the repository root.
+It opens that build's launcher without changing the collection settings.
+
+- **Add game** accepts an existing `Launch.cmd`, `.bat`, or converted `.exe`.
+- **Library folders** saves multiple roots selected with the Windows folder
+  picker. **Rescan all** checks each root and up to five nested levels for `app0`,
+  `libs`, and an unambiguous launch file. It prefers `Launch.cmd`, detects existing
+  game folders without replacing their settings, and skips ambiguous outputs.
+  Missing roots are shown with their path. Original `eboot.bin` folders are
+  reported as needing preparation, not registered as launch targets.
+- **Settings** preserves the working directory and supports GPU, driver JSON,
+  window mode, one direct-executable argument per line, and child-only environment
+  overrides. `KEY=value` sets an environment variable; `-KEY` removes it.
+  `{game}` and `{launcher}` expand to the working and collection directories.
+  Batch arguments remain in the existing script, which may override settings.
+- **Logs** opens per-game session folders with output, target, working directory
+  and launch-process exit code. A direct launch defaults `ANYPS5_LOG_FILE` to its
+  session's `runtime.log` unless already set. Existing scripts keep their own logs.
+- **Remove entry** changes only the library record. Closing the launcher leaves
+  launched games running and ends monitoring. A running process or a zero exit
+  code does not confirm gameplay. Set the test result after testing the game.
+
+Normal builds use the persistent collection selected by
+`ANYPS5_LAUNCHER_DATA_ROOT`, defaulting to `.local/launcher` in the checkout.
+`data/library.txt` stores UTF-8 quoted settings and `library.txt.bak` keeps the
+previous save. Corrupt files are reported and left untouched. Only one launcher
+may edit a collection at a time. Relative entries resolve from the collection;
+external entries retain their original absolute paths and working directories.
+Saved roots are stored in `data/library-folders.txt`, with a previous-copy backup.
+Removing a root does not remove games, settings, or saves.
+
+To register prepared folders without opening the GUI:
+
+```powershell
+.\b\tools\launcher\AnyPS5Launcher.exe --register 'C:\Games\AnyPS5\Games'
+```
+
+`--data-root <folder>` before other arguments selects another persistent collection.
+`--run <title-id-or-entry-id>` launches an entry and waits for its launch process.
+`--export <new-folder>` copies the registered complete working folders and
+settings into a fresh collection. Exports never replace an existing folder.
+
+An optional [portable package](../dev/BUILD.md#windows-launcher) contains
+`AnyPS5Launcher.exe`, `portable.flag`, `Games`, `data`, `logs` and converter/runtime
+tools. `portable.flag` makes the executable use its own folder as the collection.
+Move the entire package together. Keep saves, configuration, original resources,
+converted guest modules and matching DLLs with each game. Review absolute paths
+inside scripts, environment values and driver installations, and test a copy in
+a path containing spaces before retiring an old location. Packaging does not
+change CPU, Vulkan or GPU-driver requirements.
+
+## Optional Docker Compose web launcher
+
+Phase 1 provides a local game library in a Linux container and a helper in the
+signed-in Windows desktop session. Games execute on Windows with their existing
+scripts, matching runtime libraries, settings and saves. The native launcher and
+`Start-Launcher.cmd` remain independent of Docker.
+
+### Getting started
+
+1. Extract the Phase 1 bundle into a permanent, writable folder. Have Docker
+   Desktop running with Linux containers. The first build needs internet access
+   for its pinned base image. No compiler, CMake, Python or Node is needed to use
+   the bundle.
+2. Double-click `Start-AnyPS5.cmd`. It checks Docker, installs or updates the
+   current user's desktop helper, registers one sign-in startup shortcut, starts
+   Compose, waits for health and opens **http://127.0.0.1:8766**.
+3. Enter the eight-digit code displayed on the Windows desktop. The code expires
+   after two minutes and works once. Run `Pair-Browser.cmd` for another browser
+   or an expired session. Only pair a browser you opened yourself.
+4. Select **Add folder**, paste an absolute Windows Explorer folder path, and
+   select **Scan folder**. Review the results and select **Add selected games**.
+   Select **Play** in the library.
+
+In a source checkout, first build `desktop_helper` using the existing configured
+Windows build, then use the same entry point. Close games and the native launcher
+before updating the helper. Re-running setup preserves registered games and
+settings; it does not reinitialize an existing library. A helper installed for a
+different app folder is not silently reassigned: use that app folder, or uninstall
+its helper first. Only one primary helper is installed per Windows user.
+
+### Pairing and local access
+
+The permanent helper credential stays in `.local/launcher-web/auth.token`,
+restricted to the current user and SYSTEM and mounted read-only into the backend.
+The desktop pairing action exchanges it for a short-lived, single-use code.
+Pairing attempts are rate-limited. The browser receives an eight-hour HttpOnly,
+SameSite=Strict cookie. **Settings > Unpair this browser** revokes that session.
+Credentials are excluded from packages, images, URLs and application logs.
+
+The default service binds only `127.0.0.1:8766`. Browser Host and Origin checks,
+authenticated state changes and fixed helper actions remain enforced. The helper
+uses outbound loopback HTTP without redirects or proxies, never a remote shell.
+For another port, pass `-Port <port>` to `Start-AnyPS5.cmd`; use that same port on
+subsequent starts. Set `ANYPS5_WEB_PORT` in the shell or an existing `.env` when
+using Compose directly. Do not overwrite an existing `.env`.
+
+### Folders, preparation and availability
+
+Pasting a plain or quoted Explorer path is sufficient. Spaces, Unicode and valid
+punctuation are preserved. Input is validated on Windows as a path, never as shell
+text or a Linux path. Use an absolute drive path such as `D:\My Games`. UNC and
+device paths are rejected; network storage needs a mapped drive accessible to the
+signed-in desktop user. **Browse on Windows** is optional; after choosing a folder,
+use **Folders > Rescan all folders** to discover games there.
+
+Discovery accepts a game itself or nested collections up to five directory levels,
+with a 20,000-folder/entry bound and no directory-link traversal. It skips game
+assets, libraries, caches, build folders and saves. A prepared folder needs `app0`,
+`libs` and a Windows PE executable; an existing `Launch.cmd` takes priority.
+An arbitrary executable alone is not treated as a game. Original ELF/SELF/package
+inputs and other-platform outputs show **Needs preparation** and cannot be added.
+Phase 1 does not extract, decrypt, convert, download or upgrade games or runtimes.
+
+Scans report real folders visited and can be cancelled. Roots are saved before
+scanning; games are added only after review. **Folders** retains multiple roots,
+rescans and reports unavailable drives. Removing a root changes discovery only;
+it never deletes games or library entries. Duplicate locations, case variants and
+overlapping roots preserve the existing working registration. Copies in different
+locations remain separate, even with the same title ID.
+
+The library supports search, sorting, local PNG artwork from `app0/sce_sys/icon0.png`
+(up to 512 KiB per image with a bounded snapshot budget), and title fallbacks.
+**Details** contains paths, compatibility records and session results.
+**Available** means the folder and launch file exist; it does not verify gameplay.
+Games remain listed when a drive or helper disconnects. Reconnect the drive/helper
+to restore launch controls. Missing or inaccessible paths produce actionable errors.
+
+### Ownership, launch state and diagnostics
+
+Both interfaces share `.local/launcher/data/library.txt` and `library-folders.txt`.
+The native UI holds an exclusive collection lock while open. The helper takes the
+same lock for short transactions and reloads settings before each operation.
+During native ownership the browser retains its previous snapshot and disables
+changes. Corrupt or unwritable data is reported rather than overwritten.
+
+Play accepts only a registered game ID. Pending requests and running sessions block
+duplicate launches. Windows job objects track the process tree, so a detached child
+keeps the game active after its script exits. Existing script working directories,
+arguments, environment and game-local log destinations are preserved. Process-tree
+completion reports the wrapper's exit code; zero does not establish compatibility.
+Script pauses or other descendants can keep a session active after its game closes.
+
+Backend/container recreation does not stop a healthy game or erase the collection.
+The helper reconnects with its live sessions; delivered commands are not replayed.
+After a helper restart during a game, the UI reports uncertain status and blocks
+another launch until you check Windows and confirm closure in that game's details.
+Automatic process monitoring recovery after a helper restart is not implemented.
+The optional native folder picker pauses helper heartbeats while its modal dialog
+is open. Close that dialog to resume. **Settings > Activity & diagnostics** shows
+scan and launch results; game details expose session log locations.
+
+### Subsequent use and removal
+
+Run `Start-AnyPS5.cmd` again, or, with the helper already installed:
+
+```powershell
+docker compose up -d
+```
+
+Rebuild source changes with `docker compose up -d --build --wait`.
+`docker compose ps` reports health. `docker compose down` stops the web app without
+removing host state or terminating a running game.
+
+Run `Start-AnyPS5.cmd -Uninstall` to remove the helper executable and its sign-in
+shortcut. Stop Compose separately with `docker compose down`. Games, saves,
+configuration, logs and credentials are retained. Keep the app's `.local` folder
+when updating its files. Do not move the app folder while its helper uses it.
+
+### Persistent storage
+
+| Location | Contents |
+| --- | --- |
+| `.local/launcher/data/` | Shared game settings, roots, backups and ownership lock |
+| `.local/launcher/logs/<entry-id>/<session-id>/` | Launch output and exit records |
+| `%LOCALAPPDATA%/AnyPS5/DesktopHelper/` | Stable helper and `helper.conf` |
+| `.local/launcher-web/auth.token` | Permanent helper credential |
+| `.local/launcher-web/backend/backend.sqlite3` | Browser sessions, pairing digests, snapshot and commands |
+| `.local/launcher-web/active-sessions.txt` | Session IDs requiring confirmation after helper restart |
+| `.local/launcher-web/helper.log` | Connection and action diagnostics |
+| Each registered game folder | Existing runtime, resources, settings, saves and game-local logs |
+
+Persistent state is outside container layers and disposable build output. Games,
+credentials, `.local`, packages and build caches are excluded from Docker context
+and the allowlisted Phase 1 distribution. The backend mount contains only its
+state; its remaining filesystem is read-only.
+
+### Container engine build
+
+Phase 2 implements the complete Windows engine build in Linux containers, locked dependency hydration for source archives, versioned engine export and generated helper installation. See [DOCKER](DOCKER.md) for startup, updates, artifact locations and observed validation. The Phase 1 prebuilt library bundle remains available as a separate workflow.
+
+Automatic guided conversion remains follow-on work for suitable user-supplied
+inputs. Building an engine in a container and running a
+graphical game in one are separate projects. Graphical container execution needs
+its own target-OS, GPU, display, audio, input, memory and persistence validation.
+Existing Windows output cannot run unchanged in a Linux execution image.
+
 [**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
 
 ### Browser folder output
@@ -876,3 +1078,6 @@ By default, imports use the library export naming rules: `_nid_no_patch` and `SD
 `nid_patcher --exec --only-sce <file>` restricts renaming to names starting with `sce` (case-insensitive) or ending with `_nid_postfix`. Both modes accept `--preserve-exports <unpatched-library>` or `--preserve-export-list <export-list>` for explicit exclusions. The existing `nid_patcher <library_name> <file>` mode is unchanged.
 
 Unsupported layouts fail before the input file is written.
+# This fork's Docker launcher
+
+See [DOCKER](DOCKER.md) for the complete Windows engine/container build, generated helper setup and local browser launcher. Games still execute on Windows and existing prepared games retain their matching runtimes.

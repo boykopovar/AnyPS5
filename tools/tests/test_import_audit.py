@@ -3097,6 +3097,15 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<qQ", image, dynamic + 16, 0, 0)
         self.assertEqual(import_audit.elf_imports("module.prx", image)[1], {"libc.prx"})
 
+    def test_read_modules_can_exclude_the_main_executable(self):
+        main = self.work.modules / 'eboot.bin'
+        main.write_bytes(build_elf([], []))
+        module = self.work.modules / 'transport.prx.guest.prx'
+        module.write_bytes(build_pe(['transport']))
+        imports, exports = import_audit.read_modules([self.work.modules], [main])
+        self.assertEqual(set(imports), {module.name})
+        self.assertIn('transport', exports)
+
     def test_read_modules_uses_pe_exports_and_no_host_imports(self):
         module = self.work.modules / "libc.prx.guest.prx"
         module.write_bytes(build_pe(["sceKernelGettimeofday#guest", "sceKernelSleep"]))

@@ -1,0 +1,62 @@
+set(ANYPS5_LAUNCHER_DATA_ROOT "${CMAKE_SOURCE_DIR}/.local/launcher" CACHE PATH "Persistent launcher collection outside the build tree")
+set(ANYPS5_LAUNCHER_PACKAGE_ROOT "${CMAKE_SOURCE_DIR}/.local/launcher-packages" CACHE PATH "Parent for fresh portable launcher packages")
+option(ANYPS5_LAUNCHER_PACKAGE_GAMES "Copy registered games into each fresh portable package" OFF)
+string(TOLOWER "${CMAKE_BINARY_DIR}" launcher_build_path)
+foreach(launcher_storage IN ITEMS ANYPS5_LAUNCHER_DATA_ROOT ANYPS5_LAUNCHER_PACKAGE_ROOT)
+    string(TOLOWER "${${launcher_storage}}" launcher_storage_path)
+    cmake_path(IS_PREFIX launcher_build_path "${launcher_storage_path}" NORMALIZE launcher_storage_in_build)
+    if(launcher_storage_in_build)
+        message(FATAL_ERROR "${launcher_storage} must be outside the build tree to preserve games and saves")
+    endif()
+endforeach()
+add_library(anyps5_launcher_core STATIC Launcher.cpp)
+target_compile_definitions(anyps5_launcher_core PUBLIC UNICODE _UNICODE NOMINMAX "ANYPS5_LAUNCHER_DATA_ROOT=L\"${ANYPS5_LAUNCHER_DATA_ROOT}\"")
+target_include_directories(anyps5_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(anyps5_launcher_core PUBLIC ole32 shell32 uuid)
+add_executable(launcher WIN32 Main.cpp)
+set_target_properties(launcher PROPERTIES OUTPUT_NAME AnyPS5Launcher)
+target_link_libraries(launcher PRIVATE anyps5_launcher_core comdlg32 user32 gdi32)
+add_executable(desktop_helper WIN32 DesktopHelper.cpp)
+set_target_properties(desktop_helper PROPERTIES OUTPUT_NAME AnyPS5DesktopHelper)
+if(NOT ANYPS5_ENGINE_REVISION)
+    set(ANYPS5_ENGINE_REVISION native-source)
+endif()
+target_compile_definitions(desktop_helper PRIVATE "ANYPS5_HELPER_REVISION=\"${ANYPS5_ENGINE_REVISION}\"")
+target_link_libraries(desktop_helper PRIVATE anyps5_launcher_core winhttp user32)
+if(MINGW)
+    target_link_options(launcher PRIVATE -municode -static -static-libgcc -static-libstdc++)
+    target_link_options(desktop_helper PRIVATE -municode -static -static-libgcc -static-libstdc++)
+endif()
+if(BUILD_TESTING)
+    add_test_executable(launcher_tests Tests.cpp)
+    configure_host_test_executable(launcher_tests)
+    target_link_libraries(launcher_tests PRIVATE anyps5_launcher_core)
+    add_test(NAME launcher_windows COMMAND launcher_tests)
+    set_tests_properties(launcher_windows PROPERTIES TIMEOUT 30)
+endif()
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME launcher_web_backend COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/TestsWeb.py")
+    set_tests_properties(launcher_web_backend PROPERTIES TIMEOUT 30)
+endif()
+if(Python3_Interpreter_FOUND AND TARGET relinker)
+    set(launcher_package_options)
+    if(ANYPS5_LAUNCHER_PACKAGE_GAMES)
+        list(APPEND launcher_package_options --include-games)
+    endif()
+    add_custom_target(launcher_portable
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/package_launcher.py"
+            --build "${CMAKE_BINARY_DIR}" --launcher "$<TARGET_FILE:launcher>"
+            --converter "$<TARGET_FILE:relinker>" --collection "${ANYPS5_LAUNCHER_DATA_ROOT}"
+            --output "${ANYPS5_LAUNCHER_PACKAGE_ROOT}" ${launcher_package_options}
+        DEPENDS launcher relinker libs
+        VERBATIM)
+endif()
+
+if(Python3_Interpreter_FOUND)
+    add_custom_target(launcher_web_package
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/package_web.py"
+            --helper "$<TARGET_FILE:desktop_helper>" --output "${ANYPS5_LAUNCHER_PACKAGE_ROOT}"
+        DEPENDS desktop_helper
+        VERBATIM)
+endif()

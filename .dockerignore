@@ -1,0 +1,13 @@
+**
+!tools/
+!tools/launcher/
+!tools/launcher/web/
+!tools/launcher/web/Dockerfile
+!tools/launcher/web/server.py
+!tools/launcher/web/static/
+!tools/launcher/web/static/index.html
+!tools/launcher/web/static/app.js
+!tools/launcher/web/static/app.css
+!tools/engine/
+!tools/engine/bundle.py
+!tools/engine/pe.py
