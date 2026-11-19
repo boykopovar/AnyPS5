@@ -1,12 +1,21 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
 
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using Jsc::WtfAbi::StringImpl;
 using Jsc::WtfAbi::StringView;
@@ -325,6 +334,63 @@ void TestDefaultWritingDirection() {
     Check(ThrowsInvalidArgument([] { _ZN3WTF10StringImpl23defaultWritingDirectionEPb(nullptr, nullptr); }), __LINE__);
 }
 
+unsigned char* MapGuardedPages() {
+#ifdef _WIN32
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Check(pages != nullptr, __LINE__);
+    DWORD previous = 0;
+    Check(VirtualProtect(pages + 4096, 4096, PAGE_NOACCESS, &previous) != 0, __LINE__);
+#else
+    void* mapped = mmap(nullptr, 2 * 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Check(mapped != MAP_FAILED, __LINE__);
+    auto* pages = static_cast<unsigned char*>(mapped);
+    Check(mprotect(pages + 4096, 4096, PROT_NONE) == 0, __LINE__);
+#endif
+    return pages;
+}
+
+void UnmapGuardedPages(unsigned char* pages) {
+#ifdef _WIN32
+    Check(VirtualFree(pages, 0, MEM_RELEASE) != 0, __LINE__);
+#else
+    Check(munmap(pages, 2 * 4096) == 0, __LINE__);
+#endif
+}
+
+template<typename Function> bool RejectsKeepingErrno(Function function) {
+    errno = 71;
+    return ThrowsInvalidArgument(function) && errno == 71;
+}
+
+void TestProtocolIsGuestPointers() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{unmapped, 5, true}, "http"); }), __LINE__);
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{unmapped, 5, false}, "http"); }), __LINE__);
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(View("http:"), unmapped); }), __LINE__);
+    Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{unmapped, 0, true}, unmapped), __LINE__);
+
+    unsigned char* pages = MapGuardedPages();
+    char* end = reinterpret_cast<char*>(pages + 4096);
+    std::memcpy(end - 5, "http", 5);
+    Check(_ZN3WTF10protocolIsENS_10StringViewEPKc(View("HTTP://a"), end - 5), __LINE__);
+    std::memcpy(end - 2, "ht", 2);
+    Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(View("hx"), end - 2), __LINE__);
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(View("http:"), end - 2); }), __LINE__);
+    std::memcpy(end - 5, " ftp:", 5);
+    Check(_ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 5, 5, true}, "ftp"), __LINE__);
+    std::memcpy(end - 5, "  ftp", 5);
+    Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 5, 5, true}, "ftp"), __LINE__);
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 5, 6, true}, "ftp"); }), __LINE__);
+    const std::u16string wide = u"ftp:";
+    std::memcpy(end - 8, wide.data(), 8);
+    Check(_ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 8, 4, false}, "ftp"), __LINE__);
+    const std::u16string unfinished = u" ftp";
+    std::memcpy(end - 8, unfinished.data(), 8);
+    Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 8, 4, false}, "ftp"), __LINE__);
+    Check(RejectsKeepingErrno([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView{end - 8, 5, false}, "ftp"); }), __LINE__);
+    UnmapGuardedPages(pages);
+}
+
 } // namespace
 
 int main() {
@@ -335,6 +401,7 @@ int main() {
     TestFindIgnoringASCIICase();
     TestStringView();
     TestProtocolIs();
+    TestProtocolIsGuestPointers();
     TestInvalidArguments();
     TestDefaultWritingDirection();
     return 0;

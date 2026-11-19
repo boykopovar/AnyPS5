@@ -102,8 +102,10 @@ Derived from Source/WTF/wtf/text/StringView.cpp@c55364d53f971f63a709976f168d932d
 
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceIcu/Properties.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -246,6 +248,33 @@ bool IsASCIIAlphaCaselessEqual(char16_t codeUnit, char expected) {
     return static_cast<int>(codeUnit | 0x20) == static_cast<int>(expected);
 }
 
+constexpr std::size_t GuestPageSize = 4096;
+
+class GuestReader {
+public:
+    GuestReader(const void* data, const char* function) : cursor(static_cast<const std::uint8_t*>(data)), function(function) {}
+
+    std::uint8_t Next() {
+        if (offset == size) {
+            size = GuestPageSize - reinterpret_cast<std::uintptr_t>(cursor) % GuestPageSize;
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk, cursor, size);
+            errno = savedErrno;
+            if (!copied) throw std::invalid_argument(function);
+            cursor += size;
+            offset = 0;
+        }
+        return chunk[offset++];
+    }
+
+private:
+    const std::uint8_t* cursor;
+    const char* function;
+    std::uint8_t chunk[GuestPageSize];
+    std::size_t offset = 0;
+    std::size_t size = 0;
+};
+
 } // namespace
 
 extern "C" {
@@ -345,15 +374,21 @@ bool APS5_VABI _ZNK3WTF10StringView8containsEPKc(const StringView* self, const c
 
 bool APS5_VABI _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView string, const char* protocol) {
     const Text text = Require(&string, __func__);
+    GuestReader units(text.data, __func__);
+    GuestReader expectedCharacters(protocol, __func__);
     bool isLeading = true;
     for (unsigned index = 0; index < text.length; ++index) {
-        const char16_t codeUnit = text[index];
+        char16_t codeUnit = units.Next();
+        if (!text.is8Bit) {
+            const std::uint8_t bytes[2] = {static_cast<std::uint8_t>(codeUnit), units.Next()};
+            std::memcpy(&codeUnit, bytes, sizeof(codeUnit));
+        }
         if (isLeading) {
             if (codeUnit <= ' ') continue;
             isLeading = false;
         } else if (codeUnit == '\t' || codeUnit == '\r' || codeUnit == '\n') continue;
         if (!protocol) throw std::invalid_argument(__func__);
-        const char expected = *protocol++;
+        const char expected = static_cast<char>(expectedCharacters.Next());
         if (!expected) return codeUnit == ':';
         if (!IsASCIIAlphaCaselessEqual(codeUnit, expected)) return false;
     }
