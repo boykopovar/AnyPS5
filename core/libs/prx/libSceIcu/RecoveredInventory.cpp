@@ -151,14 +151,6 @@ int APS5_VABI unumsys_openAvailableNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uplrules_getKeywords_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uplrules_selectWithFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ureldatefmt_formatNumeric_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

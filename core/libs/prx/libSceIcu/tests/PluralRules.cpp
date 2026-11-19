@@ -112,6 +112,132 @@ void Run() {
 
 } // namespace UplrulesOpenForType
 
+namespace UplrulesGetKeywords {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&uplrules_getKeywords_nid_postfix), UEnumeration* (APS5_VABI*)(const UPluralRules*, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+
+} // namespace
+
+void Run() {
+    const std::array<std::int32_t, 7> failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+    const std::array<std::int32_t, 4> passing{0, -128, -124, -1};
+    const auto storage = Filler();
+    const auto rules = reinterpret_cast<const UPluralRules*>(storage.data());
+
+    for (const auto incoming : failing) {
+        std::int32_t status = incoming;
+        Require(uplrules_getKeywords_nid_postfix(rules, &status) == nullptr);
+        Require(status == incoming);
+
+        status = incoming;
+        Require(uplrules_getKeywords_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == incoming);
+    }
+
+    for (const auto incoming : passing) {
+        std::int32_t status = incoming;
+        RequireThrows([&] { uplrules_getKeywords_nid_postfix(rules, &status); });
+        Require(status == incoming);
+
+        status = incoming;
+        Require(uplrules_getKeywords_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
+    }
+
+    Require(Unchanged(storage));
+    RequireThrows([&] { uplrules_getKeywords_nid_postfix(rules, nullptr); });
+    RequireThrows([&] { uplrules_getKeywords_nid_postfix(nullptr, nullptr); });
+}
+
+} // namespace UplrulesGetKeywords
+
+namespace UplrulesSelectWithFormat {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&uplrules_selectWithFormat_nid_postfix), std::int32_t (APS5_VABI*)(const UPluralRules*, double, const UNumberFormat*, char16_t*, std::int32_t, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+
+} // namespace
+
+void Run() {
+    const std::array<std::int32_t, 7> failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+    const std::array<std::int32_t, 4> passing{0, -128, -124, -1};
+    const auto storage = Filler();
+    const auto rules = reinterpret_cast<const UPluralRules*>(storage.data());
+    const auto format = reinterpret_cast<const UNumberFormat*>(storage.data() + 4);
+    const auto keyword = reinterpret_cast<char16_t*>(const_cast<std::uint32_t*>(storage.data()));
+
+    for (const auto incoming : failing) {
+        std::int32_t status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, 8, &status) == 0);
+        Require(status == incoming);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, nullptr, nullptr, 4, &status) == 0);
+        Require(status == incoming);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, -1, &status) == 0);
+        Require(status == incoming);
+    }
+
+    for (const auto incoming : passing) {
+        std::int32_t status = incoming;
+        RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, 8, &status); });
+        Require(status == incoming);
+
+        status = incoming;
+        RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, nullptr, 0, &status); });
+        Require(status == incoming);
+
+        status = incoming;
+        RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, 0, &status); });
+        Require(status == incoming);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, format, keyword, 8, &status) == 0);
+        Require(status == IllegalArgument);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, nullptr, keyword, 8, &status) == 0);
+        Require(status == IllegalArgument);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, nullptr, 4, &status) == 0);
+        Require(status == IllegalArgument);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, nullptr, -1, &status) == 0);
+        Require(status == IllegalArgument);
+
+        status = incoming;
+        Require(uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, -2, &status) == 0);
+        Require(status == IllegalArgument);
+    }
+
+    Require(Unchanged(storage));
+    RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(rules, 1.5, format, keyword, 8, nullptr); });
+    RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, nullptr, nullptr, -1, nullptr); });
+}
+
+} // namespace UplrulesSelectWithFormat
+
 namespace PluralRulesGuestPointers {
 
 void Run() {
@@ -158,6 +284,14 @@ void Run() {
     rejectsRuntime([&] { uplrules_openForType_nid_postfix("en", 2, roZero); });
     IcuRecoveredTest::Require(uplrules_openForType_nid_postfix("en", 2, roFailing) == nullptr);
 
+    rejectsRuntime([&] { uplrules_getKeywords_nid_postfix(nullptr, badStatus); });
+    rejectsRuntime([&] { uplrules_getKeywords_nid_postfix(nullptr, roZero); });
+    IcuRecoveredTest::Require(uplrules_getKeywords_nid_postfix(nullptr, roFailing) == nullptr);
+
+    rejectsRuntime([&] { uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, nullptr, nullptr, 0, badStatus); });
+    rejectsRuntime([&] { uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, nullptr, nullptr, 0, roZero); });
+    IcuRecoveredTest::Require(uplrules_selectWithFormat_nid_postfix(nullptr, 1.5, nullptr, nullptr, 0, roFailing) == 0);
+
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);
 #else
@@ -170,5 +304,7 @@ void Run() {
 void CheckIcuPluralRules() {
     UplrulesClose::Run();
     UplrulesOpenForType::Run();
+    UplrulesGetKeywords::Run();
+    UplrulesSelectWithFormat::Run();
     PluralRulesGuestPointers::Run();
 }

@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [ICU plural rules exports]
+
+- [ICU plural rules exports](../../../core/libs/prx/libSceIcu/PluralRules.cpp) implement only the early returns of ICU 68.2 ([upluralrules.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/i18n/upluralrules.cpp): `uplrules_close` 74-78, `uplrules_getKeywords` 159-180, `uplrules_openForType` 68-72, `uplrules_selectWithFormat` 138-157). A failing `UErrorCode` (above zero) returns early with the status untouched; `uplrules_close` ignores a null handle, `uplrules_getKeywords` sets `U_ILLEGAL_ARGUMENT_ERROR` for a null handle, and `uplrules_selectWithFormat` sets it for a null handle or number format, a null keyword with a nonzero capacity or a negative capacity. Non-null handles, valid calls, a null `UErrorCode` and every path that needs `UPluralRules` objects and plural data throw `NotImplemented_nid_no_patch`. Unverified on a console. Closes when: those are implemented and compared with the console.

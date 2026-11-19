@@ -190,7 +190,9 @@ UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::in
 UNumberingSystem* APS5_VABI unumsys_openByName_nid_postfix(const char* name, std::int32_t* status);
 
 void APS5_VABI uplrules_close_nid_postfix(UPluralRules* uplrules);
+UEnumeration* APS5_VABI uplrules_getKeywords_nid_postfix(const UPluralRules* uplrules, std::int32_t* status);
 UPluralRules* APS5_VABI uplrules_openForType_nid_postfix(const char* locale, std::int32_t type, std::int32_t* status);
+std::int32_t APS5_VABI uplrules_selectWithFormat_nid_postfix(const UPluralRules* uplrules, double number, const UNumberFormat* fmt, char16_t* keyword, std::int32_t capacity, std::int32_t* status);
 
 void APS5_VABI ureldatefmt_close_nid_postfix(URelativeDateTimeFormatter* reldatefmt);
 std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status);
