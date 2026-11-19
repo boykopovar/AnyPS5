@@ -1175,10 +1175,8 @@ int APS5_VABI _ZN3WTF13ReadWriteLock11writeUnlockEv();
 int APS5_VABI _ZN3WTF13ReadWriteLock8readLockEv();
 int APS5_VABI _ZN3WTF13ReadWriteLock9writeLockEv();
 int APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc();
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE();
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPN3JSC9CodeBlockE();
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE();
@@ -4734,7 +4732,6 @@ int APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLock
 int APS5_VABI _ZNK3WTF15AutomaticThread4nameEv();
 int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE();
-int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF6Thread4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase16secondsUntilFireEv();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase8isActiveEv();

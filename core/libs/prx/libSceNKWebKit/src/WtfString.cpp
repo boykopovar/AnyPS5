@@ -1374,6 +1374,11 @@ String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const URL* self) {
     return result;
 }
 
+void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const URL* self, NKWebKit::WtfAbi::PrintStream& out) {
+    const auto& url = Checked(self);
+    NKWebKit::WtfAbi::WtfPrintUtf8Atomically_nid_no_patch(out, View(url.impl), "String");
+}
+
 StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const URL* self) {
     const auto& url = Checked(self);
     return Slice(View(url.impl), url.userStart, url.userEnd - url.userStart);

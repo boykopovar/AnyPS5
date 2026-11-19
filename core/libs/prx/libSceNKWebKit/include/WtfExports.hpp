@@ -8,6 +8,7 @@
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
+#include "prx/libSceNKWebKit/include/WtfPrintStreamExports.hpp"
 #include "prx/libSceNKWebKit/src/YarrErrorCodeAbi.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -330,6 +331,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDyn
 WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(NKWebKit::WtfAbi::StringView dataURL);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const NKWebKit::WtfAbi::URL* self, unsigned length);
+void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::PrintStream& out);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
