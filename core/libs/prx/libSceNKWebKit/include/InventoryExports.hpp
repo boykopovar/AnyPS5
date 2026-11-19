@@ -674,12 +674,7 @@ int APS5_VABI _ZN3JSC13RuntimeMethodC1ERNS_2VMEPNS_9StructureEPNS_8Bindings6Meth
 int APS5_VABI _ZN3JSC13RuntimeMethodC2ERNS_2VMEPNS_9StructureEPNS_8Bindings6MethodE();
 int APS5_VABI _ZN3JSC13ShadowChicken16functionsOnStackEPNS_14JSGlobalObjectEPNS_9CallFrameE();
 int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMEPKc();
-int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMEPNS_22DeferredWatchpointFireE();
 int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMERKNS_10FireDetailE();
-int APS5_VABI _ZN3JSC13WatchpointSetC1ENS_15WatchpointStateE();
-int APS5_VABI _ZN3JSC13WatchpointSetC2ENS_15WatchpointStateE();
-int APS5_VABI _ZN3JSC13WatchpointSetD1Ev();
-int APS5_VABI _ZN3JSC13WatchpointSetD2Ev();
 int APS5_VABI _ZN3JSC13iteratorValueEPNS_14JSGlobalObjectENS_7JSValueE();
 int APS5_VABI _ZN3JSC14JSGlobalObject13clearRareDataEPNS_6JSCellE();
 int APS5_VABI _ZN3JSC14JSGlobalObject14exposeDollarVMERNS_2VME();

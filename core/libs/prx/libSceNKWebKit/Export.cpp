@@ -11268,27 +11268,7 @@ int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMEPNS_22DeferredWatchpointFireE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC13WatchpointSet11fireAllSlowERNS_2VMERKNS_10FireDetailE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC13WatchpointSetC1ENS_15WatchpointStateE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC13WatchpointSetC2ENS_15WatchpointStateE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC13WatchpointSetD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC13WatchpointSetD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
