@@ -77,9 +77,41 @@ void WriteResult(char* buffer, const char* bytes, std::size_t size, const char* 
     errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable result buffer");
 }
+
+char DefaultUiMethodName[] = "OpenSSL default user interface";
+
+int APS5_VABI OpenConsole(void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL open_console");
+}
+
+int APS5_VABI WriteString(void*, void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL write_string");
+}
+
+int APS5_VABI ReadString(void*, void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL read_string");
+}
+
+int APS5_VABI CloseConsole(void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL close_console");
+}
+
+LibreSslUiMethod DefaultUiMethod {
+    DefaultUiMethodName,
+    OpenConsole,
+    WriteString,
+    nullptr,
+    ReadString,
+    CloseConsole,
+    nullptr,
+};
 }
 
 extern "C" {
+LibreSslUiMethod* APS5_VABI UI_OpenSSL_nid_postfix(void) {
+    return &DefaultUiMethod;
+}
+
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
     const std::string text = name ? GuestText(name, __func__, "name") : std::string();
     auto* method = static_cast<LibreSslUiMethod*>(malloc_nid_postfix(sizeof(LibreSslUiMethod)));
