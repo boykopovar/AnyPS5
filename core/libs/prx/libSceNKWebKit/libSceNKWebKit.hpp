@@ -67,6 +67,7 @@
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/RegionDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
