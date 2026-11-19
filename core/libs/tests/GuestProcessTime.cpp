@@ -29,6 +29,10 @@ int main(int argc, char** argv) {
         const std::uint64_t nativeStart = __rdtsc();
         const std::uint64_t readStart = sceKernelReadTsc();
         const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(sleptMicros);
+        if (argc > 2 && std::strcmp(argv[2], "delayed") == 0) {
+            const auto resume = until + std::chrono::microseconds(sleptMicros);
+            while (std::chrono::steady_clock::now() < resume) std::this_thread::sleep_until(resume);
+        }
         while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_until(until);
         const std::uint64_t nativeMicros = (__rdtsc() - nativeStart) * 1000000 / frequency;
         const std::uint64_t readMicros = (sceKernelReadTsc() - readStart) * 1000000 / frequency;
