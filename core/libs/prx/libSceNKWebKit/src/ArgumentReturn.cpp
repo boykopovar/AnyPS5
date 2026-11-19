@@ -402,4 +402,14 @@ void* APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentnwEm10NotNullTagPv(vo
     return third;
 }
 
+void* APS5_VABI _ZN7WebCore17FrameLoaderClientnaEmPv(std::size_t size, void* where) {
+    (void)size;
+    return where;
+}
+
+void* APS5_VABI _ZN7WebCore17FrameLoaderClientnwEmPv(std::size_t size, void* where) {
+    (void)size;
+    return where;
+}
+
 }
