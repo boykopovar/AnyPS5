@@ -1,0 +1,18 @@
+add_library(libSceWebmParserMdrw SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceWebmParserMdrw PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceWebmParserMdrw)
+
+add_library(webm_ebml STATIC EXCLUDE_FROM_ALL src/EbmlReader.cpp)
+target_include_directories(webm_ebml PUBLIC ${LIBS_INCLUDE_DIR})
+target_compile_features(webm_ebml PUBLIC cxx_std_20)
+if(MINGW)
+    target_compile_options(webm_ebml PRIVATE -fasynchronous-unwind-tables)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(webm_ebml_tests tests/EbmlReader.cpp)
+    target_link_libraries(webm_ebml_tests PRIVATE webm_ebml)
+    configure_host_test_executable(webm_ebml_tests)
+    add_test(NAME webm_ebml COMMAND webm_ebml_tests)
+    set_tests_properties(webm_ebml PROPERTIES TIMEOUT 20)
+endif()
