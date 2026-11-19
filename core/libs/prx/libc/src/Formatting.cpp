@@ -604,7 +604,7 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     if (!stream->SwitchToReading()) return EOF;
     const int result = ScanSource(StreamSource(native), format, secure, nextPointer, nextCapacity);
     stream->SyncStatus();
-    if (!secure) stream->KeepDirectoryReadError(result == -1);
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
