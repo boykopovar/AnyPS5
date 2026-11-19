@@ -88,6 +88,7 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     constexpr std::uint32_t round32 = ModeRound32Bits;
     constexpr std::uint32_t round1664 = ModeRound1664Bits;
     constexpr std::uint32_t denorm32In = 0x10u;
+    constexpr std::uint32_t denorm32Out = 0x20u;
     constexpr std::uint32_t denorm32 = ModeDenorm32Bits;
     constexpr std::uint32_t denorm1664In = 0x40u;
     constexpr std::uint32_t denorm1664Out = 0x80u;
@@ -139,13 +140,14 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::VMadLegacyF32:
     case RdnaOpcode::VMacLegacyF32:
     case RdnaOpcode::VDivFmasF32:
-    case RdnaOpcode::VCvtF32F64:
     case RdnaOpcode::VCubemaF32:
     case RdnaOpcode::VDot2F32F16:
     case RdnaOpcode::VDot2cF32F16:
     case RdnaOpcode::VInterpP1F32:
     case RdnaOpcode::VInterpP2F32:
         return {round32, RoundingUseKind::Unmodelled};
+    case RdnaOpcode::VCvtF32F64:
+        return {round32 | denorm32Out, RoundingUseKind::Unmodelled};
     case RdnaOpcode::VAddF16:
     case RdnaOpcode::VSubF16:
     case RdnaOpcode::VSubrevF16:
@@ -398,13 +400,9 @@ void TranslationContext::checkRoundingUse(const RdnaInstruction& inst) const {
     if (changed == 0u) return;
     switch (use.kind) {
     case RoundingUseKind::Directed32:
+    case RoundingUseKind::Directed16:
     case RoundingUseKind::SelfChecked:
     case RoundingUseKind::Denormal:
-        return;
-    case RoundingUseKind::Directed16:
-        if (((floatMode.has_value() ? floatMode->floatMode : 0xc0u) & ModeDenorm1664Bits) != ModeDenorm1664Bits) {
-            throw std::runtime_error(where + " runs with an f16 rounding mode set at run time and f16 denormals not kept: not implemented");
-        }
         return;
     case RoundingUseKind::Unmodelled:
         if (!setsDirectedRounding(rounding.value, initial, use.fields)) return;

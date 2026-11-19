@@ -12,18 +12,6 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
-
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 std::uint32_t g_sdkVersion = 0;
 std::atomic_bool g_closed{false};
@@ -60,7 +48,7 @@ int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param) {
     if (local.userId == -1 || sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), local.userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     if (local.path[1023] != 0 || local.path[0] == 0) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     if (g_sdkVersion >= 0x04500000 && (std::strpbrk(local.path, ",*?\"<>|") != nullptr || std::strstr(local.path, "..") != nullptr)) return static_cast<int>(0x812D0003u);
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
     g_closed = false;
     g_status = COMMON_DIALOG_STATUS_RUNNING;
     return 0;
@@ -103,7 +91,7 @@ int APS5_VABI sceUsbStorageDialogGetResult(UsbStorageDialogResult* result) {
             return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
         }
         errno = savedErrno;
-        if (size != sizeof(*result) || currentResult != COMMON_DIALOG_ERROR_BUSY) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+        if (size != sizeof(*result) || currentResult != COMMON_DIALOG_ERROR_RESULT_NONE) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     }
     const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
     const int savedErrno = errno;

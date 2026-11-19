@@ -53,6 +53,7 @@ struct DispatchVariant {
     std::array<std::uint32_t, 4> meshIndexDescriptor{};
 
     std::shared_ptr<const ShaderSnapshot> shader;
+    std::shared_ptr<const PreparedShaderState::UserDataLink> linking;
 
     AtomicSharedPtr<const Recipe> recipe;
 
@@ -64,6 +65,7 @@ struct DispatchVariant {
     std::uint32_t pushOffset = 0;
     std::vector<std::int8_t> runBases;
     std::uint64_t relocatableWords = 0;
+    std::uint64_t userWordsWalked = 0;
     std::uint64_t valueWords = 0;
     std::vector<std::array<std::uint32_t, 3>> valueSlots;
     std::vector<std::array<std::uint32_t, 3>> descriptorPatches;

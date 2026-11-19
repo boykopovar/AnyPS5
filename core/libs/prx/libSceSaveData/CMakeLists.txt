@@ -13,5 +13,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_savedata_memory_quota_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
     endif()
+    add_test_executable(guest_savedata_container_info_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataContainerInfoBounds.cpp)
+    target_include_directories(guest_savedata_container_info_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_container_info_bounds_tests PRIVATE libSceSaveData libc)
+    configure_windows_unwind(guest_savedata_container_info_bounds_tests)
+    add_test(NAME guest_savedata_container_info_bounds COMMAND guest_savedata_container_info_bounds_tests)
+    set_tests_properties(guest_savedata_container_info_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_savedata_container_info_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
+    endif()
 endif()
-

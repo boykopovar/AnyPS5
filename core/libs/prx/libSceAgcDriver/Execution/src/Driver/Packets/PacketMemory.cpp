@@ -68,6 +68,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         const bool storesNothing = (packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0;
         if (label.has_value() || storesNothing) {
             bumpEpoch(&EpochBumps::drains);
+            ++DrainEpochCounts().interrupts;
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
@@ -198,13 +199,13 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue);
+                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
                 if (reason == 0 || reason == 5) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
                     wroteOnGpu = true;
                     drained = false;
-                } else if (reason == 1) {
+                } else if (reason == 1 || (reason == 3 && opcode == 0x40 && Pm4::CopyDataSource(packet) == Pm4::CopyDataGpuClockSource && !localDevice->StoresPendingOver(store->address, bytes.size()))) {
                     GuestMemory::Write(store->address, bytes, 1);
                     ++storesOnCpu;
                     wroteOnGpu = true;
@@ -278,6 +279,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         static const bool unlockedDrain = std::getenv("APS5_NO_UNLOCKED_DRAIN") == nullptr && !drainAll;
 
         bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().packets[header == FlipPacketHeader ? DrainEpochs::Flip : opcode & 0xffu];
         std::shared_ptr<VulkanDevice> draining;
         std::uint64_t epoch = 0;
         {
@@ -468,13 +470,13 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
         reason = localDevice->WriteLabelOnGpu(address, bytes, stamp, queue);
     }
     if (reason == 0 || reason == 5 || reason == 6) {
-        noteLabelStore(address, bytes, stamp, queue);
+        noteLabelStore(address, bytes, stamp, queue, false);
         if (reason == 0) ++storesOnGpu;
         else ++storesBehindCompletions;
     } else {
         if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
         GuestMemory::Write(address, bytes, 1);
-        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue);
+        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue, false);
         ++storesOnCpu;
     }
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
@@ -509,7 +511,10 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
         bytes.assign(stored.begin(), stored.end());
         writes.emplace_back(address, address + bytes.size());
     }
-    if (endOfPipeInterrupt) bumpEpoch(&EpochBumps::drains);
+    if (endOfPipeInterrupt) {
+        bumpEpoch(&EpochBumps::drains);
+        ++DrainEpochCounts().queuedInterrupts;
+    }
     auto stored = bytes;
     auto labelBytes = bytes;
     auto enqueue =[this, queue, opcode, address, bytes = std::move(bytes), interrupt, writes, stored = std::move(stored)]() mutable {

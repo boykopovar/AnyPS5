@@ -1,6 +1,7 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include <cerrno>
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -15,6 +16,7 @@
 #include <exception>
 #include <string>
 #include <thread>
+#include <type_traits>
 
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
@@ -24,6 +26,8 @@ static bool Equal(const char* left, const char* right) { return std::strcmp(left
 
 
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
+static_assert(sizeof(SceHttpUriElement) == 80 && offsetof(SceHttpUriElement, scheme) == 8 && offsetof(SceHttpUriElement, port) == 64);
+static_assert(std::has_unique_object_representations_v<SceHttpUriElement>);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -703,7 +707,7 @@ int main(int argc, char** argv) {
     constexpr int invalidId = static_cast<int>(0x80431100);
     const auto flushCaches = [](int id, int expected) {
         Require(sceHttpAuthCacheFlush(id) == expected);
-        Require(sceHttpCookieFlush(id) == expected);
+        Require(sceHttpCookieFlush(id) == (expected == beforeInit ? invalidId : expected));
     };
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
@@ -717,8 +721,38 @@ int main(int argc, char** argv) {
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
     Require(sceHttpAbortWaitRequest(nullptr) == beforeInit);
     Require(sceHttpTerm_nid_postfix(1) == beforeInit);
+    HttpConnectionStat preStat{};
+    Require(sceHttpGetConnectionStat(1, &preStat) == beforeInit);
+    Require(sceHttpGetConnectionStat(1, nullptr) == beforeInit);
+    int cookie = 0x5a5a;
+    Require(sceHttpSetCookieEnabled(12345, 0) == invalidId);
+    Require(sceHttpSetCookieEnabled(12345, 2) == invalidId);
+    Require(sceHttpGetCookieEnabled(12345, &cookie) == invalidId && cookie == 0x5a5a);
     const int context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(context > 0);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    Require(sceHttpGetConnectionStat(1, nullptr) == invalidValue);
+    Require(sceHttpGetConnectionStat(12345, &preStat) == invalidId);
+    const int tmpl = sceHttpCreateTemplate(context, "test-agent", 1, 0);
+    Require(tmpl > 0);
+    for (const int value : {0, 1, 2, 3, 255, 256, -1, static_cast<int>(0x80000000u)}) {
+        Require(sceHttpSetCookieEnabled(tmpl, value) == 0);
+        cookie = 0x5a5a;
+        Require(sceHttpGetCookieEnabled(tmpl, &cookie) == 0 && cookie == value);
+    }
+    Require(sceHttpSetCookieEnabled(9999, 0) == invalidId);
+    cookie = 0x5a5a;
+    Require(sceHttpGetCookieEnabled(9999, &cookie) == invalidId && cookie == 0x5a5a);
+    const int conn = sceHttpCreateConnectionWithURL(tmpl, "http://127.0.0.1:8080", 0);
+    Require(conn > 0);
+    HttpConnectionStat connStat{};
+    connStat.words[0] = 0xdeadbeef;
+    Require(sceHttpGetConnectionStat(conn, &connStat) == 0);
+    Require(connStat.words[0] == 0 && connStat.words[1] == 0 && connStat.words[2] == 0 && connStat.words[3] == 0);
+    Require(sceHttpGetConnectionStat(conn, nullptr) == invalidValue);
+    Require(sceHttpDeleteConnection(conn) == 0);
+    Require(sceHttpGetConnectionStat(conn, &connStat) == invalidId);
+    Require(sceHttpDeleteTemplate(tmpl) == 0);
     flushCaches(context, 0);
     flushCaches(context, 0);
     flushCaches(0, invalidId);
@@ -735,6 +769,9 @@ int main(int argc, char** argv) {
     Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpCreateEpoll(context, reinterpret_cast<HttpEpollHandle*>(0x10)) == invalidValue);
+    Require(errno == 71);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);
@@ -832,12 +869,18 @@ int main(int argc, char** argv) {
     Require(sceHttpsSetSslVersion(1, 0) == 0);
     Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
     Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpSetCookieSendCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpAddQuery(1, "a=b") == 0);
     int sslError = -1;
     std::uint32_t sslDetail = 0xFFFFFFFFu;
     Require(sceHttpsGetSslError(1, &sslError, &sslDetail) == 0);
     Require(sslError == 0 && sslDetail == 0);
     Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
     Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpsGetSslError(1, reinterpret_cast<int*>(0x10), &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, reinterpret_cast<std::uint32_t*>(0x10)) == invalidValue);
+    Require(errno == 71);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);
@@ -870,6 +913,23 @@ int main(int argc, char** argv) {
     Require(parse(nullptr, 17) == parseInvalidResponse);
     Require(sceHttpParseStatusLine(response, 17, nullptr, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
     Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, nullptr) == parseInvalidValue);
+    errno = 71;
+    major = -1;
+    minor = -1;
+    Require(sceHttpParseStatusLine(reinterpret_cast<const char*>(0x10), 17, &major, &minor, &code, &phrase, &phraseLength) == parseInvalidResponse);
+    Require(major == 0 && minor == 0);
+    auto* const badInt = reinterpret_cast<std::int32_t*>(0x10);
+    Require(sceHttpParseStatusLine(response, 17, badInt, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
+    code = -1;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, badInt, &phrase, &phraseLength) == parseInvalidValue);
+    Require(major == 1 && minor == 1);
+    phrase = nullptr;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, reinterpret_cast<const char**>(0x10), &phraseLength) == parseInvalidValue);
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, reinterpret_cast<std::size_t*>(0x10)) == parseInvalidValue);
+    Require(code == 200 && phrase == response + 12);
+    Require(errno == 71);
+    phrase = nullptr;
+    phraseLength = 0;
     major = -1;
     minor = -1;
     Require(parse("HTTX/1.1 200 OK\n", 16) == parseInvalidResponse);
@@ -895,6 +955,9 @@ int main(int argc, char** argv) {
     Require(sceHttpUriSweepPath(nullptr, "/foo", 5) == invalidValue);
     char sweptPath[16];
     Require(sceHttpUriSweepPath(sweptPath, nullptr, 5) == invalidValue);
+    errno = 71;
+    Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));
@@ -952,6 +1015,14 @@ int main(int argc, char** argv) {
         Require(copy.scheme == pool && copy.hostname == pool + 5 && copy.path == pool + 17 && copy.username == pool + 22 && copy.password == pool + 27);
         Require(allBytes(pool + 30, 34, 0) && pool[64] == '~' && copy.query == nullptr && copy.fragment == nullptr);
         Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 4, 4, 0) && allBytes(copy.reserved, sizeof(copy.reserved), 0));
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 76, 4, 0));
+
+        SceHttpUriElement parsed;
+        char parsedPadPool[256];
+        std::memset(&parsed, 0xa5, sizeof(parsed));
+        Require(sceHttpUriParse(&parsed, "http://user:pw@example.com:8080/a/b?q=1#frag", parsedPadPool, nullptr, sizeof(parsedPadPool)) == 0);
+        Require(std::strcmp(parsed.hostname, "example.com") == 0 && parsed.port == 8080 && allBytes(parsed.reserved, sizeof(parsed.reserved), 0));
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&parsed) + 4, 4, 0) && allBytes(reinterpret_cast<const unsigned char*>(&parsed) + 76, 4, 0));
 
         std::memset(pool, '~', sizeof(pool));
         std::memset(&copy, 0x5a, sizeof(copy));

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <mutex>
 
 namespace {
@@ -14,6 +15,9 @@ int head = 0;
 int count = 0;
 bool initialized = false;
 bool opened = false;
+bool secondPortOpened = false;
+int secondPortUser = 0;
+int openedUser = 0;
 bool connected = true;
 std::uint32_t led = 0;
 std::uint32_t modifiers = 0;
@@ -25,6 +29,10 @@ constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}||:\"~<>?";
 constexpr char JIS_NORMAL[] = "1234567890\n\0\b\t -^@[]];:\0,./";
 constexpr char JIS_SHIFTED[] = "!\"#$%&'()\0\n\0\b\t =~`{}}+*\0<>?";
 constexpr char KEYPAD_DIGITS[] = "1234567890.";
+
+bool openSecondPort(std::int32_t handle) {
+    return handle == KEYBOARD_SECOND_PORT_HANDLE && secondPortOpened;
+}
 
 bool registered(int userId) {
     UserServiceRegisteredUserIdList users{};
@@ -122,12 +130,19 @@ int Initialize() {
 int Open(int userId, std::int32_t type, std::int32_t index) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (type != 0 || index != 0) return KEYBOARD_ERROR_INVALID_ARG;
+    if (type != 0 || index < 0 || index > 1) return KEYBOARD_ERROR_INVALID_ARG;
     if (userId == USER_SERVICE_USER_ID_INVALID) return KEYBOARD_ERROR_INVALID_USER_ID;
     if (userId < 0) return KEYBOARD_ERROR_INVALID_ARG;
     if (!registered(userId)) return KEYBOARD_ERROR_UNKNOWN_USER;
+    if (index == 1) {
+        if (secondPortOpened) return KEYBOARD_ERROR_ALREADY_OPENED;
+        secondPortOpened = true;
+        secondPortUser = userId;
+        return KEYBOARD_SECOND_PORT_HANDLE;
+    }
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
+    openedUser = userId;
     clearKeys();
     head = 0;
     count = 0;
@@ -138,24 +153,44 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
 int Close(std::int32_t handle) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (openSecondPort(handle)) {
+        secondPortOpened = false;
+        secondPortUser = 0;
+        return KEYBOARD_OK;
+    }
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     opened = false;
+    openedUser = 0;
     clearKeys();
     head = 0;
     count = 0;
     return KEYBOARD_OK;
 }
 
+int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (type == 0 && index == 1 && secondPortOpened && secondPortUser == userId) return KEYBOARD_SECOND_PORT_HANDLE;
+    return opened && openedUser == userId && type == 0 && index == 0 ? KEYBOARD_HANDLE : KEYBOARD_ERROR_NO_HANDLE;
+}
+
 int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
+    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr || num <= 0 || num > KEYBOARD_MAX_DATA_NUM) return KEYBOARD_ERROR_INVALID_ARG;
+    if (handle == KEYBOARD_SECOND_PORT_HANDLE) return 0;
     const int available = std::min(count, num);
+    if (available == 0) return 0;
+    std::array<KeyboardData, KEYBOARD_MAX_DATA_NUM> output{};
     for (int i = 0; i < available; ++i) {
-        data[i] = history[head];
-        head = (head + 1) % KEYBOARD_MAX_DATA_NUM;
+        output[i] = history[(head + i) % KEYBOARD_MAX_DATA_NUM];
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, output.data(), static_cast<std::size_t>(available) * sizeof(KeyboardData));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
+    head = (head + available) % KEYBOARD_MAX_DATA_NUM;
     count -= available;
     return available;
 }
@@ -163,18 +198,32 @@ int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
 int ReadState(std::int32_t handle, KeyboardData* data) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
+    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
-    *data = snapshot();
+    KeyboardData current{};
+    if (handle == KEYBOARD_SECOND_PORT_HANDLE) {
+        current.timestamp = sceKernelGetProcessTime();
+        current.length = 1;
+    } else {
+        current = snapshot();
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 
 int GetConnection(std::int32_t handle, bool* isConnected) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
+    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (isConnected == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
-    *isConnected = connected;
+    const bool state = handle == KEYBOARD_HANDLE && connected;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(isConnected, &state, sizeof(state));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 
@@ -182,9 +231,19 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (deviceId == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
-    *deviceId = -1;
-    if (handle != KEYBOARD_HANDLE || !opened || !connected) return KEYBOARD_ERROR_INVALID_HANDLE;
-    *deviceId = KEYBOARD_DEVICE_ID;
+    std::int32_t id = -1;
+    if (handle != KEYBOARD_HANDLE || !opened || !connected) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(deviceId, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
+        return KEYBOARD_ERROR_INVALID_HANDLE;
+    }
+    id = KEYBOARD_DEVICE_ID;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(deviceId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 
@@ -201,15 +260,19 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
         std::lock_guard lock(keyboardMutex);
         if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
         if (keyCode < 4 || keyCode > 231) return KEYBOARD_ERROR_INVALID_ARG;
-        if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
+        if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     }
     if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
-    *charData = {};
+    KeyboardCharData localData{};
     const std::uint16_t converted = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
-    charData->char_code = converted != 0 ? converted : keyCode;
-    charData->processed = converted != 0;
-    charData->length = charData->processed ? 1 : 0;
+    localData.char_code = converted != 0 ? converted : keyCode;
+    localData.processed = converted != 0;
+    localData.length = localData.processed ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(charData, &localData, sizeof(localData));
+    errno = savedErrno;
+    if (!copied) return KEYBOARD_ERROR_INVALID_ARG;
     return KEYBOARD_OK;
 }
 
