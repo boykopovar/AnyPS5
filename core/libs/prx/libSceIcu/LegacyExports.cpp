@@ -476,10 +476,6 @@ int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_fixFileSeparator_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6812ResourceSinkD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
