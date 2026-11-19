@@ -148,7 +148,7 @@ int main() {
     Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), plain, sizeof(plain)); }));
     Require(errno == 71);
     const long peakBefore = PeakKilobytes();
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, 0xfffffff8u); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, 0x7ffffff0u); }));
     Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     CheckRfc3394();
     CheckIv();

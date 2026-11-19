@@ -17,6 +17,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
 
 
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+ALIAS_INTERPRETER = any(is_app_execution_alias(program) for program in {sys.executable, getattr(sys, "_base_executable", sys.executable)})
+ALIAS_REASON = "the interpreter is an App Execution Alias, whose process image is outside the launched directory"
+
+
 def feature(name):
     value = getattr(title_run, name, None)
     assert value is not None, f"title_run.{name} is missing"
@@ -670,6 +678,13 @@ class PreparationTests(unittest.TestCase):
             title_run.main(common)
         self.assertFalse((self.root / "out").exists())
 
+    def test_games_without_a_title_package_are_refused(self):
+        games = self.root / "games"
+        games.mkdir()
+        with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
+            title_run.main(["--games", str(games), "--out", str(self.root / "out")])
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -1137,12 +1152,14 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 3)
 
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_of_the_last_process(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "job process list is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_ignores_processes_outside_owned(self):
         child = "import subprocess, time; time.sleep(1); subprocess.run(['cmd.exe', '/c', 'exit 0']); raise SystemExit(7)"
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
@@ -1150,6 +1167,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_follows_a_junctioned_interpreter(self):
         interpreter = Path(getattr(sys, "_base_executable", sys.executable))
         target = interpreter.parent
@@ -1632,6 +1650,26 @@ class ModuleFileTests(unittest.TestCase):
             text.write_text('hello', encoding='utf-8')
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
+
+class CheckFilesTests(unittest.TestCase):
+    def test_valid_text_and_content_entries_pass(self):
+        title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
+        title_run.check_files({})
+
+    def test_destination_must_be_a_relative_path_under_a_file_root(self):
+        for destination in ("a.txt", "other/a.txt", "../app0/a.txt", "/app0/a.txt", "app0\\a.txt"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "must be a relative path under"):
+                title_run.check_files({destination: {"text": "x"}})
+
+    def test_source_must_be_a_single_text_or_content_string(self):
+        for source in ("text", {}, {"text": 1}, {"other": "x"}, {"text": "x", "content": "y"}):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "must be"):
+                title_run.check_files({"app0/a.txt": source})
+
+    def test_content_must_stay_inside_the_content_directory(self):
+        for content in ("../x", "/x", "a\\b", "c:x"):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
+                title_run.check_files({"app0/a.txt": {"content": content}})
 
 
 if __name__ == "__main__":
