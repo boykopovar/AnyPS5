@@ -36,12 +36,14 @@ if ($dockerReady) {
     $resources = "$(& docker info --format '{{.NCPU}} {{.MemTotal}}' 2>$null)".Trim() -split ' '
     if ($resources.Count -eq 2) {
         $processors = [int]$resources[0]
-        Note ("Docker can use $processors processors and {0:N1} GB of memory." -f ([double]$resources[1] / 1GB))
+        $memory = [double]$resources[1] / 1GB
+        Note ("Docker can use $processors processors and {0:N1} GB of memory." -f $memory)
         if ($processors -lt 4) { Note "The engine build uses 4 jobs by default. Before docker compose up, run: `$env:ANYPS5_BUILD_JOBS = '$processors'" }
+        if ($memory -lt 10) { Note "A measured engine build with 4 jobs peaked at 8.5 GB of memory. With less than 10 GB for Docker, raise its memory limit or, before docker compose up, run: `$env:ANYPS5_BUILD_JOBS = '2'" }
     }
 }
 $drive = Get-PSDrive -Name ((Get-Item -LiteralPath $repository).PSDrive.Name) -ErrorAction SilentlyContinue
-if ($drive) { Note ("{0:N0} GB free on drive {1}:, where this folder is. Docker Desktop keeps its images on the drive set in its settings." -f ($drive.Free / 1GB), $drive.Name) }
+if ($drive) { Note ("{0:N0} GB free on drive {1}:, where this folder is. Building the engine from source used about 20 GB of Docker disk and 40 minutes on a 4-processor machine; Docker Desktop keeps that on the drive set in its settings." -f ($drive.Free / 1GB), $drive.Name) }
 $listener = $null
 try {
     $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback, $Port)

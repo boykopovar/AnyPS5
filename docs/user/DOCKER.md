@@ -12,7 +12,7 @@ Run this in the folder containing `compose.yaml`. A clone and a source ZIP both 
 
 Use Windows x86-64, Docker Desktop in Linux-container mode, Docker Compose v2.17 or newer and internet access for engine builds. The builder uses pinned WinLibs GCC 15.2, CMake 3.31.6, Ninja 1.12.1 and Python 3.13.3 under Wine 9 inside Linux. These tools preserve the project's required System V exception ABI. The exported engine and helper execute on Windows.
 
-The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` for a smaller Docker allocation, or increase it if your allocation supports more compiler processes. The first build needs substantial time and free Docker disk space. Cached builds still check the configured upstream ref.
+The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` for a smaller Docker allocation, or increase it if your allocation supports more compiler processes. On a GitHub-hosted runner with 4 processors and 15 GB of memory, a full engine build took 39 minutes, used about 20 GB of Docker disk (10.1 GB of images and 9.8 GB of build cache) and peaked at 8.5 GB of memory with 4 jobs. Give Docker Desktop at least 10 GB of memory for 4 jobs, or use fewer jobs. The finished engine image is 181 MB and its exported bundle and download use 562 MB. Times differ on other machines. Cached builds still check the configured upstream ref.
 
 ## First run
 
