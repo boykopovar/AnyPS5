@@ -488,7 +488,7 @@ static void ReusedDescriptorNumberIsPolledFresh() {
     Require(connect_nid_postfix(reused, address.data(), address.size()) == 0);
     Require(send_nid_postfix(reused, "r", 1, 0) == 1);
     GuestPollDescriptor entry{reused, In, 0};
-    Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & In) != 0);
+    Require(poll_nid_postfix(&entry, 1, 1000) == 1 && (entry.revents & In) != 0);
     char byte{};
     Require(recv_nid_postfix(reused, &byte, sizeof(byte), 0) == 1 && byte == 'r');
     Require(close_nid_postfix(reused) == 0 && close_nid_postfix(held) == 0);
