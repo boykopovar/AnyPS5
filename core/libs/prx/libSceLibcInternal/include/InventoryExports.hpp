@@ -223,7 +223,7 @@ void APS5_VABI libSceLibcInternalInventory_233_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_234_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_235_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_236_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_237_nid_no_patch();
+[[noreturn]] void APS5_VABI libSceLibcInternalInventory_237_nid_no_patch(const char* message);
 int APS5_VABI libSceLibcInternalInventory_239_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_244_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_245_nid_no_patch();

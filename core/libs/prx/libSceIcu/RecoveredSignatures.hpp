@@ -11,6 +11,7 @@ struct UConstrainedFieldPosition;
 struct UDateFormat;
 struct UDateIntervalFormat;
 struct UDateTimePatternGenerator;
+struct UDataMemory;
 struct UFieldPosition;
 struct UFieldPositionIterator;
 struct UFormattedDateInterval;
@@ -78,6 +79,8 @@ enum UDateTimePatternMatchOptions : std::int32_t {
 };
 
 extern "C" {
+
+void APS5_VABI udata_close_nid_postfix(UDataMemory* data);
 
 UCalendar* APS5_VABI ucal_clone_nid_postfix(const UCalendar* cal, std::int32_t* status);
 void APS5_VABI ucal_close_nid_postfix(UCalendar* cal);

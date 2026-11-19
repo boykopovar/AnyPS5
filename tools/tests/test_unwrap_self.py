@@ -588,7 +588,7 @@ class UnwrapTest(unittest.TestCase):
         try:
             os.chown(directory, -1, group)
             directory.chmod(0o2700)
-        except PermissionError as error:
+        except OSError as error:
             self.skipTest(str(error))
         if not directory.stat().st_mode & 0o2000:
             self.skipTest("filesystem does not retain the setgid bit")
@@ -1913,6 +1913,14 @@ class DecryptedCheckTests(unittest.TestCase):
 class RecordReadTests(unittest.TestCase):
     def test_read_records_returns_nothing_for_an_empty_table(self):
         self.assertEqual(unwrap_self.read_records(bytes(unwrap_self.FIRST_REGION)), [])
+
+    def test_place_segments_maps_each_segment_to_its_record_payload(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        _, _, headers = unwrap_self.parse_elf(container)
+        zero_filled = unwrap_self.place_segments(container, headers, unwrap_self.read_records(container))
+        self.assertEqual(zero_filled, b"")
+        self.assertEqual([(header["source"], header["size"]) for header in headers],
+                         [(0x800, 0x100), (0xA00, 0x80), (0xA40, 0x10)])
 
 
 if __name__ == "__main__":

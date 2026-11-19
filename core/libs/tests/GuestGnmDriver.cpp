@@ -91,6 +91,7 @@ void TestWorkloads() {
     std::uint32_t stream = 0xdeadbeefu;
     check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a workload stream without a name did not return 3 untouched");
     check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, nullptr) == 3, "a workload stream without an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
     check(sceGnmCreateWorkloadStream_nid_disambig1(0, nullptr) == 3, "a workload stream without a name and an output did not return 3");
     check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, &stream) == 0 && stream == 1, "the created workload stream is not 1");
     stream = 0xdeadbeefu;
@@ -98,6 +99,8 @@ void TestWorkloads() {
 
     check(sceGnmBeginWorkload_nid_disambig1(0, nullptr) == 3, "a workload without an output did not return 3");
     check(sceGnmBeginWorkload_nid_disambig1(0x10, nullptr) == 3, "the workload output is not checked before the stream");
+    check(sceGnmBeginWorkload_nid_disambig1(1, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, reinterpret_cast<std::uint64_t*>(1)) == 3, "the invalid workload output was not checked before the stream");
     for (const std::uint32_t known : {0u, 1u, 0xfu}) {
         std::uint64_t workload = ~0ull;
         check(sceGnmBeginWorkload_nid_disambig1(known, &workload) == 0 && workload == 1, "stream " + std::to_string(known) + " did not begin workload 1");
