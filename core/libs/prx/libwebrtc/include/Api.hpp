@@ -66,6 +66,7 @@
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
 #include "prx/libwebrtc/include/WavReader.hpp"
 #include "prx/libwebrtc/include/SdpAudioFormat.hpp"
+#include "prx/libwebrtc/include/RtcStatsReport.hpp"
 #include "prx/libwebrtc/include/AudioStreamConfig.hpp"
 
 struct WebRtcVadInstance;
@@ -143,9 +144,9 @@ std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown06(void);
 int APS5_VABI _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc14RTCStatsReport3endEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorneERKS1__nid_postfix(void);
-int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratordeEv_nid_postfix(void);
+bool APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorneERKS1__nid_postfix(const WebRtcRtcStatsReportConstIterator* iterator, const WebRtcRtcStatsReportConstIterator* other);
+WebRtcRtcStatsReportConstIterator* APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEv_nid_postfix(WebRtcRtcStatsReportConstIterator* iterator);
+const void* APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratordeEv_nid_postfix(const WebRtcRtcStatsReportConstIterator* iterator);
 int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(void);
 std::int64_t APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown07(void);
@@ -489,7 +490,7 @@ int APS5_VABI libwebrtcUnknown58(void);
 void APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigD1Ev_nid_postfix(WebRtcAudioNetworkAdaptorConfig* config);
 int APS5_VABI _ZN6webrtc32CreateBuiltinAudioEncoderFactoryEv_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown59(void);
-int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEi_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorptEv_nid_postfix(void);
+WebRtcRtcStatsReportConstIterator* APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorppEi_nid_postfix(WebRtcRtcStatsReportConstIterator* iterator, int);
+const void* APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorptEv_nid_postfix(const WebRtcRtcStatsReportConstIterator* iterator);
 
 }

@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::RTCStatsReport::ConstIterator operator++(), operator++(int), operator!=, operator* and operator->](../../../core/libs/prx/libwebrtc/src/RtcStatsReport.cpp) (libwebrtc) - nothing is checked on the console. Incrementing or dereferencing the end iterator, `operator*` on a null entry, null iterators or reports, and trees whose walk leaves the map or exceeds its size throw instead of upstream undefined behaviour. Adapted from [rtc_stats_report.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/stats/rtc_stats_report.cc), the same at M127, with its WebRTC notice and BSD licence at the top of the file. The iterator is the report pointer and a libc++ `std::map` node pointer; the report holds its count at 0, `timestamp_` at 8 and `stats_` at 16, whose root field at 24 is the end node. Nodes are the libc++ tree links, the guest `std::string` id at 32 and the `RTCStats` pointer at 72, as in `SdpAudioFormat.hpp`. Closes when: compared with the console.
