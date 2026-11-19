@@ -10,10 +10,13 @@
 
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libc/include/General.hpp"
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -50,7 +53,11 @@ void APS5_VABI ures_close(UResourceBundle* resB) {
 }
 
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB) {
-    std::memset(resB, 0, Icu68ResourceBundleSize);
+    const std::array<std::byte, Icu68ResourceBundleSize> cleared{};
+    const int savedErrno = errno;
+    const bool written = GuestWritable_nid_no_patch(resB, cleared.size()) && GuestCopyOut_nid_no_patch(resB, cleared.data(), cleared.size());
+    errno = savedErrno;
+    if (!written) throw std::invalid_argument(std::string(__func__) + ": unwritable resource bundle");
 }
 
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status) {
