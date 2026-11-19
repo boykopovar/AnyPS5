@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import io
 import os
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rebase_verify
@@ -292,6 +294,83 @@ class RebaseDiffTextTests(unittest.TestCase):
         old, _ = self.changes("before")
         new, _ = self.changes("after")
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+
+class CountHelperTests(unittest.TestCase):
+    def test_default_onto_returns_an_explicit_name_without_asking_git(self):
+        self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+    def test_commits_and_people_count_the_commits_between_two_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "base")
+            base = run_git(root, "rev-parse", "HEAD").strip()
+            for name, email in (("Alice", "alice@example.invalid"), ("Bob", "bob@example.invalid"),
+                                ("Alice", "alice@example.invalid")):
+                run_git(root, "-c", f"user.name={name}", "-c", f"user.email={email}",
+                        "commit", "-q", "--allow-empty", "-m", f"change by {name}")
+            tip = run_git(root, "rev-parse", "HEAD").strip()
+            self.assertEqual(rebase_verify.commits(root, base, tip), 3)
+            self.assertEqual(rebase_verify.people(root, base, tip), collections.Counter({
+                "Alice <alice@example.invalid>\x1fchange by Alice": 2,
+                "Bob <bob@example.invalid>\x1fchange by Bob": 1}))
+class ChangedModeTests(unittest.TestCase):
+    def commit(self, root, message):
+        run_git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", message)
+        return run_git(root, "rev-parse", "HEAD")
+
+    def test_changed_modes_reports_a_file_whose_executable_bit_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            run_git(root, "update-index", "--chmod=+x", "--", "f.txt")
+            tip = self.commit(root, "make executable")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
+
+    def test_changed_modes_is_empty_for_a_content_only_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            (root / "f.txt").write_text("y\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            tip = self.commit(root, "edit")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {})
+
+
+class ModeDifferencesTests(unittest.TestCase):
+    def differences(self, table):
+        with patch.object(rebase_verify, "changed_modes", side_effect=lambda root, base, ref: table.get((base, ref), {})):
+            return rebase_verify.mode_differences("root", table["old_base"], "old", table["new_base"], "new")
+
+    def test_preserved_mode_changes_have_no_problems(self):
+        change = {b"a": ("100644", "100755")}
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): change, ("b", "new"): change}
+        self.assertEqual(self.differences(table), [])
+
+    def test_lost_mode_change_is_reported(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): {b"a": ("100644", "100755")}}
+        self.assertEqual(self.differences(table), ["a: file mode 100644, expected 100755"])
+
+    def test_mode_already_applied_by_the_new_base_is_accepted(self):
+        change = {b"a": ("100644", "100755")}
+        table = {"old_base": "b0", "new_base": "b1", ("b0", "old"): change, ("b0", "b1"): change}
+        self.assertEqual(self.differences(table), [])
+
+    def test_mode_change_only_in_the_new_branch_is_reported(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "new"): {b"c": ("100755", "100644")}}
+        self.assertEqual(self.differences(table), ["c: file mode 100644, expected 100755"])
+
+    def test_non_utf8_paths_are_escaped(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): {b"\xff": ("100644", "100755")}}
+        self.assertEqual(self.differences(table), ["\\xff: file mode 100644, expected 100755"])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,32 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = Path(os.environ.get("TITLE_RUN_SCRIPT", ROOT / "tools/title_run.py"))
 TITLE = "PPSA00001"
+
+
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def launcher_interpreter():
+    launcher = shutil.which("py")
+    if launcher is None:
+        return None
+    result = subprocess.run([launcher, "-X", "utf8", "-c", "import sys; print(sys.executable)"], capture_output=True, encoding="utf-8", timeout=30)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def copyable_executable():
+    for program in (sys.executable, launcher_interpreter()):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return program
+    return None
+
+
+def copy_executable(program, target):
+    shutil.copy2(program, target)
+    for pattern in ("python*.dll", "vcruntime*.dll"):
+        for library in Path(program).parent.glob(pattern):
+            shutil.copy2(library, target.parent / library.name)
 
 
 def snapshot(root):
@@ -70,10 +97,14 @@ class TitleRunIdentityTests(unittest.TestCase):
         def stat(path, *arguments, **keywords):
             return original_stat(mapped(path), *arguments, **keywords)
 
+        def path_stat(path, *arguments, **keywords):
+            return original_stat(mapped(path), *arguments, **keywords)
+
         def open_directory(path, *arguments, **keywords):
             return original_open(mapped(path), *arguments, **keywords)
 
-        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(os, "open", side_effect=open_directory):
+        with mock.patch.object(os, "stat", side_effect=stat), mock.patch.object(Path, "stat", path_stat), \
+                mock.patch.object(os, "open", side_effect=open_directory):
             yield
 
     @contextlib.contextmanager
@@ -445,6 +476,21 @@ class TitleRunIdentityTests(unittest.TestCase):
             checks = self.runner.PathChecks()
             self.assertEqual(checks.directory(self.root), ((expected.st_dev, expected.st_ino), None))
 
+    def fake_relinker(self):
+        program = copyable_executable()
+        if program is None:
+            self.skipTest("no interpreter to copy as the relinker: sys.executable is an App Execution Alias and py is unavailable")
+        relinker = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
+        relinker.parent.mkdir(parents=True)
+        copy_executable(program, relinker)
+        return relinker
+
+    def test_fake_relinker_starts_outside_the_interpreter_directory(self):
+        relinker = self.fake_relinker()
+        result = subprocess.run([str(relinker), "--version"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, f"{result.returncode:#x} {result.stderr}")
+        self.assertIn("Python", result.stdout + result.stderr)
+
     def run_distinct_layout(self, physical_name, output_name):
         physical, self.out = self.root / physical_name, self.root / output_name
         physical.mkdir()
@@ -454,9 +500,7 @@ class TitleRunIdentityTests(unittest.TestCase):
         self.assertNotEqual((physical.stat().st_dev, physical.stat().st_ino), (self.out.stat().st_dev, self.out.stat().st_ino))
         package = self.package(physical / "work" / TITLE)
         before = snapshot(package)
-        relinker = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
-        relinker.parent.mkdir(parents=True)
-        shutil.copy2(sys.executable, relinker)
+        self.fake_relinker()
         (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={ROOT}\n", encoding="utf-8")
         errors, output = io.StringIO(), io.StringIO()
         handles, lock_work = [], self.runner.lock_work
