@@ -491,6 +491,17 @@ static void VerifyFailedWaitClearsCount() {
     Require(sceKernelWaitEqueue(eq, nullptr, 2, &count, &poll) == SCE_KERNEL_ERROR_EFAULT && count == 0);
     count = -1;
     Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT && count == 0);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, reinterpret_cast<const KernelUseconds*>(1)) == SCE_KERNEL_ERROR_EFAULT && count == 0);
+    Require(sceKernelWaitEqueue(eq, events, 2, reinterpret_cast<int*>(1), &poll) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelAddUserEvent(eq, 1) == SCE_OK);
+    Require(sceKernelTriggerUserEvent(eq, 1, nullptr) == SCE_OK);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 0x7fffffff, &count, &poll) == SCE_OK && count == 1 && events[0].ident == 1);
+    Require(sceKernelTriggerUserEvent(eq, 1, nullptr) == SCE_OK);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, reinterpret_cast<KernelEvent*>(1), 2, &count, &poll) == SCE_KERNEL_ERROR_EFAULT && count == 0);
+    Require(sceKernelDeleteUserEvent(eq, 1) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
     count = -1;
     Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_EBADF && count == 0);

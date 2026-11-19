@@ -11,6 +11,7 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 
@@ -111,6 +112,16 @@ static void CheckUnmappedOutputs(int box) {
     Require(sceHttp2GetCookie(box, badText, header, &required, sizeof(header)) == InvalidValue);
     Require(sceHttp2AddCookie(box, badText, "a=b", 3) == InvalidValue);
     Require(sceHttp2AddCookie(box, url, badText, 3) == InvalidValue);
+#ifndef _WIN32
+    rusage before{};
+    getrusage(RUSAGE_SELF, &before);
+#endif
+    Require(sceHttp2AddCookie(box, url, badText, std::size_t{1} << 40) == InvalidValue);
+#ifndef _WIN32
+    rusage after{};
+    getrusage(RUSAGE_SELF, &after);
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024);
+#endif
     Require(errno == 71);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
