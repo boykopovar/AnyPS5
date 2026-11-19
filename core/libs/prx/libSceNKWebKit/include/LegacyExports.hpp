@@ -742,7 +742,6 @@ int APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD2Ev();
 int APS5_VABI _ZN7WebCore5Frame17injectUserScriptsENS_23UserScriptInjectionTimeE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_KjosapOEgbc_nid_no_patch();
 int APS5_VABI _ZN7WebCore11DisplayList20FillRectWithGradientD2Ev();
-int APS5_VABI _ZNK7WebCore25BackForwardItemIdentifier7isValidEv();
 int APS5_VABI WKContextClearCachedCredentials();
 int APS5_VABI _ZN7WebCore13JSDOMRectListC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_11DOMRectListENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore4Page28setPaginationLineGridEnabledEb();

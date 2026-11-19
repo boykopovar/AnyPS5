@@ -3005,10 +3005,6 @@ int APS5_VABI _ZN7WebCore11DisplayList20FillRectWithGradientD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore25BackForwardItemIdentifier7isValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextClearCachedCredentials() {
     NotImplemented_nid_no_patch(__func__);
 }
