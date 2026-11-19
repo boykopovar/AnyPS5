@@ -8,7 +8,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool labelPacket) {
+std::uint32_t Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool labelPacket, const FlushInputs* inputs) {
     static const bool packetFlush = !LabelBatchSubmit() && std::getenv("APS5_NO_LABEL_PACKET_FLUSH") == nullptr;
     static const bool ownLock = std::getenv("APS5_LABEL_OWN_LOCK") != nullptr;
     static std::atomic<std::uint64_t> packetFlushes{0}, deadlineFlushes{0}, capFlushes{0}, boundaryReaps{0}, overdueLocks{0};
@@ -18,13 +18,13 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     if (queuedTable) noteQueuedLabels(queue);
     const bool selfLocking = !ownLock && PacketLocksItself(header);
     bool submit = false, record = false, needsRecord = false, deferredDue = false, pendingDue = false;
-    const auto pending = Graphics::Recorder::PendingLabelSince();
+    const auto pending = inputs != nullptr ? inputs->pending : Graphics::Recorder::PendingLabelSince();
 
-    thread_local std::chrono::steady_clock::time_point lastReapTry{};
-    const bool completions = completionsPending();
+    auto& lastReapTry = lastReapTries[queue == 0 ? 0 : queue - 0x20 + 1];
+    const bool completions = inputs != nullptr ? inputs->completions : completionsPending();
     const bool reapDue = completions && (reapEachPacket() || queue == 0);
 
-    const auto now = queued || pending.has_value() || reapDue ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto now = inputs != nullptr ? inputs->now : (queued || pending.has_value() || reapDue ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{});
 
     bool recordAtLock = false;
     if (queued) {
@@ -43,17 +43,19 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
         if (!labelPacket && packetFlush) submit = true;
         if (now - *pending >= labelFlushDeadline()) submit = pendingDue = true;
     }
-    const auto work = Graphics::Recorder::RecordedWorkSinceSubmit();
+    const auto work = inputs != nullptr ? inputs->work : Graphics::Recorder::RecordedWorkSinceSubmit();
     const bool capped = !submit && !record && batchCap() != 0 && work >= batchCap();
-    const bool reap = !submit && !record && !capped && reapDue && (reapEachPacket() || now - lastReapTry >= ReapInterval);
+    const bool reap = !submit && !record && !capped && reapDue && (reapEachPacket() || now - (inputs != nullptr ? inputs->reap : lastReapTry) >= ReapInterval);
+    const std::uint32_t decision = (queuedTable ? FlushDecision::Noted : 0u) | (record ? FlushDecision::Record : 0u) | (submit ? FlushDecision::Submit : 0u) | (pendingDue ? FlushDecision::Deadline : 0u)
+        | (capped ? FlushDecision::Capped : 0u) | (reap ? FlushDecision::Reap : 0u) | (recordAtLock && (submit || capped || reap) ? FlushDecision::RecordAtLock : 0u);
     if (!submit && !record && !capped && !reap) {
         if (recordAtLock) ++recordTriesSkipped;
-        return;
+        return decision;
     }
     if (reap) lastReapTry = now;
     if (DrawPipeline::Active() && (submit || record || capped || recordAtLock)) {
         static const bool committerSubmits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
-        if (committerSubmits && !record && !recordAtLock && DrawPipeline::Queue0().Busy()) return;
+        if (committerSubmits && !record && !recordAtLock && DrawPipeline::Queue0().Busy()) return decision;
         DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Flush);
     }
     std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
@@ -76,7 +78,7 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
         ++triesFailed[record ? TryLabel : submit || capped ? TryFlush : TryReap];
         if (selfLocking && record) ++packetLockDeferred;
         else if (selfLocking && submit) ++packetSubmitDeferred;
-        return;
+        return decision;
     }
     const auto localDevice = device.Load();
     if (record || recordAtLock) {
@@ -84,10 +86,10 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
 
         if ((!labelPacket && packetFlush) || deferredDue) submit = true;
     }
-    if (localDevice == nullptr) return;
+    if (localDevice == nullptr) return decision;
     if (submit || capped) {
 
-        if (!Graphics::Recorder::PendingLabelSince().has_value() && (batchCap() == 0 || Graphics::Recorder::RecordedWorkSinceSubmit() < batchCap())) return;
+        if (!Graphics::Recorder::PendingLabelSince().has_value() && (batchCap() == 0 || Graphics::Recorder::RecordedWorkSinceSubmit() < batchCap())) return decision;
         localDevice->SubmitRecorded(queue == 0);
         if (capped) ++capFlushes;
         else if (!labelPacket && packetFlush) ++packetFlushes;
@@ -99,13 +101,14 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
 
     static std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
-    if (!profile) return;
+    if (!profile) return decision;
     const auto reportNow = std::chrono::steady_clock::now();
-    if (reportNow - lastReport < std::chrono::seconds(10)) return;
+    if (reportNow - lastReport < std::chrono::seconds(10)) return decision;
     lastReport = reportNow;
     const auto stores = Graphics::Recorder::StoreCounts();
     const auto failed = [](TrySite site) { return static_cast<unsigned long long>(triesFailed[site].load()); };
     AgcDriver::ProfilePrint_nid_no_patch("[labels] batch flushes between packets: %llu at the next packet, %llu by deadline, %llu by size cap (%llu well overdue, waited for the mutex); %llu boundary reaps; record tries skipped (self-locking next) %llu; failed tries: label %llu, flush %llu, reap %llu, poll %llu, idle %llu, capture %llu, poll-record %llu; at the packet's own lock: %llu label groups (%.0f ms), %llu submits (%.0f ms incl. queue 0's reaps), left to it by a failed try: %llu groups, %llu submits; after a capture: %llu groups recorded by a try, %llu packets redone for a queued label over the capture, %llu for captured memory that changed before recording; %llu suspend points; stores: %llu in %llu runs (%llu joined, %llu replaced, %llu WAW barriers, %llu joins refused; %llu runs recorded at submit, %llu in place before a writer or reader); DCC key stores: %llu queued in %llu runs (%llu before a writer, %llu joined a queued range); queued labels: %llu noted (%llu over a recorded entry), %llu same-queue wait hits, %llu groups recorded from a poll loop, %llu from the flush hook (%llu hook accesses, %llu inside a completion skipped)\n", static_cast<unsigned long long>(packetFlushes.load()), static_cast<unsigned long long>(deadlineFlushes.load()), static_cast<unsigned long long>(capFlushes.load()), static_cast<unsigned long long>(overdueLocks.load()), static_cast<unsigned long long>(boundaryReaps.load()), static_cast<unsigned long long>(recordTriesSkipped.load()), failed(TryLabel), failed(TryFlush), failed(TryReap), failed(TryPoll), failed(TryIdle), failed(TryCapture), failed(TryPollRecord), static_cast<unsigned long long>(packetLockRecords.load()), packetLockRecordUs.load() / 1000.0, static_cast<unsigned long long>(packetLockSubmits.load()), packetLockSubmitUs.load() / 1000.0, static_cast<unsigned long long>(packetLockDeferred.load()), static_cast<unsigned long long>(packetSubmitDeferred.load()), static_cast<unsigned long long>(captureTryRecords.load()), static_cast<unsigned long long>(captureRetries.load()), static_cast<unsigned long long>(captureChangeRetries.load()), static_cast<unsigned long long>(suspendPoints.load()), static_cast<unsigned long long>(stores.stores), static_cast<unsigned long long>(stores.runs), static_cast<unsigned long long>(stores.joined), static_cast<unsigned long long>(stores.replaced), static_cast<unsigned long long>(stores.wawBarriers), static_cast<unsigned long long>(stores.joinsRefused), static_cast<unsigned long long>(stores.runsAtSubmit), static_cast<unsigned long long>(stores.runsForced), static_cast<unsigned long long>(stores.keyStores), static_cast<unsigned long long>(stores.keyStoreRuns), static_cast<unsigned long long>(stores.keyStoreRunsForWriter), static_cast<unsigned long long>(stores.keyStoresJoined), static_cast<unsigned long long>(stores.queuedNoted), static_cast<unsigned long long>(stores.queuedOverRecorded), static_cast<unsigned long long>(stores.queuedHits), static_cast<unsigned long long>(pollLabelRecords.load()), static_cast<unsigned long long>(hookLabelRecords.load()), static_cast<unsigned long long>(stores.queuedHookRecords), static_cast<unsigned long long>(stores.queuedHookInCompletion));
+    return decision;
 }
 
 }

@@ -21,6 +21,13 @@ public:
 
     std::size_t Nodes() const { return nodes.size(); }
 
+    struct AddressForward {
+        std::uint32_t word = 0;
+        std::uint32_t index = 0;
+        bool flat = false;
+    };
+    std::vector<AddressForward> AddressForwards(const IrResourcePlan& plan) const;
+
 private:
     friend class SrtTapeCompiler;
     static std::shared_ptr<const SrtTape> Compile(const IrResourcePlan& plan);

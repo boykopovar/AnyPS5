@@ -131,6 +131,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
 void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool DriverStoredOver(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
 // returns the current generation instead. A guest write landing between two collects of the same
@@ -184,8 +185,10 @@ void SetObservationHookForTest(void (*hook)(int point));
 // tracker mutex, so every collect that bumped before it has finished its walk and every later
 // collect stamps newer.
 std::uint64_t TrackerGeneration();
+std::uint64_t TrackerGenerationNow();
 void AdvanceTrackerGenerationForTest(std::uint64_t generation);
 std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes);
+bool StampsAtMost(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // Whether no CPU write touched the range since `generation`: an uncached resetting collect of the
 // range's pages first (a game store not collected yet becomes a block stamp), then the compare over

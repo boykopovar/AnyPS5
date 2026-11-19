@@ -739,6 +739,12 @@ struct VertexAttribute {
     std::uint32_t formatComponents = 0;
 };
 
+struct StageSideWords {
+    std::vector<std::vector<std::uint32_t>> bindings;
+    std::vector<VertexAttribute> vertexAttributes;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pushWords;
+};
+
 struct BarycentricEmulationLayout {
     static constexpr std::uint32_t NoLocation = 0xffffffffu;
     std::uint32_t smoothLocation = NoLocation;

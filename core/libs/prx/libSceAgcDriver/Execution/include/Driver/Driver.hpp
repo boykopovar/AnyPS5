@@ -2,11 +2,16 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRIVER_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanTails.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SegmentLoop.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/DeviceAccess.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketHistory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DirectDrawReport.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRecords.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/LeanDraw.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
@@ -56,6 +61,10 @@ inline std::uint32_t ThreadDimensionGroups(std::uint32_t threads, std::uint32_t 
 }
 
 struct DrawTail;
+struct DirectStages;
+struct DirectClass;
+struct DirectClassKey;
+class DirectStepClock;
 
 class Driver {
 public:
@@ -145,19 +154,49 @@ private:
     friend struct PendingView;
     friend struct PacketTimer;
     friend struct DriverTestAccess;
+    struct FlipHold {
+        Driver& driver;
+        std::uint32_t queue;
+        bool held;
+        bool working;
+        std::shared_ptr<FlipWork> work;
+        void Release() {
+            if (!held) return;
+            held = false;
+            driver.releaseFlipHold();
+        }
+        void Finish() {
+            if (!working) return;
+            const auto workSerial = driver.submitFlipWork(queue);
+            working = false;
+            driver.finishFlipWork(work, workSerial);
+        }
+        ~FlipHold() {
+            Release();
+            if (working) driver.finishFlipWork(work, 0);
+        }
+    };
     void stop();
     Driver();
     void rethrowFailure() const;
     void checkStopping() const;
     std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
-    static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
+    static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words, GuestRanges* sources = nullptr);
     static constexpr std::size_t MaximumSegmentDepth = 64;
-    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth);
-    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords);
+    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, GuestRanges* sources);
+    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords, GuestRanges* sources);
     static void readRegisterLists(Submission& submission);
+    void resolveLeanLists(Submission& submission, bool cacheable);
+    void settleListHits(Submission& submission);
+    void verifyLeanLists(const Submission& submission, bool cacheable);
+    bool keptTailCurrent(const KeptTail& kept, const Submission& stalled) const;
+    void recycleLeanTail(Submission& tail);
+    void prepareLeanTail(const Submission& stalled, Submission& tail, bool popped, bool verify, PacketTable* table);
     bool refreshIndirectSegment(Submission& submission, std::size_t index);
     void waitForFlipRoom(const Submission& submission);
+    void waitForFlipRoomAt(const Submission& submission, const PacketTable& table);
+    void waitForFlipRoomOf(const Submission& submission, std::size_t cursor);
     bool holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     void holdFlipBehindWork(const std::shared_ptr<FlipWork>& earlier);
     static bool flipWorkDone(const std::shared_ptr<FlipWork>& work);
@@ -171,7 +210,24 @@ private:
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
     void reserveOutputs(Submission& submission);
+    void reserveOutputsAt(Submission& submission, const PacketTable& table);
+    void reserveOutput(Submission& submission, std::size_t cursor, std::set<std::uint32_t>& eopTokens);
+    void prepareIndirectWaits(Submission::IndirectSegment& segment);
     void executeRewindTail(const Submission& stalled);
+    void awaitRewindTail(const Submission& stalled, FrontMode front);
+    std::uint64_t prepareTail(const Submission& stalled, Submission& tail, FrontMode front, bool ring, PacketTable* table, bool verify);
+    void executeLean(Submission& first);
+    void runLeanSegment(Submission& submission, QueueState& queue, SegmentSlot& slot, FlipHold& flipHold, LeanRun& run, bool verify);
+    template <bool Timers>
+    void runLeanPackets(Submission& submission, QueueState& queue, PacketTable& table, FlipHold& flipHold, LeanRun& run);
+    bool endLeanSegment(const Submission& submission, FlipHold& flipHold);
+    static void scanSegment(const Submission& submission, PacketTable& table, bool validating = false, const std::uint32_t* guest = nullptr);
+    static void markOutputs(const Submission& submission, PacketTable& table);
+    static void verifyOutputs(const Submission& submission, const PacketTable& table);
+    static void verifySegmentTable(const Submission& submission, const PacketTable& table);
+    bool flushDue(FlushGate& gate, FlushInputs& inputs);
+    static void checkFlush(const Submission& submission, std::size_t cursor, const FlushGate& gate, bool gateDue, std::uint32_t decision, const FlushInputs& inputs);
+    void releaseSegmentSlot(SegmentSlot& slot);
     void enqueue(Submission submission);
     void noteHeldAtSubmit(Submission& submission, std::size_t cursor);
     static void forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission);
@@ -235,20 +291,45 @@ private:
     static void patchForwardedWord(ShaderRecompiler::RecompileResult& result, std::uint32_t slot, std::uint32_t value);
     void learnPendingRelocation();
     void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
+    void relocateDrawEntry(const DrawUserWords& words, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
+    template <typename TRead>
+    void relocateDrawEntryWith(const TRead& read, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
     void reportDrawRelocation();
     static bool sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b);
     static bool sameDecode(const DrawDecode& a, const DrawDecode& b);
     std::shared_ptr<DrawDecode> decodeDraw(const QueueState& queue, const Submission& submission, const Graphics::Context& context);
     void resolveDrawDecode(const QueueState& queue, const Submission& submission, const Graphics::Context& context, std::shared_ptr<const DrawDecode>& decode, bool registerKey, std::uint64_t drawKey, bool profile);
     void lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData);
+    static ShaderRecompiler::RecompileRequest drawStageRequest(const DrawProgram& program, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& vertexInfo, std::span<const ShaderRecompiler::MemoryRegion> memory, std::span<const ShaderRecompiler::LinkedProgram> linked, const VulkanDevice& device, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics, bool hasFragment);
     std::shared_ptr<const ShaderRecompiler::RecompileResult> materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics);
     static void recordStageDataPositions(DispatchVariant& variant, const ShaderRecompiler::ResourceCapture& capture, const std::vector<Graphics::DecodeRead>& decodeReads);
     void cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawParameters& drawParameters, const std::optional<Graphics::IndirectDrawPath>& indirectCpu, const std::vector<DrawProgram>& programs, const std::vector<StageCapture>& stageCaptures, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, bool verifyHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<StageDataHit>& stageData, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::uint64_t drawKey, bool registerKey, const std::shared_ptr<const DrawDecode>& decode, DrawPhaseTiming& phaseTiming, const std::vector<bool>& reused, const std::shared_ptr<DrawEntry>& entry, std::uint64_t shapeKey, bool shapeNeedsEntry = false);
     static bool drawPrecheck();
     std::optional<DrawVerdict> precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect);
+    static LeanVerdict precheckVerdict(const QueueState& queue, bool indexed, std::uint32_t indexSize);
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
     DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
     DrawVerdict finishDraw(DrawTail& tail, PerformanceTimer& timing);
+    DrawVerdict drawLean(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
+    DrawVerdict verifyLeanDraw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected, ShapeRecord& record, LeanVerdict verdict, const Pm4::DrawParameters& parameters, const LeanDrawJob* job);
+    void prepareLeanDraws();
+    bool leanDrawDevice();
+    ShapeRecord* leanShapeRecord(const QueueState& queue, const Submission& submission);
+    LeanVerdict leanVerdict(const QueueState& queue, ShapeRecord& record, const Pm4::DrawParameters& parameters);
+    bool buildLeanShape(const QueueState& queue, const Submission& submission, ShapeRecord& record);
+    static bool leanShapeCurrent(const LeanShape& shape, const QueueState& queue, const ShaderRegistry& registry);
+    void finishLeanDraw(const LeanDrawJob& job, const LeanAnchor& anchor);
+    static void runLeanDraw(const std::byte* payload);
+    void commitRecordDraw(const LeanDrawJob& job, const LeanAnchor& anchor, std::shared_ptr<DrawRecordHit> hit);
+    void commitRecord(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, DrawRecordHit& hit, const VulkanDevice::DrawTraceContext& trace, std::uint64_t shape);
+    bool verifyRecordCommit(const DrawRecord& record, const DrawCommitView& answer, const DrawCommitView& today);
+    bool compareRecordAnswer(const LeanDrawJob& job, const DrawRecord& record, const DrawRecordView& answer, const DrawRecordSink& sink, void (*noteDifference)(DrawRecords::Field, std::string_view), void (*noteAllowed)(DrawRecords::Allowed));
+    void finishDirectDraw(const LeanDrawJob& job);
+    std::optional<DirectDraws::Counter> resolveDirectStages(const LeanDrawJob& job, const LeanAnchor& anchor, DirectStages& resolved, DirectStepClock* clock);
+    std::optional<DirectDraws::Counter> assembleDirectHit(const LeanDrawJob& job, DirectStages& resolved, DrawRecordHit& hit);
+    const DrawRecordSink* finishDirectAnswer(const LeanDrawJob& job, const LeanAnchor& anchor, const DirectStages& resolved, const DrawRecordHit& hit, DrawRecordView& answer);
+    void buildDirectClass(const LeanDrawJob& job, const LeanAnchor& anchor, const DirectClassKey& key, std::uint64_t probe, const DirectStages& resolved, const DrawRecordHit& hit);
+    void verifyDirectHit(const LeanDrawJob& job, const LeanAnchor& anchor, const DirectClass& found, const DirectStages& resolved, const DrawRecordHit& hit);
     void restartFinishedDraw(DrawTail& tail);
     void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated);
     static PendingDispatchPhases& pendingDispatchPhases();
@@ -404,7 +485,9 @@ private:
     static void bumpWaitEpoch(std::uint64_t address, std::size_t bytes, std::uint64_t since = 0);
     static std::chrono::steady_clock::time_point& lastEpochBump();
     static std::deque<const std::uint32_t*>& releasedTails();
-    void noteReleasedTails(const Submission& submission);
+    void noteReleasedTails(const Submission& submission, FrontMode front);
+    void keepReleasedTails(const Submission& submission);
+    FrontMode latchFront(std::uint32_t queue, bool suspend);
     static bool packetEpoch();
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
@@ -422,7 +505,7 @@ private:
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();
-    void flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool labelPacket);
+    std::uint32_t flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool labelPacket, const FlushInputs* inputs = nullptr);
     bool preparePacketMemory(const Submission& submission, QueueState& queue, std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode, std::optional<std::uint32_t> interrupt, bool& wroteOnGpu, bool& endOfPipeInterrupt, bool& interruptDeferred, bool& drawPacket, bool& sampleDump);
     void dumpSampleCounters(std::uint64_t address);
     template <typename TWork>
@@ -431,6 +514,7 @@ private:
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
     void execute(Submission& submission);
     void deliverGuestEopInterrupt(std::uint32_t queue, std::uint32_t context);
+    void abAtFlip();
     static std::optional<std::uint32_t> releaseInterrupt(std::span<const std::uint32_t> packet, std::uint32_t opcode, bool carriesFlip);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
@@ -467,6 +551,12 @@ private:
 
     alignas(64) std::atomic<int> packetsInFlight{0};
     std::atomic<std::uint64_t> packetsDone{0};
+
+    alignas(64) LeanFront::Latch frontLatch;
+    LeanTails leanTails;
+    LeanDraws leanDraws;
+    SegmentSlots segmentSlots;
+    std::array<std::chrono::steady_clock::time_point, SubmissionQueueEnd - 0x20 + 1> lastReapTries{};
 
     std::atomic<std::uint64_t> eventSerial{0};
     alignas(64) std::shared_ptr<ShaderRegistry> shaders = std::make_shared<ShaderRegistry>();

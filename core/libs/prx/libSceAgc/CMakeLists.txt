@@ -107,7 +107,7 @@ endif()
 
 add_test_executable(agc_rewind_patch_tests EXCLUDE_FROM_ALL tests/RewindPatch.cpp)
 target_include_directories(agc_rewind_patch_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_rewind_patch_tests PRIVATE libSceAgc libc)
+target_link_libraries(agc_rewind_patch_tests PRIVATE libSceAgc libSceAgcDriver libc)
 configure_windows_unwind(agc_rewind_patch_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_rewind_patch_tests PROPERTIES EXCLUDE_FROM_ALL OFF)

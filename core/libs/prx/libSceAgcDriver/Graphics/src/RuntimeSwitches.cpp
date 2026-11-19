@@ -31,10 +31,33 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_DRAW_TABLE_SNAPSHOT",
     "APS5_NO_TARGET_MEMO",
     "APS5_NO_TARGET_MEMO_OVERLAP_CACHE",
+    "APS5_LEAN_FRONT",
+    "APS5_LEAN_LIST_DIRECT",
+    "APS5_DIRECT_DRAWS",
+    "APS5_DIRECT_RETRY",
+    "APS5_DIRECT_PASS_TARGETS",
+    "APS5_DIRECT_BUFFERS",
+    "APS5_DIRECT_INPUTS",
+    "APS5_FAST_SETTLE",
+    "APS5_PRECISE_SETTLE",
+    "APS5_IMPORT_SNAPSHOTS",
+    "APS5_MERGED_SETTLE",
+    "APS5_UNLOCKED_STAMPS",
+    "APS5_WRITE_SNAPSHOT_FRONTS",
+    "APS5_PENDING_FRONTS",
+    "APS5_LEAN_PREPARE",
+    "APS5_BUFFER_BLOB_APPEND",
+    "APS5_PREPARED_CAPACITY",
+    "APS5_INVOCATION_SLOTS_WIDE",
+    "APS5_STAGE_MEMO",
+    "APS5_STAGE_MEMO_ADMIT_THIRD",
+    "APS5_STAGE_MEMO_FRONT",
 };
+static_assert(SwitchNames.back() != nullptr, "every runtime switch needs a name");
 
 struct SwitchValues {
     std::array<std::atomic<bool>, SwitchCount> set{};
+    std::atomic<std::uint64_t> generation{1};
     SwitchValues() {
         const std::array<bool, SwitchCount> environment{
             std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
@@ -51,6 +74,27 @@ struct SwitchValues {
             std::getenv("APS5_DRAW_TABLE_SNAPSHOT") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO_OVERLAP_CACHE") != nullptr,
+            std::getenv("APS5_LEAN_FRONT") != nullptr,
+            std::getenv("APS5_LEAN_LIST_DIRECT") != nullptr,
+            std::getenv("APS5_DIRECT_DRAWS") != nullptr,
+            std::getenv("APS5_DIRECT_RETRY") != nullptr,
+            std::getenv("APS5_DIRECT_PASS_TARGETS") != nullptr,
+            std::getenv("APS5_DIRECT_BUFFERS") != nullptr,
+            std::getenv("APS5_DIRECT_INPUTS") != nullptr,
+            std::getenv("APS5_FAST_SETTLE") != nullptr,
+            std::getenv("APS5_PRECISE_SETTLE") != nullptr,
+            std::getenv("APS5_IMPORT_SNAPSHOTS") != nullptr,
+            std::getenv("APS5_MERGED_SETTLE") != nullptr,
+            std::getenv("APS5_UNLOCKED_STAMPS") != nullptr,
+            std::getenv("APS5_WRITE_SNAPSHOT_FRONTS") != nullptr,
+            std::getenv("APS5_PENDING_FRONTS") != nullptr,
+            std::getenv("APS5_LEAN_PREPARE") != nullptr,
+            std::getenv("APS5_BUFFER_BLOB_APPEND") != nullptr,
+            std::getenv("APS5_PREPARED_CAPACITY") != nullptr,
+            std::getenv("APS5_INVOCATION_SLOTS_WIDE") != nullptr,
+            std::getenv("APS5_STAGE_MEMO") != nullptr,
+            std::getenv("APS5_STAGE_MEMO_ADMIT_THIRD") != nullptr,
+            std::getenv("APS5_STAGE_MEMO_FRONT") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }
@@ -94,7 +138,22 @@ bool Set(RuntimeSwitch id) {
 }
 
 void Assign(RuntimeSwitch id, bool set) {
-    Values().set.at(static_cast<std::size_t>(id)).store(set, std::memory_order_relaxed);
+    auto& values = Values();
+    if (values.set.at(static_cast<std::size_t>(id)).exchange(set, std::memory_order_relaxed) == set) return;
+    values.generation.fetch_add(1, std::memory_order_release);
+}
+
+std::uint64_t Generation() {
+    return Values().generation.load(std::memory_order_acquire);
+}
+
+SwitchSnapshot Snapshot() {
+    auto& values = Values();
+    SwitchSnapshot snapshot;
+    for (std::size_t index = 0; index < SwitchCount; ++index) {
+        if (values.set[index].load(std::memory_order_relaxed)) snapshot.Assign(static_cast<RuntimeSwitch>(index), true);
+    }
+    return snapshot;
 }
 
 std::optional<RuntimeSwitch> Find(std::string_view name) {

@@ -44,8 +44,58 @@ struct DrawDecode {
     std::vector<ShaderRecompiler::ProgramRole> roles;
 };
 
+struct DrawUserWords {
+    static constexpr std::size_t Count = 132;
+    static constexpr std::array<std::uint32_t, 6> ResourceRegisters{0x00bu, 0x04bu, 0x08bu, 0x0cbu, 0x10bu, 0x14bu};
+    static constexpr std::array<std::uint32_t, 4> Bases{0x00cu, 0x04cu, 0x08cu, 0x10cu};
+    std::array<std::uint32_t, Count> values;
+    std::array<std::uint64_t, 3> present;
+    std::array<std::uint32_t, 6> resources;
+
+    static int Index(std::uint32_t offset) {
+        for (std::size_t base = 0; base < Bases.size(); ++base) {
+            if (offset - Bases[base] < 32u) return static_cast<int>(offset - Bases[base] + 32u * base);
+        }
+        if (offset - 0x082u < 2u) return static_cast<int>(offset - 0x082u + 128u);
+        if (offset - 0x102u < 2u) return static_cast<int>(offset - 0x102u + 130u);
+        return -1;
+    }
+    static int ResourceIndex(std::uint32_t offset) {
+        for (std::size_t index = 0; index < ResourceRegisters.size(); ++index) {
+            if (ResourceRegisters[index] == offset) return static_cast<int>(index);
+        }
+        return -1;
+    }
+    bool Contains(std::uint32_t offset) const {
+        const auto index = Index(offset);
+        return index >= 0 && ((present[static_cast<std::size_t>(index) / 64] >> (static_cast<std::size_t>(index) % 64)) & 1u) != 0;
+    }
+    std::uint32_t Value(std::uint32_t offset) const {
+        if (const auto index = Index(offset); index >= 0) return Contains(offset) ? values[static_cast<std::size_t>(index)] : 0u;
+        if (const auto index = ResourceIndex(offset); index >= 0) return resources[static_cast<std::size_t>(index)];
+        return 0u;
+    }
+    void Capture(const Registers& shader) {
+        present = {};
+        const auto range = [&](std::uint32_t first, std::uint32_t count, std::size_t index) {
+            const auto bits = shader.CopyRange(first, count, values.data() + index);
+            present[index / 64] |= bits << (index % 64);
+            if (index % 64 + count > 64) present[index / 64 + 1] |= bits >> (64 - index % 64);
+        };
+        for (std::size_t base = 0; base < Bases.size(); ++base) range(Bases[base], 32, 32 * base);
+        range(0x082u, 2, 128);
+        range(0x102u, 2, 130);
+        for (std::size_t index = 0; index < ResourceRegisters.size(); ++index) {
+            const auto found = shader.find(ResourceRegisters[index]);
+            resources[index] = found == shader.end() ? 0u : found->second;
+        }
+    }
+};
+
 void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi);
 void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32_t pointerBase, bool pointerRequired, bool staticAbi);
+void ReadUserWordsFrom(const DrawUserWords& words, DrawProgram& program);
+void InitializeMergedFrom(const DrawUserWords& words, DrawProgram& program, std::uint32_t pointerBase, bool pointerRequired);
 void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment);
 ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<Graphics::DecodeRead>& reads, std::uint32_t hiddenUserWords);
 

@@ -212,7 +212,7 @@ std::vector<std::unique_ptr<TPage>>& pagePool() {
 constexpr std::size_t PagePoolLimit = 64;
 
 bool sharedPagePools() {
-    static const bool enabled = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    static const bool enabled = std::getenv("APS5_NO_DRAW_PIPELINE") == nullptr;
     return enabled;
 }
 
@@ -902,6 +902,11 @@ std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> ShaderMemory
     for (const auto& entry : supplied) blocks.push_back(entry.words);
     blocks.insert(blocks.end(), spilled.begin(), spilled.end());
     return blocks;
+}
+
+void ShaderMemory::SetImageViewHooks(ShaderRecompiler::SrtRuntime& runtime) {
+    runtime.normalizeImageView = &normalizeImageView;
+    runtime.imageViewGeneration = &imageViewGeneration;
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
