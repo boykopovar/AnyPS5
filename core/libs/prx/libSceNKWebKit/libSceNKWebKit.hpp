@@ -103,3 +103,4 @@
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
+#include "prx/libSceNKWebKit/include/SQLiteFileSystemExports.hpp"
