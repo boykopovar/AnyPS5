@@ -203,6 +203,23 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
 
+    def test_gap_report_distinguishes_data_definitions_from_declarations(self):
+        names = ["Exported", "Declared", "Private"]
+        nids = [nid_of(name) for name in names]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {
+                "Export.cpp": 'extern "C" { int Exported_nid_postfix = 1; static int Private_nid_postfix; }',
+                "Api.hpp": 'extern "C" int Declared_nid_postfix;',
+            })
+            write_table(tables, MODULE, nids)
+            db = write_db(directory, zip(nids, names))
+            out = Path(directory) / "gaps.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(out.read_text().splitlines()), set(nids[1:]))
+            self.assertIn("defined as data", report)
+
     def test_assembly_postfix_name_counts_as_provided(self):
         name = "sceExampleAsm_nid_postfix"
         source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\n'
@@ -897,6 +914,54 @@ class ExportGapTests(unittest.TestCase):
             bad.write_text("not-a-nid-too-long\n", encoding="utf-8")
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_nids_file(bad)
+
+
+    def test_normalize_module_strips_prx_suffix_only_with_a_stem(self):
+        self.assertEqual(export_gap.normalize_module("libSceFoo.prx"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module("libSceFoo.PRX"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module(".prx"), ".prx")
+        self.assertEqual(export_gap.normalize_module("libSceFoo"), "libSceFoo")
+
+
+    def test_base_of_ignores_postfix_without_a_stem(self):
+        postfix = export_gap.POSTFIXES[0]
+        self.assertEqual(export_gap.base_of("foo" + postfix), ("foo", postfix))
+        self.assertEqual(export_gap.base_of(postfix), (postfix, None))
+        self.assertEqual(export_gap.base_of("foo"), ("foo", None))
+
+
+    def test_strip_disambig_requires_digit_tail(self):
+        marker = export_gap.DISAMBIG
+        self.assertEqual(export_gap.strip_disambig("foo" + marker + "12"), "foo")
+        self.assertEqual(export_gap.strip_disambig("foo" + marker), "foo" + marker)
+        self.assertEqual(export_gap.strip_disambig("foo"), "foo")
+
+
+    def test_unreadable_input_files_raise_gap_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.txt"
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(missing)
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_export_table(missing)
+
+class MaskCodeTests(unittest.TestCase):
+    def test_comments_are_blanked_and_layout_is_preserved(self):
+        source = "int a; // note\nint b; /* block\nmore */ int c;\n"
+        masked = export_gap.mask_code(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("note", masked)
+        self.assertNotIn("block", masked)
+        self.assertNotIn("more", masked)
+        for kept in ("int a;", "int b;", "int c;"):
+            self.assertIn(kept, masked)
+
+    def test_string_literal_contents_are_blanked(self):
+        masked = export_gap.mask_code('call("hidden text");\n')
+        self.assertNotIn("hidden", masked)
+        self.assertTrue(masked.startswith("call("))
+        self.assertTrue(masked.endswith(");\n"))
 
 
 if __name__ == "__main__":

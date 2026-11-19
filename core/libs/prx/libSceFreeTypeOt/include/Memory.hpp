@@ -4,6 +4,15 @@
 
 #include <cstdint>
 
+namespace FreeType {
+
+void* OtMemAlloc(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error);
+void* OtMemQAlloc(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error);
+void* OtMemRealloc(GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount, std::int64_t newCount, void* block, std::int32_t* error);
+void OtMemFree(GuestMemoryRec* memory, const void* block);
+
+}
+
 extern "C" {
 
 void* APS5_VABI ft_mem_alloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t* error);

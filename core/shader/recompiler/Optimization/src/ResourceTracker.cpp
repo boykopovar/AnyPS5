@@ -91,7 +91,7 @@ std::uint32_t possibleU32BitsDepth(const IrValue* value, std::uint32_t depth) {
         }
         case IrOpcode::ShiftRightLogical32: {
             const IrValue* shift = value->Argument(1)->Resolve();
-            return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32Bits(value->Argument(0)) >> (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
+            return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32BitsDepth(value->Argument(0), depth - 1u) >> (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
         }
         case IrOpcode::ReadFirstLane:
             return value->ArgumentCount() >= 1u ? possibleU32BitsDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
