@@ -198,6 +198,9 @@ class LauncherWebHandler(BaseHTTPRequestHandler):
             engine = self.server.engine.status(30) if self.server.engine else {'status': 'not_configured'}
             ready = engine['status'] in ('ready', 'not_configured')
             return self.respond(200 if ready else 503, {'status': 'ok' if ready else 'engine_unavailable', 'engine': engine})
+        if path == '/setup/status':
+            engine = self.server.engine.status(30) if self.server.engine else {'status': 'not_configured'}
+            return self.respond(200, {'engine': engine['status'], 'helper_online': self.server.store.state()['online']})
         if path == '/engine/status':
             return self.respond(200, self.server.engine.status(30) if self.server.engine else {'status': 'not_configured'})
         if path == '/engine/download' and self.server.engine:

@@ -192,6 +192,17 @@ class WebTests(unittest.TestCase):
             self.server.store.report({'games': [], 'folders': [], 'helper_protocol': 2})
 
 
+    def test_setup_status_reports_progress_without_library_details(self):
+        status, data, _ = self.request('GET', '/setup/status')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {'engine': 'not_configured', 'helper_online': False})
+        self.snapshot()
+        self.server.engine = web.EngineCatalogue(Path(self.temp.name) / 'missing-engine')
+        status, data, _ = self.request('GET', '/setup/status')
+        self.assertEqual(json.loads(data), {'engine': 'missing', 'helper_online': True})
+        self.assertNotIn(b'Fixture', data)
+        self.assertEqual(self.request('GET', '/setup/status', headers={'Host': 'evil.invalid'})[0], 403)
+
     def test_state_setup_creates_and_keeps_a_private_credential(self):
         if not hasattr(os, 'getuid'):
             self.skipTest('Ownership is applied inside the Linux container')

@@ -250,3 +250,21 @@ async function refreshEngine() {
     }
 }
 refreshEngine(); setInterval(refreshEngine, 15000);
+function step(id, label, done, failed = false) {
+    const item = byId(id);
+    item.classList.toggle('done', done);
+    item.classList.toggle('failed', failed);
+    item.querySelector('.step-state').textContent = label;
+}
+const engineSteps = {ready: 'Engine ready', not_configured: 'Engine not needed', exporting: 'Exporting the engine\u2026', missing: 'Waiting for the engine\u2026', failed: 'Engine export failed', incompatible: 'Engine needs rebuilding'};
+async function refreshSetup() {
+    if (authenticated || byId('pairing').hidden) return;
+    try {
+        const setup = await api('/setup/status');
+        const engineDone = ['ready', 'not_configured'].includes(setup.engine);
+        step('step-engine', engineSteps[setup.engine] || 'Checking the engine\u2026', engineDone, ['failed', 'incompatible'].includes(setup.engine));
+        step('step-helper', setup.helper_online ? 'Helper connected' : engineDone ? 'Next step' : 'Waiting', setup.helper_online);
+        step('step-pair', setup.helper_online ? 'Next step' : 'Waiting', false);
+    } catch { step('step-engine', 'App not reachable', false, true); }
+}
+refreshSetup(); setInterval(refreshSetup, 3000);
