@@ -96,7 +96,7 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8", errors="replace") as source:
+        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
             events = parse_events(source)
         sys.stdout.write(render_events(events, args.trace, start, size, args.limit))
     except (OSError, ValueError) as error:

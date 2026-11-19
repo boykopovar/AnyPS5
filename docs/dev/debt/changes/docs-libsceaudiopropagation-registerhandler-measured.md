@@ -1,0 +1,4 @@
+# libSceAudioPropagation
+
+## change [sceAudioPropagationReportRegisterHandler]
+- [sceAudioPropagationReportRegisterHandler](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `-1` when the `registration` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured. A PS5 (firmware 11.60, payload process; a title process may differ) returned -2 for a null handler with the category 0, also with a valid buffer or the unmapped address 0x10 as the `registration` pointer, and 0 for a valid handler with a null `registration`, without a fault, and AnyPS5 returns the same in these five cases; a valid handler with an unwritable `registration` pointer was not called, so the console's answer for that case stays unmeasured.

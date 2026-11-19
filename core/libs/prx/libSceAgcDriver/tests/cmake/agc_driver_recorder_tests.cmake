@@ -27,6 +27,13 @@ target_link_libraries(agc_driver_recorder_tests PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_test(NAME agc_multisample_use_collect COMMAND agc_driver_recorder_tests --multisample-use-collect-only)
+    add_test(NAME agc_multisample_use_collect_no_memo COMMAND agc_driver_recorder_tests --multisample-use-collect-only)
+    set_tests_properties(agc_multisample_use_collect agc_multisample_use_collect_no_memo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_DRAW_PIPELINE=8")
+    set_property(TEST agc_multisample_use_collect_no_memo APPEND PROPERTY ENVIRONMENT "APS5_NO_COLLECT_MEMO=1")
+    if(WIN32)
+        set_tests_properties(agc_multisample_use_collect agc_multisample_use_collect_no_memo PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_completion_label_wait COMMAND agc_driver_recorder_tests --completion-wait-only)
     set_tests_properties(agc_completion_label_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
@@ -35,6 +42,28 @@ if(BUILD_TESTING)
 endif()
 set_target_properties(agc_driver_recorder_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_recorder_tests)
+
+set(agcSampleImportOriginHeader ${agcTestShaderGeneratedRoot}/SampleImportOrigin_spv.h)
+set(agcSampleImportOriginSpv ${agcTestShaderGeneratedRoot}/SampleImportOrigin.spv)
+add_custom_command(
+        OUTPUT "${agcSampleImportOriginHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSampleImportOriginSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleImportOrigin.comp"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSampleImportOriginSpv} -DOUTPUT=${agcSampleImportOriginHeader}
+        -DSYMBOL=SAMPLE_IMPORT_ORIGIN_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleImportOrigin.comp" glslang-standalone
+        VERBATIM
+)
+target_sources(agc_driver_recorder_tests PRIVATE "${agcSampleImportOriginHeader}")
+if(BUILD_TESTING)
+    add_test(NAME agc_sampled_import_pieces COMMAND agc_driver_recorder_tests --sampled-import-pieces)
+    set_tests_properties(agc_sampled_import_pieces PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "SYNC-HAZARD|VUID-"
+        ENVIRONMENT "VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT")
+    if(WIN32)
+        set_tests_properties(agc_sampled_import_pieces PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     set_target_properties(agc_driver_recorder_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
@@ -90,7 +119,8 @@ if(BUILD_TESTING)
     add_test(NAME agc_import_watch COMMAND agc_driver_recorder_tests --import-watch-only)
     set_tests_properties(agc_import_watch PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_import_settle_initial_dcc COMMAND agc_driver_recorder_tests --settle-initial-dcc-only)
-    set_tests_properties(agc_import_settle_initial_dcc PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_import_settle_initial_dcc_committer COMMAND agc_driver_recorder_tests --settle-initial-dcc-committer-only)
+    set_tests_properties(agc_import_settle_initial_dcc agc_import_settle_initial_dcc_committer PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
         add_test(NAME agc_import_watch_other_family COMMAND agc_driver_recorder_tests --import-watch-other-family-only)
         set_tests_properties(agc_import_watch_other_family PROPERTIES SKIP_RETURN_CODE 77)
@@ -109,7 +139,7 @@ if(BUILD_TESTING)
         add_test(NAME agc_import_settle_storage_image COMMAND agc_driver_recorder_tests --settle-storage-image-only)
         add_test(NAME agc_import_rewatch_under_image COMMAND agc_driver_recorder_tests --rewatch-under-image-only)
         set_tests_properties(agc_import_settle_deferred agc_import_settle_deferred_other_family agc_import_settle_first_use agc_import_settle_earlier_import agc_import_settle_retire agc_import_settle_storage_image agc_import_rewatch_under_image PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
-        set_tests_properties(agc_import_watch agc_import_watch_other_family agc_import_settle_deferred agc_import_settle_deferred_other_family agc_import_settle_first_use agc_import_settle_earlier_import agc_import_settle_retire agc_import_settle_storage_image agc_import_rewatch_under_image agc_import_settle_initial_dcc PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_import_watch agc_import_watch_other_family agc_import_settle_deferred agc_import_settle_deferred_other_family agc_import_settle_first_use agc_import_settle_earlier_import agc_import_settle_retire agc_import_settle_storage_image agc_import_rewatch_under_image agc_import_settle_initial_dcc agc_import_settle_initial_dcc_committer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     if(WIN32)
@@ -328,6 +358,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_write_back_scratch PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_storage_write_back_host_retile COMMAND agc_driver_recorder_tests --storage-write-back-only)
+    set_tests_properties(agc_storage_write_back_host_retile PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_LINEAR_IMPORT_RETILE_HOST=1")
+    if(WIN32)
+        set_tests_properties(agc_storage_write_back_host_retile PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_copied_direct_ordering COMMAND agc_driver_recorder_tests --copied-direct-only)
     set_tests_properties(agc_copied_direct_ordering PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
@@ -490,6 +526,8 @@ if(BUILD_TESTING)
     set_tests_properties(agc_draw_inputs_copied PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_input_reuse COMMAND agc_driver_recorder_tests --draw-input-reuse-only)
     set_tests_properties(agc_draw_input_reuse PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_index_in_place_behind_writer COMMAND agc_driver_recorder_tests --index-behind-writer-only)
+    set_tests_properties(agc_index_in_place_behind_writer PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_resident_present COMMAND agc_driver_recorder_tests --resident-present-only)
     set_tests_properties(agc_resident_present PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_queued_write_groups COMMAND agc_driver_recorder_tests --queued-write-groups-only)
@@ -500,7 +538,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_metadata_pass COMMAND agc_driver_recorder_tests --metadata-pass-only)
     set_tests_properties(agc_metadata_pass PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_recorder_read_list agc_recorder_stored_bytes agc_host_import_unmap agc_parked_import_unmap agc_window_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_driver_recorder agc_idle_publish_wait agc_recorder_command_buffer_release agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_untracked_forget agc_draw_snapshot_epoch agc_multisample_guest_access agc_repeat_storage_guard agc_owned_draw_inputs agc_owned_draw_inputs_verify agc_owned_draw_inputs_trace agc_owned_draw_inputs_trace_unbound agc_owned_draw_inputs_trace_eviction agc_draw_inputs_in_place agc_draw_inputs_copied agc_draw_input_reuse agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve agc_changed_copy agc_bound_changed_copy agc_draw_input_mirrors agc_draw_input_mirrors_off PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_recorder_read_list agc_recorder_stored_bytes agc_host_import_unmap agc_parked_import_unmap agc_window_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_driver_recorder agc_idle_publish_wait agc_recorder_command_buffer_release agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_untracked_forget agc_draw_snapshot_epoch agc_multisample_guest_access agc_repeat_storage_guard agc_owned_draw_inputs agc_owned_draw_inputs_verify agc_owned_draw_inputs_trace agc_owned_draw_inputs_trace_unbound agc_owned_draw_inputs_trace_eviction agc_draw_inputs_in_place agc_draw_inputs_copied agc_draw_input_reuse agc_index_in_place_behind_writer agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve agc_changed_copy agc_bound_changed_copy agc_draw_input_mirrors agc_draw_input_mirrors_off PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_host_import_second_mapping COMMAND agc_driver_recorder_tests --host-import-second-mapping-only)
         set_tests_properties(agc_host_import_second_mapping PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION

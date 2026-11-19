@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <string>
 
+using Jsc::WtfAbi::GraphemeClusterIterator;
+using Jsc::WtfAbi::GraphemeClusterIteratorImpl;
 using Jsc::WtfAbi::HexResult;
 using Jsc::WtfAbi::LChar;
 using Jsc::WtfAbi::MediaTime;
@@ -179,11 +181,36 @@ void TestMediaTime() {
     Check(ThrowsInvalidArgument([] { NotEqual(Time(std::int64_t{1} << 62, 0), Time((std::int64_t{1} << 62) + 1, 4)); }), __LINE__);
 }
 
+void TestGraphemeClusterIterator() {
+    int view = 0;
+    GraphemeClusterIteratorImpl first{&view, true, &view, 3, 5};
+    GraphemeClusterIteratorImpl same{&view, true, &view, 3, 5};
+    GraphemeClusterIteratorImpl end{&view, true, &view, 7, 7};
+    GraphemeClusterIteratorImpl empty{&view, false, nullptr, 0, 0};
+    GraphemeClusterIteratorImpl emptyEnd{&view, false, nullptr, 0, 0};
+    GraphemeClusterIterator a{&first};
+    GraphemeClusterIterator b{&same};
+    GraphemeClusterIterator c{&end};
+    GraphemeClusterIterator d{&empty};
+    GraphemeClusterIterator e{&emptyEnd};
+    GraphemeClusterIterator null{nullptr};
+    Check(!_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&a, &a), __LINE__);
+    Check(!_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&a, &b), __LINE__);
+    Check(_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&a, &c), __LINE__);
+    Check(_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&c, &a), __LINE__);
+    Check(!_ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&d, &e), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(nullptr, &a); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&a, nullptr); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&null, &a); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_(&a, &null); }), __LINE__);
+}
+
 } // namespace
 
 int main() {
     TestSixCharacterHash();
     TestAppendHex();
     TestMediaTime();
+    TestGraphemeClusterIterator();
     return 0;
 }

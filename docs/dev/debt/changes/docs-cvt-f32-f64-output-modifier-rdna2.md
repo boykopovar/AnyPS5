@@ -1,0 +1,5 @@
+# shader
+
+## change [`v_cvt_f32_f64` output modifier]
+
+- The [`v_cvt_f32_f64` output modifier](../../../core/shader/recompiler/Translation/src/Float64Instructions.cpp) applies `mul:2`, `mul:4` and `div:2` to the converted f32 value under the f32 result rule above only when the shader's float mode is known; a missing mode drops it (plain conversion, clamp kept): its gating f32 denormal field is then unknown, and a mode-less `v_cvt_f32_f64 mul:2` writes the plain conversion in `agc_driver_f64_rounding` across the CI GPUs. Measured with [tools/hw-oracle](../HW_ORACLE.md) on RDNA3 (gfx1101, RX 7700 XT, RADV, Mesa 26.2.4) and RDNA2 (gfx1032, RX 6600, AMD Windows driver 32.0.21030.2001), not the PS5's gfx1013: 22 f64 inputs by 8 forms in all 16 explicit modes, no mismatch on the modifier and clamp columns. U32-result conversions on this path (`v_cvt_i32_f64`, `v_cvt_u32_f64`, `v_frexp_exp_i32_f64`) never carry a modifier. Pinned by [CvtF32F64OutputModifier.cpp](../../../core/libs/prx/libSceAgcDriver/tests/execution/CvtF32F64OutputModifier.cpp).

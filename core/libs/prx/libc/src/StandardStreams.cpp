@@ -227,6 +227,7 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     errno = 0;
     const int result = std::fputc(value, native);
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -244,6 +245,7 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     const int result = putc_unlocked(value, native);
 #endif
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncUnlockedStatus();
     stream->Orientation(-1);
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
