@@ -62,6 +62,13 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(command[1:], [64, 300])
         self.assertEqual(self.queue(1001, "cross"), [command[0] + 1, 16384, 300])
 
+    def test_previous_command_size_limit_matches_runtime(self):
+        for command in (b"2000 16384 300\n", b"APS5_PAD_TIMELINE 1 2000 1\n0 1 16384\n"):
+            for length, expected in ((65536, 2001), (65537, 1000)):
+                with self.subTest(command=command, length=length):
+                    self.path.write_bytes(command.ljust(length, b" "))
+                    self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
     def test_timeline_command_is_advanced_after_clock_reset(self):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
@@ -307,6 +314,29 @@ class PadInputTests(unittest.TestCase):
             pad_input.main()
         self.assertEqual(error.exception.code, 2)
         self.assertIn("is a directory", errors.getvalue())
+
+
+class ButtonMaskTests(unittest.TestCase):
+    def test_button_mask_ors_joined_button_names(self):
+        self.assertEqual(pad_input.button_mask('l3'), pad_input.BUTTONS['l3'])
+        self.assertEqual(pad_input.button_mask('cross+circle'), pad_input.BUTTONS['cross'] | pad_input.BUTTONS['circle'])
+
+    def test_button_mask_refuses_unknown_release_and_repeated_names(self):
+        import argparse
+        for value in ('bogus', 'release+cross', 'cross+cross'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                pad_input.button_mask(value)
+class TimelineHeaderTests(unittest.TestCase):
+    def test_timeline_sequence_refuses_a_non_timeline_header_and_other_versions(self):
+        import io
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'junk\n'), 0)
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'APS5_PAD_TIMELINE 2 5 1\n'), 0)
+class NextSequenceTests(unittest.TestCase):
+    def test_next_sequence_is_positive_and_fits_64_bits_without_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = pad_input.next_sequence(Path(directory) / 'missing.cmd')
+        self.assertGreater(value, 0)
+        self.assertLess(value, 2 ** 64)
 
 
 if __name__ == "__main__":

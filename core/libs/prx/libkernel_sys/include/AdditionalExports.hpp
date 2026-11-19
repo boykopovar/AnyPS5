@@ -71,7 +71,7 @@ int APS5_VABI libkernel_sysUnknown_2YWCKF9_minus_3gM_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_2_plus_KZ4mZKp6E_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_2fPLezHAV2E_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_2wKjID0iGVM_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch();
+int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(KernelModule handle, const void* address);
 int APS5_VABI libkernel_sysUnknown_3BwLcdWeZLs_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_3YkQPLocySc_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_3jw_minus_vq4gYLs_nid_no_patch();
