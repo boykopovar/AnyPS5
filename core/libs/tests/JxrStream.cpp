@@ -556,6 +556,48 @@ void MemoryBitIo() {
     CloseMemory(stream);
 }
 
+void PacketBitIoGuestPointers(Jxr::Stream& stream) {
+    auto* unmappedIo = reinterpret_cast<Jxr::BitIo*>(0x10);
+    auto* unmappedStream = reinterpret_cast<Jxr::Stream*>(0x10);
+    static const std::array<std::uint8_t, 4096> roPacket{};
+    static const Jxr::BitIo readOnlyIo{
+        0, 0, 0, ~8192,
+        const_cast<std::uint8_t*>(roPacket.data()),
+        const_cast<std::uint8_t*>(roPacket.data()) + 4096,
+        nullptr, 0};
+
+    errno = 71;
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, unmappedIo); }, "readIS accepted unmapped io");
+    Require(errno == 71, "readIS unmapped io changed errno");
+    RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, unmappedIo); }, "writeIS accepted unmapped io");
+    Require(errno == 71, "writeIS unmapped io changed errno");
+    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, unmappedIo); }, "detachISRead accepted unmapped io");
+    Require(errno == 71, "detachISRead unmapped io changed errno");
+    RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, unmappedIo); }, "detachISWrite accepted unmapped io");
+    Require(errno == 71, "detachISWrite unmapped io changed errno");
+
+    Jxr::BitIo badStreamIo{0, 0, 0, ~8192, ring.data(), ring.data() + PacketSize, unmappedStream, 0};
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &badStreamIo); }, "readIS accepted unmapped stream");
+    Require(errno == 71, "readIS unmapped stream changed errno");
+    RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &badStreamIo); }, "writeIS accepted unmapped stream");
+    Require(errno == 71, "writeIS unmapped stream changed errno");
+    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, &badStreamIo); }, "detachISRead accepted unmapped stream");
+    Require(errno == 71, "detachISRead unmapped stream changed errno");
+    RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, &badStreamIo); }, "detachISWrite accepted unmapped stream");
+    Require(errno == 71, "detachISWrite unmapped stream changed errno");
+
+    Jxr::BitIo roIoCopy = readOnlyIo;
+    roIoCopy.stream = &stream;
+    static const Jxr::BitIo readOnlyAlignedIo{
+        0, 0, 0, ~8192,
+        const_cast<std::uint8_t*>(roPacket.data()),
+        const_cast<std::uint8_t*>(roPacket.data()),
+        nullptr, 0};
+    (void)readOnlyAlignedIo;
+    RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, const_cast<Jxr::BitIo*>(&readOnlyIo)); }, "writeIS accepted read-only io");
+    Require(errno == 71, "writeIS read-only io changed errno");
+}
+
 }
 
 int main() {
@@ -578,5 +620,6 @@ int main() {
     MemoryWrite();
     MemoryPosition();
     MemoryBitIo();
+    PacketBitIoGuestPointers(stream);
     return 0;
 }
