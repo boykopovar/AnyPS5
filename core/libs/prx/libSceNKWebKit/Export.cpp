@@ -1264,10 +1264,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer30setScrollPositionDeltaIfNeededERK
 }
 
 
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22SocketStreamHandleImpl12platformSendEPKhmON3WTF8FunctionIFvbEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4121,10 +4117,6 @@ int APS5_VABI _ZN7WebCore9FrameView27updateBackgroundRecursivelyERKN3WTF8Optiona
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList17FillRectWithColorC1ERKNS_9FloatRectERKNS_5ColorE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5148,10 +5140,6 @@ int APS5_VABI _ZNK7WebCore15StyleProperties17propertyAsValueIDENS_13CSSPropertyI
 }
 
 int APS5_VABI _ZN7WebCore8Settings38setSimpleLineLayoutDebugBordersEnabledEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6330,10 +6318,6 @@ int APS5_VABI _ZN7WebCore8FormData15appendFileRangeERKN3WTF6StringExxNS1_8Option
 }
 
 int APS5_VABI _ZN7WebCore26MessagePortChannelRegistry26checkRemotePortForActivityERKNS_21MessagePortIdentifierEON3WTF17CompletionHandlerIFvNS_26MessagePortChannelProvider11HasActivityEEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7683,10 +7667,6 @@ int APS5_VABI _ZN7Nicosia29ImageBackingTextureMapperImpl11flushUpdateEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList15DrawNativeImageC2ERKN3WTF6RefPtrI14_cairo_surfaceNS2_13DumbPtrTraitsIS4_EEEERKNS_9FloatSizeERKNS_9FloatRectESF_RKNS_20ImagePaintingOptionsE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8588,10 +8568,6 @@ int APS5_VABI _ZN7WebCore12PrintContext13numberOfPagesERNS_5FrameERKNS_9FloatSiz
 }
 
 int APS5_VABI _ZN7WebCore13TextureMapper6createEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
