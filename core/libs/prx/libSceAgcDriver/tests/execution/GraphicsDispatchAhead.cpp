@@ -1,9 +1,11 @@
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <iostream>
 #include <stdexcept>
@@ -77,11 +79,17 @@ int main() {
         Run(1);
         Require(Counted[0] == 2, "the warm-up dispatches on the graphics queue did not run");
         const auto adopted = AgcDriverDispatchesAdoptedAhead_nid_postfix();
+        const auto drains = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x15);
         Run(2);
         Require(Counted[0] == 4, "the second submission's dispatches on the graphics queue did not run");
         const auto adoptedNow = AgcDriverDispatchesAdoptedAhead_nid_postfix();
-        std::cout << "graphics queue dispatches adopted ahead: " << adoptedNow - adopted << '\n';
-        Require(adoptedNow > adopted, "with APS5_GROUP_CAPTURE_ALL_QUEUES and draw pipelining off, the second dispatch on the graphics queue was neither pipelined nor resolved ahead");
+        const auto dispatchDrains = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(0x15) - drains;
+        std::cout << "graphics queue dispatches adopted ahead: " << adoptedNow - adopted << ", dispatch drain requests: " << dispatchDrains << '\n';
+        if (AgcDriver::DriverDetail::DrawPipeline::Depth() != 0 && std::getenv("APS5_NO_PIPELINE_DISPATCH") == nullptr) {
+            Require(dispatchDrains == 0, "with draws pipelined and no APS5_NO_PIPELINE_DISPATCH, a cached dispatch on the graphics queue drained the draw pipeline instead of joining it");
+        } else {
+            Require(adoptedNow > adopted, "with APS5_GROUP_CAPTURE_ALL_QUEUES and draw pipelining off, the second dispatch on the graphics queue was neither pipelined nor resolved ahead");
+        }
         std::cout << "graphics dispatch ahead test passed\n";
         AgcDriverShutdown_nid_postfix();
         return 0;
