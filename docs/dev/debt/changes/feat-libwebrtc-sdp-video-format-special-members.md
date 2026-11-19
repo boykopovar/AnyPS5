@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::SdpVideoFormat copy constructor, move constructor and destructor](../../../core/libs/prx/libwebrtc/src/SdpVideoFormat.cpp) (libwebrtc) - the layout and allocator are unverified on the console. All three are defaulted in M127 and M134 [sdp_video_format.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/video_codecs/sdp_video_format.cc). Layout: `name` at 0, `parameters` at 40, and `scalability_modes`, a 48-byte `absl::InlinedVector<ScalabilityMode, 34>`, at 64. The vector follows the pinned abseil [inlined_vector.h](https://chromium.googlesource.com/chromium/src/third_party/+/65ef38d36813d1ad9d4cbf8a18b32ac3691f418b/abseil-cpp/absl/container/inlined_vector.h): a heap source is copied into a guest `new` buffer of `max(68, size)`, a move takes the storage and leaves the source inline and empty, and the destructor frees it through guest `delete`. Invalid objects or vector headers throw. Closes when: compared with the console.

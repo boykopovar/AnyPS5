@@ -34,6 +34,9 @@ struct WebRtcSdpAudioFormat {
 };
 
 extern "C" void WebRtcValidateSdpAudioFormat_nid_no_patch(const WebRtcSdpAudioFormat* format, const char* message);
+extern "C" void WebRtcCopySdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, const WebRtcGuestString* sourceName, const WebRtcStringMap* sourceParameters, const char* message);
+extern "C" void WebRtcMoveSdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, WebRtcGuestString* sourceName, WebRtcStringMap* sourceParameters, const char* message);
+extern "C" void WebRtcDestroySdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, const char* message);
 
 static_assert(sizeof(WebRtcStringMapLinks) == 32);
 static_assert(sizeof(WebRtcStringMapNode) == 112);

@@ -396,3 +396,65 @@ void APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(WebRtcSdpAudioFormat* 
 }
 
 }
+
+namespace {
+
+void MoveMap(WebRtcStringMap& destination, WebRtcStringMap& source) {
+    if (source.size == 0) {
+        destination.beginNode = EndNode(destination);
+        destination.root = nullptr;
+        destination.size = 0;
+        return;
+    }
+    destination.beginNode = source.beginNode;
+    destination.root = source.root;
+    destination.size = source.size;
+    destination.root->links.parent = EndNode(destination);
+    source.beginNode = EndNode(source);
+    source.root = nullptr;
+    source.size = 0;
+}
+
+void AdoptClonedMap(WebRtcStringMap& destination, const WebRtcStringMap& cloned) {
+    destination = cloned;
+    if (destination.size == 0)
+        destination.beginNode = EndNode(destination);
+    else
+        destination.root->links.parent = EndNode(destination);
+}
+
+}
+
+extern "C" {
+
+void WebRtcCopySdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, const WebRtcGuestString* sourceName, const WebRtcStringMap* sourceParameters, const char* message) {
+    ValidateString(*sourceName, message);
+    StringGuard nameGuard;
+    CopyString(*sourceName, nameGuard.value);
+    nameGuard.active = true;
+
+    WebRtcStringMap clonedMap{};
+    CloneMap(*sourceParameters, clonedMap, message);
+
+    *name = nameGuard.value;
+    nameGuard.active = false;
+    AdoptClonedMap(*parameters, clonedMap);
+}
+
+void WebRtcMoveSdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, WebRtcGuestString* sourceName, WebRtcStringMap* sourceParameters, const char* message) {
+    ValidateString(*sourceName, message);
+    std::vector<WebRtcStringMapNode*> validated;
+    ValidateMapNodes(*sourceParameters, message, validated);
+    MoveString(*name, *sourceName);
+    MoveMap(*parameters, *sourceParameters);
+}
+
+void WebRtcDestroySdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, WebRtcStringMap* parameters, const char* message) {
+    ValidateString(*name, message);
+    std::vector<WebRtcStringMapNode*> nodes;
+    ValidateMapNodes(*parameters, message, nodes);
+    DestroyMapNodes(nodes, *parameters);
+    ReleaseString(*name);
+}
+
+}
