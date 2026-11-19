@@ -40,6 +40,14 @@ alignas(256) constexpr std::array<std::uint32_t, 36> Code{
     0x80001201, 0xe070103c, 0x80001301, 0xbf810000,
 };
 
+constexpr std::array<std::uint32_t, 36> WithLoadWord(std::uint32_t word) {
+    auto code = Code;
+    code[16] = word;
+    return code;
+}
+
+alignas(256) constexpr auto LayerLoadCode = WithLoadWord(0xf0001f20u);
+
 alignas(256) constexpr std::array<std::uint32_t, 26> ImplicitLodCode{
     0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
     0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf0800f10, 0x00610c02,
@@ -186,6 +194,14 @@ void CheckLineLoad() {
     }
 }
 
+void CheckLineLayerLoad() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto layer = LineY[tid % LineY.size()];
+        const std::array<std::uint32_t, 4> texel = layer == 0u ? std::array<std::uint32_t, 4>{SliceMarker(0), LaneOf(tid).x, 0u, 255u} : std::array<std::uint32_t, 4>{};
+        Expect(tid, LoadResult, texel, "image_load 1d array on a 1D texture with layer " + std::to_string(static_cast<std::int32_t>(layer)));
+    }
+}
+
 void CheckVolume() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto lane = LaneOf(tid);
@@ -216,6 +232,9 @@ int main() {
         Run(*device, Code, LineDescriptor());
         CheckLine("image_sample_lz");
         CheckLineLoad();
+        Run(*device, LayerLoadCode, LineDescriptor());
+        CheckLine("image_sample_lz");
+        CheckLineLayerLoad();
         FillInput(false);
         Run(*device, ImplicitLodCode, LineDescriptor());
         CheckLine("image_sample");
