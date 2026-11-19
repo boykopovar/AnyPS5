@@ -111,7 +111,7 @@ void CheckInvalidGuestPointers() {
 
     Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(page) == ((digit ^ 1u) << 32) + (digit ^ 0u), "unmapped get", "value");
     _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(page, 0x5);
-    Require(page[0] == digit + 5 && page[1] == digit ^ 1u && page[2] == digit ^ 2u && page[3] == digit ^ 3u && page[4] == digit ^ 4u, "unmapped add", "words");
+    Require(page[0] == (digit + 5) && page[1] == (digit ^ 1u) && page[2] == (digit ^ 2u) && page[3] == (digit ^ 3u) && page[4] == (digit ^ 4u), "unmapped add", "words");
     for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
     _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(page, 3, 4);
     Require(page[0] == 12 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "unmapped mul", "words");
