@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -343,6 +344,37 @@ void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
     RequirePlayed(played, {&voice});
 }
 
+void TestSetAttributesRejectsUnreadablePointers() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0);
+    params.num_grains = grain;
+    params.queue_depth = 1;
+    AudioOut2ContextHandle context = 0;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
+    AudioOut2PortParam portParams{};
+    portParams.port_type = portTypeMain;
+    portParams.data_format = formatStereoFloat;
+    portParams.sampling_freq = frequency;
+    AudioOut2PortHandle port = 0;
+    Require(sceAudioOut2PortCreate(context, &portParams, &port) == 0);
+
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, reinterpret_cast<const AudioOut2Attribute*>(std::uintptr_t{0x10}), 1) == errorInvalidArgument);
+    Require(errno == 71);
+    const AudioOut2Attribute badData{attributeData, 0, reinterpret_cast<const void*>(std::uintptr_t{0x10}), sizeof(void*)};
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, &badData, 1) == errorInvalidArgument);
+    Require(errno == 71);
+    const AudioOut2Attribute badVolume{1, 0, reinterpret_cast<const void*>(std::uintptr_t{0x10}), channels * sizeof(float)};
+    errno = 71;
+    Require(sceAudioOut2PortSetAttributes(port, &badVolume, 1) == errorInvalidArgument);
+    Require(errno == 71);
+
+    Require(sceAudioOut2PortDestroy(port) == 0);
+    Require(sceAudioOut2ContextDestroy(context) == 0);
+}
+
 }
 
 int main() {
@@ -361,5 +393,6 @@ int main() {
     TestRenderingSizedByLevelStaysWithinQueueDepth();
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);
+    TestSetAttributesRejectsUnreadablePointers();
     return 0;
 }
