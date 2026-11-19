@@ -396,7 +396,7 @@ void DefineModule(SpirvEmitterState& state) {
         DefineTessellationExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
-    EmitBaseHeader(state.module, state.program, state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);
+    EmitBaseHeader(state.module, state.program, state.stencilReplayLateStore || state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);
     for (const auto capability : state.requirements.capabilities) {
         state.module.EmitCapability(capability);
     }

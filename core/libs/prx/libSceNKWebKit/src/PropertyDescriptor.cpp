@@ -91,6 +91,10 @@ bool APS5_VABI _ZNK3JSC18PropertyDescriptor10enumerableEv(const PropertyDescript
     return !(RequireDescriptor(self, __func__)->attributes & NKWebKit::JscAbi::DontEnum);
 }
 
+bool APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv(const PropertyDescriptor* self) {
+    return !(RequireDescriptor(self, __func__)->attributes & NKWebKit::JscAbi::DontDelete);
+}
+
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor16isDataDescriptorEv(const PropertyDescriptor* self) {
     RequireDescriptor(self, __func__);
     return self->value != 0 || (self->seenAttributes & NKWebKit::JscAbi::WritablePresent);
