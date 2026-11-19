@@ -169,6 +169,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
     require(left.hostSubgroupSize == right.hostSubgroupSize && left.fullSubgroups == right.fullSubgroups, prefix + "host subgroup size differs");
     require(left.windowSelects == right.windowSelects, prefix + "window-select form flag differs");
+    require(left.groupMultiplier == right.groupMultiplier, prefix + "workgroup multiplier differs");
     require(left.vertexInputs == right.vertexInputs, prefix + "vertex inputs differ");
     require(left.vertexInputPatches == right.vertexInputPatches, prefix + "vertex type patches differ");
     require(left.registrationModule == right.registrationModule, prefix + "registration module flags differ");
@@ -276,6 +277,7 @@ RecompileResult sampleResult() {
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
     result.windowSelects = true;
+    result.groupMultiplier = 3u;
     result.workgroupMemoryDwords = 32769u;
     result.vertexInputs = {{1, 4, 2}, {5, 2, 0}};
     result.vertexInputPatches = {{1, 20, {7, 8, 9}}, {5, 40, {10, 11, 12}}};
