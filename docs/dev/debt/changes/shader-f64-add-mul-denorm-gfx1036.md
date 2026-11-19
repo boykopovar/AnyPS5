@@ -1,0 +1,4 @@
+# shader
+
+## change [v_add_f64 and v_mul_f64 denormals]
+- [v_add_f64 and v_mul_f64 denormals](../../../core/shader/recompiler/Translation/src/Float64Instructions.cpp) follow the `FLOAT_MODE` f16/f64 denormal field; the PS5's gfx1013 is not measured. Measured on RDNA2 (`gfx1031`, Radeon RX 6700 XT, AMD Windows driver 32.0.21045.5002 through HIP, across all four `f16/f64` denormal/rounding modes at `IEEE=0/1` over 17 x 17 pairs; corroborated on `gfx1036` across `denorm16={0..3}`): bit 0 clears denormal inputs to a signed zero before the operation, and bit 1 clears denormal outputs to a signed zero; in mode 1 (`in` kept, `out` flushed), `v_add_f64` and `v_mul_f64` still keep a denormal input before adding or multiplying (`denorm + 0` flushes to `0`, whereas `denorm + normal` and `denorm * 2` produce normal results).
