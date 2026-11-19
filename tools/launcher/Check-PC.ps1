@@ -43,7 +43,7 @@ if ($dockerReady) {
     }
 }
 $drive = Get-PSDrive -Name ((Get-Item -LiteralPath $repository).PSDrive.Name) -ErrorAction SilentlyContinue
-if ($drive) { Note ("{0:N0} GB free on drive {1}:, where this folder is. The downloaded images and exported engine need about 1 GB. Building the engine from source instead used about 20 GB of Docker disk and 40 minutes on a 4-processor machine. Docker Desktop keeps its data on the drive set in its settings." -f ($drive.Free / 1GB), $drive.Name) }
+if ($drive) { Note ("{0:N0} GB free on drive {1}:, where this folder is. The downloaded images and exported engine need about 1.5 GB. Building the engine from source instead used about 20 GB of Docker disk and 40 minutes on a 4-processor machine. Docker Desktop keeps its data on the drive set in its settings." -f ($drive.Free / 1GB), $drive.Name) }
 $listener = $null
 try {
     $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback, $Port)
