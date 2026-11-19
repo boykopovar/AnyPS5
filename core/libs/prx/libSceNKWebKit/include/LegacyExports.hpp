@@ -721,7 +721,6 @@ int APS5_VABI WKBundlePageGetPageGroup();
 int APS5_VABI libSceNKWebKitLegacyUnknown_JmwlvppRWE4_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_JqkF17rNelU_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_Jr1tSCtuUiY_nid_no_patch();
-int APS5_VABI _ZNK7WebCore21WheelEventDeltaFilter17isFilteringDeltasEv();
 void APS5_VABI _ZN7WebCore17LibWebRTCProvider29setH264HardwareEncoderAllowedEb(bool allowed);
 int APS5_VABI libSceNKWebKitLegacyUnknown_K_plus_InrvOGqvo_nid_no_patch();
 int APS5_VABI _ZN7WebCore17FrameLoaderClientD2Ev();
