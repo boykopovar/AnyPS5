@@ -19,7 +19,7 @@
 #include <thread>
 #include <vector>
 #include <fcntl.h>
-#include <poll.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -58,7 +58,7 @@ public:
         const auto name = frameName(index);
         check(mkfifo(name.c_str(), 0600) == 0, "a frame dump pipe could not be created");
         descriptor = open(name.c_str(), O_RDWR);
-        check(descriptor >= 0, "a frame dump pipe could not be opened");
+        check(descriptor >= 0 && descriptor < FD_SETSIZE, "a frame dump pipe could not be opened");
     }
 
     ~HeldDump() { close(descriptor); }
@@ -69,8 +69,11 @@ public:
     std::vector<char> Release() const {
         std::vector<char> dump(DumpBytes);
         for (std::size_t done = 0; done < dump.size();) {
-            pollfd waiting{descriptor, POLLIN, 0};
-            check(poll(&waiting, 1, 15000) == 1, "a queued frame dump was not written");
+            fd_set waiting;
+            FD_ZERO(&waiting);
+            FD_SET(descriptor, &waiting);
+            timeval timeout{15, 0};
+            check(select(descriptor + 1, &waiting, nullptr, nullptr, &timeout) == 1, "a queued frame dump was not written");
             const auto count = read(descriptor, dump.data() + done, dump.size() - done);
             check(count > 0, "a frame dump pipe could not be read");
             done += static_cast<std::size_t>(count);
