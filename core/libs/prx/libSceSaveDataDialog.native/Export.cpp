@@ -1,5 +1,6 @@
 #include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -7,6 +8,24 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+ errno = savedErrno;
+ return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+ errno = savedErrno;
+ return copied;
+}
+
+} // namespace
 
 static int g_status = SAVE_DATA_DIALOG_STATUS_NONE;
 static int g_mode = 0;
@@ -41,25 +60,21 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- void* dir_name = nullptr;
- if (!GuestCopyIn_nid_no_patch(&dir_name, static_cast<const char*>(result) + offsetof(SaveDataDialogResult, dir_name), sizeof(dir_name))) {
+ SaveDataDialogResult local{};
+ constexpr std::size_t writeLen = offsetof(SaveDataDialogResult, user_data) + sizeof(local.user_data);
+ if (!CopyInPreservingErrno(&local, result, writeLen)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- struct ResultHeader {
-  std::int32_t mode;
-  std::int32_t result;
-  std::int32_t button_id;
- } header{g_mode, SAVE_DATA_DIALOG_RESULT_OK, SAVE_DATA_DIALOG_BUTTON_ID_OK};
- if (!GuestCopyOut_nid_no_patch(result, &header, sizeof(header))) {
+ local.mode = g_mode;
+ local.result = SAVE_DATA_DIALOG_RESULT_OK;
+ local.button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
+ local.user_data = g_user_data;
+ if (!CopyOutPreservingErrno(result, &local, writeLen)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- void* user_data = g_user_data;
- if (!GuestCopyOut_nid_no_patch(static_cast<char*>(result) + offsetof(SaveDataDialogResult, user_data), &user_data, sizeof(user_data))) {
-  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
- }
- if (dir_name != nullptr) {
+ if (local.dir_name != nullptr) {
   const std::size_t len = std::strlen(g_dir_name) + 1;
-  if (!GuestCopyOut_nid_no_patch(dir_name, g_dir_name, len)) {
+  if (!CopyOutPreservingErrno(local.dir_name, g_dir_name, len)) {
    return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
   }
  }
@@ -73,20 +88,40 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  if (param == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- const auto* p = static_cast<const SaveDataDialogParam*>(param);
- g_mode = p->mode;
- g_user_data = p->user_data;
- g_dir_name[0] = '\0';
- const auto* items = static_cast<const SaveDataDialogItems*>(p->items);
- if (items != nullptr && items->dir_names != nullptr) {
-  for (std::uint32_t i = 0; i < items->dir_names_num; i++) {
-   const char* name = items->dir_names[i].data;
-   if (name[0] != '\0') {
-    std::snprintf(g_dir_name, sizeof(g_dir_name), "%s", name);
+ const int savedErrno = errno;
+ SaveDataDialogParam p{};
+ const std::size_t copyLen = offsetof(SaveDataDialogParam, user_data) + sizeof(p.user_data);
+ if (!GuestCopyIn_nid_no_patch(&p, param, copyLen)) {
+  errno = savedErrno;
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ SaveDataDialogItems items{};
+ if (p.items != nullptr && !GuestCopyIn_nid_no_patch(&items, p.items, sizeof(items))) {
+  errno = savedErrno;
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ char dir_name[sizeof(g_dir_name)] = {};
+ if (items.dir_names != nullptr) {
+  for (std::uint32_t i = 0; i < items.dir_names_num; i++) {
+   SaveDataDirName name{};
+   if (!GuestCopyIn_nid_no_patch(&name, &items.dir_names[i], sizeof(name))) {
+    errno = savedErrno;
+    return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+   }
+   if (name.data[0] != '\0') {
+    if (std::memchr(name.data, '\0', sizeof(name.data)) == nullptr) {
+     errno = savedErrno;
+     return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+    }
+    std::snprintf(dir_name, sizeof(dir_name), "%s", name.data);
     break;
    }
   }
  }
+ errno = savedErrno;
+ g_mode = p.mode;
+ g_user_data = p.user_data;
+ std::memcpy(g_dir_name, dir_name, sizeof(g_dir_name));
  g_status = g_mode == SAVE_DATA_DIALOG_MODE_PROGRESS_BAR
   ? SAVE_DATA_DIALOG_STATUS_RUNNING : SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;

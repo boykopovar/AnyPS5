@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -270,7 +271,8 @@ int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, Guest
     if (count > (std::numeric_limits<size_t>::max() - LinkSize) / size) throw std::overflow_error("mergesort: array size overflow");
     auto* const scratch = static_cast<unsigned char*>(malloc_nid_postfix(count * size + LinkSize));
     if (!scratch) return -1;
+    const std::unique_ptr<unsigned char, decltype(&free_nid_postfix)> owner(scratch, free_nid_postfix);
     MergeSorter sorter(size, compare);
-    free_nid_postfix(sorter.Sort(static_cast<unsigned char*>(base), count, scratch));
+    sorter.Sort(static_cast<unsigned char*>(base), count, scratch);
     return 0;
 }

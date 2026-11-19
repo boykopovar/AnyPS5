@@ -1,12 +1,25 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 namespace {
+
+constexpr std::uint32_t SocketCreationCallbackSdkVersion = 0x01500000u;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
+    return sdkVersion;
+}
 
 constexpr std::uint32_t PrivateSslFlags = 0x2dffu;
 
@@ -22,14 +35,21 @@ void AddHttpContext(int contextId) {
 }
 
 void RemoveHttpContext(int contextId) {
-    std::lock_guard lock(g_optionsMutex);
+    std::unique_lock lock(g_optionsMutex);
     g_contextAcceptEncodingGzip.erase(contextId);
     if (g_contextAcceptEncodingGzip.empty()) g_objectOptions.clear();
+    lock.unlock();
+    RemoveHttpCookieJar(contextId);
 }
 
 bool HttpInitialised() {
     std::lock_guard lock(g_optionsMutex);
     return !g_contextAcceptEncodingGzip.empty();
+}
+
+bool IsHttpContext(int contextId) {
+    std::lock_guard lock(g_optionsMutex);
+    return g_contextAcceptEncodingGzip.contains(contextId);
 }
 
 void AddHttpTemplate(int templateId, int contextId) {
@@ -65,6 +85,14 @@ bool SetHttpOption(int id, bool HttpOptions::*option, bool enable) {
     return true;
 }
 
+bool SetHttpCookieEnabled(int id, int enable) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.cookieEnabled = enable;
+    return true;
+}
+
 bool SetHttpContextAcceptEncodingGzip(int contextId, bool enable) {
     std::lock_guard lock(g_optionsMutex);
     const auto found = g_contextAcceptEncodingGzip.find(contextId);
@@ -89,7 +117,7 @@ int APS5_VABI sceHttpGetAutoRedirect(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->autoRedirect ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->autoRedirect ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -98,7 +126,7 @@ int APS5_VABI sceHttpGetNonblock(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->nonblock ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->nonblock ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -111,7 +139,7 @@ int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->acceptEncodingGzip ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->acceptEncodingGzip ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -125,8 +153,8 @@ int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* epoll, void** argument) {
     if (!epoll) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *epoll = options->epoll;
-    if (argument) *argument = options->epollArgument;
+    if (!HttpGuest::Store(epoll, options->epoll)) return ERROR_INVALID_VALUE;
+    if (argument && !HttpGuest::Store(argument, options->epollArgument)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -144,6 +172,14 @@ int APS5_VABI sceHttpsEnableOptionPrivate(int id, std::uint32_t sslFlags) {
 
 int APS5_VABI sceHttpsDisableOptionPrivate(int id, std::uint32_t sslFlags) {
     return sceHttpsEnableOptionPrivate(id, sslFlags);
+}
+
+int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)callback;
+    (void)userArg;
+    if (!FindHttpOptions(id)) return ERROR_INVALID_ID;
+    return CompiledSdkVersion() < SocketCreationCallbackSdkVersion ? ERROR_INVALID_VALUE : 0;
 }
 
 }

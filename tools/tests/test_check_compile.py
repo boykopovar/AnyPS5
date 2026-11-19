@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_compile
 
 TOOL = Path(__file__).resolve().parents[1] / "check_compile.py"
+
+
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def spawnable_python():
+    for program, options in ((sys.executable, ()), (shutil.which("py"), ("-3",))):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return [program, *options]
+    return None
 
 
 class CheckCompileFixture(unittest.TestCase):
@@ -317,6 +329,99 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertIn("flags.rsp", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_dry_run_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\nsys.exit(1)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" -c -o unit.o "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{other}"')])
+        control = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertEqual(control.stderr, "")
+        self.assertEqual(json.loads(control.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        for arguments in (("unit.cpp", "loop.cpp"), ("loop.cpp",)):
+            with self.subTest(arguments=arguments):
+                result = self.tool("--dry-run", *arguments)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("loop.cpp", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists())
+        subprocess.run(["git", "-C", str(self.root), "add", "unit.cpp"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "add"], check=True)
+        result = self.tool("--dry-run", "--base", "HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        plan = json.loads(result.stdout)
+        self.assertEqual(len(plan["translation_units"]), 1)
+        self.assertEqual(plan["translation_units"][0]["source"], str(source))
+        self.assertEqual(len(plan["translation_units"][0]["commands"]), 2)
+        self.assertFalse(invoked.exists())
+        response = self.build / "flags.rsp"
+        response.write_text('"-DREQUIRED=1" "-c" "-o" "unit.o"', encoding="utf-8")
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), "@flags.rsp", str(source)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(json.loads(result.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", "-DREQUIRED=1", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        response.unlink()
+        response.symlink_to(response)
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        dangling = self.root / "dangling.cpp"
+        dangling.symlink_to(self.root / "missing.cpp")
+        for missing_arg, resolved in (("orphan.cpp", self.root / "orphan.cpp"),
+                                      ("dangling.cpp", self.root / "missing.cpp")):
+            with self.subTest(missing_arg=missing_arg):
+                result = self.tool("--dry-run", missing_arg)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(json.loads(result.stdout), {
+                    "translation_units": [{"source": str(resolved), "commands": []}],
+                })
+
     def test_syntax_arguments_does_not_call_path_resolve_on_the_source(self):
         loop = self.root / "loop.cpp"
         other = self.root / "other.cpp"
@@ -576,6 +681,23 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                     check_compile.check(self.root, self.build, [source])
                 compiler.assert_not_called()
 
+    def test_index_groups_entries_by_checkout_relative_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "checkout"
+            build = Path(directory) / "build"
+            (root / "src").mkdir(parents=True)
+            build.mkdir()
+            database = [
+                {"directory": str(root), "file": "src/a.cpp", "command": "cc -c src/a.cpp"},
+                {"directory": str(root / "src"), "file": "a.cpp", "command": "cc -DX -c a.cpp"},
+                {"directory": str(root), "file": "src/b.cpp", "command": "cc -c src/b.cpp"},
+            ]
+            (build / "compile_commands.json").write_text(json.dumps(database), encoding="utf-8")
+            commands = check_compile.index(build, root)
+            self.assertEqual(sorted(commands), ["src/a.cpp", "src/b.cpp"])
+            self.assertEqual(commands["src/a.cpp"], database[:2])
+            self.assertEqual(commands["src/b.cpp"], database[2:])
+
 
 class CheckCompileOutputTests(CheckCompileFixture):
     def test_dependency_options_do_not_make_syntax_checks_fail_or_rewrite_outputs(self):
@@ -770,8 +892,10 @@ class CheckCompileResponseTests(CheckCompileFixture):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         recorder = self.compiler("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
-        launcher = shutil.which("py")
-        wrapper = f"{launcher},-3,{recorder}" if launcher else f"{sys.executable},{recorder}"
+        interpreter = spawnable_python()
+        if interpreter is None:
+            self.skipTest("needs a Python interpreter that is not an App Execution Alias")
+        wrapper = ",".join([*interpreter, str(recorder)])
         arguments = [compiler, "-wrapper", wrapper,
                      "-c", str(source), "-o", str(self.build / "unit.o"), "@flags.rsp"]
         cases = (
@@ -882,19 +1006,143 @@ class CheckCompileResponseTests(CheckCompileFixture):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertFalse(invoked.exists())
 
-    def test_windows_response_grammars_are_rejected_before_execution(self):
+    def test_cl_mode_response_files_are_rejected_before_execution(self):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         response.write_text("-DA=7", encoding="utf-8")
         for arguments in (["clang-cl", "@flags.rsp"], ["cl.exe", "@flags.rsp"],
                           ["clang", "--driver-mode=cl", "@flags.rsp"],
-                          ["clang", "--rsp-quoting=windows", "@flags.rsp"]):
+                          ["clang", "--driver-mode=cl", "--rsp-quoting=windows", "@flags.rsp"]):
             with self.subTest(arguments=arguments):
                 self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
                 result = self.tool("unit.c")
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn("Windows-style compiler response files are unsupported", result.stderr)
+                self.assertIn("cl-mode compiler response files are unsupported", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_windows_quoted_response_files_follow_the_clang_tokenizer(self):
+        response = self.build / "flags.rsp"
+        cases = (
+            (r'-DA=a\\"b c"', ["-DA=a\\b c"]),
+            (r'-DA=a\\\"b', ['-DA=a\\"b']),
+            (r"-DA=c:\dir\ -DB=x\\y", ["-DA=c:\\dir\\", "-DB=x\\\\y"]),
+            (r'"-DA=p""q"', ['-DA=p"q']),
+            (r'"-DA=p"""q"', ['-DA=p"q']),
+            (r'-DA=p""q', ["-DA=pq"]),
+            (r'-D "" -DB', ["-D", "", "-DB"]),
+            ('""', [""]),
+            ("-DA=x\vy -DB=x\fy", ["-DA=x\vy", "-DB=x\fy"]),
+            ('-DA "-DB=x y', ["-DA", "-DB=x y"]),
+            ("-DA\r\n-DB\t-DC\n", ["-DA", "-DB", "-DC"]),
+            ('"-DA=x\r\ny"', ["-DA=x\r\ny"]),
+            ("-DA='x y'", ["-DA='x", "y'"]),
+            ("\\", ["\\"]),
+            ('"\\"', ['"']),
+            ("", []),
+            (" \t\r\n", []),
+        )
+        for content, expected in cases:
+            with self.subTest(content=content):
+                response.write_bytes(content.encode("utf-8"))
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True), expected)
+
+    def test_windows_quoted_response_files_decode_byte_order_marks(self):
+        response = self.build / "flags.rsp"
+        cases = (
+            (b"\xef\xbb\xbf-DA=c:\\dir", ["-DA=c:\\dir"]),
+            (b"\xff\xfe" + '-DA="x y" -DB=\u00e9'.encode("utf-16-le"), ["-DA=x y", "-DB=\u00e9"]),
+            (b"\xfe\xff" + '-DA="x y"'.encode("utf-16-be"), ["-DA=x y"]),
+        )
+        for content, expected in cases:
+            with self.subTest(content=content):
+                response.write_bytes(content)
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True), expected)
+        for content in (b"-DA=\0", b"\xff\xfe-", b"-DA=\xff", "-DNOBOM".encode("utf-16-le")):
+            with self.subTest(content=content):
+                response.write_bytes(content)
+                with self.assertRaises(ValueError):
+                    check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True)
+
+    def test_windows_quoting_applies_to_nested_response_files_relative_to_the_build_directory(self):
+        (self.build / "sub").mkdir()
+        (self.build / "sub" / "outer.rsp").write_text("@inner.rsp -DA=c:\\outer", encoding="utf-8")
+        (self.build / "sub" / "inner.rsp").write_text("-DWRONG", encoding="utf-8")
+        (self.build / "inner.rsp").write_text('"-DB=x y" -DC=c:\\inner', encoding="utf-8")
+        self.assertEqual(check_compile.expand_response_files(["@sub/outer.rsp"], self.build, windows=True),
+                         ["-DB=x y", "-DC=c:\\inner", "-DA=c:\\outer"])
+
+    def test_the_last_top_level_rsp_quoting_option_selects_the_tokenizer(self):
+        source = self.source("unit.c")
+        response = self.build / "flags.rsp"
+        recorded = self.root / "recorded.json"
+        script = self.compiler("import json, sys\nfrom pathlib import Path\n"
+                               f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        cases = (
+            ("-DA=c:\\dir", ["--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("-DA=c:\\dir", ["--rsp-quoting=windows", "--rsp-quoting=posix"], "-DA=c:dir"),
+            ("-DA=c:\\dir", ["--rsp-quoting=posix", "--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("-DA=c:\\dir", ["@flags.rsp", "--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("--rsp-quoting=windows -DA=c:\\dir", [], "-DA=c:dir"),
+        )
+        for content, options, expected in cases:
+            with self.subTest(content=content, options=options):
+                response.write_text(content, encoding="utf-8")
+                arguments = [sys.executable, str(script), *options]
+                if "@flags.rsp" not in options:
+                    arguments.append("@flags.rsp")
+                self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
+                result = self.tool("unit.c")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, json.loads(recorded.read_text(encoding="utf-8")))
+
+    def test_an_unknown_rsp_quoting_value_is_rejected_before_execution(self):
+        source = self.source("unit.c")
+        (self.build / "flags.rsp").write_text("-DA=7", encoding="utf-8")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), "--rsp-quoting=cl", "@flags.rsp"]}])
+        result = self.tool("unit.c")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("unsupported response-file quoting --rsp-quoting=cl", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+
+    def test_windows_quoted_response_tokens_match_clang(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to compare Windows response-file quoting")
+        prefix = "error: no such file or directory: '"
+        response = self.build / "flags.rsp"
+        for content in (r'a\\"b c"', 'a\\\\\\"b', "x\\ y", '"', '""', '"""', '""""', 'a""b', '"a""b"',
+                        'x"y z', 'q\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
+            with self.subTest(content=content):
+                response.write_bytes(("-- " + content).encode("utf-8"))
+                result = subprocess.run([compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", "@flags.rsp"],
+                                        cwd=self.build, capture_output=True, text=True, encoding="utf-8")
+                tokens = [part[:part.rindex("'")] for part in result.stderr.split(prefix)[1:]]
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True)[1:], tokens)
+
+    def test_windows_quoted_response_files_compile_without_changing_build_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to compile Windows-quoted response files")
+        source = self.source("unit.c", "_Static_assert(VALUE == 'x', \"Windows quoting keeps single quotes\");\n"
+                                       "_Static_assert(sizeof(TEXT) == 4, \"Windows quoting keeps backslashes\");\n")
+        outputs = [self.build / name for name in ("unit.o", "unit dependency.d")]
+        response = self.build / "flags.rsp"
+        response.write_text(f"-DVALUE='x' -DTEXT=\\\"a\\\\b\\\" -c \"{source}\" -o \"{outputs[0]}\" -MD -MF \"{outputs[1]}\"",
+                            encoding="utf-8")
+        arguments = [compiler, "--rsp-quoting=windows", "@flags.rsp"]
+        original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+        self.assertEqual(original.returncode, 0, original.stderr)
+        preserved = {path: path.read_bytes() for path in [source, response, *outputs]}
+        self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
+        result = self.tool("unit.c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+        for path, content in preserved.items():
+            self.assertEqual(path.read_bytes(), content, path.name)
 
     def test_response_files_are_expanded_without_rewriting_build_outputs(self):
         compiler = shutil.which("clang")
