@@ -964,5 +964,21 @@ class MaskCodeTests(unittest.TestCase):
         self.assertTrue(masked.endswith(");\n"))
 
 
+class MaskDirectivesTests(unittest.TestCase):
+    def test_directive_lines_and_continuations_are_blanked(self):
+        source = "#define X 1 \\\n  continued\nint a;\n  #if Y\nint b;\n"
+        masked = export_gap.mask_directives(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.splitlines()[2], "int a;")
+        self.assertEqual(masked.splitlines()[4], "int b;")
+        for blanked in (0, 1, 3):
+            self.assertEqual(masked.splitlines()[blanked].strip(), "")
+        self.assertNotIn("continued", masked)
+
+    def test_text_without_directives_is_unchanged(self):
+        source = "int a;\r\nint b = 1 \\\n  + 2;\r\n"
+        self.assertEqual(export_gap.mask_directives(source), source)
+
+
 if __name__ == "__main__":
     unittest.main()
