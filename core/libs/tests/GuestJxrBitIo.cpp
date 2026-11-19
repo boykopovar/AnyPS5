@@ -13,6 +13,12 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 extern "C" std::uint32_t JxrBitIoReference_nid_no_patch(int operation, void* state, std::uint32_t value, std::uint32_t bits);
 
 namespace {
@@ -318,6 +324,12 @@ void RunAttachRead(bool writeBuffer, std::size_t position, std::int64_t getPosit
         [](std::byte value) { return value == std::byte{AttachGuardValue}; }), "attach read preserves the trailing guard");
 }
 
+std::int64_t APS5_VABI UnwritableGetPosition(Jxr::Stream* stream, std::size_t* position) {
+    static_cast<void>(stream);
+    *position = 0;
+    return 0;
+}
+
 void RunAttachReadEdges() {
     RunAttachRead(true, std::numeric_limits<std::size_t>::max() - 4095,
         INT64_C(0x123456789abcdef), -INT64_C(0x123456789abcdef), -INT64_C(0x23456789abcdef));
@@ -328,6 +340,20 @@ void RunAttachReadEdges() {
     Jxr::Stream stream{};
     RequireInvalidArgument([&] { attachISRead_nid_postfix(&io, &stream, nullptr); }, "attach read rejects a missing callback");
     RequireInvalidArgument([] { attachISRead_nid_postfix(nullptr, nullptr, nullptr); }, "attach read rejects null state and stream");
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+#else
+    void* page = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
+    Require(page != nullptr && page != reinterpret_cast<void*>(-1), "cannot map an unwritable bit state");
+    auto* const unwritable = static_cast<std::uint8_t*>(page) + 64;
+    stream.getPosition = &UnwritableGetPosition;
+    RequireInvalidArgument([&] { attachISRead_nid_postfix(reinterpret_cast<Jxr::BitIo*>(unwritable), &stream, nullptr); }, "attach read rejects an unwritable bit state");
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
 }
 
 Jxr::BitIo* attachingIo = nullptr;
