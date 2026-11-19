@@ -1321,6 +1321,7 @@ alignas(256) constexpr std::array<std::uint32_t, 64> BarrierFreeWaterfallVertexC
 alignas(256) constexpr std::array<std::uint32_t, 11> FrontCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> UndecodablePixelCode{0xf1949f05u, 0x00060018u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> PassthroughPixelCode{0xc8020002u, 0xf800180fu, 0x00000000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> PerVertexPixelCode{0xc80a0000u, 0xc80e0001u, 0xc8120002u, 0xf800180fu, 0x04040302u, 0xbf810000u};
 
 void DescribeWaterfallPixel(AbiHeader& pixel) {
     DescribeAbi(pixel, WaterfallPixelCode, 1, {{0x8, ProgramLow(WaterfallPixelCode.data())}, {0x9, ProgramHigh(WaterfallPixelCode.data())}, {0xa, 0}, {0xb, 2u << 1u}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
@@ -1695,31 +1696,36 @@ void AbiDeferredVertexInputs() {
 }
 
 void AbiDeferredRectanglePairs() {
+#ifdef _WIN32
+    Require(_putenv_s("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1") == 0, "cannot emulate per-vertex inputs");
+#else
+    Require(setenv("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1", 1) == 0, "cannot emulate per-vertex inputs");
+#endif
     static AbiHeader front;
     DescribeFront(front);
     static AbiHeader pixel;
-    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0x420}, {0x1c5, 4}});
+    DescribeAbi(pixel, PerVertexPixelCode, 1, {{0x8, ProgramLow(PerVertexPixelCode.data())}, {0x9, ProgramHigh(PerVertexPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
     static AbiHeader unresolved;
     DescribeWaterfallPixel(unresolved);
     for (auto* header : {&front, &pixel, &unresolved}) AgcDriverRegisterShader_nid_postfix(&header->shader);
-    const std::array<ShaderRegister, 1> passthrough{pixel.context[3]};
+    const std::array<ShaderRegister, 1> inputControl{pixel.context[3]};
     const auto resolve = [&] {
         AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, nullptr, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &unresolved.shader, 17);
-        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         scope.Commit();
     };
     {
         AgcDriver::ShaderPreparationScope scope({&pixel.shader});
-        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
         scope.Commit();
     }
     SettleResolvedAbis();
     auto log = Logged(resolve);
-    Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
+    Require(Deferrals(log) == 1 && log.find("an emulated per-vertex parameter is not exported by the vertex shader") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
     log = Logged(resolve);
     Require(Deferrals(log) == 0, "a rectangle pair deferred at its pipeline ABI was logged again");
     const auto draw = [&](bool withPixel) {
@@ -1736,8 +1742,8 @@ void AbiDeferredRectanglePairs() {
         AgcDriverWaitIdle_nid_postfix();
     };
     draw(false);
-    ExpectFailure([&] { draw(true); }, "custom per-vertex interpolation is unsupported");
-    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
+    ExpectFailure([&] { draw(true); }, "an emulated per-vertex parameter is not exported by the vertex shader");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "an emulated per-vertex parameter is not exported by the vertex shader");
 }
 
 void CommittedAbis() {
