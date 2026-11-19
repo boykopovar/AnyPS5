@@ -142,6 +142,19 @@ class Tests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertTrue(err)
 
+    def test_missing_argument_and_directory_input_are_reported_as_usage_errors(self):
+        errors = io.StringIO()
+        printed = io.StringIO()
+        with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(printed):
+            with self.assertRaises(SystemExit) as caught:
+                inspect_self.main([])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(printed.getvalue(), "")
+        self.assertIn("required", errors.getvalue())
+        code, out, err = self.run_main(self.root)
+        self.assertEqual((code, out), (2, ""))
+        self.assertTrue(err)
+
 
 if __name__ == "__main__":
     unittest.main()
