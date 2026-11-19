@@ -63,8 +63,13 @@ void CheckUnmountedCalls() {
     SaveDataMount3 nullMount{};
     SaveDataMountResult mountResult{};
     Check(sceSaveDataMount3(nullptr, &mountResult) == SaveDataErrorParameter, "mount3 null mount is PARAMETER");
+    Check(sceSaveDataMount3(reinterpret_cast<const SaveDataMount3*>(0x10), &mountResult) == SaveDataErrorParameter, "mount3 unmapped mount is PARAMETER");
     Check(sceSaveDataMount3(&nullMount, nullptr) == SaveDataErrorParameter, "mount3 null result is PARAMETER");
+    Check(sceSaveDataMount3(&nullMount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "mount3 unmapped result is PARAMETER");
     Check(sceSaveDataMount3(&nullMount, &mountResult) == SaveDataErrorParameter, "mount3 null dir_name is PARAMETER");
+    SaveDataMount3 unmappedDirMount{};
+    unmappedDirMount.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataMount3(&unmappedDirMount, &mountResult) == SaveDataErrorParameter, "mount3 unmapped dir_name is PARAMETER");
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataUmount2(0, reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, "umount2 unmapped point is PARAMETER");
     Check(sceSaveDataUmount2(0, &point) == SaveDataErrorNotMounted, "umount2 unmounted point is NOT_MOUNTED");
