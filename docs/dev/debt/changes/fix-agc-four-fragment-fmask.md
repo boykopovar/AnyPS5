@@ -2,7 +2,11 @@
 
 ## change [Compressed FMASK reads]
 
-- [Compressed FMASK reads](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp) - console equivalence is unmeasured. Reads without an exact resident native owner, other layouts, standalone compressed decoding, guest publication and recipe reuse throw. Owners require 2, 4 or 8 fragments, one per sample, one slice and mip, pipe-aligned DCC/CMASK, Z_64KB_X FMASK and unchanged, disjoint planes, each watched or compared after host-import settling. Snapshots use AMD PAL `c5e80007` `Gfx9Fmask::GetPackedExpandedValue`: `0x02`, `0xe4`, `0x76543210`; shader expansion gives `0x10`, `0x3210`, `0x76543210`, four bits per sample as Mesa `mesa-25.0.0` `nir_lower_ms_txf_to_fragment_fetch` reads it. Metadata stores invalidate the view, except a same-value CPU store to a compared plane.
+- [Compressed FMASK reads](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp) - console equivalence is unmeasured. Native owners require 2, 4 or 8 fragments, one per sample, one slice and mip, pipe-aligned DCC/CMASK, Z_64KB_X FMASK and unchanged, disjoint planes, each watched or compared after host-import settling. Other native layouts and guest publication throw; recipe reuse is disabled. Snapshots use AMD PAL `c5e80007` `Gfx9Fmask::GetPackedExpandedValue`: `0x02`, `0xe4`, `0x76543210`; shader expansion gives `0x10`, `0x3210`, `0x76543210`, four bits per sample as Mesa `mesa-25.0.0` `nir_lower_ms_txf_to_fragment_fetch` reads it. Metadata stores invalidate the view, except a same-value CPU store to a compared plane.
+
+## add Functional
+
+- [Standalone compressed FMASK](../../../core/libs/prx/libSceAgcDriver/Graphics/src/FmaskTexture.cpp) - console equivalence and cost on large surfaces are unmeasured. Only four samples with four fragments, one 2D slice and mip, Z_64KB_X and pipe-aligned CMASK are decoded. CMASK nibbles `0xc` and `0xe` select zero and stored packed mappings; other codes throw. The expanded code follows AMD PAL `c5e800072a32f68b6ccc4422936d96167c6e0728`, `gfx9MaskRam.cpp`, `Gfx9Cmask::GetInitialValue`. Addressing adapts the decoder from #4790 and Amoenus/AnyPS5 `822db494615d39f0ae7e6fb4d421fa2750645d77`. Both planes are settled and watched or compared before snapshot reuse; recipe reuse is disabled. Arrays, EQAA, other sample counts and metadata layouts throw. No console hardware oracle was run.
 
 # shader
 

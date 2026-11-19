@@ -1,6 +1,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -8,10 +13,16 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -207,12 +218,194 @@ void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool l
     }
 }
 
+struct StandalonePlane {
+    StandalonePlane(std::size_t size, bool watch) : bytes((size + 65535u) & ~std::size_t{65535u}), watched(watch) {
+#ifdef _WIN32
+        if (watched) {
+            data = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536u));
+            GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
+        } else data = static_cast<std::byte*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        data = static_cast<std::byte*>(std::aligned_alloc(65536u, bytes));
+        if (watched && data != nullptr) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, bytes);
+#endif
+        Require(data != nullptr, "cannot allocate standalone FMASK fixture");
+        std::memset(data, 0, bytes);
+        GuestAllocations::Mutation mutation;
+        mutation.Add(data, bytes, true, true, true);
+        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "standalone FMASK fixture is not watched");
+    }
+    ~StandalonePlane() {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(data);
+        }
+#ifdef _WIN32
+        if (watched) {
+            GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+        } else VirtualFree(data, 0, MEM_RELEASE);
+#else
+        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, bytes);
+        std::free(data);
+#endif
+    }
+    StandalonePlane(const StandalonePlane&) = delete;
+    StandalonePlane& operator=(const StandalonePlane&) = delete;
+    std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(data); }
+    std::size_t bytes;
+    bool watched;
+    std::byte* data = nullptr;
+};
+
+struct FlushProbe {
+    static inline FlushProbe* active = nullptr;
+    FlushProbe(StandalonePlane& metadata, std::byte* changed, bool race) : metadata(metadata), changed(changed), race(race), previous(AgcDriver::GuestMemory::CurrentFlushHook()) {
+        active = this;
+        AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+            auto& probe = *active;
+            if (probe.previous != nullptr) probe.previous(address, bytes);
+            if (address != probe.metadata.Address()) return;
+            ++probe.calls;
+            if (!probe.race && probe.calls == 1u) std::memset(probe.metadata.data, 0xee, probe.metadata.bytes);
+            if (probe.race && probe.calls == 2u) *probe.changed ^= std::byte{0xff};
+        });
+    }
+    ~FlushProbe() {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        active = nullptr;
+    }
+    StandalonePlane& metadata;
+    std::byte* changed;
+    bool race;
+    void (*previous)(std::uint64_t, std::size_t);
+    std::uint32_t calls = 0;
+};
+
+void RunStandalone(AgcDriver::VulkanDevice& device, bool tiled, bool watched, bool registration, std::uint32_t pipeXor) {
+    const std::uint32_t width = tiled ? 1152u : 128u;
+    const std::uint32_t height = tiled ? 576u : 64u;
+    StandalonePlane fmask(2u * 1024u * 1024u, watched);
+    StandalonePlane cmask(65536u, watched);
+    const auto base = (fmask.Address() | pipeXor) >> 8u;
+    const auto meta = cmask.Address() >> 8u;
+    const std::array<std::uint32_t, 8> image{
+        static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u) | (161u << 20u) | (((width - 1u) & 3u) << 30u),
+        ((width - 1u) >> 2u) | ((height - 1u) << 14u), 4u | (1u << 3u) | (4u << 6u) | (24u << 20u) | (9u << 28u),
+        0u, 0u, (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(meta) << 24u), static_cast<std::uint32_t>(meta >> 8u)};
+    const auto resource = DecodeTextureResource(image);
+    const auto geometry = DescribeSurface(resource);
+    const auto& mip = geometry.mips.front();
+    Require(geometry.guestBytes <= fmask.bytes && (tiled ? geometry.guestBytes > 65536u : geometry.guestBytes == 65536u), "standalone FMASK fixture does not cover its intended layout");
+    const auto block = ThinBlockLayout(resource.tileMode, 1u);
+    const auto* equation = FindTextureSwizzleEquation(24u, 1u);
+    Require(equation != nullptr, "standalone FMASK fixture lacks its equation");
+    const auto offset = [&](std::uint32_t x, std::uint32_t y) {
+        const auto tile = mip.tail ? 0u : (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0];
+        return mip.tiledOffset + tile + (EquationOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), 0u) ^ pipeXor);
+    };
+    const auto mapping = [](std::uint32_t x, std::uint32_t y) { return static_cast<std::byte>((x * 37u + y * 19u) & 255u); };
+    for (std::uint32_t y = 0; y < height; ++y) for (std::uint32_t x = 0; x < width; ++x) fmask.data[offset(x, y)] = mapping(x, y);
+    const CmaskLayout layout(width, height);
+    const auto nibble = [&](std::uint32_t x, std::uint32_t y) { return layout.Nibble(x / 8u, y / 8u) ^ ((pipeXor & 0xf00u) << 1u); };
+    const auto setCode = [&](std::uint32_t x, std::uint32_t y, std::uint32_t code) {
+        const auto n = nibble(x, y);
+        const auto old = std::to_integer<std::uint32_t>(cmask.data[n / 2u]);
+        cmask.data[n / 2u] = static_cast<std::byte>((old & ~(15u << ((n & 1u) * 4u))) | (code << ((n & 1u) * 4u)));
+    };
+    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+        Input[lane * 4u] = lane == 0u ? width - 1u : (lane * 79u) % width;
+        Input[lane * 4u + 1u] = lane == 0u ? height - 1u : (lane * 43u) % height;
+        Input[lane * 4u + 2u] = Input[lane * 4u + 3u] = 0u;
+    }
+    const auto program = Compile(device, Code, image, registration);
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto check = [&] {
+        for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+            const auto x = Input[lane * 4u], y = Input[lane * 4u + 1u];
+            const auto n = nibble(x, y);
+            const auto code = (std::to_integer<std::uint32_t>(cmask.data[n / 2u]) >> ((n & 1u) * 4u)) & 15u;
+            const auto packed = code == 12u ? 0u : std::to_integer<std::uint32_t>(fmask.data[offset(x, y)]);
+            const auto expected = Expanded(NarrowFormats[5], packed);
+            Require(Output[lane * 4u] == expected && Output[lane * 4u + 1u] == 1u && Output[lane * 4u + 2u] == expected && Output[lane * 4u + 3u] == 0u, "standalone FMASK returned the wrong mapping or selectors");
+        }
+        Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto word) { return word == Sentinel; }), "standalone FMASK overran its output");
+    };
+    for (const auto code : {0xccu, 0xeeu}) {
+        std::memset(cmask.data, code, cmask.bytes);
+        Output.fill(Sentinel);
+        std::shared_ptr<const AgcDriver::Recipe> recipe;
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, nullptr, &recipe);
+        device.WaitIdle();
+        check();
+        Require(recipe == nullptr, "standalone FMASK emitted a recipe without a two-plane proof");
+    }
+    for (std::uint32_t y = 0; y < height; y += 8u) for (std::uint32_t x = 0; x < width; x += 8u) setCode(x, y, ((x / 8u + 3u * (y / 8u)) & 1u) ? 12u : 14u);
+    setCode(Input[0], Input[1], 14u);
+    const auto prepared = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    Require(prepared != nullptr, "standalone FMASK did not prepare a deferred dispatch");
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, prepared);
+    device.WaitIdle();
+    check();
+    fmask.data[offset(Input[0], Input[1])] = std::byte{0xe4};
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, prepared);
+    device.WaitIdle();
+    check();
+    Require(Output[0] == 0x3210u, "prepared standalone FMASK reused stale packed data");
+    const auto preparedMetadata = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    setCode(Input[0], Input[1], 12u);
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, preparedMetadata);
+    device.WaitIdle();
+    check();
+    Require(Output[0] == 0u, "prepared standalone FMASK reused stale CMASK");
+    const auto preparedInvalid = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    setCode(Input[0], Input[1], 15u);
+    Output.fill(Sentinel);
+    std::string refusal;
+    try {
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, preparedInvalid);
+        device.WaitIdle();
+    } catch (const std::runtime_error& error) { refusal = error.what(); }
+    Require(refusal.find("standalone FMASK CMASK compression code is not implemented") != std::string::npos, "unsupported standalone CMASK was not refused: " + refusal);
+    Require(std::all_of(Output.begin(), Output.end(), [](auto word) { return word == Sentinel; }), "rejected standalone FMASK wrote output");
+    setCode(Input[0], Input[1], 12u);
+    {
+        FlushProbe pending(cmask, nullptr, false);
+        Output.fill(Sentinel);
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress);
+        device.WaitIdle();
+        Require(pending.calls != 0u && Output[0] == 0x3210u, "standalone FMASK captured CMASK before its pending store landed");
+        check();
+    }
+    {
+        FlushProbe race(cmask, fmask.data + offset(Input[0], Input[1]), true);
+        Output.fill(Sentinel);
+        refusal.clear();
+        try {
+            device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress);
+            device.WaitIdle();
+        } catch (const std::runtime_error& error) { refusal = error.what(); }
+        Require(race.calls >= 2u && refusal.find("guest writes raced standalone FMASK import") != std::string::npos, "standalone FMASK missed a write during capture: " + refusal);
+        Require(std::all_of(Output.begin(), Output.end(), [](auto word) { return word == Sentinel; }), "raced standalone FMASK wrote output");
+    }
+    std::cout << "standalone four-sample FMASK passed: " << width << 'x' << height << ", watched=" << watched << ", registration=" << registration << ", XOR=" << pipeXor << '\n';
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2) {
+            const std::string mode = argv[1];
+            Require(mode == "--standalone4-small" || mode == "--standalone4-tiled" || mode == "--standalone4-watched", "unknown FMASK test mode");
+            for (const bool registration : {false, true}) for (const auto pipeXor : {0u, 0xcf00u}) RunStandalone(*device, mode != "--standalone4-small", mode == "--standalone4-watched", registration, pipeXor);
+            return 0;
+        }
         for (const bool registration : {false, true}) {
             for (const bool layered : {false, true}) {
                 for (const auto pipeXor : {0u, 0xf00u}) Run(*device, layered, registration, pipeXor);
