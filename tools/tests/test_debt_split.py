@@ -598,5 +598,28 @@ class SectionsOfTests(unittest.TestCase):
         self.assertEqual(debt_split.sections_of(""), [])
 
 
+class ReadPreambleTests(unittest.TestCase):
+    def write(self, root, text):
+        path = root / debt_split.debt_file("lib")
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_returns_text_before_the_first_section_without_the_title(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n\nIntro text.\n\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["Intro text."])
+
+    def test_second_level_headings_are_kept(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n## Notes\nbody\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["## Notes", "body"])
+
+    def test_missing_file_has_no_preamble(self):
+        with tempfile.TemporaryDirectory() as name:
+            self.assertEqual(debt_split.read_preamble(Path(name), "lib"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
