@@ -488,6 +488,41 @@ std::string Classified(Fixture& fixture, const std::string& what, const ShaderRe
     return what + ": classified to " + PathName(path) + ", expected " + PathName(expectedPath) + (expectedPath ? "" : expectedRule == Rule::InPlace ? " with both dimensions in place" : " with both dimensions constant") + "\n";
 }
 
+std::string CheckMeshReuseIndirectRouting(Fixture& fixture) {
+    const auto userData = fixture.UserData(0u, 0u);
+    const auto vertex = fixture.Vertex(PostAddCode, userData);
+    const std::array<std::uint16_t, 4> indices{0u, 1u, 2u, 0u};
+    const auto address = fixture.GuestIndices(indices);
+    std::string failures;
+    for (const bool reuse : {false, true}) {
+        for (const bool indexed : {false, true}) {
+            for (const auto count : {1u, 3u}) {
+                auto state = fixture.State();
+                state.stages.path = AgcDriver::Graphics::ShaderPath::Geometry;
+                state.stages.mesh = ShaderRecompiler::MeshConfiguration{4u, 4u, 12u, 42u, 14u, 64u, 0u, 0u, 1u, 3u};
+                if (reuse) {
+                    state.stages.mesh->reuseVertexLimit = 14u;
+                    state.stages.mesh->reusePrimitiveLimit = 14u;
+                }
+                AgcDriver::Pm4::DrawParameters draw{address, 3u, 2u, 1u, 0u, indexed};
+                draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{
+                    reinterpret_cast<std::uintptr_t>(fixture.Records()), indexed ? 0x25u : 0x24u,
+                    indexed ? 20u : 16u, indexed ? 20u : 16u, count, false, 0u,
+                    NoLocation, NoLocation, NoLocation, false, 0u};
+                draw.indirect->indexLimitKnown = true;
+                draw.indirect->baseVertexSgpr = -1;
+                draw.indirect->startInstanceSgpr = -1;
+                const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, state, Program(userData), fixture.device, draw, false);
+                const std::optional<Path> expected = !reuse && indexed && count == 1u ? std::nullopt : std::optional{Path::NonVertexPath};
+                const auto label = std::string(reuse ? "reuse" : "ordinary") + (indexed ? " indexed" : " non-indexed") + " mesh, " + std::to_string(count) + " records";
+                std::cout << label << ": " << PathName(path) << '\n';
+                if (path != expected) failures += label + ": expected " + PathName(expected) + ", got " + PathName(path) + "\n";
+            }
+        }
+    }
+    return failures;
+}
+
 std::string Analysis(Fixture& fixture) {
     struct Case {
         const char* what;
@@ -750,6 +785,7 @@ int main(int argc, char** argv) {
         Fixture fixture(device);
         std::string failures;
         if (argc == 1) failures = Run(fixture);
+        else if (argc == 2 && std::string(argv[1]) == "mesh-reuse-routing") failures = CheckMeshReuseIndirectRouting(fixture);
         else {
             Require(argc == 3 || argc == 4, "expected runtime-fetch INDEX [compact-restart]");
             Require(std::string(argv[1]) == "runtime-fetch", "unknown case");
