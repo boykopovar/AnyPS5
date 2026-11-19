@@ -51,12 +51,11 @@ constexpr std::uint64_t NotCellMask = NumberTag | 0x2;
 constexpr std::uint64_t ValueFalse = 0x6;
 
 bool IsInt52(double number) {
-    if (number != number || std::isinf(number)) return false;
+    constexpr double limit = 2251799813685248.0;
+    if (!(number < limit && number >= -limit)) return false;
     const auto asInt64 = static_cast<std::int64_t>(number);
     if (static_cast<double>(asInt64) != number) return false;
-    if (!asInt64 && std::signbit(number)) return false;
-    constexpr std::int64_t limit = std::int64_t{1} << 51;
-    return asInt64 < limit && asInt64 >= -limit;
+    return asInt64 || !std::signbit(number);
 }
 
 }

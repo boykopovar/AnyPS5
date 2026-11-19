@@ -62,6 +62,10 @@ void TestDouble() {
     Require(Speculate(Double(std::numeric_limits<double>::infinity())) == SpecNonIntAsDouble);
     Require(Speculate(Double(-std::numeric_limits<double>::infinity())) == SpecNonIntAsDouble);
     Require(Speculate(Double(std::numeric_limits<double>::quiet_NaN())) == SpecDoublePureNaN);
+    Require(Speculate(Double(std::numeric_limits<double>::max())) == SpecNonIntAsDouble);
+    Require(Speculate(Double(-std::numeric_limits<double>::max())) == SpecNonIntAsDouble);
+    Require(Speculate(Double(9223372036854775808.0)) == SpecNonIntAsDouble);
+    Require(Speculate(Double(-9223372036854775808.0)) == SpecNonIntAsDouble);
 }
 
 void TestImmediates() {
