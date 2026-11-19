@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <random>
 #include <source_location>
 #include <string>
 #include <vector>
@@ -112,7 +113,7 @@ int main(int argc, char** argv) {
     const auto open = LoadFunction<int (APS5_VABI*)(const char*, int, int)>(kernel, "open", patched);
     const auto close = LoadFunction<int (APS5_VABI*)(int)>(kernel, "close", patched);
     const auto stat = LoadFunction<std::int64_t (APS5_VABI*)(const char*, FileStat*)>(kernel, "stat", patched);
-    const auto root = std::filesystem::path("anyps5-kernel-sys-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path("anyps5-kernel-sys-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(std::random_device{}()));
     Require(std::filesystem::create_directory(root));
     const auto path = (root / "data").string();
     { std::ofstream stream(path); stream << "data"; Require(stream.good()); }

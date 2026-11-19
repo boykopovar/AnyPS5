@@ -249,7 +249,7 @@ bool ReadSymbolicLinkTarget(const std::filesystem::path& native, std::filesystem
 #endif
 }
 
-int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast) {
+int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast, std::filesystem::path* resolved = nullptr) {
     constexpr int MaxSymbolicLinks = 32;
     std::vector<std::filesystem::path> pending;
     const auto push = [&pending](const std::filesystem::path& path) {
@@ -279,11 +279,16 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast)
         }
         current = next;
     }
+    if (resolved != nullptr) {
+        *resolved = current;
+        if (!native.has_filename()) *resolved /= "";
+    }
     return 0;
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
-    if (const int error = SymbolicLinkLimitError(native, false)) return Fail(error);
+    auto resolved = native;
+    if (const int error = SymbolicLinkLimitError(native, false, &resolved)) return Fail(error);
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
@@ -294,13 +299,13 @@ std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, s
     }
 #endif
     std::error_code error;
-    const auto status = std::filesystem::symlink_status(native, error);
+    const auto status = std::filesystem::symlink_status(resolved, error);
     if (error)
         return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
     if (status.type() == std::filesystem::file_type::not_found)
         return Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent);
     if (!std::filesystem::is_symlink(status)) return Fail(GuestEinval);
-    const auto target = std::filesystem::read_symlink(native, error).generic_string();
+    const auto target = std::filesystem::read_symlink(resolved, error).generic_string();
     if (error) return Fail(GuestError(error));
     return CopyLinkTarget(target, buffer, size);
 }
