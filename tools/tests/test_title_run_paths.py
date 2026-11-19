@@ -48,6 +48,13 @@ def copyable_executable():
     return None
 
 
+def copy_executable(program, target):
+    shutil.copy2(program, target)
+    for pattern in ("python*.dll", "vcruntime*.dll"):
+        for library in Path(program).parent.glob(pattern):
+            shutil.copy2(library, target.parent / library.name)
+
+
 def frozen_datetime(instant):
     class FrozenDateTime(REAL_DATETIME):
         @classmethod
@@ -178,7 +185,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             self.skipTest("no interpreter to copy as the relinker: sys.executable is an App Execution Alias and py is unavailable")
         target = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         target.parent.mkdir(parents=True)
-        shutil.copy2(program, target)
+        copy_executable(program, target)
         self.build_from_source()
         return target
 
@@ -189,6 +196,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     def reports(self, output=None):
         output = output or self.out
         return sorted(path for path in output.iterdir() if path.is_dir() and not path.is_symlink() and path.name != "work")
+
+    def test_fake_relinker_starts_outside_the_interpreter_directory(self):
+        relinker = self.fake_relinker()
+        result = subprocess.run([str(relinker), "--version"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, f"{result.returncode:#x} {result.stderr}")
+        self.assertIn("Python", result.stdout + result.stderr)
 
     def test_package_equals_work_directory(self):
         self.package(self.out / "work" / TITLE)

@@ -54,6 +54,7 @@ struct Settings {
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
     bool inflateGzip = false;
+    bool stripGzipHeaders = false;
     bool auth = true;
     int redirect = 1;
     std::uint32_t verifyFlags = 0x3d;
