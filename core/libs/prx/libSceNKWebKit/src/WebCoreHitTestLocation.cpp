@@ -19,10 +19,13 @@
  * Boston, MA 02110-1301, USA.
  *
 */
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/HitTestLocationExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 
 #include <climits>
+#include <new>
 
 namespace {
 
@@ -56,6 +59,28 @@ WebCore::IntRect APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11Lay
     rect.m_size.m_width = Extent(leftPadding, rightPadding);
     rect.m_size.m_height = Extent(topPadding, bottomPadding);
     return rect;
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC2Ev(WebCore::HitTestLocation* self) {
+    if (self == nullptr) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    new (self) WebCore::HitTestLocation{};
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC1Ev(WebCore::HitTestLocation* self) {
+    _ZN7WebCore15HitTestLocationC2Ev(self);
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC2ERKS0_(WebCore::HitTestLocation* self, const WebCore::HitTestLocation* other) {
+    if (self == nullptr || other == nullptr) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    new (self) WebCore::HitTestLocation{*other};
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC1ERKS0_(WebCore::HitTestLocation* self, const WebCore::HitTestLocation* other) {
+    _ZN7WebCore15HitTestLocationC2ERKS0_(self, other);
 }
 
 }
