@@ -199,9 +199,36 @@ void execution() {
     }
 }
 
+void stackOperands() {
+    constexpr std::uint64_t value = 0x0100010001000100ull;
+    for (const auto operation : kOperations) {
+        for (const auto width : kWidths) {
+            for (const std::int32_t displacement : {-200, -192, -184, -177, -176, -175, -169, -168, -160, -152, -144, -137, -136}) {
+                Bytes tail{0x84, 0x24};
+                for (unsigned shift = 0; shift < 32; shift += 8) tail.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+                const auto site = memorySite(operation, width, tail);
+                const auto operands = *Codegen::DecodeCount(site.data(), site.size());
+                const Execution execution(site, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    for (int part = 0; part < 2; ++part) {
+                        Bytes fill{0xC7, 0x84, 0x24};
+                        const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                        const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                        for (unsigned shift = 0; shift < 32; shift += 8) fill.push_back(static_cast<std::uint8_t>(slot >> shift));
+                        for (unsigned shift = 0; shift < 32; shift += 8) fill.push_back(static_cast<std::uint8_t>(word >> shift));
+                        body.Raw(fill);
+                    }
+                    Codegen::EmitCount(body, operands);
+                });
+                run(execution, operands, LoweringExecution::InitialState(), value);
+            }
+        }
+    }
+}
+
 #else
 
 void execution() { std::cout << "count execution checks require a Linux/macOS x86-64 build\n"; }
+void stackOperands() {}
 
 #endif
 
@@ -212,6 +239,7 @@ int main() {
         decoding();
         matching();
         execution();
+        stackOperands();
         std::cout << "count lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

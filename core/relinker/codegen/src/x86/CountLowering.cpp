@@ -12,17 +12,18 @@ constexpr std::int32_t kFallbackSlot = 8;
 constexpr std::int32_t kZeroSlot = 16;
 constexpr std::int32_t kMaskSlot = 24;
 constexpr std::int32_t kStackResultSlot = 32;
-constexpr std::int32_t kFrame = FrameSize + 32;
+constexpr std::int32_t kSpillBytes = 48;
+constexpr std::int32_t kFrame = FrameSize - 16 + kSpillBytes;
 
-void _loadSource(StubBodyBuilder& body, const CountOperands& operands, const std::uint8_t result, const char* name) {
+void _loadSource(StubBodyBuilder& body, const CountOperands& operands, const std::uint8_t result, const char* name, const std::int32_t frame) {
     if (operands.Width == 16)
         MoveImmediate32(body, result, 0);
     if (operands.Memory) {
-        SizedMemory(body, 0x8B, operands.Width, *operands.Memory, result, name, kFrame);
+        SizedMemory(body, 0x8B, operands.Width, *operands.Memory, result, name, frame);
         return;
     }
     if (operands.Source == Stack) {
-        StackSlot(body, 0x8D, true, result, kFrame);
+        StackSlot(body, 0x8D, true, result, frame);
         if (operands.Width == 32)
             Register(body, 0x8B, false, result, result);
         else if (operands.Width == 16)
@@ -55,12 +56,12 @@ void _flags(StubBodyBuilder& body, const std::uint8_t result, const std::uint8_t
     body.Raw(std::vector<std::uint8_t>{Rex(false, 0, fallback), 0x83, static_cast<std::uint8_t>(0xF8 | (fallback & 7)), 1});
 }
 
-void _store(StubBodyBuilder& body, const CountOperands& operands, const std::uint8_t result, const std::uint8_t fallback) {
+void _store(StubBodyBuilder& body, const CountOperands& operands, const std::uint8_t result, const std::uint8_t fallback, const std::int32_t frame) {
     if (operands.Destination != Stack) {
         SizedRegister(body, 0x8B, operands.Width, operands.Destination, result);
         return;
     }
-    StackSlot(body, 0x8D, true, fallback, kFrame);
+    StackSlot(body, 0x8D, true, fallback, frame);
     StackSlot(body, 0x89, true, fallback, kStackResultSlot);
     SizedStackSlot(body, 0x89, operands.Width == 16 ? 16 : 64, result, kStackResultSlot);
 }
@@ -105,19 +106,20 @@ void EmitCount(StubBodyBuilder& body, const CountOperands& operands) {
                                 : UsedRegisters({operands.Destination, operands.Source}, std::nullopt);
     const auto result = Scratch(used, name);
     const auto fallback = Scratch(used, name);
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrame(operands.Memory, operands.Width == 64, kFrame, kSpillBytes);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     StackSlot(body, 0x89, true, result, kResultSlot);
     StackSlot(body, 0x89, true, fallback, kFallbackSlot);
-    _loadSource(body, operands, result, name);
+    _loadSource(body, operands, result, name, frame);
     _count(body, operands, result, fallback);
     _flags(body, result, fallback);
-    _store(body, operands, result, fallback);
+    _store(body, operands, result, fallback, frame);
     StackSlot(body, 0x8B, true, fallback, kFallbackSlot);
     StackSlot(body, 0x8B, true, result, kResultSlot);
     if (operands.Destination == Stack)
         StackSlot(body, 0x8B, true, Stack, kStackResultSlot);
     else
-        StackSlot(body, 0x8D, true, Stack, kFrame);
+        StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

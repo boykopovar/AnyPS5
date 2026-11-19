@@ -10,7 +10,8 @@ namespace {
 constexpr std::int32_t kValueSlot = 0;
 constexpr std::int32_t kSwapSlot = 8;
 constexpr std::int32_t kStackResultSlot = 16;
-constexpr std::int32_t kFrame = FrameSize + 16;
+constexpr std::int32_t kSpillBytes = 32;
+constexpr std::int32_t kFrame = FrameSize - 16 + kSpillBytes;
 constexpr const char* kName = "MOVBE";
 
 void _swap(StubBodyBuilder& body, const std::uint8_t width, const std::uint8_t value) {
@@ -20,13 +21,13 @@ void _swap(StubBodyBuilder& body, const std::uint8_t width, const std::uint8_t v
     TwoByteStackSlot(body, 0xB7, value, kSwapSlot + 2);
 }
 
-void _writeStackPointer(StubBodyBuilder& body, const std::uint8_t width, const std::uint8_t value) {
+void _writeStackPointer(StubBodyBuilder& body, const std::uint8_t width, const std::uint8_t value, const std::int32_t frame) {
     if (width != 16) {
         StackSlot(body, 0x89, true, value, kStackResultSlot);
         return;
     }
     StackSlot(body, 0x89, false, value, kSwapSlot);
-    StackSlot(body, 0x8D, true, value, kFrame);
+    StackSlot(body, 0x8D, true, value, frame);
     StackSlot(body, 0x89, true, value, kStackResultSlot);
     TwoByteStackSlot(body, 0xB7, value, kSwapSlot);
     SizedStackSlot(body, 0x89, 16, value, kStackResultSlot);
@@ -53,20 +54,21 @@ std::optional<MovbeOperands> DecodeMovbe(const std::uint8_t* data, const std::si
 void EmitMovbe(StubBodyBuilder& body, const MovbeOperands& operands) {
     auto used = UsedRegisters({operands.Register}, operands.Memory);
     const auto value = Scratch(used, kName);
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrame(std::optional<MemoryOperand>(operands.Memory), operands.Width == 64, kFrame, kSpillBytes);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     StackSlot(body, 0x89, true, value, kValueSlot);
     if (operands.Store) {
         if (operands.Register == Stack)
-            StackSlot(body, 0x8D, true, value, kFrame);
+            StackSlot(body, 0x8D, true, value, frame);
         else
             Register(body, 0x8B, operands.Width == 64, value, operands.Register);
         _swap(body, operands.Width, value);
-        SizedMemory(body, 0x89, operands.Width, operands.Memory, value, kName, kFrame);
+        SizedMemory(body, 0x89, operands.Width, operands.Memory, value, kName, frame);
     } else {
-        SizedMemory(body, 0x8B, operands.Width, operands.Memory, value, kName, kFrame);
+        SizedMemory(body, 0x8B, operands.Width, operands.Memory, value, kName, frame);
         _swap(body, operands.Width, value);
         if (operands.Register == Stack)
-            _writeStackPointer(body, operands.Width, value);
+            _writeStackPointer(body, operands.Width, value, frame);
         else
             SizedRegister(body, 0x8B, operands.Width, operands.Register, value);
     }
@@ -74,7 +76,7 @@ void EmitMovbe(StubBodyBuilder& body, const MovbeOperands& operands) {
     if (!operands.Store && operands.Register == Stack)
         StackSlot(body, 0x8B, true, Stack, kStackResultSlot);
     else
-        StackSlot(body, 0x8D, true, Stack, kFrame);
+        StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

@@ -138,9 +138,65 @@ void execution() {
     }
 }
 
+void stackOperands() {
+    constexpr std::uint64_t initial = 0x1122334455667788ull;
+    constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+    constexpr std::uint8_t reg = 8;
+    constexpr std::uint8_t probe = 9;
+    const auto append32 = [](Bytes& bytes, std::uint32_t word) {
+        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(word >> shift));
+    };
+    for (const bool store : {false, true}) {
+        for (const auto width : kWidths) {
+            for (const std::int32_t displacement : {-184, -176, -168, -167, -161, -160, -159, -153, -152, -145, -144, -137, -136, -128, -64, -16}) {
+                Bytes tail{0x84, 0x24};
+                append32(tail, static_cast<std::uint32_t>(displacement));
+                const auto bytes = site(store, width, reg, tail);
+                const auto operands = *Codegen::DecodeMovbe(bytes.data(), bytes.size());
+                const Execution execution(bytes, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    for (int part = 0; part < 2; ++part) {
+                        Bytes fill{0xC7, 0x84, 0x24};
+                        append32(fill, static_cast<std::uint32_t>(displacement + part * 4));
+                        append32(fill, static_cast<std::uint32_t>(initial >> (part * 32)));
+                        body.Raw(fill);
+                    }
+                    Codegen::EmitMovbe(body, operands);
+                    Bytes read{0x4C, 0x8B, static_cast<std::uint8_t>(0x84 | ((probe & 7) << 3)), 0x24};
+                    append32(read, static_cast<std::uint32_t>(displacement));
+                    body.Raw(read);
+                });
+                auto state = LoweringExecution::InitialState();
+                state.Input[reg] = value;
+                execution.Run(state);
+                const auto describe = std::string(store ? "MOVBE store " : "MOVBE load ") + std::to_string(width) + " at rsp" + std::to_string(displacement);
+                const auto mask = width == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1;
+                for (std::size_t other = 0; other < 16; ++other) {
+                    auto wanted = state.Input[other];
+                    auto found = state.Output[other];
+                    if (other == probe) {
+                        wanted = store ? swapped(value, width) : initial & mask;
+                        found &= mask;
+                    } else if (!store && other == reg) {
+                        wanted = merged(width, state.Input[reg], swapped(initial & mask, width));
+                    }
+                    if (found != wanted)
+                        throw std::runtime_error(describe + ": register " + std::to_string(other) + " is " + std::to_string(found) + ", wanted " + std::to_string(wanted));
+                }
+                require((state.Flags & (LoweringExecution::kFlagMask | 0x14u)) == (state.InputFlags & (LoweringExecution::kFlagMask | 0x14u)), describe + ": flags changed");
+                for (std::size_t slot = 0; slot < state.RedZone.size(); ++slot) {
+                    const auto address = static_cast<std::int32_t>(slot * 8) - 128;
+                    if (address + 8 > displacement && address < displacement + 8) continue;
+                    require(state.RedZone[slot] == LoweringExecution::kSentinel, describe + " overwrote the caller's red zone");
+                }
+            }
+        }
+    }
+}
+
 #else
 
 void execution() { std::cout << "MOVBE execution checks require a Linux/macOS x86-64 build\n"; }
+void stackOperands() {}
 
 #endif
 
@@ -151,6 +207,7 @@ int main() {
         decoding();
         matching();
         execution();
+        stackOperands();
         std::cout << "MOVBE lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
