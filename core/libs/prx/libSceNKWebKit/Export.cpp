@@ -1552,10 +1552,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_9xDz4aqfRec_nid_no_patch() {
 }
 APS5_EXPORT("9xDz4aqfRec", libSceNKWebKitLegacyUnknown_9xDz4aqfRec_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore18AdClickAttribution13markAsExpiredEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_A_plus_k81GS7Dzs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3877,10 +3873,6 @@ int APS5_VABI _ZNK7WebCore9FrameView27clientToLayoutViewportPointENS_10FloatPoin
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore18AdClickAttribution21hasHigherPriorityThanERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SharedBuffer6createEON3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4550,10 +4542,6 @@ int APS5_VABI _ZNK7WebCore17HTMLCanvasElement23replayDisplayListAsTextEj() {
 }
 
 int APS5_VABI _ZN7WebCore18TextureMapperLayer21computeOverlapRegionsERNS_6RegionES2_NS0_22ResolveSelfOverlapModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore18AdClickAttribution20markConversionAsSentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6221,10 +6209,6 @@ int APS5_VABI _ZN7WebCore9FrameView32recalculateScrollbarOverlayStyleEv() {
 }
 
 int APS5_VABI _ZNK7WebCore18AdClickAttribution8toStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore18AdClickAttribution17wasConversionSentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8463,10 +8447,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_ye8ug5xQnCo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("ye8ug5xQnCo", libSceNKWebKitLegacyUnknown_ye8ug5xQnCo_nid_no_patch);
-
-int APS5_VABI _ZNK7WebCore18AdClickAttribution10hasExpiredEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore16ResourceResponseC1Ev() {
     NotImplemented_nid_no_patch(__func__);
