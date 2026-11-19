@@ -13399,10 +13399,6 @@ int APS5_VABI _ZN3WTF19isCompilationThreadEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF20ParallelHelperClient13doSomeHelpingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13524,10 +13520,6 @@ int APS5_VABI _ZN3WTF24AutomaticThreadConditionD2Ev() {
 }
 
 int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -18747,10 +18739,6 @@ int APS5_VABI _ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3
 }
 
 int APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

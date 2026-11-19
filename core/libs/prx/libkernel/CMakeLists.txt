@@ -3181,6 +3181,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sysconf_params PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_stream_write_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelStreamWrite.cpp)
+    target_include_directories(guest_kernel_stream_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_stream_write_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_stream_write_tests)
+    add_test(NAME guest_kernel_stream_write COMMAND guest_kernel_stream_write_tests)
+    set_tests_properties(guest_kernel_stream_write PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_stream_write PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
