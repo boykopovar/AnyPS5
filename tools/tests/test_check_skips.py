@@ -35,6 +35,12 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
+    "skipped, host imports unavailable: carried shadows not tested",
+    "skipped, host import of the test block refused: carried shadows not tested",
+    "skipped, host imports are compared, not watched: carried shadows not tested",
+    "skipped, the surface's host import is compared, not write-watched",
+    "skipped, the device has no settle or sparse queue; nothing to check",
 ]
 
 HOST_LIMITATIONS = [
@@ -225,6 +231,8 @@ class CtestSkipPolicyTests(unittest.TestCase):
                                                 capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_probe skipped", result.stdout)
+                        if "skipped, flaky" in report:
+                            self.assertIn("error: guest_probe skipped: skipped, flaky", result.stdout)
 
     def test_ctest_status_preserves_high_refresh_policy(self):
         reason = "skipped, current display does not provide 120 Hz"
