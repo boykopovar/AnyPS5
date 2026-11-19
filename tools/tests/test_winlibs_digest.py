@@ -54,10 +54,10 @@ class WinlibsDigestTests(unittest.TestCase):
             archive.write_bytes(b"not the compiler archive")
             environment = dict(os.environ, RUNNER_TEMP=Path(directory).as_posix())
             environment["WINLIBS_SHA256"] = "0" * 64
-            rejected = subprocess.run([BASH,"-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
+            rejected = subprocess.run([BASH, "-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
             self.assertNotEqual(rejected.returncode, 0)
             environment["WINLIBS_SHA256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
-            accepted = subprocess.run([BASH,"-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
+            accepted = subprocess.run([BASH, "-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
 
