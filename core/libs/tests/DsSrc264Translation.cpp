@@ -127,10 +127,60 @@ void CheckWriteTranslation() {
     Require(MemoryOf(program, write, "the store").offset == 0u, "the store does not write offset 0");
 }
 
+void CheckSingleDwordTranslation() {
+    constexpr std::uint32_t offset1 = 0x10u;
+    const auto atomicCode = Encode(0x80u, 8u, offset1, 12u, 16u, 20u, 4u);
+    const RdnaInstruction atomic = DecodeRdnaDs(0u, atomicCode, 0u);
+    Require(atomic.op == RdnaOpcode::DsAddSrc2U32, "ds_add_src2_u32 did not decode");
+    Require(atomic.dataDwordCount == 1u, "ds_add_src2_u32 does not read one dword");
+
+    {
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
+
+        const IrValue* load = nullptr;
+        const IrValue* add = nullptr;
+        for (const auto* value : block.Instructions()) {
+            if (value->Opcode() == IrOpcode::LoadSharedU32) load = value;
+            if (value->Opcode() == IrOpcode::SharedAtomicIAdd32) add = value;
+        }
+        Require(load != nullptr, "no single-dword shared load for the 32-bit src2 operand");
+        Require(add != nullptr, "no SharedAtomicIAdd32 for the 32-bit form");
+        Require(MemoryOf(program, load, "the src2 load").offset == (offset1 << 8u | 8u) * 4u, "the 32-bit src2 load reads the wrong offset");
+        Require(MemoryOf(program, add, "the atomic").offset == 0u, "the 32-bit atomic does not target offset 0");
+        Require(add->Argument(1) == load, "the 32-bit atomic does not take the loaded value");
+    }
+
+    const auto writeCode = Encode(0x8du, 0x20u, 0x10u, 0u, 0u, 0u, 4u);
+    const RdnaInstruction write = DecodeRdnaDs(0u, writeCode, 0u);
+    Require(write.op == RdnaOpcode::DsWriteSrc2B32, "ds_write_src2_b32 did not decode");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(write);
+
+    const IrValue* load = nullptr;
+    const IrValue* store = nullptr;
+    for (const auto* value : block.Instructions()) {
+        if (value->Opcode() == IrOpcode::LoadSharedU32) load = value;
+        if (value->Opcode() == IrOpcode::WriteSharedU32) store = value;
+    }
+    Require(load != nullptr, "no shared load for the 32-bit src2 operand");
+    Require(store != nullptr, "no WriteSharedU32 for the 32-bit form");
+    Require(MemoryOf(program, load, "the src2 load").offset == (0x10u << 8u | 0x20u) * 4u, "the 32-bit src2 load reads the wrong offset");
+    Require(MemoryOf(program, store, "the store").offset == 0u, "the 32-bit store does not write offset 0");
+}
+
 }
 
 int main() {
     CheckDecode();
+    CheckSingleDwordTranslation();
     CheckAtomicTranslation();
     CheckWriteTranslation();
     return 0;
