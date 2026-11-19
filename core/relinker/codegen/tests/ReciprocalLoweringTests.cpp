@@ -260,7 +260,7 @@ void scalarForms() {
     for (const bool squareRoot : {false, true}) {
         const std::uint8_t op = squareRoot ? 0x52 : 0x53;
         for (const auto& form : {Scalar{{0xF3, 0x0F, op, 0xD5}, 2, 2, 5, false}, Scalar{{0xF3, 0x0F, op, 0xD2}, 2, 2, 2, false}, Scalar{{0xF3, 0x45, 0x0F, op, 0xCC}, 9, 9, 12, false},
-                                 Scalar{{0xC5, 0xE2, op, 0xD5}, 2, 3, 5, true}, Scalar{{0xC5, 0xEA, op, 0xD5}, 2, 2, 5, true}, Scalar{{0xC4, 0x41, 0x1A, op, 0xCC}, 9, 12, 12, true}}) {
+                                 Scalar{{0xC5, 0xE2, op, 0xD5}, 2, 3, 5, true}, Scalar{{0xC5, 0xE6, op, 0xD5}, 2, 3, 5, true}, Scalar{{0xC4, 0xE1, 0xE6, op, 0xD5}, 2, 3, 5, true}, Scalar{{0xC5, 0xEA, op, 0xD5}, 2, 2, 5, true}, Scalar{{0xC4, 0x41, 0x1A, op, 0xCC}, 9, 12, 12, true}}) {
             const Stub stub(form.Site, form.Destination);
             for (const auto& golden : kGolden) {
                 auto before = initial();

@@ -1466,6 +1466,10 @@ void reciprocalOperands() {
     const auto vrcpss = Codegen::DecodeReciprocal(Bytes{0xC4, 0x41, 0x52, 0x53, 0xC9}.data(), 5);
     require(vrcpss && vrcpss->Vex && vrcpss->Scalar && vrcpss->Operation == Codegen::ReciprocalOperation::Reciprocal && vrcpss->Destination == 9 && vrcpss->Upper == 5 && vrcpss->Source == 9, "VEX3 VRCPSS with high registers was not decoded");
     require(Codegen::DecodeReciprocal(Bytes{0xC5, 0xFE, 0x52, 0xD5}.data(), 4).has_value(), "VRSQRTSS ignores VEX.L");
+    for (const Bytes& lig : {Bytes{0xC5, 0xE6, 0x53, 0xD5}, Bytes{0xC4, 0xE1, 0xE6, 0x53, 0xD5}, Bytes{0xC4, 0x41, 0x06, 0x52, 0x10}}) {
+        const auto scalar = Codegen::DecodeReciprocal(lig.data(), lig.size());
+        require(scalar && scalar->Scalar && !scalar->Wide, "A VEX.LIG scalar reciprocal with VEX.L or VEX.W set was not decoded as scalar");
+    }
     for (const Bytes& unsupported : {Bytes{0xC5, 0xF9, 0x52, 0xD5}, Bytes{0xC5, 0xFB, 0x53, 0xD5}})
         require(!Codegen::DecodeReciprocal(unsupported.data(), unsupported.size()), "An unsupported VEX reciprocal encoding was accepted");
     const auto rsqrtss = Codegen::DecodeReciprocal(Bytes{0xF3, 0x0F, 0x52, 0xD5}.data(), 4);
