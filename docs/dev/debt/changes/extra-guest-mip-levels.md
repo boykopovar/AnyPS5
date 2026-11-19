@@ -9,7 +9,3 @@
 ## add Functional
 
 - [T#s whose levels reach past the full mip chain](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) have unrepresented texels; extra-level mip loads and unrepresented-base texel/LOD queries throw. Sampling/gathers still clamp to represented data, with console behavior unverified. Safe physical query LODs retain the decoded guest count: in-count extra levels report 1x1 spatial extents; LODs at or past count zero all extent/layer components and retain count. Pure table size queries are supported. Raw LAST_LEVEL still clamps to MAX_MIP; the reported LAST9/MAX0 count discrepancy is unchanged. Query results agree with [desktop gfx1031 HIP evidence](https://github.com/boykopovar/AnyPS5/pull/6280#issuecomment-6254884569), not PS5 measurements or sampling/gather coverage.
-
-## change [GCN dimension-query regression]
-
-- [GCN image checks](../../../core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp) follow both data arms through nested selects when checking whether the returned depth depends on component 2 of the size query. They retain the cube and 3D positive checks and the 2D negative check. This structural dependency check does not establish predicate semantics; [GPU dimension-query execution](../../../core/libs/prx/libSceAgcDriver/tests/execution/ImageResinfoDimension.cpp) checks the returned values. Shader cache format 101 distinguishes the combined resource schema from both main's format 90 and the prior integration's format 100.
