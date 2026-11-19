@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Recompiler.hpp"
+#include "StencilReplay.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -88,6 +89,8 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
     return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
 }
 
+bool LastReplayStored = false;
+
 void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
     Pixels.fill(Kept);
     auto target = device.Target();
@@ -125,8 +128,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     if (!pixelResult.stencilReferences.empty()) {
         Require(pixelResult.stencilReferenceDword * sizeof(std::uint32_t) + sizeof(std::uint32_t) == pixelResult.pushConstants.size(), "dynamic reference is not reserved after the stage payload");
+        LastReplayStored = false;
         for (std::size_t cursor = 5; cursor < pixelResult.spirv.size();) {
             const auto count = pixelResult.spirv[cursor] >> 16u;
+            LastReplayStored = LastReplayStored || (pixelResult.spirv[cursor] & 0xffffu) == spv::OpConvertUToPtr;
             Require(count != 0u && count <= pixelResult.spirv.size() - cursor, "invalid materialized replay module");
             Require((pixelResult.spirv[cursor] & 0xffffu) != spv::OpSpecConstant, "expected reference remains a pipeline specialization");
             cursor += count;
@@ -231,6 +236,17 @@ int main() {
         Check(odd, "odd columns exported zero");
         Draw(*device, alternating, exported, equal(91u));
         Check(all, "exported references replace compare reference");
+        const auto storeDevice = ShaderRecompiler::StencilReplayLanesFixed(device->Target().supportedCapabilities);
+        Require(!LastReplayStored, "a shader that needs no lane guarantee kept the replay store");
+        constexpr std::array<std::uint32_t, 21> waveBranch{
+            0x7e040f00u, 0xbe84047eu, 0x36060481u, 0x7daa0680u, 0xbf880007u, 0xbefe0404u, 0x7e0802ffu,
+            0x000000ffu, 0x7d8a0680u, 0xd5010005u, 0x01a90104u, 0xbf820003u, 0xbefe0404u, 0x7e0a02ffu,
+            0x000000feu, 0x7e0e02f2u, 0xf8000082u, 0x00000500u, 0xf800180fu, 0x07070707u, 0xbf810000u
+        };
+        Draw(*device, alternating, exported, replace());
+        Draw(*device, waveBranch, exported, equal(91u));
+        Check(all, "a wave branch on a lane predicate sees every lane of the original draw");
+        Require(LastReplayStored == storeDevice, "a shader that needs the lane guarantee did not get the replay store");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
