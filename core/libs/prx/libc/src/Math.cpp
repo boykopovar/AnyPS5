@@ -1207,7 +1207,7 @@ std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<doubl
 std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
 std::int64_t APS5_VABI llround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
 std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
-std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
+std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(roundl_nid_postfix(x)); }
 int APS5_VABI __isfinitef_nid_postfix(float x) {
     const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
     return exponent != 0x7f800000u ? 1 : 0;

@@ -246,7 +246,6 @@ int APS5_VABI _ZNK6icu_6815Normalizer2Impl23hasDecompBoundaryBeforeEi_nid_postfi
 int APS5_VABI _ZN6icu_6817DictionaryMatcherD0Ev_nid_postfix();
 int APS5_VABI uenum_unextDefault_nid_postfix();
 int APS5_VABI uenum_openCharStringsEnumeration_nid_postfix();
-int APS5_VABI ures_getUInt_nid_postfix();
 int APS5_VABI ures_getBinary_nid_postfix();
 int APS5_VABI udata_readInt16_nid_postfix();
 int APS5_VABI _ZN6icu_685Edits8Iterator4nextEaR10UErrorCode_nid_postfix();
