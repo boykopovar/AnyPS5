@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 
@@ -372,6 +376,60 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         result.mipCount = lastLevel + 1u;
     }
     return result;
+}
+
+namespace {
+
+using RejectionKey = std::array<std::uint32_t, 9>;
+
+struct RememberedRejections {
+    std::shared_mutex mutex;
+    std::map<RejectionKey, std::shared_ptr<const std::string>> entries;
+};
+
+RememberedRejections& rememberedRejections() {
+    static RememberedRejections remembered;
+    return remembered;
+}
+
+}
+
+TextureResourceDecode TryDecodeTextureResource(std::span<const std::uint32_t> words) {
+    TextureResourceDecode decoded;
+    if (words.size() != 8) {
+        try {
+            decoded.resource = DecodeTextureResource(words);
+        } catch (const std::runtime_error& error) {
+            decoded.rejection = std::make_shared<const std::string>(error.what());
+        }
+        return decoded;
+    }
+    RejectionKey key{};
+    std::copy(words.begin(), words.end(), key.begin());
+    key[8] = ShaderRecompiler::GcnGuestShaders() ? 1u : 0u;
+    auto& remembered = rememberedRejections();
+    {
+        std::shared_lock lock(remembered.mutex);
+        if (const auto found = remembered.entries.find(key); found != remembered.entries.end()) {
+            decoded.rejection = found->second;
+            return decoded;
+        }
+    }
+    try {
+        decoded.resource = DecodeTextureResource(words);
+    } catch (const std::runtime_error& error) {
+        decoded.rejection = std::make_shared<const std::string>(error.what());
+        std::unique_lock lock(remembered.mutex);
+        if (remembered.entries.size() >= RememberedTextureRejections) remembered.entries.clear();
+        remembered.entries.emplace(key, decoded.rejection);
+    }
+    return decoded;
+}
+
+std::size_t RememberedTextureRejectionCount() {
+    auto& remembered = rememberedRejections();
+    std::shared_lock lock(remembered.mutex);
+    return remembered.entries.size();
 }
 
 std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource) {

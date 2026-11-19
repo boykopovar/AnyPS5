@@ -2105,7 +2105,7 @@ int APS5_VABI _ZN6icu_6816LocaleKeyFactoryC1Ei_nid_postfix();
 int APS5_VABI _ZNK6icu_6816LocaleKeyFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6823UnicodeStringAppendable15getAppendBufferEiiPDsiPi_nid_postfix();
 int APS5_VABI _ZN6icu_689UVector327setSizeEi_nid_postfix();
-int APS5_VABI ucnv_getAliases_nid_postfix();
+void APS5_VABI ucnv_getAliases_nid_postfix(const char* alias, const char** aliases, std::int32_t* error);
 int APS5_VABI uhash_count_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet20ensureBufferCapacityEi_nid_postfix();
 int APS5_VABI _ZN6icu_6816ICULocaleService16registerInstanceEPNS_7UObjectERKNS_6LocaleEiiR10UErrorCode_nid_postfix();
