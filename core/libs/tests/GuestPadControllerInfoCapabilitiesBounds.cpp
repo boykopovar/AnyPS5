@@ -93,13 +93,10 @@ int main() {
     }
 
     Require(scePadGetExtensionUnitInfo(1, nullptr) == errorInvalidArg);
-    bool threwExtensionUnit = false;
-    try {
-        scePadGetExtensionUnitInfo(1, reinterpret_cast<PadExtensionUnitInfo*>(unitBuf.data()));
-    } catch (const std::runtime_error&) {
-        threwExtensionUnit = true;
-    }
-    Require(threwExtensionUnit);
+    std::memset(unitBuf.data(), 0xa5, unitBuf.size());
+    Require(scePadGetExtensionUnitInfo(1, reinterpret_cast<PadExtensionUnitInfo*>(unitBuf.data())) == errorNotPermitted);
+    Require(scePadGetExtensionUnitInfo(-9999, reinterpret_cast<PadExtensionUnitInfo*>(unitBuf.data())) == errorNotPermitted);
+    Require(unitBuf.front() == 0xa5 && unitBuf.back() == 0xa5);
 
     bool threwExtensionReport = false;
     try {

@@ -8,6 +8,7 @@ constexpr int PAD_OK = 0;
 constexpr int PAD_ERROR_INVALID_ARG = -2137915391;
 constexpr int PAD_ERROR_INVALID_HANDLE = -2137915389;
 constexpr int PAD_ERROR_NOT_INITIALIZED = static_cast<int>(0x80920005u);
+constexpr int PAD_ERROR_NOT_PERMITTED = static_cast<int>(0x80920101u);
 
 constexpr int PAD_PORT_TYPE_STANDARD = 0;
 constexpr int PAD_PORT_TYPE_SPECIAL = 2;

@@ -42,7 +42,6 @@ constexpr int PAD_ERROR_ALREADY_OPENED = static_cast<int>(0x80920004);
 constexpr int PAD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081);
 constexpr int PAD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001);
 constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
-constexpr int PAD_ERROR_NOT_PERMITTED = static_cast<int>(0x80920101);
 constexpr int PAD_USER_ID_INVALID = -1;
 
 std::array<std::atomic_bool, PAD_MAX_CONTROLLERS> g_opened{};
@@ -683,7 +682,7 @@ int APS5_VABI scePadGetExtensionUnitInfo(std::int32_t handle, PadExtensionUnitIn
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (info == nullptr) return PAD_ERROR_INVALID_ARG;
     static_cast<void>(handle);
-    NotImplemented_nid_no_patch(__func__);
+    return PAD_ERROR_NOT_PERMITTED;
 }
 
 int APS5_VABI scePadEnableExtensionPort(bool enabled) {

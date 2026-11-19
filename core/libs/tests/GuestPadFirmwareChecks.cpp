@@ -71,5 +71,10 @@ int main() {
     const int handle = scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 0, nullptr);
     Require(handle > 0);
     Require(scePadReadStateExt(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    std::array<std::uint8_t, 44> extension{};
+    extension.fill(0xa5);
+    Require(scePadGetExtensionUnitInfo(handle, reinterpret_cast<PadExtensionUnitInfo*>(extension.data())) == PAD_ERROR_NOT_PERMITTED);
+    Require(scePadGetExtensionUnitInfo(12345, reinterpret_cast<PadExtensionUnitInfo*>(extension.data())) == PAD_ERROR_NOT_PERMITTED);
+    Require(extension.front() == 0xa5 && extension.back() == 0xa5);
     return 0;
 }
