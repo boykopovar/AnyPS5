@@ -2,6 +2,9 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
+#include <cstring>
+#include <string>
+#include <vector>
 #include <limits>
 #include <cstdio>
 #include <cstdlib>
@@ -400,6 +403,156 @@ static void TestRestrictToInitialScale() {
     Require(r.maximumScale == 5.0f);
 }
 
+struct RecordedViewportError {
+    WebCore::ViewportErrorCode code;
+    std::u16string message;
+};
+
+struct RecordingViewportErrorHandler {
+    WebCore::ViewportErrorCallableWrapper base;
+    std::vector<RecordedViewportError> errors;
+};
+
+static void APS5_VABI RecordViewportError(WebCore::ViewportErrorCallableWrapper* self, WebCore::ViewportErrorCode code, const NKWebKit::WtfAbi::String& message) {
+    std::u16string text;
+    for (unsigned i = 0; i < message.impl->length; ++i) {
+        text += (message.impl->hashAndFlags & 4u) ? static_cast<const unsigned char*>(message.impl->data)[i] : static_cast<const char16_t*>(message.impl->data)[i];
+    }
+    reinterpret_cast<RecordingViewportErrorHandler*>(self)->errors.push_back({code, text});
+}
+
+static const WebCore::ViewportErrorCallableWrapperVtable RecordingViewportErrorVtable{nullptr, nullptr, RecordViewportError};
+
+static NKWebKit::WtfAbi::StringView View(const char* text) {
+    return {text, static_cast<unsigned>(std::strlen(text)), true};
+}
+
+static std::vector<RecordedViewportError> SetFeature(WebCore::ViewportArguments& args, NKWebKit::WtfAbi::StringView key, NKWebKit::WtfAbi::StringView value, bool viewportFitEnabled = true) {
+    RecordingViewportErrorHandler recorder{{&RecordingViewportErrorVtable}, {}};
+    WebCore::ViewportErrorHandler handler{&recorder.base};
+    _ZN7WebCore18setViewportFeatureERNS_17ViewportArgumentsEN3WTF10StringViewES3_bRKNS2_8FunctionIFvNS_17ViewportErrorCodeERKNS2_6StringEEEE(args, key, value, viewportFitEnabled, handler);
+    return recorder.errors;
+}
+
+static std::vector<RecordedViewportError> SetFeature(WebCore::ViewportArguments& args, const char* key, const char* value, bool viewportFitEnabled = true) {
+    return SetFeature(args, View(key), View(value), viewportFitEnabled);
+}
+
+static void TestSetViewportFeatureSizes() {
+    WebCore::ViewportArguments args;
+    Require(SetFeature(args, "WIDTH", "Device-Width").empty());
+    Require(args.width == WebCore::ViewportArguments::ValueDeviceWidth);
+    Require(args.widthWasExplicit);
+    Require(SetFeature(args, "width", "-5").empty());
+    Require(args.width == WebCore::ViewportArguments::ValueAuto);
+    Require(!args.widthWasExplicit);
+    Require(SetFeature(args, "width", " 320").empty());
+    Require(args.width == 320.0f);
+    Require(args.widthWasExplicit);
+    Require(SetFeature(args, "height", "device-height").empty());
+    Require(args.height == WebCore::ViewportArguments::ValueDeviceHeight);
+
+    auto errors = SetFeature(args, "height", "480px");
+    Require(args.height == 480.0f);
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::TruncatedViewportArgumentValueError);
+    Require(errors[0].message == u"Viewport argument value \"480px\" for key \"height\" was truncated to its numeric prefix.");
+
+    errors = SetFeature(args, "width", "auto");
+    Require(args.width == 0.0f);
+    Require(args.widthWasExplicit);
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::UnrecognizedViewportArgumentValueError);
+    Require(errors[0].message == u"Viewport argument value \"auto\" for key \"width\" is invalid, and has been ignored.");
+}
+
+static void TestSetViewportFeatureScales() {
+    WebCore::ViewportArguments args;
+    Require(SetFeature(args, "initial-scale", "yes").empty());
+    Require(args.zoom == 1.0f);
+    Require(SetFeature(args, "minimum-scale", "NO").empty());
+    Require(args.minZoom == 0.0f);
+    Require(SetFeature(args, "maximum-scale", "device-height").empty());
+    Require(args.maxZoom == 10.0f);
+    Require(SetFeature(args, "initial-scale", "-1").empty());
+    Require(args.zoom == WebCore::ViewportArguments::ValueAuto);
+    Require(SetFeature(args, "minimum-scale", "0.5").empty());
+    Require(args.minZoom == 0.5f);
+
+    auto errors = SetFeature(args, "maximum-scale", "12");
+    Require(args.maxZoom == 12.0f);
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::MaximumScaleTooLargeError);
+    Require(errors[0].message == u"Viewport maximum-scale cannot be larger than 10.0. The maximum-scale will be set to 10.0.");
+
+    errors = SetFeature(args, "initial-scale", "2;");
+    Require(args.zoom == 2.0f);
+    Require(errors.size() == 1);
+    Require(errors[0].message == u"Viewport argument value \"2;\" for key \"initial-scale\" was truncated to its numeric prefix. Note that ';' is not a separator in viewport values. The list should be comma-separated.");
+}
+
+static void TestSetViewportFeatureBooleans() {
+    WebCore::ViewportArguments args;
+    Require(SetFeature(args, "user-scalable", "no").empty());
+    Require(args.userZoom == 0.0f);
+    Require(SetFeature(args, "user-scalable", "Device-Width").empty());
+    Require(args.userZoom == 1.0f);
+    Require(SetFeature(args, "user-scalable", "-1").empty());
+    Require(args.userZoom == 1.0f);
+    Require(SetFeature(args, "user-scalable", "0.9").empty());
+    Require(args.userZoom == 0.0f);
+    Require(SetFeature(args, "shrink-to-fit", "YES").empty());
+    Require(args.shrinkToFit == 1.0f);
+
+    auto errors = SetFeature(args, "shrink-to-fit", "maybe");
+    Require(args.shrinkToFit == 0.0f);
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::UnrecognizedViewportArgumentValueError);
+}
+
+static void TestSetViewportFeatureViewportFit() {
+    WebCore::ViewportArguments args;
+    Require(SetFeature(args, "viewport-fit", "COVER").empty());
+    Require(args.viewportFit == WebCore::ViewportFit::Cover);
+    Require(SetFeature(args, "viewport-fit", "contain").empty());
+    Require(args.viewportFit == WebCore::ViewportFit::Contain);
+
+    auto errors = SetFeature(args, "viewport-fit", "fill");
+    Require(args.viewportFit == WebCore::ViewportFit::Auto);
+    Require(errors.size() == 1);
+    Require(errors[0].message == u"Viewport argument value \"fill\" for key \"viewport-fit\" is invalid, and has been ignored.");
+
+    args.viewportFit = WebCore::ViewportFit::Cover;
+    errors = SetFeature(args, "viewport-fit", "contain", false);
+    Require(args.viewportFit == WebCore::ViewportFit::Cover);
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::UnrecognizedViewportArgumentKeyError);
+    Require(errors[0].message == u"Viewport argument key \"viewport-fit\" not recognized and ignored.");
+}
+
+static void TestSetViewportFeatureUnknownKeyAndWideStrings() {
+    WebCore::ViewportArguments args;
+    auto errors = SetFeature(args, "minimal-ui", "");
+    Require(errors.size() == 1);
+    Require(errors[0].code == WebCore::UnrecognizedViewportArgumentKeyError);
+    Require(errors[0].message == u"Viewport argument key \"minimal-ui\" not recognized and ignored.");
+
+    const char16_t key[] = u"WİDTH";
+    errors = SetFeature(args, NKWebKit::WtfAbi::StringView{key, 5, false}, View("1"));
+    Require(errors.size() == 1);
+    Require(errors[0].message == u"Viewport argument key \"WİDTH\" not recognized and ignored.");
+
+    const char16_t width[] = u"width";
+    const char16_t value[] = u"640.5 ";
+    errors = SetFeature(args, NKWebKit::WtfAbi::StringView{width, 5, false}, NKWebKit::WtfAbi::StringView{value, 6, false});
+    Require(args.width == 640.5f);
+    Require(errors.size() == 1);
+    Require(errors[0].message == u"Viewport argument value \"640.5 \" for key \"width\" was truncated to its numeric prefix.");
+
+    WebCore::ViewportErrorHandler none{nullptr};
+    _ZN7WebCore18setViewportFeatureERNS_17ViewportArgumentsEN3WTF10StringViewES3_bRKNS2_8FunctionIFvNS_17ViewportErrorCodeERKNS2_6StringEEEE(args, View("bogus"), View("1"), true, none);
+}
+
 int main() {
     TestImplicit();
     TestViewportMeta();
@@ -416,5 +569,10 @@ int main() {
     TestRestrictMinimumScale();
     TestContentContained();
     TestRestrictToInitialScale();
+    TestSetViewportFeatureSizes();
+    TestSetViewportFeatureScales();
+    TestSetViewportFeatureBooleans();
+    TestSetViewportFeatureViewportFit();
+    TestSetViewportFeatureUnknownKeyAndWideStrings();
     return 0;
 }

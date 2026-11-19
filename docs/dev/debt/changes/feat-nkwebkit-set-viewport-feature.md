@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Functional
+
+- [setViewportFeature](../../../core/libs/prx/libSceNKWebKit/src/WebCoreViewport.cpp) (libSceNKWebKit) - not compared with a console module. It follows the pinned [ViewportArguments.cpp](https://github.com/WebKit/WebKit/blob/e12a212a531aeddc11259e8515671cf5188e038d/Source/WebCore/dom/ViewportArguments.cpp#L292-L481), whose signature with the `viewportFitEnabled` flag matches the exported name; the PS5 11.x [ViewportArguments.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/ViewportArguments.cpp) drops that flag and always parses `viewport-fit`. The `minimal-ui` key is reported as unrecognized because the iOS-only branch is not built for PlayStation. Error messages are built as 8-bit strings whenever every code unit fits in Latin-1, which WebKit only does when the key and value are 8-bit; the text is the same. A null error handler skips the report instead of faulting. Closes when: compared with a console module.
