@@ -455,6 +455,12 @@ struct Context {
             const auto now = ReportedHeap(heap);
             const auto wanted = bytes + (now.usage > now.budget ? now.usage - now.budget : 0u);
             const auto released = retainedImageReclaim(*this, wanted);
+            if (released != 0) {
+                static std::atomic<std::uint64_t> releases{0}, releasedBytes{0};
+                const auto count = releases.fetch_add(1) + 1;
+                const auto total = releasedBytes.fetch_add(released) + released;
+                if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: released %llu bytes of retained image memory before host placement; %llu releases, %llu MiB in total\n", what, static_cast<unsigned long long>(released), static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+            }
             if (released >= wanted) return type;
             if (released != 0 && ReportedHeap(heap).Fits(bytes)) return type;
         }
