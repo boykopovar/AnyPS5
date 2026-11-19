@@ -806,10 +806,7 @@ long double APS5_VABI roundl_nid_postfix(long double x) {
     return negative ? -rounded : rounded;
 }
 
-std::int64_t APS5_VABI lroundl_nid_postfix(long double x) {
-    ErrnoGuard guard;
-    return std::llround(x);
-}
+std::int64_t APS5_VABI lroundl_nid_postfix(long double x) { return llroundl_nid_postfix(x); }
 
 std::int64_t APS5_VABI lrintl_nid_postfix(long double x) {
     ErrnoGuard guard;
