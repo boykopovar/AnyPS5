@@ -113,6 +113,16 @@ void FreeNull() {
     const std::size_t freesBefore = freeCalls;
     sk_free_nid_postfix(nullptr);
     Require(freeCalls == freesBefore);
+    for (std::uintptr_t address : {std::uintptr_t{1}, std::uintptr_t{0x10}}) {
+        errno = E2BIG;
+        bool threw = false;
+        try {
+            sk_free_nid_postfix(reinterpret_cast<LibreSslStack*>(address));
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw && errno == E2BIG && freeCalls == freesBefore);
+    }
 }
 
 void AllocationFailures() {

@@ -147,7 +147,9 @@ int APS5_VABI sk_push_nid_postfix(LibreSslStack* stack, void* element) {
 
 void APS5_VABI sk_free_nid_postfix(LibreSslStack* stack) {
     if (!stack) return;
-    free_nid_postfix(stack->data);
+    LibreSslStack guestStack{};
+    if (!CopyGuestIn(&guestStack, stack, sizeof(guestStack))) throw std::invalid_argument("sk_free: unreadable stack");
+    free_nid_postfix(guestStack.data);
     free_nid_postfix(stack);
 }
 
