@@ -4179,6 +4179,20 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     verify({weak(7), weak(1)}, {0, 1, 2, 6, 7});
     verify({weak(8)}, {8, 9});
     verify({weak(7), weak(8)}, {6, 7, 8, 9});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer(12), page, true, true, true, false);
+        mutation.Add(pointer(13), page, true, true, true, true);
+        mutation.Add(pointer(14), page, true, false, true, false);
+        mutation.Add(pointer(15), page, true, false, true, true);
+    }
+    verify({weak(12)}, {12, 13});
+    verify({weak(14)}, {14});
+    verify({weak(15)}, {15});
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 12; index < 16; ++index) mutation.Remove(pointer(index));
+    }
     auto stale = std::make_shared<const GuestAllocations::Range>(*GuestAllocations::GuestAllocationsLookup_nid_postfix(base + page, false));
     {
         GuestAllocations::Mutation mutation;

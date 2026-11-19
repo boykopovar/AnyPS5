@@ -1674,7 +1674,7 @@ bool importStaysWatched(const Context& context, HostImports& state, const Import
 }
 
 bool continuesRun(const GuestAllocations::Range& before, const GuestAllocations::Range& after) {
-    return before.address + before.bytes == after.address && before.HostReadable() && after.HostReadable() && before.readable == after.readable && before.writable == after.writable && before.gpu == after.gpu && before.gpuWritable == after.gpuWritable;
+    return before.address + before.bytes == after.address && before.HostReadable() && after.HostReadable() && before.readable == after.readable && before.writable == after.writable && before.gpu == after.gpu && before.HostWritable() == after.HostWritable();
 }
 
 std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uint64_t address) {

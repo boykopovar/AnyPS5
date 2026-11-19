@@ -827,7 +827,7 @@ Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped) {
     std::sort(targets.begin(), targets.end(), [](const auto& a, const auto& b) { return a->first < b->first; });
     auto ranges = std::make_shared<Lease::Ranges>();
     const auto continues = [](const Range& before, const Range& after) {
-        return before.address + before.bytes == after.address && before.readable == after.readable && before.writable == after.writable && before.gpu == after.gpu && before.gpuWritable == after.gpuWritable;
+        return before.address + before.bytes == after.address && before.readable == after.readable && before.writable == after.writable && before.gpu == after.gpu && before.HostWritable() == after.HostWritable();
     };
     for (const auto target : targets) {
         if (!ranges->empty() && target->first < ranges->back()->address + ranges->back()->bytes) continue;
