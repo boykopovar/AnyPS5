@@ -64,6 +64,16 @@ def settings_text(environ, identity):
     return "\n".join(lines) + ("\n" if lines else "No ANYPS5_ variables were set.\n")
 
 
+def host_text():
+    return (
+        f"os: {platform.system()} {platform.release()}\n"
+        f"machine: {platform.machine()}\n"
+        f"processor: {platform.processor() or 'unknown'}\n"
+        f"logical cpus: {os.cpu_count() or 'unknown'}\n"
+        f"python: {platform.python_version()}\n"
+    )
+
+
 def make_bundle(report, out, *, home, user, host, log=None, input_config=None, settings=None):
     report = Path(report)
     out = Path(out)
@@ -78,7 +88,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, s
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     if settings is not None:
         members["anyps5-settings.txt"] = redact(settings, **identity)
-    members["host.txt"] = f"os: {platform.system()}\nmachine: {platform.machine()}\npython: {platform.python_version()}\n"
+    members["host.txt"] = host_text()
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():

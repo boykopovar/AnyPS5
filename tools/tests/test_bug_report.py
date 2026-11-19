@@ -304,3 +304,14 @@ class RedactReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostTextTests(unittest.TestCase):
+    def test_host_text_names_the_system_processor_cpus_and_python(self):
+        with patch.object(bug_report.platform, "system", return_value="Linux"), \
+                patch.object(bug_report.platform, "release", return_value="6.1.0"), \
+                patch.object(bug_report.platform, "machine", return_value="x86_64"), \
+                patch.object(bug_report.platform, "processor", return_value=""), \
+                patch.object(bug_report.os, "cpu_count", return_value=8):
+            text = bug_report.host_text()
+        self.assertEqual(text.splitlines(), ["os: Linux 6.1.0", "machine: x86_64", "processor: unknown", "logical cpus: 8", f"python: {bug_report.platform.python_version()}"])
