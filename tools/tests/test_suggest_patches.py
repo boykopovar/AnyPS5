@@ -757,5 +757,43 @@ class PrintMetadataTests(unittest.TestCase):
         self.assertEqual(self.render(metadata), "  Contributor: a\n  Contributor: b\n  Tested: load pass: log\n  Tested: run fail on linux (2026-01-02): video\n")
 
 
+class ValidateMetadataTests(unittest.TestCase):
+    def valid(self):
+        return {
+            "id": "fps-unlock", "name": "FPS unlock", "category": "fps", "description": "d", "notes": "n",
+            "source": "https://example.com/patch", "revision": 2, "contributors": ["Ada", "Grace"],
+            "tested": [{"stage": "launch", "result": "passed", "evidence": "log", "environment": "linux", "date": "2026-02-28"}],
+        }
+
+    def test_valid_metadata_is_returned_without_entry_core_fields(self):
+        entry = {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {}, **self.valid()}
+        self.assertEqual(suggest_patches.validate_metadata(entry), self.valid())
+        self.assertEqual(suggest_patches.validate_metadata({"titleId": "PPSA00001"}), {})
+
+    def test_each_invalid_field_is_refused_with_its_message(self):
+        cases = (
+            ({"id": "Bad Id"}, "id must match"),
+            ({"id": 3}, "id must match"),
+            ({"name": "two\nlines"}, "name must be nonempty single-line text"),
+            ({"category": "nope"}, "invalid category"),
+            ({"source": "http://example.com"}, "source must be an HTTPS URL"),
+            ({"source": "https://"}, "source must be an HTTPS URL"),
+            ({"revision": 0}, "revision must be a positive integer"),
+            ({"revision": True}, "revision must be a positive integer"),
+            ({"contributors": []}, "contributors must be a nonempty array"),
+            ({"contributors": ["Ada", "ada"]}, "duplicate contributor"),
+            ({"tested": []}, "tested must be a nonempty array"),
+            ({"tested": [{"stage": "launch", "result": "passed"}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "extra": 1}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "nope", "result": "passed", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "nope", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-1-1"}]}, "tested date must be YYYY-MM-DD"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-02-30"}]}, "valid calendar date"),
+        )
+        for change, message in cases:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                suggest_patches.validate_metadata(change)
+
+
 if __name__ == "__main__":
     unittest.main()
