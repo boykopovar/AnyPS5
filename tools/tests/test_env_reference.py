@@ -648,5 +648,18 @@ class KindOfTests(unittest.TestCase):
         self.assertEqual(env_reference.kind_of("getenv", "std::string s = p"), "string")
 
 
+class LibraryOfTests(unittest.TestCase):
+    def test_prx_sources_map_to_the_library_directory(self):
+        self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/src/a.cpp"), "libSceFoo")
+
+    def test_other_core_sources_map_to_the_component(self):
+        self.assertEqual(env_reference.library_of("core/loader/a.cpp"), "core/loader")
+        self.assertEqual(env_reference.library_of("core/libs/x.cpp"), "core/libs")
+
+    def test_non_core_sources_map_to_the_top_directory_or_themselves(self):
+        self.assertEqual(env_reference.library_of("tools/x.py"), "tools")
+        self.assertEqual(env_reference.library_of("README.md"), "README.md")
+
+
 if __name__ == "__main__":
     unittest.main()
