@@ -422,6 +422,16 @@ static void CheckMeasuredWideConversions() {
         buffer == std::u16string(u"  %😀|"), "swprintf right-aligned surrogate pair");
     Require(swprintf_nid_postfix(buffer, 48, u"%3\xd83d|") == 4 &&
         buffer == std::u16string(u" %\xd83d|"), "swprintf lone surrogate prints as itself");
+    Require(swprintf_nid_postfix(buffer, 48, u"100%\u5b8c|") == 6 &&
+        buffer == std::u16string(u"100%\u5b8c|"), "swprintf ideograph as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%4\u00e9|") == 5 &&
+        buffer == std::u16string(u"  %\u00e9|"), "swprintf right-aligned Latin-1 unit as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%-4\u3067|") == 5 &&
+        buffer == std::u16string(u"%\u3067  |"), "swprintf left-aligned kana as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%\x80" u"%d|%d%\uffe5", 7, 8) == 7 &&
+        buffer == std::u16string(u"%\x80" u"7|8%\uffe5"), "swprintf keeps its arguments around non-ASCII unknown conversions");
+    Require(swprintf_nid_postfix(buffer, 48, u"%3\xdc00|") == 4 &&
+        buffer == std::u16string(u" %\xdc00|"), "swprintf lone low surrogate prints as itself");
 }
 
 
