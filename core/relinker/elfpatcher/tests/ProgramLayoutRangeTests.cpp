@@ -188,9 +188,8 @@ int main() {
         try { (void)builder.RequiredProgramHeaderCount(twoOverlappingRelros); } catch (const std::exception&) { overlappingRelroRejected = true; }
         Require(overlappingRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they overlap");
         const std::vector<Domain::ProgramHeader> twoIdenticalRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x1000, 0x800)};
-        bool identicalRelroRejected = false;
-        try { (void)builder.RequiredProgramHeaderCount(twoIdenticalRelros); } catch (const std::exception&) { identicalRelroRejected = true; }
-        Require(identicalRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they are identical");
+        Require(builder.RequiredProgramHeaderCount(twoIdenticalRelros) == builder.RequiredProgramHeaderCount(oneRelro),
+            "identical RELRO headers must share one output slot");
         constexpr std::uint16_t extendedCount = 0xffff;
         std::vector<Domain::ProgramHeader> manyHeaders(extendedCount - Elfpatcher::kSyntheticProgramHeaderCount - 2);
         manyHeaders.front() = singleLoad.front();

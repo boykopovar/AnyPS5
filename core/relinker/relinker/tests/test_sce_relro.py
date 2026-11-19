@@ -104,6 +104,10 @@ def main():
                     assert result.returncode == 0, (case, result.stdout, result.stderr)
                     registry = json.loads(output.with_suffix(".registry.json").read_text())
                     assert [entry["nid"] for entry in registry] == (["foo"] if lifecycle else []), (case, registry)
+        for name, extra in (("standalone", standalone), ("covered", covered)):
+            result, output = relink(relinker, work, f"{name}-duplicate", fixture([*extra, extra[-1]]), [])
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            assert gnu_relro_headers(output.read_bytes()) == gnu_relro_headers((work / f"{name}-linux.out").read_bytes())
         for name, load in (("tail", (PT_LOAD, 6, 0x1000, 0x1000, 0x800, 0x800, 0x1000)),
                            ("head", (PT_LOAD, 6, 0x1800, 0x1800, 0x800, 0x800, 0x1000))):
             for options in ([], ["--windows"]):

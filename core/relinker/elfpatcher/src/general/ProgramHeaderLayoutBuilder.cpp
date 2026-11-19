@@ -49,6 +49,13 @@ bool hasWritableLoadCoverage(
     return false;
 }
 
+bool sameRelroHeader(const Domain::ProgramHeader& first, const Domain::ProgramHeader& second) {
+    return first.Flags == second.Flags && first.Offset == second.Offset &&
+        first.MappedAddress == second.MappedAddress && first.PhysicalAddress == second.PhysicalAddress &&
+        first.FileSize == second.FileSize && first.MemorySize == second.MemorySize &&
+        first.Alignment == second.Alignment;
+}
+
 }
 
 ProgramHeaderLayoutBuilder::ProgramHeaderLayoutBuilder(
@@ -143,10 +150,18 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
     const auto lastStack = std::find_if(originalHeaders.rbegin(), originalHeaders.rend(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; });
     const auto lastStackPtr = lastStack != originalHeaders.rend() ? &(*lastStack) : nullptr;
+    const Domain::ProgramHeader* keptRelro = nullptr;
     std::vector<Domain::ProgramHeader> kept;
     for (const auto& ph : originalHeaders) {
         if (_segmentFilter->ShouldSkip(ph)) continue;
-        if (ph.Type == PT_GNU_RELRO && !hasWritableLoadCoverage(originalHeaders, ph)) continue;
+        if (ph.Type == PT_GNU_RELRO) {
+            if (!hasWritableLoadCoverage(originalHeaders, ph)) continue;
+            if (keptRelro) {
+                if (sameRelroHeader(*keptRelro, ph)) continue;
+                throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
+            }
+            keptRelro = &ph;
+        }
         if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         kept.push_back(ph);
     }
@@ -155,8 +170,6 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
 
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
     auto kept = _keptHeaders(originalHeaders);
-    if (std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_RELRO; }) > 1)
-        throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
     if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
         kept.push_back(Domain::ProgramHeader{PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
     if (kept.size() >= kExtendedProgramHeaderCount - kSyntheticProgramHeaderCount)
