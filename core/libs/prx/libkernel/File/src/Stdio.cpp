@@ -1217,7 +1217,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     if (length < 0 || GuestSockets::IsOpen(d)) {
         return PosixFailure(GUEST_EINVAL);
     }
-    File::RefuseArchivedFile(d, "ftruncate");
+    if (File::IsArchivedFile(d)) return PosixFailure(GUEST_EINVAL);
 #ifdef _WIN32
     int error = NativeFtruncate(d, length);
     if (error != 0) {
@@ -1461,8 +1461,7 @@ int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
 #ifdef _WIN32
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
     if (!File::DirectoryDescriptorPath(fd)) {
@@ -1509,8 +1508,7 @@ static unsigned char GuestEntryType(int fd, const struct dirent& entry, bool fol
 }
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1592,8 +1590,7 @@ static unsigned char GuestEntryType(int fd, const struct dirent64& entry, bool f
 }
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);

@@ -37,6 +37,7 @@ static constexpr int32_t SCE_FIBER_ERROR_STATE = static_cast<int32_t>(0x80590006
 
 static constexpr std::size_t FIBER_OBJECT_SIZE = 0x100;
 static constexpr std::size_t FIBER_OPT_PARAM_SIZE = 0x80;
+static constexpr std::uint32_t FIBER_OPT_PARAM_MAGIC = 0xBB40E64Du;
 static constexpr std::size_t FIBER_MIN_CONTEXT_SIZE = 512;
 static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 static constexpr std::size_t FIBER_HOST_STACK_MARGIN = 1u << 20;
@@ -671,9 +672,11 @@ int32_t APS5_VABI sceFiberRename(FiberObject* object, const char* name) {
 
 int32_t APS5_VABI sceFiberOptParamInitialize(FiberOptParam* opt_param) {
     if (!opt_param) return SCE_FIBER_ERROR_NULL;
-    const std::uint8_t zero[FIBER_OPT_PARAM_SIZE] = {};
+    if ((reinterpret_cast<std::uintptr_t>(opt_param) & 7) != 0) return SCE_FIBER_ERROR_ALIGNMENT;
+    std::uint8_t block[FIBER_OPT_PARAM_SIZE] = {};
+    std::memcpy(block, &FIBER_OPT_PARAM_MAGIC, sizeof(FIBER_OPT_PARAM_MAGIC));
     const auto preserved = errno;
-    if (!GuestCopyOut_nid_no_patch(opt_param, zero, sizeof(zero))) {
+    if (!GuestCopyOut_nid_no_patch(opt_param, block, sizeof(block))) {
         errno = preserved;
         return SCE_FIBER_ERROR_INVALID;
     }

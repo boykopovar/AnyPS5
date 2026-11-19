@@ -468,6 +468,8 @@ int main() {
     Require(ThrowsRuntimeError([&] { sceSysmoduleGetModuleHandleInternal(0x00ffffffu, &handle); }));
 
     Require(sceSysmoduleLoadModule(kFiberModuleId) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(nullptr) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(reinterpret_cast<const void*>(&sceSysmoduleLoadModule)) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == 0);
     Require(handle >= 0);
     Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kFiberModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
@@ -477,7 +479,15 @@ int main() {
     void* symbol = nullptr;
     Require(sceKernelDlsym(handle, "sceFiberOptParamInitialize", &symbol) == 0);
     Require(symbol != nullptr);
+    Require(sceSysmoduleIsCalledFromSysModule(symbol) == 1);
+    ModuleInfoEx fiberInfo{};
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uint64_t>(symbol), 1, &fiberInfo) == 0);
+    const auto data = std::find_if(std::begin(fiberInfo.segments), std::begin(fiberInfo.segments) + fiberInfo.segment_count,
+        [](const ModuleSegmentInfo& segment) { return (segment.prot & 2) != 0; });
+    Require(data != std::begin(fiberInfo.segments) + fiberInfo.segment_count);
+    Require(sceSysmoduleIsCalledFromSysModule(reinterpret_cast<const void*>(data->address)) == 0);
     Require(sceSysmoduleUnloadModule(kFiberModuleId) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(symbol) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == kModuleUnloaded);
 
     constexpr std::uint16_t kAudioPropagationModuleId = 0x0120;
@@ -502,6 +512,8 @@ int main() {
     constexpr int kKernelEinval = static_cast<int>(0x80020016);
     int moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal(nullptr, 0, nullptr, 0, &moduleResult) == kKernelEinval);
+    Require(moduleResult == -1);
+    Require(sceSysmoduleLoadModuleByNameInternal(reinterpret_cast<const char*>(0x10), 0, nullptr, 0, &moduleResult) == static_cast<int>(0x8002000e));
     Require(moduleResult == -1);
     KernelModule byName = sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult);
     Require(byName > 0);
