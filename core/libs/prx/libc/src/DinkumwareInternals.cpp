@@ -14,6 +14,7 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ExtendedPrecisionParts.hpp"
 
 namespace {
 
@@ -22,10 +23,7 @@ constexpr int InvalidArgument = 22;
 constexpr int DomainError = 33;
 constexpr int RangeError = 34;
 
-constexpr long double LogPolynomial[] = {
-    0x87f45b3375e0c9edp-66L, 0x87a58c55129af2f8p-66L, 0x9d90cfd7547e4ed2p-66L, 0xba2e6ba9488d3d0cp-66L,
-    0xe38e393a60e2888bp-66L, 0x924924920646cc89p-65L, 0xcccccccccd00c2ebp-65L, 0xaaaaaaaaaaaaa334p-64L,
-};
+using LibcDetail::LogPolynomial;
 
 bool Hexadecimal(const char* text) {
     while (std::isspace(static_cast<unsigned char>(*text))) ++text;
