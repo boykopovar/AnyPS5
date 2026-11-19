@@ -9,8 +9,7 @@ const void* APS5_VABI WKContextCreate() {
 
 const void* APS5_VABI WKContextCreateWithConfiguration(const void* configurationRef) {
     auto config = configurationRef
-        ? NKWebKit::Retained<NKWebKit::ProcessPoolConfiguration>::Share(
-              NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configurationRef, __func__))
+        ? NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configurationRef, __func__)->Duplicate()
         : NKWebKit::Make<NKWebKit::ProcessPoolConfiguration>();
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProcessPool>(std::move(config)));
 }

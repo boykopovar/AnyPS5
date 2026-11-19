@@ -56,6 +56,19 @@ const WebRtcSocketAddress& Checked(const WebRtcSocketAddress* address, const cha
     return *address;
 }
 
+WebRtcSocketAddress& Writable(WebRtcSocketAddress* address, const char* function) {
+    if (!address)
+        throw std::invalid_argument(function);
+    return *address;
+}
+
+void InitHostname(WebRtcGuestString& hostname) {
+    hostname.reserved = 0;
+    std::memset(hostname.buffer, 0, sizeof(hostname.buffer));
+    hostname.size = 0;
+    hostname.capacity = 15;
+}
+
 bool IsAny(const WebRtcIpAddress& ip) {
     static const std::uint8_t mappedPrefix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0};
     static const std::uint8_t any[16] = {};
@@ -90,6 +103,29 @@ bool APS5_VABI _ZNK3rtc13SocketAddress10IsCompleteEv_nid_postfix(const WebRtcSoc
 bool APS5_VABI _ZNK3rtc13SocketAddress5IsNilEv_nid_postfix(const WebRtcSocketAddress* address) {
     const WebRtcSocketAddress& checked = Checked(address, "SocketAddress::IsNil requires an address");
     return checked.hostname.size == 0 && checked.ip.family == WebRtcAfUnspec && checked.port == 0;
+}
+
+void APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(WebRtcSocketAddress* address) {
+    WebRtcSocketAddress& target = Writable(address, "SocketAddress::SocketAddress requires an address");
+    InitHostname(target.hostname);
+    target.ip = WebRtcIpAddress{};
+    target.port = 0;
+    target.scopeId = 0;
+    target.literal = false;
+}
+
+void APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(WebRtcSocketAddress* address, const WebRtcIpAddress* ip, std::int32_t port) {
+    WebRtcSocketAddress& target = Writable(address, "SocketAddress::SocketAddress requires an address");
+    if (!ip)
+        throw std::invalid_argument("SocketAddress::SocketAddress requires an IP address");
+    const WebRtcIpAddress source = *ip;
+    InitHostname(target.hostname);
+    target.ip = WebRtcIpAddress{};
+    target.ip.family = source.family;
+    target.ip.address = source.address;
+    target.port = static_cast<std::uint16_t>(port);
+    target.scopeId = 0;
+    target.literal = false;
 }
 
 }

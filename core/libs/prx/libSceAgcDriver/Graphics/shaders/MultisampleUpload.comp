@@ -2,8 +2,18 @@
 #extension GL_EXT_shader_image_load_formatted : require
 
 layout(constant_id = 0) const uint ELEMENT_BYTES = 4u;
-layout(local_size_x = 64) in;
 layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } sourceBuffer;
+
+#ifdef COLOR_ATTACHMENT_UPLOAD
+layout(location = 0) out uvec4 destinationColor;
+layout(push_constant) uniform Push {
+    uint width;
+    uint fragments;
+    uint firstElement;
+    uint elements;
+} params;
+#else
+layout(local_size_x = 64) in;
 layout(set = 0, binding = 1) uniform uimage2DMSArray destinationImage;
 layout(push_constant) uniform Push {
     uint width;
@@ -14,13 +24,9 @@ layout(push_constant) uniform Push {
     uint elements;
     uint rowThreads;
 } params;
+#endif
 
-void main() {
-    uint index = gl_GlobalInvocationID.y * params.rowThreads + gl_GlobalInvocationID.x;
-    if (index >= params.elements) return;
-    uint element = params.firstElement + index;
-    uint pixel = element / params.fragments;
-    ivec3 coordinate = ivec3(pixel % params.width, (pixel / params.width) % params.height, pixel / (params.width * params.height));
+uvec4 readElement(uint index) {
     uint address = index * ELEMENT_BYTES;
     uvec4 value = uvec4(0u);
     if (ELEMENT_BYTES < 4u) {
@@ -28,5 +34,22 @@ void main() {
     } else {
         for (uint component = 0u; component < ELEMENT_BYTES / 4u; ++component) value[component] = sourceBuffer.data[(address >> 2u) + component];
     }
-    imageStore(destinationImage, coordinate, int(element % params.fragments), value);
+    return value;
+}
+
+void main() {
+#ifdef COLOR_ATTACHMENT_UPLOAD
+    uvec2 pixel = uvec2(gl_FragCoord.xy);
+    uint element = (pixel.y * params.width + pixel.x) * params.fragments + uint(gl_SampleID);
+    uint index = element - params.firstElement;
+    if (element < params.firstElement || index >= params.elements) discard;
+    destinationColor = readElement(index);
+#else
+    uint index = gl_GlobalInvocationID.y * params.rowThreads + gl_GlobalInvocationID.x;
+    if (index >= params.elements) return;
+    uint element = params.firstElement + index;
+    uint pixel = element / params.fragments;
+    ivec3 coordinate = ivec3(pixel % params.width, (pixel / params.width) % params.height, pixel / (params.width * params.height));
+    imageStore(destinationImage, coordinate, int(element % params.fragments), readElement(index));
+#endif
 }
