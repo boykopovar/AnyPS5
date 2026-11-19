@@ -416,8 +416,9 @@ $("convert").onclick = async () => {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
-      sink = await createZipSink(name, () => currentWorker === worker);
-      if (sink === null) return;
+      const writable = await createZipSink(name, () => currentWorker === worker);
+      if (writable === null) return;
+      sink = writable;
     } else if ($("save").value === "disk") {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });

@@ -3,6 +3,7 @@
 
 void CheckIcuCalendar();
 void CheckIcuCollator();
+void CheckIcuDataMemory();
 void CheckIcuDateFormat();
 void CheckIcuDateTimePatternGenerator();
 void CheckIcuDateIntervalFormat();
@@ -46,6 +47,7 @@ int main(int argc, char* argv[]) {
     }
     CheckIcuCalendar();
     CheckIcuCollator();
+    CheckIcuDataMemory();
     CheckIcuDateFormat();
     CheckIcuDateTimePatternGenerator();
     CheckIcuDateIntervalFormat();

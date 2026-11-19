@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include <shared_mutex>
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -182,6 +183,33 @@ std::uint64_t guardedColorBytes(const ColorTarget& target) {
     }
     return bytes;
 }
+
+std::atomic<void (*)()> dccPublishHookForTest{nullptr};
+std::atomic<void (*)()> dccCopyHookForTest{nullptr};
+
+class DccPublication {
+public:
+    explicit DccPublication(const ColorTarget& target) {
+        if (target.dccAddress == 0) return;
+        StorageTexture::InstallUnwatchHook();
+        auto begin = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t end = 0;
+        const auto include = [&](std::uint64_t address, std::uint64_t bytes) {
+            Require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "a multisample publication range overflows");
+            begin = std::min(begin, address);
+            end = std::max(end, address + bytes);
+        };
+        include(target.address, guardedColorBytes(target));
+        include(target.dccAddress, MultisampledDccBytes(target));
+        if (target.cmaskAddress != 0) include(target.cmaskAddress, target.cmaskBytes);
+        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) include(target.fmaskAddress, SurfaceGuestBytes(fmaskResource(target)));
+        hold.emplace(begin, end - begin);
+        if (const auto hook = dccPublishHookForTest.load(std::memory_order_acquire)) hook();
+    }
+
+private:
+    std::optional<MapImportGate::PublishHold> hold;
+};
 
 std::optional<std::uint8_t> texelByte(VkFormat format, const VkClearColorValue& value) {
     if (format == VK_FORMAT_R8_UINT) return value.uint32[0] <= 255u ? std::optional<std::uint8_t>(static_cast<std::uint8_t>(value.uint32[0])) : std::nullopt;
@@ -845,6 +873,35 @@ public:
     bool drawn = false;
     std::uint64_t contents = 0;
 
+    void SaveDccBeforeUnwatch(std::uint64_t address, std::size_t bytes) {
+        if (!active->load(std::memory_order_acquire) || !metadataValid || !metadataValid->load(std::memory_order_acquire) || dccRanges.empty() || !GuestMemory::UnwatchWritesProven()) return;
+        const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+        const auto save = [&](const GuestMemory::UnchangedQuery& range, DccCopy& saved) {
+            if (saved.compared || address >= range.address + range.bytes || range.address >= address + bytes) return;
+            auto mapped = range.address;
+            for (const auto& held : lease) {
+                if (held->address > mapped) break;
+                if (held->readable && mapped < held->address + held->bytes) mapped = std::min<std::uint64_t>(range.address + range.bytes, held->address + held->bytes);
+                if (mapped == range.address + range.bytes) break;
+            }
+            if (mapped != range.address + range.bytes) return;
+            const auto unchanged = [&] {
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                return GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
+            };
+            if (!unchanged()) return;
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(range.address, range.bytes)) return;
+            const auto stamp = GuestMemory::NewestStamp(range.address, range.bytes);
+            std::vector<std::byte> copy(range.bytes);
+            if (GuestMemory::CopyMapped(range.address, copy) != GuestMemory::Compare::Equal) return;
+            if (const auto hook = dccCopyHookForTest.load(std::memory_order_acquire)) hook();
+            if (!unchanged() || !active->load(std::memory_order_acquire) || !metadataValid->load(std::memory_order_acquire) || GuestMemory::NewestStamp(range.address, range.bytes) != stamp) return;
+            saved = {true, std::move(copy), stamp, {}};
+        };
+        for (std::size_t index = 0; index < dccRanges.size(); ++index) save(dccRanges[index], dccCopies[index]);
+        if (fmaskRange) save(*fmaskRange, fmaskCopy);
+    }
+
     MultisampleColorAlias Alias() const {
         MultisampleColorAlias alias{target.address, guardedColorBytes(target), target.format, target.samples};
         alias.active = active;
@@ -907,6 +964,8 @@ private:
     };
     mutable std::vector<DccCopy> dccCopies;
     mutable DccCopy fmaskCopy;
+    mutable std::vector<GuestMemory::GpuUseObservation> dccObservations;
+    mutable GuestMemory::GpuUseObservation fmaskObservation;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
 
@@ -1014,6 +1073,7 @@ private:
         dccRanges.push_back({use.dccAddress, dccBytes, 0});
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
         dccCopies.assign(dccRanges.size(), {});
+        dccObservations.resize(dccRanges.size());
         std::vector<GuestMemory::UnchangedQuery> watched;
         for (std::size_t index = 0; index < dccRanges.size(); ++index) {
             auto& range = dccRanges[index];
@@ -1088,7 +1148,7 @@ private:
             if (compared(index)) {
                 requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, dccObservations[index]);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
@@ -1100,7 +1160,7 @@ private:
             if (fmaskCopy.compared) {
                 requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, fmaskObservation);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
@@ -1139,6 +1199,7 @@ struct GuardedRange {
     std::shared_ptr<TargetUse> use;
     bool fmask = false;
     const char* plane = "multisampled color target";
+    std::weak_ptr<MultisampleTarget> dccOwner;
 };
 
 std::shared_mutex& guardedMutex() {
@@ -1278,17 +1339,17 @@ void collectFmaskWrites(const ColorTarget& target) {
     if (GuestMemory::Watched(target.fmaskAddress, bytes)) static_cast<void>(GuestMemory::CollectWrites(target.fmaskAddress, bytes));
 }
 
-void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid, const std::shared_ptr<TargetUse>& use) {
+void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid, const std::shared_ptr<TargetUse>& use, const std::shared_ptr<MultisampleTarget>& owner) {
     const auto bytes = guardedColorBytes(target);
     collectFmaskWrites(target);
     stampUse(*use, target.address, bytes);
     std::unique_lock lock(guardedMutex());
-    guarded().push_back({context.device, target.address, bytes, target.samples, active, nullptr, use});
+    guarded().push_back({context.device, target.address, bytes, target.samples, active, nullptr, use, false, "multisampled color target", target.dccAddress != 0 ? owner : std::weak_ptr<MultisampleTarget>{}});
     if (target.eqaaFragments != 0) guarded().push_back({context.device, target.fmaskAddress, fmaskBytes(target), target.samples, active, nullptr, use, false, fmaskPlane});
     if (target.dccAddress != 0) {
-        guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, use});
-        if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use});
-        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, SurfaceGuestBytes(fmaskResource(target)), target.samples, active, metadataValid, use});
+        guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, use, false, "multisampled color target", owner});
+        if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use, false, "multisampled color target", owner});
+        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, SurfaceGuestBytes(fmaskResource(target)), target.samples, active, metadataValid, use, false, "multisampled color target", owner});
     }
     guardedGeneration().fetch_add(1, std::memory_order_release);
     moveGuardSpans();
@@ -1345,7 +1406,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             }
             target->Recreate(use);
             target->use->hostOnly.store(true, std::memory_order_release);
-            guard(context, use, target->active, target->metadataValid, target->use);
+            guard(context, use, target->active, target->metadataValid, target->use, target);
             target->ApplyFastClear(use);
             return *target;
         }
@@ -1380,7 +1441,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
     target->Keep();
     targets().push_back(std::move(target));
     auto& created = *targets().back();
-    guard(context, use, created.active, created.metadataValid, created.use);
+    guard(context, use, created.active, created.metadataValid, created.use, created.shared_from_this());
     if (use.cmaskFastClear && use.dccAddress == 0) created.cmask.SeedCode(CurrentUniformMetadataByte(use.cmaskAddress, static_cast<std::size_t>(use.cmaskBytes)));
     created.ApplyFastClear(use);
     created.Keep();
@@ -1451,7 +1512,7 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     targets().push_back(std::move(target));
     auto& created = *targets().back();
     created.use->hostOnly.store(written, std::memory_order_release);
-    guard(context, use, created.active, created.metadataValid, created.use);
+    guard(context, use, created.active, created.metadataValid, created.use, created.shared_from_this());
     if (uniform) created.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
     created.fromTexture = true;
     created.htileAddress = resource.dccAddress;
@@ -1751,6 +1812,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
+    const DccPublication publication(target);
     TargetsLock lock;
     auto& found = acquire(context, target);
     found.drawn = true;
@@ -1759,6 +1821,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
+    const DccPublication publication(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
@@ -1768,6 +1831,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    const DccPublication publication(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
@@ -1859,6 +1923,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
+    const DccPublication publication(target);
     TargetsLock lock;
     acquire(context, target);
 }
@@ -1906,6 +1971,7 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 }
 
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+    const DccPublication publication(source);
     TargetsLock lock;
     auto& target = acquire(context, source);
     target.Keep();
@@ -1992,6 +2058,42 @@ void ClearMultisampleTargets(VkDevice device) {
     }
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
     UpdateResidentImageUnmapObserver_nid_no_patch();
+}
+
+bool MultisampleDccUnwatchLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    if (!anyGuarded().load(std::memory_order_acquire)) return false;
+    std::shared_lock lock(guardedMutex());
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        for (const auto& range : guarded()) {
+            if (begin < range.address + range.bytes && range.address < end && range.active->load(std::memory_order_acquire) && !range.dccOwner.expired()) return true;
+        }
+    }
+    return false;
+}
+
+void SaveMultisampleDccBeforeUnwatch(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::vector<std::shared_ptr<MultisampleTarget>> owners;
+    {
+        std::shared_lock lock(guardedMutex());
+        for (const auto& range : guarded()) {
+            if (address >= range.address + range.bytes || range.address >= address + bytes || !range.active->load(std::memory_order_acquire)) continue;
+            if (auto owner = range.dccOwner.lock(); owner && std::find(owners.begin(), owners.end(), owner) == owners.end()) owners.push_back(std::move(owner));
+        }
+    }
+    if (owners.empty()) return;
+    RequireGpuLockBeforeImports("the multisample color unwatch hook");
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    for (const auto& owner : owners) owner->SaveDccBeforeUnwatch(address, bytes);
+}
+
+void SetMultisampleDccPublishHookForTest(void (*hook)()) {
+    dccPublishHookForTest.store(hook, std::memory_order_release);
+}
+
+void SetMultisampleDccCopyHookForTest(void (*hook)()) {
+    dccCopyHookForTest.store(hook, std::memory_order_release);
 }
 
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
@@ -2104,8 +2206,8 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
     return changed ? std::optional(std::move(filtered)) : std::nullopt;
 }
 
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
-    RequireNoResidentDepthRead_nid_no_patch(address, bytes);
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause) {
+    RequireNoResidentDepthRead_nid_no_patch(address, bytes, std::nullopt, true, cause);
     RequireNoMultisampleColorTarget(address, bytes, access);
 }
 

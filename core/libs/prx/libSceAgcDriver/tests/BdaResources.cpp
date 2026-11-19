@@ -3599,7 +3599,7 @@ void importWatchTests() {
 #endif
 }
 
-void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access) {
+void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access, bool allowWritableImports) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         std::cout << "write watch unavailable: sparse imported heaps not tested\n";
@@ -3657,16 +3657,29 @@ void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access
         memory.WriteBack();
     }
     {
-        GuestBufferMemory written(importing);
+        auto writing = importing;
+        if (!allowWritableImports) writing.hostImportAlignment = 0;
+        const auto beforeWrite = MirrorCounters();
+        GuestBufferMemory written(writing);
         written.AddWritable(base, 2 * bytes);
         written.Upload(false);
         std::uint32_t adjustment = 0;
         const auto view = written.Descriptor(base, 2 * bytes, adjustment);
-        Require(view.buffer != imported->buffer && view.range == bytes && MirrorCounters().rebuilds == before.rebuilds + 1, "a sparse writable descriptor bound a shortened import");
-        access.bytes(view.buffer)[view.offset] = std::byte{0x68};
+        Require(view.range == bytes && adjustment == 0, "a sparse writable descriptor did not end at the committed prefix");
+        const bool direct = view.buffer == imported->buffer;
+        if (direct) {
+            Require(allowWritableImports && written.CopiedBytes() == 0 && MirrorCounters().rebuilds == beforeWrite.rebuilds, "a sparse writable import copied or rebuilt its heap mirror");
+        } else {
+            Require(MirrorCounters().rebuilds == before.rebuilds + 1, "a sparse writable fallback changed its heap-mirror rebuild count");
+        }
+        auto gpuBytes = direct ? std::span<std::byte>(reinterpret_cast<std::byte*>(imported->base), static_cast<std::size_t>(imported->bytes)) : access.bytes(view.buffer);
+        Require(view.offset <= gpuBytes.size() && view.range <= gpuBytes.size() - view.offset, "a sparse writable view extends past its bound fixture memory");
+        if (direct) Require(imported->base + view.offset == base, "a sparse writable import does not address its guest prefix");
+        gpuBytes[view.offset] = std::byte{0x68};
         guest[8] = 0x79;
         written.WriteBack();
-        Require(guest[0] == 0x68 && guest[8] == 0x79, "the sparse writable fallback lost a GPU store or rolled back a CPU store");
+        Require(guest[0] == 0x68 && guest[8] == 0x79, "the sparse writable binding lost a GPU store or rolled back a CPU store");
+        std::cout << "Sparse writable heap " << (direct ? "direct import" : "mirror fallback") << " preserved interleaved writes\n";
     }
     mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
     GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
@@ -3685,6 +3698,7 @@ void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access
 #else
     static_cast<void>(context);
     static_cast<void>(access);
+    static_cast<void>(allowWritableImports);
 #endif
 }
 
@@ -4065,6 +4079,66 @@ void releaseSparse(std::byte* block, std::size_t reserved) {
 #else
     munmap(block, reserved);
 #endif
+}
+
+void importPartlyCommittedWindowTests(const Context& context) {
+#ifdef _WIN32
+    constexpr std::size_t piece = 65536;
+#else
+    constexpr std::size_t piece = 4096;
+#endif
+    constexpr std::size_t reserved = 8 * piece;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    auto* block = reserveSparse(reserved, piece);
+    struct Cleanup {
+        std::byte* block;
+        Context importing;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block), 1);
+            SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+            releaseSparse(block, reserved);
+        }
+    } cleanup{block, importing};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, reserved, true, false, true);
+    }
+    std::memset(block, 0x35, piece);
+    SetHostImportRangeWindow(2 * piece);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    Require(AgcDriver::GuestMemory::DescribeCommitted(base, piece).whole && !AgcDriver::GuestMemory::DescribeCommitted(base, 2 * piece).whole, "the import window test has no uncommitted tail");
+    const auto* imported = HostImportFor(importing, base + 16, 32);
+    Require(imported != nullptr && imported->base == base && imported->bytes == piece, "a committed access was refused because its import window includes uncommitted pages");
+    const auto buffer = imported->buffer;
+    Require(HostImportFor(importing, base + piece - 16, 32) == nullptr, "an import crossed from committed bytes into an uncommitted page");
+    const auto* repeated = HostImportFor(importing, base + 32, 32);
+    Require(repeated != nullptr && repeated->buffer == buffer, "a repeated committed access did not retain its narrowed import");
+#ifdef _WIN32
+    Require(VirtualAlloc(block + 4 * piece, piece, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot commit the separate import island");
+#else
+    Require(mprotect(block + 4 * piece, piece, PROT_READ | PROT_WRITE) == 0, "cannot commit the separate import island");
+#endif
+    const auto* island = HostImportFor(importing, base + 4 * piece + 16, 32);
+    Require(island != nullptr && island->base == base + 4 * piece && island->bytes == piece && island->buffer != buffer, "a separate committed island did not get its own import");
+    Require(HostImportFor(importing, base + piece - 16, 3 * piece + 32) == nullptr, "an import joined committed islands across uncommitted pages");
+#ifdef _WIN32
+    Require(VirtualAlloc(block + piece, piece, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot grow the committed import prefix");
+#else
+    Require(mprotect(block + piece, piece, PROT_READ | PROT_WRITE) == 0, "cannot grow the committed import prefix");
+#endif
+    Require(HostImportFor(importing, base + piece - 16, 32) == nullptr, "growing a window replaced a held import without a recorder");
+    {
+        GuestBufferMemory nextBuild(importing);
+        nextBuild.Upload(false);
+        nextBuild.WriteBack();
+    }
+    const auto* grown = HostImportFor(importing, base + piece - 16, 32);
+    Require(grown != nullptr && grown->base == base && grown->bytes == 2 * piece, "a newly committed window did not replace the narrower import");
 }
 
 void sparseHeapTests(const Context& context, const BdaTestAccess& access) {
@@ -5553,6 +5627,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
     importRefusedWholeRangeTests(context);
+    importPartlyCommittedWindowTests(context);
     importPiecesOverAllocationLimitTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
@@ -5591,7 +5666,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         importReportFloorTests(context, false, failure);
     }
     importReportRefusalMemoryTests(context, access);
-    sparseImportedHeapTests(context, access);
+    sparseImportedHeapTests(context, access, true);
+    sparseImportedHeapTests(context, access, false);
     importEvictionFramesTests(context);
     heapMirrorTests(context, access);
     partialHeapImportBudgetTests(context, access);
