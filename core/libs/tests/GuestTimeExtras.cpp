@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -55,6 +56,8 @@ static void CheckReentrantConversions() {
         GuestTm expected{};
         GuestTm actual{};
         Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime_s rejected a representable time");
+        Require(expected.tm_isdst == -1, "gmtime_s did not leave daylight saving undetermined");
+        expected.tm_isdst = 0;
         Require(gmtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected), "gmtime_r differs from gmtime_s");
         Require(localtime_s_nid_postfix(&timer, &expected) == &expected, "localtime_s rejected a representable time");
         Require(localtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected) && actual.tm_gmtoff == 7200,
@@ -107,6 +110,8 @@ static void CheckXtime() {
     Require(xtime_get_nid_postfix(&time, 0) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 0");
     Require(xtime_get_nid_postfix(&time, 2) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 2");
     Require(xtime_get_nid_postfix(nullptr, 1) == 0, "xtime_get accepted a null xtime");
+    errno = 71;
+    Require(xtime_get_nid_postfix(reinterpret_cast<Xtime*>(0x10), 1) == 0 && errno == 71, "xtime_get accepted an unwritable xtime or changed errno");
     const std::int64_t before = static_cast<std::int64_t>(std::time(nullptr));
     Require(xtime_get_nid_postfix(&time, 1) == 1, "xtime_get rejected TIME_UTC");
     Require(time.sec >= before - 1 && time.sec <= before + 2 && time.nsec >= 0 && time.nsec < 1000000000 && time.nsec % 1000 == 0,

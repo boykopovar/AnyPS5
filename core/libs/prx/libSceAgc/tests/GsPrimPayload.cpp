@@ -95,6 +95,23 @@ void testRejections() {
     check(out == Sentinel, "a rejected call wrote the payload");
 }
 
+void testUnmappedPointers() {
+    std::vector<ShaderRegister> cx{{ShaderRegs::SPI_SHADER_IDX_FORMAT, 2u}};
+    const Shader gs = makeGs(cx);
+    std::uint32_t out = Sentinel;
+    auto* unmappedPayload = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedShader = reinterpret_cast<const Shader*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcGetGsPrimPayload(unmappedPayload, &gs); }, "an unwritable payload pointer was accepted");
+    expectFailure([&] { sceAgcGetGsPrimPayload(&out, unmappedShader); }, "an unreadable shader was accepted");
+    Shader unreadable{};
+    unreadable.cx_registers = reinterpret_cast<ShaderRegister*>(std::uintptr_t{0x10});
+    unreadable.num_cx_registers = 1;
+    expectFailure([&] { sceAgcGetGsPrimPayload(&out, &unreadable); }, "an unreadable register array was accepted");
+    check(out == Sentinel, "a rejected call wrote the payload");
+    unreadable.num_cx_registers = 0;
+    expectPayload(unreadable, 0, "an empty register array was read");
+}
+
 }
 
 int main() {
@@ -106,6 +123,7 @@ int main() {
         testSearchContinuesPastAMismatch();
         testCountBoundsTheSearch();
         testRejections();
+        testUnmappedPointers();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC GS primitive payload tests passed");
         return 0;

@@ -197,6 +197,7 @@ void IrValue::Invalidate() {
     for (std::size_t index = 0; index < arguments.size(); index++) {
         ReplaceArgument(index, nullptr);
     }
+    phiBlocks.clear();
     opcode = IrOpcode::Unreachable;
 }
 
@@ -209,6 +210,7 @@ void IrValue::ReplaceUsesWith(IrValue* replacement, bool preserve) {
             ReplaceArgument(index, nullptr);
         }
         arguments.clear();
+        phiBlocks.clear();
         opcode = IrOpcode::Identity;
         AddArgument(replacement);
         return;

@@ -462,10 +462,36 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  if (size < USER_SERVICE_MAX_USER_NAME_LENGTH + 1) {
-  std::memset(name, 0, size);
+  if (size > 0) {
+   std::array<char, USER_SERVICE_MAX_USER_NAME_LENGTH> zero{};
+   const int savedErrno = errno;
+   const bool copied = GuestCopyOut_nid_no_patch(name, zero.data(), size);
+   errno = savedErrno;
+   if (!copied) {
+    return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+   }
+  }
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
+ if (size > (1ULL << 47)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ std::array<char, 256> chunk{};
+ std::strncpy(chunk.data(), USER_SERVICE_USER_NAMES[index], std::min(size, chunk.size()));
+ const int savedErrno = errno;
+ std::size_t offset = 0;
+ while (offset < size) {
+  const std::size_t count = std::min(size - offset, chunk.size());
+  if (!GuestCopyOut_nid_no_patch(name + offset, chunk.data(), count)) {
+   errno = savedErrno;
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
+  if (offset == 0) {
+   chunk.fill('\0');
+  }
+  offset += count;
+ }
+ errno = savedErrno;
  return USER_SERVICE_OK;
 }
 
@@ -1119,19 +1145,21 @@ int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::si
     if (!UserGroupSlotExists(groupIndex)) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    std::memset(name, 0, size);
+    char output[129]{};
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor >= 0) {
-        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        const std::int64_t bytesRead = sceKernelRead(descriptor, output, 128);
         sceKernelClose(descriptor);
-        if (bytesRead > 0) {
-            return USER_SERVICE_OK;
-        }
+        if (bytesRead <= 0) std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
+    } else {
+        std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
     }
-    std::snprintf(name, size, "User Group %d", groupIndex + 1);
-    return USER_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, output, sizeof(output));
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
@@ -1357,8 +1385,11 @@ int APS5_VABI sceUserServiceSetIPDLeft(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
- NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceGetKratosPrimaryUser(int* userId) {
+ if (userId == nullptr) {
+  NotImplemented_nid_no_patch(__func__);
+ }
+ return USER_SERVICE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI sceUserServiceLogout(void) {
@@ -1817,7 +1848,7 @@ int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
 }
 
 bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
- NotImplemented_nid_no_patch(__func__);
+ return false;
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {
@@ -3008,14 +3039,24 @@ int APS5_VABI sceUserServiceSetGlsMessageFilterLevel(void) {
 
 int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList, std::size_t size,
                                                 std::int32_t* count) {
+    const int savedErrno = errno;
     if (nameList == nullptr || count == nullptr) {
+        errno = savedErrno;
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     if (size < 0x110) {
+        errno = savedErrno;
         return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
     }
-    if (size != 0x110 || groupIndex < -1 || groupIndex > 128 ||
-        (groupIndex >= 0 && !UserGroupSlotExists(groupIndex))) {
+    const bool groupValid = groupIndex >= -1 && groupIndex <= 128 && (groupIndex < 0 || UserGroupSlotExists(groupIndex));
+    errno = savedErrno;
+    if (size != 0x110 || !groupValid) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const bool countWritable = GuestWritable_nid_no_patch(count, sizeof(*count));
+    const bool namesWritable = GuestWritable_nid_no_patch(nameList, size);
+    errno = savedErrno;
+    if (!countWritable || !namesWritable) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     char path[64];
@@ -3028,22 +3069,32 @@ int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList,
     userIds.fill(USER_SERVICE_USER_ID_INVALID);
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor < 0) {
+        errno = savedErrno;
         return descriptor;
     }
     const std::int64_t bytesRead = sceKernelRead(descriptor, userIds.data(), 0x40);
     sceKernelClose(descriptor);
     if (bytesRead < 0) {
+        errno = savedErrno;
         return static_cast<int>(bytesRead);
     }
-    *count = 0;
+    std::array<char, 0x110> localNames{};
+    std::int32_t localCount = 0;
     for (std::size_t index = 0; index < userIds.size() && userIds[index] != USER_SERVICE_USER_ID_INVALID; ++index) {
         char userName[USER_SERVICE_MAX_USER_NAME_LENGTH + 1]{};
         const int result = sceUserServiceGetUserName(userIds[index], userName, sizeof(userName));
         if (result != USER_SERVICE_OK) {
+            errno = savedErrno;
             return result;
         }
-        std::memcpy(nameList + index * sizeof(userName), userName, sizeof(userName));
-        ++*count;
+        std::memcpy(localNames.data() + index * sizeof(userName), userName, sizeof(userName));
+        ++localCount;
+    }
+    const bool countCopied = GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount));
+    const bool namesCopied = GuestCopyOut_nid_no_patch(nameList, localNames.data(), localNames.size());
+    errno = savedErrno;
+    if (!countCopied || !namesCopied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     return USER_SERVICE_OK;
 }
