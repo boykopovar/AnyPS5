@@ -1321,10 +1321,13 @@ CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds)
     deviceTable.cmdDraw = thunked("vkCmdDraw", &emptyDraw);
     AgcDriver::Graphics::Context device{};
     device.functions = &deviceTable;
+    direct.listed = &deviceTable;
+    auto streamed = AgcDriver::Graphics::StreamedCommands();
+    streamed.listed = &deviceTable;
     const CommandFunctions* volatile rawDevice = &direct;
     const AgcDriver::Graphics::Context* volatile context = &device;
     const CommandFunctions* volatile directBatch = &direct;
-    const CommandFunctions* volatile streamedBatch = &AgcDriver::Graphics::StreamedCommands();
+    const CommandFunctions* volatile streamedBatch = &streamed;
     const auto target = FakeCommandBuffer(1);
     std::vector<double> raw, thunk, typed, thunkStreamed, typedStreamed;
     const std::array<std::function<void()>, 3> direct3{
@@ -1452,6 +1455,64 @@ int DirectModeCost() {
 
 }
 
+int batchDraws = 0;
+int hookDraws = 0;
+int batchViewports = 0;
+int hookViewports = 0;
+
+VKAPI_ATTR void VKAPI_CALL batchDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+    ++batchDraws;
+}
+
+VKAPI_ATTR void VKAPI_CALL hookDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+    ++hookDraws;
+}
+
+VKAPI_ATTR void VKAPI_CALL batchViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport*) {
+    ++batchViewports;
+}
+
+VKAPI_ATTR void VKAPI_CALL hookViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport*) {
+    ++hookViewports;
+}
+
+void BatchTablesDeferToTheContextsOwnEntryPoints() {
+    using AgcDriver::Graphics::DeviceFunctions;
+    const auto target = FakeCommandBuffer(3);
+    const VkViewport viewport{};
+    DeviceFunctions table{};
+    table.cmdDraw = thunked("vkCmdDraw", &batchDraw);
+    table.cmdSetViewport = thunked("vkCmdSetViewport", &batchViewport);
+    CommandFunctions batch{};
+    batch.CmdDraw = &batchDraw;
+    batch.CmdSetViewport = &batchViewport;
+    batch.listed = &table;
+    AgcDriver::Graphics::Context context{};
+    context.functions = &table;
+    const auto record = [&](const AgcDriver::Graphics::Context& through, const CommandFunctions* commands) {
+        through.ForBatch(commands, &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw")(target, 3, 1, 0, 0);
+        through.ForBatch(commands, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(target, 0, 1, &viewport);
+    };
+    const auto counts = [&] { return std::array{batchDraws, hookDraws, batchViewports, hookViewports}; };
+    Require(context.ForBatch(&batch, &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw") == &batchDraw, "a batch built against the context's table did not use its own entry point");
+    record(context, &batch);
+    Require((counts() == std::array{1, 0, 1, 0}), "a batch built against the context's table did not reach its entry points");
+    DeviceFunctions traced = table;
+    traced.cmdDraw = &hookDraw;
+    traced.cmdSetViewport = &hookViewport;
+    AgcDriver::Graphics::Context tracing = context;
+    tracing.functions = &traced;
+    record(tracing, &batch);
+    Require((counts() == std::array{1, 1, 1, 1}), "a context with its own table recorded into a batch built against another table bypassed its own entry points");
+    CommandFunctions unlisted = batch;
+    unlisted.listed = nullptr;
+    record(tracing, &unlisted);
+    Require((counts() == std::array{1, 2, 1, 2}), "a batch built without a table bypassed the context's table");
+    AgcDriver::Graphics::Context bare{};
+    record(bare, &unlisted);
+    Require((counts() == std::array{2, 2, 2, 2}), "a context without a table did not use the batch's entry points");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--bench") return DirectModeCost();
@@ -1464,6 +1525,7 @@ int main(int argc, char** argv) {
         PushDescriptorsDemoteOnlyWhatTheyCannotCopy();
         DemotionWithoutAMaterializerPoisons();
         EntryPointsBeyondTheSlotsAreKeyedByDevice();
+        BatchTablesDeferToTheContextsOwnEntryPoints();
         std::cout << "command thunks passed\n";
         return 0;
     } catch (const std::exception& error) {

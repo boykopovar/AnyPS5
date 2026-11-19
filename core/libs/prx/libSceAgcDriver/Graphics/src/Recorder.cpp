@@ -1392,6 +1392,7 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, bool deferre
     if (context.deviceProc != nullptr) {
         if (!deferring) ResolveCommandFunctions(realCommands, context.device, context.deviceProc);
         realResolved = true;
+        overlayListed();
     }
     {
         std::lock_guard lock(liveRecordersMutex);
@@ -2313,9 +2314,22 @@ std::vector<std::pair<std::string, std::uint64_t>> Recorder::Demotions() const {
     return {demotions.begin(), demotions.end()};
 }
 
+void Recorder::overlayListed() {
+    directCommands = realCommands;
+    streamedCommands = StreamedCommands();
+    const auto* table = context.Table();
+    if (table == nullptr) return;
+    listedFunctions = *table;
+    context.OverlayCommands(directCommands, realCommands);
+    context.OverlayCommands(streamedCommands, realCommands);
+    directCommands.listed = table;
+    streamedCommands.listed = table;
+}
+
 void Recorder::ensureOpen() {
     GuestMemory::AssertGpuLockHeld("Recorder::Commands");
     if (open == nullptr) {
+        if (realResolved && !context.OverlayMatches(listedFunctions)) overlayListed();
         ++passGeneration;
         auto batch = std::make_unique<Batch>();
         batch->sampleBatch = ++sampleBatches;
@@ -2329,12 +2343,12 @@ void Recorder::ensureOpen() {
                     throw;
                 }
                 batch->commands = batch->stream->Handle();
-                batch->functions = &StreamedCommands();
+                batch->functions = &streamedCommands;
                 deferredBatches.fetch_add(1, std::memory_order_relaxed);
             } else {
                 batch->real = allocateBegun();
                 batch->commands = batch->real;
-                batch->functions = realResolved ? &realCommands : nullptr;
+                batch->functions = realResolved ? &directCommands : nullptr;
                 directBatches.fetch_add(1, std::memory_order_relaxed);
             }
             if (!spare.empty()) {

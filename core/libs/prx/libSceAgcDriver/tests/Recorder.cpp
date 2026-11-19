@@ -2237,7 +2237,7 @@ void deferredBatchTests(const Device& device) {
         recordBarrierThrough(context, commands);
         recordBarrierThrough(context, commands);
         Require(recorder.StreamOps() >= 2, "barriers recorded into a deferred batch did not reach its stream");
-        Require(recorder.GraphicsState().FunctionsFor(commands) == &StreamedCommands(), "a deferred batch's draw state did not take the streamed command table");
+        Require(recorder.GraphicsState().FunctionsFor(commands) != nullptr && recorder.GraphicsState().FunctionsFor(commands)->CmdSetViewport == StreamedCommands().CmdSetViewport, "a deferred batch's draw state did not take the streamed command table");
         Require(recorder.GraphicsState().FunctionsFor(VK_NULL_HANDLE) == nullptr, "the batch's command table was given for another command buffer");
         const auto streamedOps = recorder.StreamOps();
         recorder.GraphicsState().SetViewport(context, VkViewport{0.0f, 0.0f, 16.0f, 16.0f, 0.0f, 1.0f});
@@ -2255,7 +2255,7 @@ void deferredBatchTests(const Device& device) {
         Require(!recorder.Deferred() && !CommandStream::IsHandle(commands), "APS5_DIRECT_BATCHES opened a deferred batch");
         recordBarrierThrough(context, commands);
         const auto* direct = recorder.GraphicsState().FunctionsFor(commands);
-        Require(direct != nullptr && direct != &StreamedCommands(), "a direct batch's draw state did not take the driver's command table");
+        Require(direct != nullptr && direct->CmdSetViewport != StreamedCommands().CmdSetViewport, "a direct batch's draw state did not take the driver's command table");
         Require(direct->CmdSetViewport != nullptr && !IsCommandThunk("vkCmdSetViewport", reinterpret_cast<PFN_vkVoidFunction>(direct->CmdSetViewport)), "a direct batch's draw state records through the thunk");
         recorder.GraphicsState().SetViewport(context, VkViewport{0.0f, 0.0f, 16.0f, 16.0f, 0.0f, 1.0f});
         recorder.Submit();
@@ -13561,7 +13561,7 @@ VKAPI_ATTR void VKAPI_CALL countingBind(VkCommandBuffer commands, VkPipelineBind
 
 void firstSampleCopyTrackingTest(const Device& device) {
     auto context = device.GetContext();
-    uncountedRealBind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
+    uncountedRealBind = reinterpret_cast<PFN_vkCmdBindPipeline>(AgcDriver::Graphics::CommandThunk("vkCmdBindPipeline", context.deviceProc(context.device, "vkCmdBindPipeline"), context.device));
     DeviceFunctions hooks;
     hooks.cmdBindPipeline = countingBind;
     context.functions = &hooks;

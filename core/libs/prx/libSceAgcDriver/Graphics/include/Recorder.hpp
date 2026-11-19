@@ -1117,9 +1117,13 @@ private:
     std::unique_ptr<ReplayExecutor> makeExecutor();
     bool defers() const;
     void poisonOpen() noexcept;
+    void overlayListed();
     void noteDemotion(const Demotion& demotion);
     VkCommandBuffer live() { return open->commands; }
     CommandFunctions realCommands;
+    DeviceFunctions listedFunctions;
+    CommandFunctions directCommands;
+    CommandFunctions streamedCommands;
     bool realResolved = false;
     FailureLatch latch;
     WorkBudget budget;

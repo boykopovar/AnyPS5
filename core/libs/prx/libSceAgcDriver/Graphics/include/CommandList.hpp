@@ -90,10 +90,13 @@ enum class CommandId : std::uint16_t {
 
 inline constexpr std::size_t CommandCount = static_cast<std::size_t>(CommandId::Count);
 
+struct DeviceFunctions;
+
 struct CommandFunctions {
 #define APS5_COMMAND_MEMBER(name) PFN_vk##name name = nullptr;
     APS5_COMMANDS(APS5_COMMAND_MEMBER)
 #undef APS5_COMMAND_MEMBER
+    const DeviceFunctions* listed = nullptr;
 };
 
 std::span<const std::string_view> CommandNames();

@@ -214,7 +214,7 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
         DeviceFunctions table{};
         table.updateDescriptorSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
         table.allocateDescriptorSets = context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets");
-        table.cmdBindPipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
+        table.cmdBindPipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(AgcDriver::Graphics::CommandThunk("vkCmdBindPipeline", context.deviceProc(context.device, "vkCmdBindPipeline"), context.device));
         table.cmdBindDescriptorSets = context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
         table.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         table.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
