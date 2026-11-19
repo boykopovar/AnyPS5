@@ -62,7 +62,8 @@ int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t ma
     return 1;
 }
 
-int APS5_VABI X509_check_akid_nid_postfix() {
+int APS5_VABI X509_check_akid_nid_postfix(void*, void* authorityKeyId) {
+    if (!authorityKeyId) return 0;
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -180,16 +181,28 @@ int APS5_VABI i2d_PUBKEY_nid_postfix(LibreSsl3EvpPkey* key, unsigned char** outp
     }
     const int length = static_cast<int>(encoded.size());
     if (!output) return length;
-    const bool advanceOutput = *output != nullptr;
-    if (!*output) {
-        *output = static_cast<unsigned char*>(malloc_nid_postfix(encoded.size()));
-        if (!*output) {
+    unsigned char* target = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&target, output, sizeof(target)))
+        throw std::invalid_argument("i2d_PUBKEY: unreadable output pointer");
+    unsigned char* next = nullptr;
+    unsigned char* allocated = nullptr;
+    if (target) {
+        if (!GuestCopyOut_nid_no_patch(target, encoded.data(), encoded.size()))
+            throw std::invalid_argument("i2d_PUBKEY: unwritable output buffer");
+        next = target + encoded.size();
+    } else {
+        allocated = static_cast<unsigned char*>(malloc_nid_postfix(encoded.size()));
+        if (!allocated) {
             PutError(ErrLibX509, ErrRMallocFailure);
             return -1;
         }
+        std::memcpy(allocated, encoded.data(), encoded.size());
+        next = allocated;
     }
-    std::memcpy(*output, encoded.data(), encoded.size());
-    if (advanceOutput) *output += encoded.size();
+    if (!GuestCopyOut_nid_no_patch(output, &next, sizeof(next))) {
+        if (allocated) free_nid_postfix(allocated);
+        throw std::invalid_argument("i2d_PUBKEY: unwritable output pointer");
+    }
     return length;
 }
 

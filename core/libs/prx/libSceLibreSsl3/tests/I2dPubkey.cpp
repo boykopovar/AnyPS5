@@ -267,6 +267,30 @@ void RequireNotImplemented(LibreSsl3EvpPkey* key) {
     Require(threw);
 }
 
+void TestGuestOutputPointers() {
+    LibreSsl3EvpPkey* key = DecodeSpki(RsaSpkiDer);
+    Require(key != nullptr);
+
+    bool threw = false;
+    try {
+        i2d_PUBKEY_nid_postfix(key, reinterpret_cast<unsigned char**>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    unsigned char* unwritable = reinterpret_cast<unsigned char*>(0x10);
+    threw = false;
+    try {
+        i2d_PUBKEY_nid_postfix(key, &unwritable);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(unwritable == reinterpret_cast<unsigned char*>(0x10));
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
 void TestUnsupportedKeyTypes() {
     LibreSsl3EvpPkey* key = DecodeSpki(RsaSpkiDer);
     const std::int32_t savedType = key->type;
@@ -330,6 +354,7 @@ int main() {
     TestNullKey();
     TestMissingKeyData();
     TestMissingMethod();
+    TestGuestOutputPointers();
     TestUnsupportedKeyTypes();
     TestEcWithoutPublicKey();
     return 0;

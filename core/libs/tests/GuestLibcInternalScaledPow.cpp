@@ -11,7 +11,7 @@ namespace {
 
 void Require(bool condition, const char* message) {
     if (condition) return;
-    std::fprintf(stderr, "libc internal scaled pow: %s\n", message);
+    std::fprintf(stderr, "libc internal math: %s\n", message);
     std::abort();
 }
 
@@ -69,10 +69,37 @@ void TestNonNullExponent() {
     Require(lpowThrew, "_LPow non-null exponent throws NotImplemented");
 }
 
+template<typename T, typename Evaluate>
+void TestErfcTail(Evaluate evaluate) {
+    constexpr auto tailStart = static_cast<T>(1.523L);
+    constexpr auto erfcOfTwo = static_cast<T>(0.00467773498104726583793074363L);
+    constexpr auto tolerance = 8 * std::numeric_limits<T>::epsilon() * erfcOfTwo;
+    const T atStart = evaluate(tailStart);
+    const T atTwo = evaluate(static_cast<T>(2));
+    Require(std::abs(atTwo - erfcOfTwo) <= tolerance, "erfc tail agrees with erfc(2)");
+    Require(atStart > atTwo && atStart < static_cast<T>(0.04L), "erfc tail includes its lower boundary");
+    Require(evaluate(static_cast<T>(150)) == 0, "erfc tail underflows to zero for a large finite input");
+
+    const T outside[] = {std::nextafter(tailStart, static_cast<T>(0)), static_cast<T>(-2),
+                         std::numeric_limits<T>::infinity(), std::numeric_limits<T>::quiet_NaN()};
+    for (T x : outside) {
+        bool rejected = false;
+        try {
+            evaluate(x);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected, "inputs outside the verified erfc tail must throw");
+    }
+}
+
 }
 
 int main() {
     TestNullExponent();
     TestNonNullExponent();
+    TestErfcTail<double>(_Erfc_nid_postfix);
+    TestErfcTail<float>(_FErfc_nid_postfix);
+    TestErfcTail<long double>(_LErfc_nid_postfix);
     return 0;
 }
