@@ -213,6 +213,7 @@ namespace {
 
 constexpr int Asn1Library = 13;
 constexpr int EcLibrary = 16;
+constexpr int MallocFailure = 65;
 constexpr int AnyFunction = 0xfff;
 constexpr int NestedAsn1Error = 58;
 constexpr int PassedNullParameter = 67;
@@ -457,7 +458,13 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     const unsigned char* const start = cursor;
     std::unique_ptr<EcGroup, GroupDeleter> group = DecodeGroup(cursor, length);
     std::unique_ptr<EcKey, KeyDeleter> created;
-    if (group && current == nullptr) created.reset(EC_KEY_new_nid_postfix());
+    if (group && current == nullptr) {
+        created.reset(EC_KEY_new_nid_postfix());
+        if (!created) {
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
     if (!group) {
         if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
         PutError(EcLibrary);
@@ -495,6 +502,10 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         return nullptr;
     }
     std::unique_ptr<EcPoint, PointDeleter> decoded(EC_POINT_new_nid_postfix(result->group));
+    if (!decoded) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
     if (!EC_POINT_oct2point_nid_postfix(result->group, decoded.get(), bytes.data(), bytes.size(), nullptr)) {
         PutError(EcLibrary);
         return nullptr;
