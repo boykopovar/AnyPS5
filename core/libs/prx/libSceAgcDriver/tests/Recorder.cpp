@@ -4789,7 +4789,7 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
 bool carriedShadowTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: carried shadows not tested\n";
+        std::cout << "skipped, host imports unavailable: carried shadows not tested\n";
         return false;
     }
     constexpr std::size_t bytes = 4u << 20u;
@@ -4815,11 +4815,11 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     }
     const Cleanup cleanup{context, block};
     if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the test block refused: carried shadows not tested\n";
+        std::cout << "skipped, host import of the test block refused: carried shadows not tested\n";
         return false;
     }
     if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
-        std::cout << "host imports are compared, not watched: carried shadows not tested\n";
+        std::cout << "skipped, host imports are compared, not watched: carried shadows not tested\n";
         return false;
     }
     const auto element = address + 4096;
