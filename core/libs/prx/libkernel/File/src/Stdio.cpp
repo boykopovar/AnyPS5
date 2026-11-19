@@ -452,10 +452,6 @@ extern "C" ssize_t __getdirentries64(int fd, void* buffer, size_t bytes, off_t* 
 static int NativeRmdir(const std::filesystem::path& path) {
     return ::rmdir(path.c_str());
 }
-static bool RemoveEmptyDirectory(const std::filesystem::path& path) {
-    std::error_code error;
-    return std::filesystem::remove(path, error);
-}
 static int NativeMkdir(const std::filesystem::path& path, std::uint16_t mode) {
     return ::mkdir(path.c_str(), static_cast<mode_t>(mode));
 }
@@ -2112,10 +2108,10 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     }
 #ifdef _WIN32
     if (!IsDirectoryEmpty(targetNative)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
-#else
-    if (!std::filesystem::is_empty(targetNative, error)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
-#endif
     if (!RemoveEmptyDirectory(targetNative)) return SceErrorFromErrno(GUEST_EIO);
+#else
+    if (NativeRmdir(targetNative) != 0) return SceErrorFromErrno(errno);
+#endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
