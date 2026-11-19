@@ -31,11 +31,13 @@ void Require(bool condition, const char* message, std::source_location location 
 
 class Module {
 public:
-    explicit Module(const char* path) {
+    explicit Module(const std::filesystem::path& path) {
 #ifdef _WIN32
-        handle = LoadLibraryW(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path))).c_str());
+        handle = LoadLibraryW(path.c_str());
+        if (!handle) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-        handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!handle) std::fprintf(stderr, "%s\n", dlerror());
 #endif
         Require(handle != nullptr, "load module");
     }
@@ -280,7 +282,9 @@ int main(int argc, char** argv) {
     const bool patched = std::string_view(argv[3]) == "nid";
     Require(patched || std::string_view(argv[3]) == "unpatched", "known variant");
     try {
-        Module module(argv[1]);
+        const std::filesystem::path aliasPath = std::u8string(reinterpret_cast<const char8_t*>(argv[1]));
+        Module nativeModule(aliasPath.parent_path() / "libSceAjm.native.prx");
+        Module module(aliasPath);
         if (std::string_view(argv[2]) == "inline") {
             CheckInline(module.Import<decltype(&sceAjmiBatchJobInlineBuffer_nid_no_patch)>(patched ? "4MsUK9kAnKg" : "4MsUK9kAnKg_nid_no_patch_cut"));
         } else if (std::string_view(argv[2]) == "run") {

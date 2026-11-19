@@ -376,7 +376,7 @@ public:
     };
     bool RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords result, BoundWords snapshot, BoundWords target, std::uint32_t dwords, VkBuffer counter = VK_NULL_HANDLE);
     std::uint64_t SamplesTotal();
-    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
+    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0, std::uint32_t blocks = 0xffffu);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
     void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
@@ -837,6 +837,7 @@ private:
                 std::uint64_t address;
                 VkDeviceAddress dumpTarget = 0;
                 std::uint32_t dumpSegments = 0;
+                std::uint32_t dumpBlocks = 0;
                 std::uint64_t End() const;
             };
             std::vector<Queued> queued;
@@ -906,7 +907,7 @@ private:
     void readSamples(Batch& batch);
     bool gpuSampleCounter();
     void endSamples(Batch& batch);
-    void foldSamples(Batch& batch, VkDeviceAddress target);
+    void foldSamples(Batch& batch, VkDeviceAddress target, std::uint32_t blocks = 0xffffu);
     bool segmentMode() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);

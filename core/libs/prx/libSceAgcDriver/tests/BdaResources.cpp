@@ -3599,7 +3599,7 @@ void importWatchTests() {
 #endif
 }
 
-void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access) {
+void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access, bool allowWritableImports) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         std::cout << "write watch unavailable: sparse imported heaps not tested\n";
@@ -3657,16 +3657,29 @@ void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access
         memory.WriteBack();
     }
     {
-        GuestBufferMemory written(importing);
+        auto writing = importing;
+        if (!allowWritableImports) writing.hostImportAlignment = 0;
+        const auto beforeWrite = MirrorCounters();
+        GuestBufferMemory written(writing);
         written.AddWritable(base, 2 * bytes);
         written.Upload(false);
         std::uint32_t adjustment = 0;
         const auto view = written.Descriptor(base, 2 * bytes, adjustment);
-        Require(view.buffer != imported->buffer && view.range == bytes && MirrorCounters().rebuilds == before.rebuilds + 1, "a sparse writable descriptor bound a shortened import");
-        access.bytes(view.buffer)[view.offset] = std::byte{0x68};
+        Require(view.range == bytes && adjustment == 0, "a sparse writable descriptor did not end at the committed prefix");
+        const bool direct = view.buffer == imported->buffer;
+        if (direct) {
+            Require(allowWritableImports && written.CopiedBytes() == 0 && MirrorCounters().rebuilds == beforeWrite.rebuilds, "a sparse writable import copied or rebuilt its heap mirror");
+        } else {
+            Require(MirrorCounters().rebuilds == before.rebuilds + 1, "a sparse writable fallback changed its heap-mirror rebuild count");
+        }
+        auto gpuBytes = direct ? std::span<std::byte>(reinterpret_cast<std::byte*>(imported->base), static_cast<std::size_t>(imported->bytes)) : access.bytes(view.buffer);
+        Require(view.offset <= gpuBytes.size() && view.range <= gpuBytes.size() - view.offset, "a sparse writable view extends past its bound fixture memory");
+        if (direct) Require(imported->base + view.offset == base, "a sparse writable import does not address its guest prefix");
+        gpuBytes[view.offset] = std::byte{0x68};
         guest[8] = 0x79;
         written.WriteBack();
-        Require(guest[0] == 0x68 && guest[8] == 0x79, "the sparse writable fallback lost a GPU store or rolled back a CPU store");
+        Require(guest[0] == 0x68 && guest[8] == 0x79, "the sparse writable binding lost a GPU store or rolled back a CPU store");
+        std::cout << "Sparse writable heap " << (direct ? "direct import" : "mirror fallback") << " preserved interleaved writes\n";
     }
     mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
     GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
@@ -3685,6 +3698,7 @@ void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access
 #else
     static_cast<void>(context);
     static_cast<void>(access);
+    static_cast<void>(allowWritableImports);
 #endif
 }
 
@@ -5652,7 +5666,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         importReportFloorTests(context, false, failure);
     }
     importReportRefusalMemoryTests(context, access);
-    sparseImportedHeapTests(context, access);
+    sparseImportedHeapTests(context, access, true);
+    sparseImportedHeapTests(context, access, false);
     importEvictionFramesTests(context);
     heapMirrorTests(context, access);
     partialHeapImportBudgetTests(context, access);
