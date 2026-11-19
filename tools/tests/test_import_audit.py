@@ -4037,5 +4037,34 @@ class DynamicSymbolEntriesTests(unittest.TestCase):
             import_audit.dynamic_symbol_entries("m.elf", bytes(10), 0, 0, 0, 1, [])
 
 
+class ElfHasDynamicSegmentTests(unittest.TestCase):
+    @staticmethod
+    def header(offset, size, count):
+        values = [0] * 14
+        values[5], values[9], values[10] = offset, size, count
+        return values
+
+    def test_no_program_headers_has_no_dynamic_segment(self):
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", b"", self.header(0, 0, 0)))
+
+    def test_finds_pt_dynamic_among_program_headers(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52) + struct.pack("<I", 2) + bytes(52)
+        self.assertTrue(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 2)))
+
+    def test_other_program_header_types_are_not_dynamic(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52)
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 1)))
+
+    def test_wrong_program_header_size_or_zero_offset_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(64, 32, 1))
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(0, 56, 1))
+
+    def test_truncated_program_header_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(80), self.header(64, 56, 2))
+
+
 if __name__ == "__main__":
     unittest.main()
