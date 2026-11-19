@@ -175,7 +175,7 @@ std::string NextHost(UEnumeration* enumeration) {
     return value ? std::string(value, static_cast<std::size_t>(length)) : std::string();
 }
 
-void FullData() {
+void InstallAliasData() {
     UErrorCode dataStatus = U_ZERO_ERROR;
     udata_setCommonData(AliasData, &dataStatus);
     Require(U_SUCCESS(dataStatus));
@@ -183,6 +183,9 @@ void FullData() {
     const auto guestStandards = SetupOpenStandardNamesData(AliasData, &guestDataStatus);
     Require(guestDataStatus == 0);
     Require(guestStandards > 0);
+}
+
+void FullData() {
     std::int32_t guestStatus = 0;
     UEnumeration* guest = ucnv_openStandardNames_nid_postfix("UTF-8", "MIME", &guestStatus);
     Require(guest != nullptr);
@@ -263,10 +266,19 @@ void FullData() {
 
 }
 
-int main(int argc, char**) {
+int main(int argc, char** argv) {
     Prefailed();
     NullStatus();
     ReadOnlyPrefailed();
-    if (argc == 1) ReducedData();
-    else FullData();
+    if (argc == 1) {
+        ReducedData();
+        return 0;
+    }
+    if (std::strcmp(argv[1], "full") == 0) {
+        InstallAliasData();
+    } else {
+        Require(std::strcmp(argv[1], "packaged") == 0);
+        Require(ucnv_countStandards() > 0);
+    }
+    FullData();
 }
