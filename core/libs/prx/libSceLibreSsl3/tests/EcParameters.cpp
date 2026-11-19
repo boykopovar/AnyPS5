@@ -240,6 +240,19 @@ void RejectsMalformedDer() {
     Fails(P256, std::numeric_limits<std::int64_t>::max(), 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
 }
 
+void RejectsOversizedLengthFields() {
+    for (int count = 1; count <= 126; ++count) {
+        for (const unsigned char fill : {static_cast<unsigned char>(0xff), static_cast<unsigned char>(0x7f)}) {
+            std::vector<unsigned char> der{0x06, static_cast<unsigned char>(0x80 | count)};
+            der.insert(der.end(), static_cast<std::size_t>(count), fill);
+            der.resize(der.size() + 16, 0);
+            ERR_clear_error_nid_postfix();
+            const unsigned char* cursor = der.data();
+            Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size())) == nullptr && cursor == der.data());
+        }
+    }
+}
+
 void BoundsWhatItCopies() {
     std::vector<unsigned char> padded = P256;
     padded.resize(5000, 0);
@@ -388,6 +401,7 @@ int main() {
     FillsOrReusesTheCallersKey();
     RejectsCurvesItCannotName();
     RejectsMalformedDer();
+    RejectsOversizedLengthFields();
     BoundsWhatItCopies();
     RejectsCallerPointersThatCannotBeWritten();
     ReadsOnlyTheBytesTheEncodingNeeds();

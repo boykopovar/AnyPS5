@@ -410,8 +410,8 @@ std::int64_t EncodedBytes(const unsigned char* in, std::int64_t available) {
     std::int64_t content = 0;
     for (int count = byte & 0x7f; count > 0; --count) {
         if (!next()) return offset;
-        content = (content << 8) | byte;
-        if (content > MaxEncodedBytes) return available;
+        if (content > (MaxEncodedBytes - byte) / 256) return available;
+        content = content * 256 + byte;
     }
     return std::min(available, offset + content);
 }
