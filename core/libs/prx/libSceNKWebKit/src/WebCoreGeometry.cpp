@@ -174,7 +174,7 @@ void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* guestSel
 }
 
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* guestSelf, const WebCore::IntPoint& guestP) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatPoint selfValue{};
     auto* self = &selfValue;
     const auto p = WebCore::LoadGuest(&guestP, __func__);
     self->m_x = static_cast<float>(p.m_x);
@@ -183,7 +183,7 @@ void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* gu
 }
 
 void APS5_VABI _ZN7WebCore10FloatPointC2ERKNS_8IntPointE(WebCore::FloatPoint* guestSelf, const WebCore::IntPoint& guestP) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatPoint selfValue{};
     auto* self = &selfValue;
     const auto p = WebCore::LoadGuest(&guestP, __func__);
     self->m_x = static_cast<float>(p.m_x);
@@ -310,7 +310,7 @@ void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, c
 }
 
 void APS5_VABI _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(WebCore::FloatRect* guestSelf, const WebCore::IntRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = static_cast<float>(r.m_location.m_x);
@@ -321,7 +321,7 @@ void APS5_VABI _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(WebCore::FloatRect* guestS
 }
 
 void APS5_VABI _ZN7WebCore9FloatRectC2ERKNS_7IntRectE(WebCore::FloatRect* guestSelf, const WebCore::IntRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = static_cast<float>(r.m_location.m_x);
@@ -416,7 +416,7 @@ bool APS5_VABI _ZNK7WebCore9FloatQuad13isRectilinearEv(const WebCore::FloatQuad*
 
 void APS5_VABI _ZN7WebCore16FloatRoundedRectC1ERKNS_9FloatRectERKNS0_5RadiiE(
     WebCore::FloatRoundedRect* guestSelf, const WebCore::FloatRect& guestRect, const WebCore::FloatRoundedRect::Radii& guestRadii) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatRoundedRect selfValue{};
     auto* self = &selfValue;
     const auto rect = WebCore::LoadGuest(&guestRect, __func__);
     const auto radii = WebCore::LoadGuest(&guestRadii, __func__);
@@ -427,7 +427,7 @@ void APS5_VABI _ZN7WebCore16FloatRoundedRectC1ERKNS_9FloatRectERKNS0_5RadiiE(
 
 void APS5_VABI _ZN7WebCore16FloatRoundedRectC2ERKNS_9FloatRectERKNS0_5RadiiE(
     WebCore::FloatRoundedRect* guestSelf, const WebCore::FloatRect& guestRect, const WebCore::FloatRoundedRect::Radii& guestRadii) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::FloatRoundedRect selfValue{};
     auto* self = &selfValue;
     const auto rect = WebCore::LoadGuest(&guestRect, __func__);
     const auto radii = WebCore::LoadGuest(&guestRadii, __func__);
@@ -437,7 +437,7 @@ void APS5_VABI _ZN7WebCore16FloatRoundedRectC2ERKNS_9FloatRectERKNS0_5RadiiE(
 }
 
 void APS5_VABI _ZN7WebCore8IntPointC1ERKNS_10FloatPointE(WebCore::IntPoint* guestSelf, const WebCore::FloatPoint& guestP) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntPoint selfValue{};
     auto* self = &selfValue;
     const auto p = WebCore::LoadGuest(&guestP, __func__);
     self->m_x = WebCore::ClampToInteger(p.m_x);
@@ -446,7 +446,7 @@ void APS5_VABI _ZN7WebCore8IntPointC1ERKNS_10FloatPointE(WebCore::IntPoint* gues
 }
 
 void APS5_VABI _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(WebCore::IntPoint* guestSelf, const WebCore::FloatPoint& guestP) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntPoint selfValue{};
     auto* self = &selfValue;
     const auto p = WebCore::LoadGuest(&guestP, __func__);
     self->m_x = WebCore::ClampToInteger(p.m_x);
@@ -467,7 +467,7 @@ WebCore::IntPoint APS5_VABI _ZNK7WebCore8IntPoint18constrainedBetweenERKS0_S2_(
 }
 
 void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* guestSelf, const WebCore::FloatSize& guestS) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntSize selfValue{};
     auto* self = &selfValue;
     const auto s = WebCore::LoadGuest(&guestS, __func__);
     self->m_width = WebCore::ClampToInteger(s.m_width);
@@ -476,7 +476,7 @@ void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* guestSel
 }
 
 void APS5_VABI _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(WebCore::IntSize* guestSelf, const WebCore::FloatSize& guestS) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntSize selfValue{};
     auto* self = &selfValue;
     const auto s = WebCore::LoadGuest(&guestS, __func__);
     self->m_width = WebCore::ClampToInteger(s.m_width);
@@ -547,7 +547,7 @@ void APS5_VABI _ZN7WebCore7IntRect9intersectERKS0_(WebCore::IntRect* guestSelf, 
 }
 
 void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_10LayoutRectE(WebCore::IntRect* guestSelf, const WebCore::LayoutRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = r.m_location.m_x.m_value / 64;
@@ -558,7 +558,7 @@ void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_10LayoutRectE(WebCore::IntRect* guestS
 }
 
 void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_9FloatRectE(WebCore::IntRect* guestSelf, const WebCore::FloatRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = WebCore::ClampToInteger(r.m_location.m_x);
@@ -569,7 +569,7 @@ void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_9FloatRectE(WebCore::IntRect* guestSel
 }
 
 void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(WebCore::IntRect* guestSelf, const WebCore::LayoutRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = r.m_location.m_x.m_value / 64;
@@ -580,7 +580,7 @@ void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(WebCore::IntRect* guestS
 }
 
 void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_9FloatRectE(WebCore::IntRect* guestSelf, const WebCore::FloatRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::IntRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x = WebCore::ClampToInteger(r.m_location.m_x);
@@ -657,7 +657,7 @@ void APS5_VABI _ZN7WebCore10LayoutRect5uniteERKS0_(WebCore::LayoutRect* guestSel
 }
 
 void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* guestSelf, const WebCore::FloatRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::LayoutRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x.m_value = WebCore::ClampToInteger(r.m_location.m_x * 64.0f);
@@ -668,7 +668,7 @@ void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* g
 }
 
 void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* guestSelf, const WebCore::FloatRect& guestR) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::LayoutRect selfValue{};
     auto* self = &selfValue;
     const auto r = WebCore::LoadGuest(&guestR, __func__);
     self->m_location.m_x.m_value = WebCore::ClampToInteger(r.m_location.m_x * 64.0f);
@@ -690,7 +690,7 @@ bool APS5_VABI _ZNK7WebCore10LayoutRect8containsERKS0_(const WebCore::LayoutRect
 
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(
     WebCore::RoundedRect* guestSelf, const WebCore::LayoutRect& guestRect, const WebCore::LayoutSize& guestTopLeft, const WebCore::LayoutSize& guestTopRight, const WebCore::LayoutSize& guestBottomLeft, const WebCore::LayoutSize& guestBottomRight) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::RoundedRect selfValue{};
     auto* self = &selfValue;
     const auto rect = WebCore::LoadGuest(&guestRect, __func__);
     const auto topLeft = WebCore::LoadGuest(&guestTopLeft, __func__);
@@ -707,7 +707,7 @@ void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6
 
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(
     WebCore::RoundedRect* guestSelf, const WebCore::LayoutRect& guestRect, const WebCore::LayoutSize& guestTopLeft, const WebCore::LayoutSize& guestTopRight, const WebCore::LayoutSize& guestBottomLeft, const WebCore::LayoutSize& guestBottomRight) {
-    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    WebCore::RoundedRect selfValue{};
     auto* self = &selfValue;
     const auto rect = WebCore::LoadGuest(&guestRect, __func__);
     const auto topLeft = WebCore::LoadGuest(&guestTopLeft, __func__);
