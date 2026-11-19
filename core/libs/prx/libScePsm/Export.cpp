@@ -61,7 +61,24 @@ private:
             throw std::invalid_argument("ScePsmMonoStringToUtf8: unreadable characters");
         }
         const auto at = address + index * sizeof(std::uint16_t);
-        const std::size_t units = std::max<std::size_t>((PageBytes - at % PageBytes) / sizeof(std::uint16_t), 1);
+        const std::size_t bytesToPageEnd = PageBytes - at % PageBytes;
+        if (bytesToPageEnd == 1) {
+            if (at > std::numeric_limits<std::uintptr_t>::max() - 1) {
+                throw std::invalid_argument("ScePsmMonoStringToUtf8: unreadable characters");
+            }
+            std::uint8_t low = 0;
+            std::uint8_t high = 0;
+            const int savedErrno = errno;
+            const bool copiedLow = GuestCopyIn_nid_no_patch(&low, reinterpret_cast<const void*>(at), 1);
+            const bool copiedHigh = copiedLow && GuestCopyIn_nid_no_patch(&high, reinterpret_cast<const void*>(at + 1), 1);
+            errno = savedErrno;
+            if (!copiedHigh) throw std::invalid_argument("ScePsmMonoStringToUtf8: unreadable characters");
+            buffer_[0] = static_cast<std::uint16_t>(low | (static_cast<std::uint16_t>(high) << 8));
+            start_ = index;
+            count_ = 1;
+            return;
+        }
+        const std::size_t units = bytesToPageEnd / sizeof(std::uint16_t);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(buffer_.data(), reinterpret_cast<const void*>(at), units * sizeof(std::uint16_t));
         errno = savedErrno;
