@@ -34,7 +34,7 @@ struct GuestSamplerResource {
     bool nonSeamlessCube = false;
 };
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false);
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false, bool scaledUnnormalized = false);
 std::optional<std::array<std::uint32_t, 4>> SingleLevelSamplerWords(std::span<const std::uint32_t, 4> words, bool singleLevelImage, bool mipmappedImage);
 bool HoldsLodAtZero(std::span<const std::uint32_t, 4> words);
 std::array<std::uint32_t, 4> PinnedLodSamplerWords(std::span<const std::uint32_t, 4> words, std::uint32_t lod);
