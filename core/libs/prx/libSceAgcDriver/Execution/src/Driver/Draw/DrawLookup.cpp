@@ -80,6 +80,11 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             mix(pixel.stencilOperationValueExport);
             mix(std::bit_cast<std::uint32_t>(pixel.depthExportMin));
             mix(std::bit_cast<std::uint32_t>(pixel.depthExportMax));
+            mix(pixel.depthExportViewportRanges ? 1u : 0u);
+            if (pixel.depthExportViewportRanges) {
+                for (const float bound : pixel.depthExportMinByViewport) mix(std::bit_cast<std::uint32_t>(bound));
+                for (const float bound : pixel.depthExportMaxByViewport) mix(std::bit_cast<std::uint32_t>(bound));
+            }
             for (const auto value : pixel.targetOutputMode) mix(value);
             for (const auto value : pixel.targetExportMapping) mix(value);
             for (const auto value : pixel.targetExportPacking) mix(static_cast<std::uint64_t>(value));

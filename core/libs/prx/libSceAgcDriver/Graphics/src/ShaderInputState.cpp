@@ -8,8 +8,9 @@
 #include <array>
 #include <bit>
 #include <cmath>
-#include <limits>
 #include <cstddef>
+#include <limits>
+#include <optional>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,7 @@ constexpr std::uint32_t dbShaderControl = 0x203;
 constexpr std::uint32_t dbRenderOverride = 0x003;
 constexpr std::uint32_t paScVportZmin0 = 0x0B4;
 constexpr std::uint32_t paScVportZmax0 = 0x0B5;
+constexpr std::uint32_t paScVportZStride = 2;
 constexpr std::uint32_t spiShaderColFormat = 0x1C5;
 constexpr std::uint32_t defaultPixelInputs = 0x2u;
 
@@ -46,6 +48,13 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
         std::snprintf(text, sizeof(text), "AGC graphics: missing register at DWORD 0x%x", offset);
         throw std::runtime_error(text);
     }
+    return it->second;
+}
+
+std::optional<std::uint32_t> readOptional(const Registers& registers, std::uint32_t offset, RegisterBank bank) {
+    NoteRegisterRead(bank, offset);
+    const auto it = registers.find(offset);
+    if (it == registers.end()) return std::nullopt;
     return it->second;
 }
 
@@ -119,7 +128,7 @@ ShaderRecompiler::ShaderPixelStageInfo DefaultUnexportedInputs(ShaderRecompiler:
     return pixel;
 }
 
-ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram, std::span<const std::byte> shaderHeader) {
+ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram, std::span<const std::byte> shaderHeader, bool viewportIndexSupported) {
     const auto inControl = nullProgram ? 0u : read(context, spiPsInControl, RegisterBank::Context);
     const auto stateInputNum = inControl & 0x3Fu;
     if (stateInputNum > 32u) {
@@ -179,6 +188,10 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool depthExportEnable = (shaderControl & 0x1u) != 0;
     float depthExportMin = 0.0f;
     float depthExportMax = 1.0f;
+    bool depthExportViewportRanges = false;
+    std::array<float, 16> depthExportMinByViewport{};
+    std::array<float, 16> depthExportMaxByViewport{};
+    depthExportMaxByViewport.fill(1.0f);
     if (depthExportEnable) {
         if ((read(context, dbRenderOverride, RegisterBank::Context) & 0x10000u) != 0) {
             depthExportMin = -std::numeric_limits<float>::infinity();
@@ -188,6 +201,23 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
             depthExportMax = std::bit_cast<float>(read(context, paScVportZmax0, RegisterBank::Context));
             if (!std::isfinite(depthExportMin) || !std::isfinite(depthExportMax) || depthExportMin > depthExportMax) {
                 throw std::runtime_error("AGC graphics: invalid viewport depth clamp bounds for depth export");
+            }
+            depthExportMinByViewport[0] = depthExportMin;
+            depthExportMaxByViewport[0] = depthExportMax;
+            if (viewportIndexSupported) {
+                for (std::uint32_t index = 1; index < depthExportMinByViewport.size(); ++index) {
+                    const auto minBits = readOptional(context, paScVportZmin0 + paScVportZStride * index, RegisterBank::Context);
+                    const auto maxBits = readOptional(context, paScVportZmax0 + paScVportZStride * index, RegisterBank::Context);
+                    auto minimum = minBits ? std::bit_cast<float>(*minBits) : 0.0f;
+                    auto maximum = maxBits ? std::bit_cast<float>(*maxBits) : 1.0f;
+                    if (!std::isfinite(minimum) || !std::isfinite(maximum) || minimum > maximum) {
+                        minimum = 0.0f;
+                        maximum = 1.0f;
+                    }
+                    depthExportMinByViewport[index] = minimum;
+                    depthExportMaxByViewport[index] = maximum;
+                    depthExportViewportRanges |= minimum != depthExportMin || maximum != depthExportMax;
+                }
             }
         }
     }
@@ -226,6 +256,9 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .depthExportEnable = depthExportEnable,
         .depthExportMin = depthExportMin,
         .depthExportMax = depthExportMax,
+        .depthExportViewportRanges = depthExportViewportRanges,
+        .depthExportMinByViewport = depthExportMinByViewport,
+        .depthExportMaxByViewport = depthExportMaxByViewport,
         .sampleMaskExportEnable = sampleMaskExportEnable,
         .earlyZ = PixelEarlyZ(shaderControl),
         .executeOnNoop = ((shaderControl >> 10u) & 0x1u) != 0,

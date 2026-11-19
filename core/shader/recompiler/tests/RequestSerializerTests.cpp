@@ -202,7 +202,22 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 62u);
+    Require(bytes.size() > 14u && bytes[4] == 66u);
+    if (request.context.pixel && request.context.pixel->depthExportEnable) {
+        const auto minimum = std::bit_cast<std::uint32_t>(request.context.pixel->depthExportMin);
+        const auto maximum = std::bit_cast<std::uint32_t>(request.context.pixel->depthExportMax);
+        const std::array<std::uint8_t, 8> bounds{
+            static_cast<std::uint8_t>(minimum), static_cast<std::uint8_t>(minimum >> 8u), static_cast<std::uint8_t>(minimum >> 16u), static_cast<std::uint8_t>(minimum >> 24u),
+            static_cast<std::uint8_t>(maximum), static_cast<std::uint8_t>(maximum >> 8u), static_cast<std::uint8_t>(maximum >> 16u), static_cast<std::uint8_t>(maximum >> 24u),
+        };
+        const auto found = std::search(bytes.begin(), bytes.end(), bounds.begin(), bounds.end());
+        Require(found != bytes.end() && found + bounds.size() < bytes.end());
+        const auto hasViewportRanges = *(found + bounds.size());
+        Require(hasViewportRanges <= 1u);
+        const auto extra = 1u + (hasViewportRanges != 0u ? 2u * 16u * sizeof(float) : 0u);
+        Require(bytes.end() - (found + bounds.size()) >= static_cast<std::ptrdiff_t>(extra));
+        bytes.erase(found + bounds.size(), found + bounds.size() + extra);
+    }
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
@@ -226,7 +241,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 62u && bytes.back() == 0u);
+                    Require(bytes[4] == 66u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -776,7 +791,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 63u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 63u, 64u, 65u, 67u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -891,10 +906,10 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
-        auto version57 = version62;
+        const auto version66 = DecodeBase64(serializer.Serialize(request));
+        Require(version66[4] == 66u && version66.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version66)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version66;
         version57[4] = 57u;
         version57.pop_back();
         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
