@@ -186,26 +186,35 @@ class SourceTests(unittest.TestCase):
             self.assertIn(value, dockerfile)
 
 
+    def test_default_upstream_ref_is_the_locked_base_revision(self):
+        root = Path(__file__).resolve().parents[2]
+        base = json.loads(Path(__file__).with_name('upstream.lock').read_text())['base_revision']
+        compose = (root / 'compose.yaml').read_text()
+        dockerfile = Path(__file__).with_name('Dockerfile').read_text()
+        self.assertIn('${ANYPS5_UPSTREAM_REF:-' + base + '}', compose)
+        defaults = [line for line in dockerfile.splitlines() if line.startswith('ARG ANYPS5_UPSTREAM_REF')]
+        self.assertTrue(defaults)
+        self.assertEqual(set(defaults), {'ARG ANYPS5_UPSTREAM_REF=' + base})
+
+
 class BundleTests(unittest.TestCase):
     @unittest.skipIf(os.name == 'nt', 'Exporter runs inside Linux')
     def test_export_failure_preserves_completed_bundle_and_reports_unavailable(self):
         module = importlib.util.spec_from_file_location('engine_export', Path(__file__).with_name('export.py'))
         exporter = importlib.util.module_from_spec(module)
         module.loader.exec_module(exporter)
-        with tempfile.TemporaryDirectory() as temporary, patch.object(exporter.os, 'chown'):
+        with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            payload, artifacts, state = root / 'payload', root / 'artifacts', root / 'state'
+            payload, artifacts = root / 'payload', root / 'artifacts'
             manifest = self.make_bundle(payload)
-            exporter.export(payload, artifacts, state)
+            exporter.export(payload, artifacts)
             current = (artifacts / 'current.json').read_bytes()
-            credential = (state / 'auth.token').read_bytes()
             (artifacts / '.pending-interrupted-process').mkdir()
             (artifacts / 'interrupted.zip.pending').write_bytes(b'partial download')
             with ThreadPoolExecutor(max_workers=2) as pool:
-                list(pool.map(lambda _: exporter.export(payload, artifacts, state), range(2)))
+                list(pool.map(lambda _: exporter.export(payload, artifacts), range(2)))
             self.assertFalse((artifacts / 'interrupted.zip.pending').exists())
             self.assertFalse((artifacts / '.pending-interrupted-process').exists())
-            self.assertEqual((state / 'auth.token').read_bytes(), credential)
             self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'ready')
             helper = payload / 'helper/AnyPS5DesktopHelper.exe'
             data = bytearray(helper.read_bytes())
@@ -217,15 +226,19 @@ class BundleTests(unittest.TestCase):
             (payload / 'manifest.json').write_text(json.dumps(manifest))
             with patch.object(exporter.shutil, 'copytree', side_effect=OSError('Interrupted export')):
                 with self.assertRaisesRegex(OSError, 'Interrupted export'):
-                    exporter.export(payload, artifacts, state)
+                    exporter.export(payload, artifacts)
             self.assertEqual((artifacts / 'current.json').read_bytes(), current)
             self.assertFalse(list(artifacts.glob('.pending-*')))
             (payload / 'libs/libstdc++-6.dll').write_bytes(b'interrupted download')
             with self.assertRaises(ValueError):
-                exporter.export(payload, artifacts, state)
+                exporter.export(payload, artifacts)
             self.assertEqual((artifacts / 'current.json').read_bytes(), current)
-            self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'incompatible')
+            failure = EngineCatalogue(artifacts).status()
+            self.assertEqual(failure['status'], 'failed')
+            self.assertIn('docker compose logs engine', failure['message'])
             self.assertTrue((artifacts / 'bundles' / json.loads(current)['id'] / 'relinker.exe').exists())
+            (artifacts / 'expected.json').write_text(json.dumps({'status': 'exporting'}))
+            self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'exporting')
 
     def make_bundle(self, directory):
         image = bytearray(1024)

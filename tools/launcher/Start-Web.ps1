@@ -29,23 +29,31 @@ if (-not (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile")) {
 }
 & docker compose -p $ProjectName up -d --build --wait
 if ($LASTEXITCODE -ne 0) { throw 'App startup failed. Check Docker Desktop and the Compose output above, then retry.' }
+$url = "http://127.0.0.1:$Port"
+$ready = $false
+$reported = ''
+$deadline = (Get-Date).AddMinutes(30)
+while (-not $ready -and (Get-Date) -lt $deadline) {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/ready" -TimeoutSec 5
+        $ready = $response.StatusCode -eq 200
+    } catch {
+        $status = $null
+        try { $status = ($_.ErrorDetails.Message | ConvertFrom-Json).engine } catch { }
+        if ($status.status -eq 'failed') { throw $status.message }
+        if ($status.message -and $status.message -ne $reported) { Write-Output $status.message; $reported = $status.message }
+    }
+    if (-not $ready) { Start-Sleep -Seconds 2 }
+}
+if (-not $ready) { throw 'The app did not become ready. Run docker compose logs to see what is still running.' }
 if (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile") {
     $current = Get-Content -Raw -LiteralPath "$repository\.local\engine-artifacts\current.json" | ConvertFrom-Json
     if ($current.id -notmatch '^[0-9a-f]{64}$') { throw 'Engine export identity is invalid' }
     $helper = Join-Path $repository ('.local\engine-artifacts\bundles\' + $current.id + '\helper\AnyPS5DesktopHelper.exe')
     & "$PSScriptRoot\Setup-WebHelper.ps1" -HelperExecutable $helper -Port $Port -CollectionDirectory $CollectionDirectory -StateDirectory $StateDirectory -InstallDirectory $InstallDirectory -NoStartup:$NoStartup -LibraryFolder ''
 }
-$url = "http://127.0.0.1:$Port"
-$ready = $false
-for ($attempt = 0; $attempt -lt 30; $attempt++) {
-    try { $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/healthz" -TimeoutSec 2; $ready = $response.StatusCode -eq 200 } catch { }
-    if ($ready) { break }
-    Start-Sleep -Seconds 1
-}
-if (-not $ready) { throw 'The app did not become ready. Check docker compose logs.' }
 Write-Output "Ready: $url"
 if (-not $NoBrowser) {
-    Start-Process $url
     $stable = if ($InstallDirectory) { $InstallDirectory } else { Join-Path $env:LOCALAPPDATA 'AnyPS5\DesktopHelper' }
     & "$PSScriptRoot\Pair-Browser.ps1" -InstallDirectory $stable
 }

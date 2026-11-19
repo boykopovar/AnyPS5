@@ -5,18 +5,38 @@ services:
       context: .
       dockerfile: tools/engine/Dockerfile
       args:
-        ANYPS5_UPSTREAM_REF: ${ANYPS5_UPSTREAM_REF:-main}
+        ANYPS5_UPSTREAM_REF: ${ANYPS5_UPSTREAM_REF:-3c07e1d05e545cb5988041da0fa63ea8dd36673e}
         ANYPS5_BUILD_JOBS: ${ANYPS5_BUILD_JOBS:-4}
         ANYPS5_CACHE_SCOPE: ${ANYPS5_CACHE_SCOPE:-default}
     volumes:
       - ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}:/artifacts
-      - ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}:/web-state
+    restart: "no"
+  setup:
+    build:
+      context: .
+      dockerfile: tools/launcher/web/Dockerfile
+    command: ["python", "/app/state.py"]
+    user: "0:0"
+    volumes:
+      - type: bind
+        source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}
+        target: /state
+        bind:
+          create_host_path: true
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
     restart: "no"
   web:
     depends_on:
-      engine:
+      setup:
         condition: service_completed_successfully
-        restart: true
     build:
       context: .
       dockerfile: tools/launcher/web/Dockerfile
@@ -31,10 +51,14 @@ services:
       - type: bind
         source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}
         target: /state
+        bind:
+          create_host_path: true
       - type: bind
         source: ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}
         target: /engine
         read_only: true
+        bind:
+          create_host_path: true
     read_only: true
     tmpfs:
       - /tmp
@@ -44,11 +68,11 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=180)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)"]
       interval: 10s
-      timeout: 185s
+      timeout: 3s
       retries: 3
-      start_period: 180s
+      start_period: 5s
     logging:
       driver: json-file
       options:

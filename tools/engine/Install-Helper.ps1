@@ -20,7 +20,6 @@ $helper = Join-Path $bundle 'helper\AnyPS5DesktopHelper.exe'
 if ((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash.ToLowerInvariant() -ne $manifest.helper_build) { throw 'Helper checksum mismatch. Download the engine bundle again.' }
 & "$bundle\tools\launcher\Setup-WebHelper.ps1" -ApplicationDirectory $ApplicationDirectory -HelperExecutable $helper -InstallDirectory $InstallDirectory -NoStartup:$NoStartup -LibraryFolder ''
 if (-not $NoBrowser) {
-    Start-Process 'http://127.0.0.1:8766'
     $stable = if ($InstallDirectory) { $InstallDirectory } else { Join-Path $env:LOCALAPPDATA 'AnyPS5\DesktopHelper' }
     & "$bundle\tools\launcher\Pair-Browser.ps1" -InstallDirectory $stable
 }

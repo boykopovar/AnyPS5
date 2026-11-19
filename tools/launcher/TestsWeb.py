@@ -7,11 +7,15 @@ import threading
 import unittest
 import time
 import hashlib
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'engine'))
 
+spec = importlib.util.spec_from_file_location('launcher_web_state', Path(__file__).parent / 'web/state.py')
+web_state = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(web_state)
 spec = importlib.util.spec_from_file_location('launcher_web', Path(__file__).parent / 'web/server.py')
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
@@ -175,16 +179,46 @@ class WebTests(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
         self.assertEqual(self.request('GET', '/../../auth.token')[0], 404)
 
-    def test_missing_engine_is_unhealthy_even_when_helper_reports(self):
-        self.assertEqual(self.request('GET', '/healthz')[0], 200)
+    def test_missing_engine_is_not_ready_even_when_helper_reports(self):
+        self.assertEqual(self.request('GET', '/ready')[0], 200)
         self.server.engine = web.EngineCatalogue(Path(self.temp.name) / 'missing-engine')
-        self.assertEqual(self.request('GET', '/healthz')[0], 503)
+        self.assertEqual(self.request('GET', '/ready')[0], 503)
+        self.assertEqual(self.request('GET', '/healthz')[0], 200)
         self.snapshot()
-        self.assertEqual(self.request('GET', '/healthz')[0], 503)
+        self.assertEqual(self.request('GET', '/ready')[0], 503)
         self.assertEqual(self.request('GET', '/engine/download')[0], 503)
         self.assertEqual(self.request('GET', '/engine/status')[0], 200)
         with self.assertRaisesRegex(ValueError, 'protocol'):
             self.server.store.report({'games': [], 'folders': [], 'helper_protocol': 2})
+
+
+    def test_setup_status_reports_progress_without_library_details(self):
+        status, data, _ = self.request('GET', '/setup/status')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {'engine': 'not_configured', 'helper_online': False})
+        self.snapshot()
+        self.server.engine = web.EngineCatalogue(Path(self.temp.name) / 'missing-engine')
+        status, data, _ = self.request('GET', '/setup/status')
+        self.assertEqual(json.loads(data), {'engine': 'missing', 'helper_online': True})
+        self.assertNotIn(b'Fixture', data)
+        self.assertEqual(self.request('GET', '/setup/status', headers={'Host': 'evil.invalid'})[0], 403)
+
+    def test_state_setup_creates_and_keeps_a_private_credential(self):
+        if not hasattr(os, 'getuid'):
+            self.skipTest('Ownership is applied inside the Linux container')
+        root = Path(self.temp.name) / 'state'
+        owner = (os.getuid(), os.getgid())
+        web_state.prepare(root, owner)
+        credential = (root / 'auth.token').read_text()
+        self.assertGreaterEqual(len(credential), 64)
+        self.assertTrue((root / 'backend').is_dir())
+        self.assertEqual((root / 'auth.token').stat().st_mode & 0o777, 0o600)
+        web_state.prepare(root, owner)
+        self.assertEqual((root / 'auth.token').read_text(), credential)
+        (root / 'auth.token').write_text('short')
+        with self.assertRaisesRegex(ValueError, 'invalid'):
+            web_state.prepare(root, owner)
+        self.assertEqual((root / 'auth.token').read_text(), 'short')
 
 
 if __name__ == '__main__':

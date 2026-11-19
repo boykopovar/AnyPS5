@@ -6,21 +6,21 @@ Build the Windows x86-64 engine, native launcher, desktop helper and local web a
 docker compose up --build
 ```
 
-Run this in the folder containing `compose.yaml`. A clone and a source ZIP both work. No host compiler, Git, CMake, Ninja, Python or Node installation is required. Docker retrieves upstream source and dependencies; existing host `b/` output is not used.
+Run this in the folder containing `compose.yaml`. A clone and a source ZIP both work. No host compiler, Git, CMake, Ninja, Python or Node installation is required. Docker retrieves the tested upstream source and dependencies; existing host `b/` output is not used.
 
 ## Requirements
 
 Use Windows x86-64, Docker Desktop in Linux-container mode, Docker Compose v2.17 or newer and internet access for engine builds. The builder uses pinned WinLibs GCC 15.2, CMake 3.31.6, Ninja 1.12.1 and Python 3.13.3 under Wine 9 inside Linux. These tools preserve the project's required System V exception ABI. The exported engine and helper execute on Windows.
 
-The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` for a smaller Docker allocation, or increase it if your allocation supports more compiler processes. The first build needs substantial time and free Docker disk space. Cached builds still check the configured upstream ref.
+The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` for a smaller Docker allocation, or increase it if your allocation supports more compiler processes. On a GitHub-hosted runner with 4 processors and 15 GB of memory, a full engine build took 39 minutes, used about 20 GB of Docker disk (10.1 GB of images and 9.8 GB of build cache) and peaked at 8.5 GB of memory with 4 jobs. Give Docker Desktop at least 10 GB of memory for 4 jobs, or use fewer jobs. The finished engine image is 181 MB and its exported bundle and download use 562 MB. Times differ on other machines. Cached builds still check the configured upstream ref.
 
 ## First run
 
-1. Extract the source ZIP or clone this fork. Open PowerShell in the source folder.
-2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. The web service starts after successful export. An exited engine service is normal.
+1. Extract the source ZIP or clone this fork. Double-click **Check-My-PC.cmd** in the source folder. It checks 64-bit Windows, WSL, Docker Desktop, Linux containers, the Compose version and the web app's port, and says how to fix each problem. It also reports Docker's processors and memory and the free space on the folder's drive. Then open PowerShell in the source folder.
+2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. An exited engine service is normal. A short `setup` service creates the web app's state and pairing credential, then also exits. The web service starts without waiting for the engine export and shows its progress; if the export fails, the page shows the reason.
 3. Open [http://127.0.0.1:8766](http://127.0.0.1:8766). The public **About** tab explains capabilities, limitations and the build's exact upstream revision.
 4. Download the engine/helper ZIP from the setup panel, extract it completely and run **Install-Helper.cmd**. Choose the source folder containing `compose.yaml` if asked. Alternatively, run `Install-Helper.cmd` directly from the source folder after export.
-5. Enter the helper's eight-digit desktop pairing code in the browser. It expires in two minutes and works once. Run **Pair-Browser.cmd** to generate another code. The permanent credential remains in local storage and is not shown in the browser.
+5. The installer opens the app in your default browser, already signed in. To sign in again, or in another browser window, run **Pair-Browser.cmd**. It opens a one-time sign-in link that expires in two minutes; if the browser cannot be opened, it shows an eight-digit code to enter instead. The permanent credential remains in local storage and is not shown in the browser.
 6. Paste a Windows Explorer folder path into **Add folder**, scan and review the results. Link existing prepared folders or choose **Prepare & add** for supported extracted inputs. The game runs only when you choose **Play**.
 
 After initial setup, **Start-AnyPS5.cmd** builds/starts the stack, installs the matching per-user helper and opens pairing. Close games and finish or cancel preparation before updating the helper. The installer retains a previous executable/configuration and restores them if startup fails.
@@ -39,7 +39,7 @@ docker compose down
 
 Default `down` removes the stack's containers and network. It retains images, compiler/download caches, exported engine bundles, pairing state, library entries, settings, saves and game folders. Ctrl+C stops an attached `up`; `down` removes its containers afterward. No global Docker prune is needed.
 
-When Compose replaces the engine service, it also restarts the web service after successful export. This resets readiness checks against the newly published bundle.
+When Compose replaces the engine service, the running web service picks up the newly published bundle on its own. `/healthz` reports only that the web server is up; `/ready` also checks the engine bundle.
 
 Windows helper, game and preparation processes have a separate lifecycle. The helper stays installed and reconnects after the backend returns. Cancel preparation and close games normally before shutdown if you want those Windows processes to stop. Docker cannot stop or restart an interactive Windows desktop process by itself.
 
@@ -53,21 +53,21 @@ Configuration, cached bundles, tokens, logs, games and saves are retained. Reins
 
 ## Upstream source updates
 
-Every engine build resolves the configured ref from `https://github.com/boykopovar/AnyPS5.git` through BuildKit's Git source operation. The default is **main**. The build records the exact resolved upstream SHA, fork overlay base, built-source fingerprint and dependency revisions in the engine manifest. The web app's About view displays the upstream SHA and engine identity.
+Every engine build resolves the configured ref from `https://github.com/boykopovar/AnyPS5.git` through BuildKit's Git source operation. The default is the exact upstream revision this fork was last tested with, `base_revision` in `tools/engine/upstream.lock`, so every clone of the same fork commit builds the same upstream source. The build records the exact resolved upstream SHA, fork overlay base, built-source fingerprint and dependency revisions in the engine manifest. The web app's About view displays the upstream SHA and engine identity.
 
 The builder compares supplied fork files with the base in `tools/engine/upstream.lock`, retains upstream changes to unmodified files and merges the fork's changes into updated files. New launcher/build files are retained. A conflict, missing source, unsupported dependency change or failed compilation stops the build; the host checkout and prior completed exports are not replaced. There is no silent fallback to stale upstream source.
 
 Third-party source follows the resolved upstream gitlinks, including recursive modules. `tools/engine/dependencies.lock` retains tested toolchain downloads and baseline submodule metadata; baseline submodule revisions do not override newer upstream gitlinks. Explicit fork dependency overrides and deletions belong in `upstream.lock`. When rebasing the fork, maintainers must advance its base to the upstream revision used for that rebase.
 
-For an exact upstream source selection:
+To build newer or different upstream source, set the ref. Use `main` for the latest upstream, or a full commit SHA for an exact revision:
 
 ```powershell
-$env:ANYPS5_UPSTREAM_REF = '<full upstream commit SHA>'
+$env:ANYPS5_UPSTREAM_REF = 'main'
 docker compose up -d --build --wait
 Remove-Item Env:ANYPS5_UPSTREAM_REF
 ```
 
-Plain `up` can reuse existing images; use `--build` to check upstream. A web-only build does not rebuild the engine. New upstream commits can introduce regressions, and latest source does not guarantee title compatibility. Pin a tested SHA for a shared release and include it with the source ZIP and engine ZIP. Byte-for-byte reproducibility is not claimed.
+Plain `up` can reuse existing images; use `--build` to rebuild. A web-only build does not rebuild the engine. New upstream commits can introduce regressions or fail to merge with the fork, and latest source does not guarantee title compatibility. Keep the default for a shared release and include its SHA with the source ZIP and engine ZIP. Byte-for-byte reproducibility is not claimed.
 
 After a successful engine update, install its helper using the generated installer or **Start-AnyPS5.cmd**. Existing prepared games keep their own runtime libraries; updating the engine does not automatically upgrade them or migrate saves into a new copy.
 
@@ -110,9 +110,9 @@ Back up collection/state and complete game folders, including their saves, setti
 
 The fork's **Sync upstream into fork** GitHub Actions workflow checks `boykopovar/AnyPS5` daily at 09:23 UTC and can be started manually. It prepares a merge into `sync/upstream`, refreshes the overlay base and recursive dependency metadata, runs integration tests, then opens a pull request against this fork's `main`. It does not replace `main` or merge the pull request automatically. An existing open sync pull request is retained for review, including a manual candidate whose title starts with `chore(sync): merge upstream `. Merge conflicts or failed tests stop publication and appear as a failed workflow run.
 
-Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Docker builds continue checking upstream independently of source-sync pull requests.
+Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Merging a sync pull request advances the default upstream revision in `upstream.lock`, `compose.yaml` and `tools/engine/Dockerfile` together.
 
-For a manual source sync, work on a new branch, merge upstream without discarding fork changes, update recursive submodules, run `python tools/engine/sources.py --write`, and advance `tools/engine/upstream.lock` to that exact upstream SHA. Run the checks below and open a pull request. Do not force-reset the fork to upstream or replace installed game runtimes during a source sync.
+For a manual source sync, work on a new branch, merge upstream without discarding fork changes, update recursive submodules, run `python tools/engine/sources.py --write`, and advance `base_revision` in `tools/engine/upstream.lock` and the `ANYPS5_UPSTREAM_REF` defaults in `compose.yaml` and `tools/engine/Dockerfile` to that exact upstream SHA. Run the checks below and open a pull request. Do not force-reset the fork to upstream or replace installed game runtimes during a source sync.
 
 Run the engine/source integration, worker and web backend tests with a development Python installation:
 
