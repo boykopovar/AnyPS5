@@ -205,6 +205,24 @@ std::int64_t RoundToInt64(TFloat value) {
     return static_cast<std::int64_t>(rounded);
 }
 
+template<typename TFloat, typename TBits, int FractionBits>
+std::int64_t NudgedToInt64(TFloat x, TFloat nudge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    const volatile TFloat sum = x < 0 ? x - nudge : x + nudge;
+    TBits bits = std::bit_cast<TBits>(static_cast<TFloat>(sum));
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits);
+    if (exponent < Bias) bits &= Sign;
+    else if (exponent < Bias + FractionBits) bits &= ~((TBits{1} << (Bias + FractionBits - exponent)) - 1);
+    const TFloat whole = std::bit_cast<TFloat>(bits);
+    if (!(whole >= static_cast<TFloat>(INT64_MIN) && whole < -static_cast<TFloat>(INT64_MIN))) {
+        std::feraiseexcept(FE_INVALID);
+        return INT64_MIN;
+    }
+    return static_cast<std::int64_t>(whole);
+}
+
 float SinhfExpm1(float x) {
     constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f, InverseLn2 = 1.4426950216e+00f;
     constexpr float Q1 = -3.3333212137e-2f, Q2 = 1.5807170421e-3f;
@@ -1184,10 +1202,10 @@ float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
     return std::bit_cast<float>((bits & 0x807fffffu) | 0x3f000000u);
 }
 // Guest long is 64-bit, including on Windows where native long is 32-bit.
-std::int64_t APS5_VABI lround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return RoundToInt64(x); }
+std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
+std::int64_t APS5_VABI llround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
 std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
 int APS5_VABI __isfinitef_nid_postfix(float x) {
     const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
