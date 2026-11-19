@@ -24,6 +24,7 @@ void APS5_VABI _ZN9Inspector15ScriptCallStackD1Ev(NKWebKit::InspectorAbi::Script
 void APS5_VABI _ZN9Inspector15ScriptCallStackD2Ev(NKWebKit::InspectorAbi::ScriptCallStack* self);
 bool APS5_VABI _ZNK9Inspector15AsyncStackTrace8isLockedEv(const NKWebKit::InspectorAbi::AsyncStackTrace* self);
 bool APS5_VABI _ZNK9Inspector15AsyncStackTrace9isPendingEv(const NKWebKit::InspectorAbi::AsyncStackTrace* self);
+bool APS5_VABI _ZNK9Inspector15ScriptCallFrame7isEqualERKS0_(const NKWebKit::InspectorAbi::ScriptCallFrame* self, const NKWebKit::InspectorAbi::ScriptCallFrame* other);
 bool APS5_VABI _ZNK9Inspector15ScriptCallFrame8isNativeEv(const NKWebKit::InspectorAbi::ScriptCallFrame* self);
 const NKWebKit::InspectorAbi::ScriptCallFrame* APS5_VABI _ZNK9Inspector15ScriptCallStack23firstNonNativeCallFrameEv(const NKWebKit::InspectorAbi::ScriptCallStack* self);
 const NKWebKit::InspectorAbi::ScriptCallFrame& APS5_VABI _ZNK9Inspector15ScriptCallStack2atEm(const NKWebKit::InspectorAbi::ScriptCallStack* self, std::size_t index);

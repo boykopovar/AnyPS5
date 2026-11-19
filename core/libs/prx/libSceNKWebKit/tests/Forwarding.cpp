@@ -201,7 +201,6 @@ int main() {
     RequireStub(&_ZN9Inspector31ScriptProfilerBackendDispatcherD2Ev);
     RequireStub(&_ZN9Inspector33ApplicationCacheBackendDispatcherD1Ev);
     RequireStub(&_ZN9Inspector33ApplicationCacheBackendDispatcherD2Ev);
-    RequireStub(&_ZNK9Inspector15ScriptCallFrameeqERKS0_);
 
     auto* object = static_cast<std::uint8_t*>(reinterpret_cast<Allocate>(&_ZN3JSC19HeapSnapshotBuildernwEm)(128));
     Require(object != nullptr);

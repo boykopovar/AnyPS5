@@ -139,4 +139,8 @@ bool APS5_VABI _ZNK9Inspector15ScriptCallFrame8isNativeEv(const ScriptCallFrame*
     return NKWebKit::InspectorAbi::IsNative(Checked(self));
 }
 
+bool APS5_VABI _ZNK9Inspector15ScriptCallFrame7isEqualERKS0_(const ScriptCallFrame* self, const ScriptCallFrame* other) {
+    return NKWebKit::InspectorAbi::FramesEqual(Checked(self), Checked(other));
+}
+
 }

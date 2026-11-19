@@ -5612,7 +5612,6 @@ int APS5_VABI _ZNK9Inspector15ScriptArguments12globalObjectEv();
 int APS5_VABI _ZNK9Inspector15ScriptArguments24getFirstArgumentAsStringERN3WTF6StringE();
 int APS5_VABI _ZNK9Inspector15ScriptArguments7isEqualERKS0_();
 int APS5_VABI _ZNK9Inspector15ScriptCallFrame20buildInspectorObjectEv();
-int APS5_VABI _ZNK9Inspector15ScriptCallFrame7isEqualERKS0_();
 int APS5_VABI _ZNK9Inspector15ScriptCallFrameeqERKS0_();
 int APS5_VABI _ZNK9Inspector15ScriptCallStack19buildInspectorArrayEv();
 int APS5_VABI _ZNK9Inspector17BackendDispatcher12CallbackBase8isActiveEv();
