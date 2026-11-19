@@ -18,6 +18,20 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <limits>
+#include <new>
+#include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -161,6 +175,50 @@ int MatchPattern(const char* pattern, const char* string, int flags) {
     }
 }
 
+std::size_t HostPageSize() {
+    static const std::size_t size = [] {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return info.dwPageSize != 0 ? static_cast<std::size_t>(info.dwPageSize) : static_cast<std::size_t>(4096);
+#else
+        const long value = ::sysconf(_SC_PAGESIZE);
+        return value > 0 ? static_cast<std::size_t>(value) : static_cast<std::size_t>(4096);
+#endif
+    }();
+    return size;
+}
+
+bool CopyGuestBytesPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestStringUnbounded(const char* source, std::vector<char>& scratch, std::string& out) {
+    out.clear();
+    if (source == nullptr) return false;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    const std::size_t pageSize = scratch.size();
+    std::size_t offset = 0;
+    for (;;) {
+        if (base > std::numeric_limits<std::uintptr_t>::max() - offset) return false;
+        const std::uintptr_t current = base + offset;
+        const std::size_t toPageEnd = pageSize - static_cast<std::size_t>(current % pageSize);
+        if (toPageEnd > std::numeric_limits<std::uintptr_t>::max() - current) return false;
+        if (!CopyGuestBytesPreservingErrno(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
+            return false;
+        }
+        const auto* nul = static_cast<const char*>(std::memchr(scratch.data(), '\0', toPageEnd));
+        const std::size_t pieceLength = nul != nullptr ? static_cast<std::size_t>(nul - scratch.data()) : toPageEnd;
+        out.append(scratch.data(), pieceLength);
+        if (nul != nullptr) return true;
+        if (offset > std::numeric_limits<std::size_t>::max() - toPageEnd) return false;
+        offset += toPageEnd;
+    }
+}
+
 }
 
 extern "C" {
@@ -172,22 +230,61 @@ int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int f
 
 char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
     if (text == nullptr || needle == nullptr) return nullptr;
-    std::string hostText;
-    if (CopyGuestString_nid_no_patch(text, 4096, hostText)) return nullptr;
-    std::string hostNeedle;
-    if (CopyGuestString_nid_no_patch(needle, 4096, hostNeedle)) return nullptr;
-    for (std::size_t offset = 0; offset + hostNeedle.size() <= hostText.size(); ++offset) {
-        bool match = true;
-        for (std::size_t index = 0; index < hostNeedle.size(); ++index) {
-            if (FoldCase(static_cast<unsigned char>(hostText[offset + index]), FnmCasefold) !=
-                FoldCase(static_cast<unsigned char>(hostNeedle[index]), FnmCasefold)) {
-                match = false;
-                break;
-            }
+    try {
+        const std::size_t pageSize = HostPageSize();
+        std::vector<char> scratch(pageSize);
+        std::string foldedNeedle;
+        if (!CopyGuestStringUnbounded(needle, scratch, foldedNeedle)) return nullptr;
+        if (foldedNeedle.empty()) {
+            char first = 0;
+            return CopyGuestBytesPreservingErrno(&first, text, 1) ? const_cast<char*>(text) : nullptr;
         }
-        if (match) return const_cast<char*>(text) + offset;
+        for (char& ch : foldedNeedle) {
+            ch = static_cast<char>(FoldCase(static_cast<unsigned char>(ch), FnmCasefold));
+        }
+        const std::size_t needleSize = foldedNeedle.size();
+        const std::size_t overlap = needleSize - 1;
+        const std::size_t compactThreshold = std::max(pageSize, overlap);
+        std::string window;
+        std::size_t baseOffset = 0;
+        std::size_t searchOffset = 0;
+        std::size_t readOffset = 0;
+        const auto textBase = reinterpret_cast<std::uintptr_t>(text);
+        for (;;) {
+            if (textBase > std::numeric_limits<std::uintptr_t>::max() - readOffset) return nullptr;
+            const std::uintptr_t current = textBase + readOffset;
+            const std::size_t toPageEnd = pageSize - static_cast<std::size_t>(current % pageSize);
+            if (toPageEnd > std::numeric_limits<std::uintptr_t>::max() - current) return nullptr;
+            if (!CopyGuestBytesPreservingErrno(scratch.data(), reinterpret_cast<const void*>(current), toPageEnd)) {
+                return nullptr;
+            }
+            const auto* nul = static_cast<const char*>(std::memchr(scratch.data(), '\0', toPageEnd));
+            const std::size_t pieceLength = nul != nullptr ? static_cast<std::size_t>(nul - scratch.data()) : toPageEnd;
+            const std::size_t previousSize = window.size();
+            window.resize(previousSize + pieceLength);
+            for (std::size_t index = 0; index < pieceLength; ++index) {
+                window[previousSize + index] =
+                    static_cast<char>(FoldCase(static_cast<unsigned char>(scratch[index]), FnmCasefold));
+            }
+            if (window.size() >= needleSize) {
+                const std::size_t found = window.find(foldedNeedle, searchOffset);
+                if (found != std::string::npos) {
+                    return const_cast<char*>(text) + baseOffset + found;
+                }
+                searchOffset = window.size() - overlap;
+                if (searchOffset >= compactThreshold) {
+                    window.erase(0, searchOffset);
+                    baseOffset += searchOffset;
+                    searchOffset = 0;
+                }
+            }
+            if (nul != nullptr) return nullptr;
+            if (readOffset > std::numeric_limits<std::size_t>::max() - toPageEnd) return nullptr;
+            readOffset += toPageEnd;
+        }
+    } catch (const std::bad_alloc&) {
+        return nullptr;
     }
-    return nullptr;
 }
 
 void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
