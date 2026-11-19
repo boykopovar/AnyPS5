@@ -245,7 +245,7 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(bug_report.identities()["user"], "")
 
 
-class RedactReportTests(unittest.TestCase):
+class RedactReportContainerTests(unittest.TestCase):
     def test_non_string_scalars_pass_through_and_containers_are_walked(self):
         identity = {"home": "/home/ana", "user": "ana", "host": "box1"}
         value = {"n": 3, "ok": True, "none": None, "list": ["/home/ana/x", 1.5, {"h": "box1"}]}
