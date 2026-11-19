@@ -21,6 +21,8 @@ GS_LOOKALIKE = bytes.fromhex("65 48 8b 00 11 22 33 44 c3")
 UNDECODABLE = bytes.fromhex("0f 78 33 1e 77 0f 0f 3c")
 GS_CALLBACK = bytes.fromhex("65 48 8b 00 c3")
 GS_TRAP = bytes.fromhex("0f 0b 90 90")
+STRINGS = TEXT + 0x60
+OPTION_STRINGS = b"rc4(8x,int)\0rc4(8x,char)\0rc4(16x,int)\0RC4 for x86_64, CRYPTOGAMS by <https://github.com/dot-asm>\0"
 
 
 def unwind(image, functions):
@@ -53,6 +55,10 @@ def callback_in_rbx(following):
     return b"\x48\x8d\x1d" + struct.pack("<i", CALLBACK - (FIRST + 7)) + following
 
 
+def returned(target):
+    return bytes.fromhex("48 8d 05") + struct.pack("<i", target - (FIRST + 7)) + bytes.fromhex("c3")
+
+
 def tested_table():
     return b"\x48\x8d\x2d" + struct.pack("<i", TABLE - (FIRST + 7)) + bytes.fromhex("48 85 ed 74 03 8b 45 00 c3")
 
@@ -64,7 +70,7 @@ CALLBACK_USES = (
 )
 
 
-def module(table, first=None):
+def module(table, first=None, strings=b""):
     first = first or first_function()
     image = guest_fixture(b"")
     image.extend(bytes(0x100))
@@ -77,6 +83,7 @@ def module(table, first=None):
     text[FIRST - TEXT:FIRST - TEXT + len(first)] = first
     text[TABLE - TEXT:TABLE - TEXT + len(table)] = table
     text[CALLBACK - TEXT:CALLBACK - TEXT + len(GS_CALLBACK)] = GS_CALLBACK
+    text[STRINGS - TEXT:STRINGS - TEXT + len(strings)] = strings
     text[SECOND - TEXT] = 0xC3
     return image
 
@@ -93,7 +100,7 @@ def convert(relinker, work, name, image, flags, first=None):
     output = converted.read_bytes()
     start = output.find(first or first_function())
     assert start >= 0, name
-    return output[start:start + SECOND - FIRST]
+    return output[start:start + TEXT + 0x100 - FIRST]
 
 
 def main():
@@ -108,6 +115,10 @@ def main():
             assert code[TABLE - FIRST:TABLE - FIRST + len(UNDECODABLE)] == UNDECODABLE, (system, code.hex())
             code = convert(relinker, work, "table-tested-before-read-" + system, module(GS_LOOKALIKE, tested_table()), flags, tested_table())
             assert code[TABLE - FIRST:TABLE - FIRST + len(GS_LOOKALIKE)] == GS_LOOKALIKE, (system, code.hex())
+            code = convert(relinker, work, "strings-returned-" + system, module(b"", returned(STRINGS), OPTION_STRINGS), flags, returned(STRINGS))
+            assert code[STRINGS - FIRST:STRINGS - FIRST + len(OPTION_STRINGS)] == OPTION_STRINGS, (system, code.hex())
+            code = convert(relinker, work, "callback-returned-" + system, module(b"", returned(CALLBACK)), flags, returned(CALLBACK))
+            assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
             for name, first in CALLBACK_USES:
                 code = convert(relinker, work, name + "-" + system, module(b"", first), flags, first)
                 assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (name, system, code.hex())
