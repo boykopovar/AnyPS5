@@ -75,14 +75,15 @@ int Autorun(const std::string& absPath, bool toWindows) {
     sigaddset(&defaults, SIGINT);
     sigaddset(&defaults, SIGQUIT);
     posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    posix_spawnattr_setsigdefault(&attributes, &defaults);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF);
+    int runError = posix_spawnattr_init(&attributes);
+    const bool attributesInitialized = runError == 0;
+    if (runError == 0) runError = posix_spawnattr_setsigdefault(&attributes, &defaults);
+    if (runError == 0) runError = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF);
     std::string file = absPath;
     char* arguments[] = {file.data(), nullptr};
     pid_t child = 0;
-    int runError = posix_spawn(&child, file.c_str(), nullptr, &attributes, arguments, environ);
-    posix_spawnattr_destroy(&attributes);
+    if (runError == 0) runError = posix_spawn(&child, file.c_str(), nullptr, &attributes, arguments, environ);
+    if (attributesInitialized) posix_spawnattr_destroy(&attributes);
     while (runError == 0 && waitpid(child, &rawCode, 0) < 0) {
         if (errno != EINTR) runError = errno;
     }
