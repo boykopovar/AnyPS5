@@ -79,3 +79,4 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorBindingTraitsExports.hpp"
