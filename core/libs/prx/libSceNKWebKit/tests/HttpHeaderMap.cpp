@@ -85,6 +85,7 @@ using Get = String (APS5_VABI *)(const Map*, int);
 using ContainsEnum = bool (APS5_VABI *)(const Map*, int);
 using ContainsString = bool (APS5_VABI *)(const Map*, const String&);
 using NameString = Literal (APS5_VABI *)(int);
+using IsolatedCopy = Map (APS5_VABI *)(const Map*);
 
 const auto construct1 = std::bit_cast<Construct>(&_ZN7WebCore13HTTPHeaderMapC1Ev);
 const auto construct2 = std::bit_cast<Construct>(&_ZN7WebCore13HTTPHeaderMapC2Ev);
@@ -97,6 +98,7 @@ const auto get = std::bit_cast<Get>(&_ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHe
 const auto containsEnum = std::bit_cast<ContainsEnum>(&_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE);
 const auto containsString = std::bit_cast<ContainsString>(&_ZNK7WebCore13HTTPHeaderMap8containsERKN3WTF6StringE);
 const auto nameString = std::bit_cast<NameString>(&_ZN7WebCore20httpHeaderNameStringENS_14HTTPHeaderNameE);
+const auto isolatedCopy = std::bit_cast<IsolatedCopy>(&_ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv);
 
 constexpr std::array<const char*, 95> expectedNames {
     "Accept",
@@ -578,6 +580,82 @@ void TestInvalidStorage() {
     inaccessible.impl = nullptr;
 }
 
+void TestIsolatedCopy() {
+    {
+        Guarded source;
+        auto copy = isolatedCopy(&source.map);
+        Require(!copy.common.buffer && !copy.common.capacity && !copy.common.size, "empty common copy");
+        Require(!copy.uncommon.buffer && !copy.uncommon.capacity && !copy.uncommon.size, "empty uncommon copy");
+    }
+    Guarded source;
+    auto& map = source.map;
+    auto accept = Text("Accept");
+    auto host = Text("Host");
+    auto custom = Text("X-Custom");
+    auto other = Text("x-other");
+    auto first = Text("text/html");
+    auto second = Wide(u"caf\u00e9 \u2603");
+    auto empty = Text("");
+    String null;
+    append(&map, accept, first);
+    append(&map, accept, second);
+    set(&map, host, null);
+    set(&map, custom, empty);
+    set(&map, other, second);
+    for (int i = 0; i < 5; ++i) append(&map, custom, first);
+    const auto firstReferences = first.impl->refCount;
+    const auto secondReferences = second.impl->refCount;
+    const auto emptyReferences = empty.impl->refCount;
+    const auto commonBuffer = map.common.buffer;
+    const auto uncommonBuffer = map.uncommon.buffer;
+    Map copy = isolatedCopy(&map);
+    Require(map.common.buffer == commonBuffer && map.common.size == 3, "source common vector unchanged");
+    Require(map.uncommon.buffer == uncommonBuffer && map.uncommon.size == 7, "source uncommon vector unchanged");
+    Require(first.impl->refCount == firstReferences && second.impl->refCount == secondReferences, "source values keep their references");
+    Require(copy.common.size == 3 && copy.common.capacity == 3, "common copy reserves exactly its size");
+    Require(copy.uncommon.size == 7 && copy.uncommon.capacity == 7, "uncommon copy reserves exactly its size");
+    Require(copy.common.buffer != map.common.buffer && copy.uncommon.buffer != map.uncommon.buffer, "copy owns new vectors");
+    for (unsigned i = 0; i < copy.common.size; ++i) {
+        const auto& from = map.common.buffer[i];
+        const auto& to = copy.common.buffer[i];
+        Require(to.key == from.key, "common key order");
+        if (!from.value.impl) {
+            Require(!to.value.impl, "null common value stays null");
+            continue;
+        }
+        Require(to.value.impl != from.value.impl && to.value.impl->refCount == 2, "common value is a new string");
+        Require(Units(to.value) == Units(from.value), "common value contents");
+        Require((to.value.impl->hashAndFlags & 4) == (from.value.impl->hashAndFlags & 4), "common value width");
+    }
+    Require(copy.common.buffer[0].key == 0 && copy.common.buffer[1].key == 0 && !copy.common.buffer[2].value.impl, "common entries");
+    for (unsigned i = 0; i < copy.uncommon.size; ++i) {
+        const auto& from = map.uncommon.buffer[i];
+        const auto& to = copy.uncommon.buffer[i];
+        Require(to.key.impl != from.key.impl && to.key.impl->refCount == 2, "uncommon key is a new string");
+        Require(Units(to.key) == Units(from.key), "uncommon key contents");
+        Require(to.value.impl && Units(to.value) == Units(from.value), "uncommon value contents");
+        if (from.value.impl->length) Require(to.value.impl != from.value.impl && to.value.impl->refCount == 2, "uncommon value is a new string");
+    }
+    Expect(copy.uncommon.buffer[0].value, u"");
+    Expect(copy.uncommon.buffer[1].key, u"x-other");
+    Expect(copy.uncommon.buffer[1].value, u"caf\u00e9 \u2603");
+    Require(!(copy.uncommon.buffer[1].value.impl->hashAndFlags & 4), "16-bit value stays 16-bit");
+    Expect(get(&copy, 0), u"text/html");
+    Require(containsString(&copy, host) && !get(&copy, 40).impl, "copy answers lookups");
+    set(&copy, accept, empty);
+    Expect(get(&map, 0), u"text/html");
+    Destroy(copy.common);
+    Destroy(copy.uncommon);
+    Require(empty.impl->refCount == emptyReferences && first.impl->refCount == firstReferences, "destroying the copy releases only its own references");
+    RequireThrows([] { isolatedCopy(nullptr); });
+    Map broken {};
+    broken.common = {nullptr, 1, 1};
+    RequireThrows([&] { isolatedCopy(&broken); });
+    broken = {};
+    broken.uncommon = {nullptr, 0, 1};
+    RequireThrows([&] { isolatedCopy(&broken); });
+}
+
 bool ProbeExports() {
     Map map {};
     auto name = Text("Accept");
@@ -603,9 +681,14 @@ bool ProbeExports() {
     probe("remove(enum)", [&] { removeEnum(&map, 0); });
     probe("remove(String)", [&] { removeString(&map, name); });
     probe("httpHeaderNameString", [&] { nameString(0); });
+    probe("isolatedCopy", [&] {
+        auto copy = isolatedCopy(&map);
+        Destroy(copy.common);
+        Destroy(copy.uncommon);
+    });
     Destroy(map.common);
     Destroy(map.uncommon);
-    std::printf("HTTPHeaderMap export probes: %u/11 threw\n", failures);
+    std::printf("HTTPHeaderMap export probes: %u/12 threw\n", failures);
     return !failures;
 }
 
@@ -622,7 +705,8 @@ int main(int argc, char** argv) {
         TestGrowth();
         TestAliasing();
         TestInvalidStorage();
-        std::puts("HTTPHeaderMap: lookup, mutation, 95 names, ABI, growth and lifetime checks passed");
+        TestIsolatedCopy();
+        std::puts("HTTPHeaderMap: lookup, mutation, 95 names, ABI, growth, isolated copy and lifetime checks passed");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "HTTPHeaderMap unexpected exception: %s\n", error.what());
         return 1;
