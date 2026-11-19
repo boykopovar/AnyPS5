@@ -405,6 +405,15 @@ void GuestPointers() {
     Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06 && errno == 71,
         "New_GlyphSlot refuses an unreadable driver pointer without changing errno");
 
+    DriverFixture badRootClazz;
+    badRootClazz.driver.root_clazz = reinterpret_cast<GuestModuleClass*>(0x10);
+    slot = reinterpret_cast<GuestGlyphSlotRec*>(0x1234);
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&badRootClazz.face, &slot) == 0x06 && errno == 71,
+        "New_GlyphSlot stops on an unreadable root_clazz without changing errno");
+    Require(calls.inits == 0 && badRootClazz.recorder.allocs == badRootClazz.recorder.frees && !badRootClazz.face.glyph,
+        "New_GlyphSlot does not call init_slot or leak on an unreadable root_clazz");
+
     DriverFixture corruptFace;
     corruptFace.clazz.init_slot = CorruptFaceOnInit;
     gCorruptTargetSlot = nullptr;

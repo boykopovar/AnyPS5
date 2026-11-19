@@ -91,14 +91,15 @@ bool DriverOf(
     return clazzCopied;
 }
 
-bool UsesOutlines(const GuestDriverRec& guestDriver, const char* function) {
+bool UsesOutlines(const GuestDriverRec& guestDriver, bool& usesOutlines, const char* function) {
     if (!guestDriver.root_clazz) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     GuestModuleClass rootClazz{};
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&rootClazz, guestDriver.root_clazz, sizeof(rootClazz));
     errno = savedErrno;
     if (!copied) return false;
-    return !(rootClazz.module_flags & ModuleDriverNoOutlines);
+    usesOutlines = !(rootClazz.module_flags & ModuleDriverNoOutlines);
+    return true;
 }
 
 void* Allocate(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error, const char* function) {
@@ -134,13 +135,15 @@ std::int32_t SlotInit(GuestGlyphSlotRec* slot, const char* function) {
     GuestDriverRec guestDriver{};
     GuestDriverClassPrefix guestClazz{};
     if (!DriverOf(guestSlot, guestFace, guestDriver, guestClazz)) return InvalidArgument;
+    bool usesOutlines = false;
+    if (!UsesOutlines(guestDriver, usesOutlines, function)) return InvalidArgument;
     GuestMemoryRec* memory = guestDriver.root_memory;
     slot->library = guestDriver.root_library;
     std::int32_t error = 0;
     auto* internal = static_cast<GuestSlotInternalRec*>(Allocate(memory, sizeof(GuestSlotInternalRec), &error, function));
     if (error) return error;
     slot->internal = internal;
-    if (UsesOutlines(guestDriver, function)) {
+    if (usesOutlines) {
         auto* loader = static_cast<GuestGlyphLoaderRec*>(Allocate(memory, sizeof(GuestGlyphLoaderRec), &error, function));
         if (!error) {
             loader->memory = memory;
@@ -163,7 +166,8 @@ void SlotDone(GuestGlyphSlotRec* slot, const char* function) {
     FreeBitmap(slot, guestSlot, function);
     GuestSlotInternalRec* internal = Internal(guestSlot);
     if (!internal) return;
-    if (UsesOutlines(guestDriver, function)) {
+    bool usesOutlines = false;
+    if (UsesOutlines(guestDriver, usesOutlines, function) && usesOutlines) {
         GuestSlotInternalRec guestInternal{};
         const int readErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&guestInternal, internal, sizeof(guestInternal));
