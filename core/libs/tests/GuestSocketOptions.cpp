@@ -262,6 +262,44 @@ void LingerFollowsFreeBsd() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+#ifdef _WIN32
+void DatagramLingerFollowsSocket(int family) {
+    const int first = socket_nid_postfix(family, Datagram, 0);
+    const int other = socket_nid_postfix(family, Datagram, 0);
+    Require(first >= 0 && other >= 0, "opening UDP sockets failed");
+    const int alias = dup_nid_postfix(first);
+    Require(alias >= 0, "dup of UDP socket failed");
+    const auto check = [](int fd, int enabled, int seconds) {
+        Linger read{-1, -1};
+        std::uint32_t length = sizeof(read);
+        Require(getsockopt_nid_postfix(fd, SolSocket, SoLinger, &read, &length) == 0, "UDP SO_LINGER get failed");
+        Require(length == sizeof(read) && read.enabled == enabled && read.seconds == seconds, "wrong UDP linger state");
+    };
+    check(first, 0, 0);
+    const Linger on{-3, 65535};
+    Require(setsockopt_nid_postfix(first, SolSocket, SoLinger, &on, sizeof(on)) == 0, "UDP SO_LINGER set failed");
+    check(alias, SoLinger, 65535);
+    check(other, 0, 0);
+    const Linger invalid{0, 65536};
+    Require(SetFails(alias, SolSocket, SoLinger, &invalid, sizeof(invalid), ErrorDomain), "UDP linger out of range accepted");
+    Require(SetFails(alias, SolSocket, SoLinger, &invalid, 7, ErrorInvalid), "short UDP linger value accepted");
+    check(first, SoLinger, 65535);
+    Linger shortRead{-1, -1};
+    std::uint32_t length = sizeof(shortRead.enabled);
+    Require(getsockopt_nid_postfix(alias, SolSocket, SoLinger, &shortRead, &length) == 0 && length == 4 &&
+            shortRead.enabled == SoLinger && shortRead.seconds == -1, "short UDP linger read overwrote the buffer");
+    Require(close_nid_postfix(first) == 0, "closing first UDP descriptor failed");
+    const Linger off{0, 7};
+    Require(setsockopt_nid_postfix(alias, SolSocket, SoLinger, &off, sizeof(off)) == 0, "disabling UDP linger failed");
+    check(alias, 0, 7);
+    Require(close_nid_postfix(alias) == 0 && close_nid_postfix(other) == 0, "closing UDP sockets failed");
+    const int fresh = socket_nid_postfix(family, Datagram, 0);
+    Require(fresh >= 0, "reopening UDP socket failed");
+    check(fresh, 0, 0);
+    Require(close_nid_postfix(fresh) == 0, "closing fresh UDP socket failed");
+}
+#endif
+
 void LengthsFollowFreeBsd() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     Require(stream >= 0, "socket failed");
@@ -645,6 +683,10 @@ int main(int argc, char** argv) {
     AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();
+#ifdef _WIN32
+    DatagramLingerFollowsSocket(2);
+    DatagramLingerFollowsSocket(28);
+#endif
     LengthsFollowFreeBsd();
     BuffersFollowThePs5();
     NullValues();

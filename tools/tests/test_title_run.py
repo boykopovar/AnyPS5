@@ -10,8 +10,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 import unittest.mock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
@@ -1670,6 +1672,85 @@ class CheckFilesTests(unittest.TestCase):
         for content in ("../x", "/x", "a\\b", "c:x"):
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
                 title_run.check_files({"app0/a.txt": {"content": content}})
+
+
+class CollectFramesTests(unittest.TestCase):
+    def test_keeps_first_middle_and_last_frames_in_numeric_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            for index in (0, 1, 2, 10, 11):
+                (work / f"frame_{index}.bmp").write_bytes(b"x")
+            (work / "other.txt").write_text("keep")
+            destination = Path(directory) / "out" / "frames"
+            kept = title_run.collect_frames(work, destination)
+            self.assertEqual(kept, ["frame_0.bmp", "frame_2.bmp", "frame_11.bmp"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(kept))
+            self.assertEqual(sorted(path.name for path in work.iterdir()), ["other.txt"])
+
+    def test_no_frames_still_creates_the_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "frames"
+            self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
+            self.assertTrue(destination.is_dir())
+
+    def test_single_frame_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            (work / "frame_5.bmp").write_bytes(b"x")
+            self.assertEqual(title_run.collect_frames(work, Path(directory) / "out"), ["frame_5.bmp"])
+
+
+class DiffEntriesTests(unittest.TestCase):
+    def test_splits_entries_into_before_only_now_only_and_both(self):
+        before = [{"a": 1, "b": 2, "n": 3}, {"a": 1, "b": 2, "n": 4}, {"a": 1, "b": 3, "n": 1}]
+        now = [{"a": 1, "b": 2, "n": 5}, {"a": 9, "b": 9, "n": 2}]
+        diff = title_run.diff_entries(before, now, ["a", "b"], "n")
+        self.assertEqual(diff["onlyBefore"], [{"a": 1, "b": 3, "n": 1}])
+        self.assertEqual(diff["onlyNow"], [{"a": 9, "b": 9, "n": 2}])
+        self.assertEqual(diff["both"], [{"a": 1, "b": 2, "before": 7, "now": 5}])
+
+    def test_missing_side_gives_no_diff(self):
+        self.assertIsNone(title_run.diff_entries(None, [], ["a"], "n"))
+        self.assertIsNone(title_run.diff_entries([], None, ["a"], "n"))
+
+    def test_non_integer_counts_add_nothing(self):
+        diff = title_run.diff_entries([{"a": 1, "n": "x"}], [{"a": 1, "n": 2.5}], ["a"], "n")
+        self.assertEqual(diff["both"], [{"a": 1, "before": 0, "now": 0}])
+
+    def test_empty_inputs_give_empty_lists(self):
+        self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class HostIsIntelTests(unittest.TestCase):
+    def check(self, system, **replaced):
+        with patch.object(title_run, "os", system), patch.object(title_run, "sys", SimpleNamespace(platform=replaced.get("platform", "linux"))):
+            return title_run.host_is_intel()
+
+    def test_windows_reads_the_processor_identifier(self):
+        for identifier, expected in (("Intel64 Family 6", True), ("  INTEL64", True), ("AMD64 Family 25", False), ("", False)):
+            with self.subTest(identifier=identifier):
+                self.assertIs(self.check(SimpleNamespace(name="nt", environ={"PROCESSOR_IDENTIFIER": identifier})), expected)
+        self.assertIs(self.check(SimpleNamespace(name="nt", environ={})), False)
+
+    def test_macos_is_intel_only_on_x86_64(self):
+        for machine, expected in (("x86_64", True), ("arm64", False)):
+            system = SimpleNamespace(name="posix", uname=lambda machine=machine: SimpleNamespace(machine=machine))
+            self.assertIs(self.check(system, platform="darwin"), expected)
+
+    def test_linux_reads_proc_cpuinfo(self):
+        system = SimpleNamespace(name="posix")
+        for text, expected in (("vendor_id\t: GenuineIntel\n", True), ("vendor_id\t: AuthenticAMD\n", False)):
+            with self.subTest(text=text), patch.object(title_run, "Path") as path:
+                path.return_value.read_text.return_value = text
+                self.assertIs(self.check(system), expected)
+                path.assert_called_once_with("/proc/cpuinfo")
+
+    def test_unreadable_cpuinfo_is_not_intel(self):
+        with patch.object(title_run, "Path") as path:
+            path.return_value.read_text.side_effect = OSError("missing")
+            self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
 if __name__ == "__main__":
