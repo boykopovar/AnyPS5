@@ -329,11 +329,13 @@ if(BUILD_TESTING)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        set_tests_properties(mingw_host_only_test_targets PROPERTIES TIMEOUT 30)
         add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_patch_lib_atrac9.py ${CMAKE_COMMAND})
         set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
         add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
+        set_tests_properties(build_changed_guest_tests PROPERTIES TIMEOUT 30)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
@@ -359,11 +361,13 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
+        set_tests_properties(pr_labels PROPERTIES TIMEOUT 30)
         add_test(NAME progress_history_date_window COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryDateWindowTests)
         set_tests_properties(progress_history_date_window PROPERTIES TIMEOUT 20)
         add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
+        set_tests_properties(pr_ready PROPERTIES TIMEOUT 30)
         add_test(NAME pr_unchanged COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_unchanged.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
@@ -415,6 +419,7 @@ if(BUILD_TESTING)
             set_tests_properties(tools_catalog_json PROPERTIES TIMEOUT 20)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+            set_tests_properties(validate_patch_catalog PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
@@ -448,6 +453,7 @@ if(BUILD_TESTING)
         set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
+        set_tests_properties(export_gap PROPERTIES TIMEOUT 30)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME tools_compile_plan COMMAND ${Python3_EXECUTABLE}
@@ -455,6 +461,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_compile_plan PROPERTIES TIMEOUT 20)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
+        set_tests_properties(audit_dump PROPERTIES TIMEOUT 30)
         add_test(NAME forced_include_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_forced_include_paths.py
             --cmake "${CMAKE_COMMAND}" --compiler "${CMAKE_CXX_COMPILER}"
@@ -462,10 +469,13 @@ if(BUILD_TESTING)
         set_tests_properties(forced_include_paths PROPERTIES TIMEOUT 30)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
+        set_tests_properties(ffmpeg_cache_keys PROPERTIES TIMEOUT 30)
         add_test(NAME winlibs_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_winlibs_digest.py)
+        set_tests_properties(winlibs_digest PROPERTIES TIMEOUT 30)
         add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
+        set_tests_properties(progress_comment_concurrency PROPERTIES TIMEOUT 30)
         add_test(NAME eligibility_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_eligibility_paths.py)
         add_test(NAME release_workflow COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_release_workflow.py)
