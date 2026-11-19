@@ -52,7 +52,7 @@ int main() {
             ++checked;
         }
         if (checked == 0) {
-            std::cout << "the device has no settle or sparse queue; nothing to check\n";
+            std::cout << "skipped, the device has no settle or sparse queue; nothing to check\n";
             return VulkanTestSkipped;
         }
         std::cout << "wait idle queue lock tests passed\n";

@@ -9,10 +9,10 @@ extern "C" {
 
 int APS5_VABI _Atan_nid_postfix();
 double APS5_VABI _Dtento_nid_postfix(double* value, std::int64_t power, int* error);
-int APS5_VABI _Erfc_nid_postfix();
+double APS5_VABI _Erfc_nid_postfix(double x);
 int APS5_VABI _FAtan_nid_postfix();
 float APS5_VABI _FDtento_nid_postfix(float* value, std::int64_t power, int* error);
-int APS5_VABI _FErfc_nid_postfix();
+float APS5_VABI _FErfc_nid_postfix(float x);
 int APS5_VABI _FHypot_nid_postfix();
 int APS5_VABI _FLogpoly_nid_postfix();
 float APS5_VABI _FPow_nid_postfix(float x, float y, short* exponent);
@@ -37,7 +37,7 @@ float* APS5_VABI _FXp_subx_nid_postfix(float* p, int n, const float* q, int m);
 int APS5_VABI _Hypot_nid_postfix();
 int APS5_VABI _LAtan_nid_postfix();
 long double APS5_VABI _LDtento_nid_postfix(long double* value, std::int64_t power, int* error);
-int APS5_VABI _LErfc_nid_postfix();
+long double APS5_VABI _LErfc_nid_postfix(long double x);
 int APS5_VABI _LHypot_nid_postfix();
 int APS5_VABI _LLogpoly_nid_postfix();
 long double APS5_VABI _LPow_nid_postfix(long double x, long double y, short* exponent);
