@@ -201,12 +201,24 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     MemoryInfo source = memory;
     source.offset = memory.secondaryOffset;
     source.secondaryOffset = 0u;
-    IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
     MemoryInfo target = memory;
     target.secondaryOffset = 0u;
     target.flushDenormals = floatAtomicFlush(opcode);
     target.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
     IrValue& active = ir.GetExec();
+    if (memory.dataDwords == 2u) {
+        IrValue* pair = loadSharedU32(2u, address, source, inst.programCounter);
+        IrValue& low = ir.CompositeExtract(*pair, 0u);
+        IrValue& high = ir.CompositeExtract(*pair, 1u);
+        if (opcode == IrOpcode::WriteSharedU32x2) {
+            (void)ir.Emit(opcode, IrType::Void, {&address.Value(), &low, &high, &active}, addMemoryInfo(target, inst.programCounter));
+            return true;
+        }
+        IrValue& value = ir.ConstructU64(low, high);
+        (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value, &active}, addMemoryInfo(target, inst.programCounter));
+        return true;
+    }
+    IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
     (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), value, &active}, addMemoryInfo(target, inst.programCounter));
     return true;
 }
