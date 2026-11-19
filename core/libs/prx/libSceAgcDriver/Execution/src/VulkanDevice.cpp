@@ -2947,6 +2947,13 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
     return !key.identity.Empty() && (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key));
 }
 
+bool VulkanDevice::ComputePipelineReady(const ShaderRecompiler::RecompileResult& shader) const {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto key = ComputePipelineKey::Of(shader, Graphics::PushConstantStages(shaders) != 0);
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    return !key.identity.Empty() && state->computePipelines.contains(key);
+}
+
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return;
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
@@ -3507,6 +3514,16 @@ VulkanDevice::CopyVerification VulkanDevice::CopyVerifyCounts() {
 namespace {
 std::atomic<std::uint64_t> computePipelinesCreated{0};
 std::atomic<std::uint64_t> computePipelinesCreatedLocked{0};
+std::atomic<std::uint64_t> windowSelectDispatches{0};
+std::atomic<std::uint64_t> splitWaveDispatches{0};
+}
+
+std::uint64_t VulkanDevice::WindowSelectDispatches() {
+    return windowSelectDispatches.load(std::memory_order_relaxed);
+}
+
+std::uint64_t VulkanDevice::SplitWaveDispatches() {
+    return splitWaveDispatches.load(std::memory_order_relaxed);
 }
 
 VulkanDevice::ComputePipelineCreation VulkanDevice::ComputePipelineCounts() {
@@ -6098,31 +6115,37 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(faultToken)));
     if (faultToken != 0 && state->bufferMarker != nullptr) state->bufferMarker(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->markerBuffer, 0, faultToken);
+    if (record.shader != nullptr && record.shader->program != nullptr && record.shader->program->windowSelects) windowSelectDispatches.fetch_add(1, std::memory_order_relaxed);
+    const std::uint32_t groupMultiplier = record.shader != nullptr && record.shader->program != nullptr ? record.shader->program->groupMultiplier : 1u;
+    if (groupMultiplier != 1u && argumentImport != nullptr) throw std::runtime_error("Vulkan dispatch: a pipeline that multiplies the workgroups in x cannot run a dispatch whose counts the GPU reads");
+    if (groupMultiplier != 1u) splitWaveDispatches.fetch_add(1, std::memory_order_relaxed);
     if (argumentImport != nullptr) {
         context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, indirectBuffer, indirectOffset);
     } else {
-        if (record.x <= limit[0] && record.y <= limit[1] && record.z <= limit[2]) {
-            context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, record.x, record.y, record.z);
+        const auto hostX = static_cast<std::uint64_t>(record.x) * groupMultiplier;
+        if (hostX <= limit[0] && record.y <= limit[1] && record.z <= limit[2]) {
+            context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>(hostX), record.y, record.z);
         } else {
             char counted[128] = "";
             if (record.cpuArguments != 0) std::snprintf(counted, sizeof(counted), " (read on the CPU from the indirect arguments at 0x%llx, cpuReason %d)", static_cast<unsigned long long>(record.cpuArguments), record.cpuReason);
             const auto offsets = std::ranges::count_if(record.shader->program->specialization, [](const auto& constant) { return ShaderRecompiler::PipelineSpecialization::IsWorkgroupOffset(constant.id); });
             if (offsets != ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetWords) {
                 char text[320];
-                std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s exceeds device limits %ux%ux%u and the shader takes no workgroup offset", record.x, record.y, record.z, counted, limit[0], limit[1], limit[2]);
+                std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s times %u in x exceeds device limits %ux%ux%u and the shader takes no workgroup offset", record.x, record.y, record.z, counted, groupMultiplier, limit[0], limit[1], limit[2]);
                 throw std::runtime_error(text);
             }
+            const std::uint32_t stepX = limit[0] / groupMultiplier;
             const auto dispatchChunk = context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch");
             bool firstChunk = true;
             for (std::uint32_t zBase = 0; zBase < record.z; zBase += limit[2]) {
                 for (std::uint32_t yBase = 0; yBase < record.y; yBase += limit[1]) {
-                    for (std::uint32_t xBase = 0; xBase < record.x; xBase += limit[0]) {
+                    for (std::uint32_t xBase = 0; xBase < record.x; xBase += stepX) {
                         if (!firstChunk) {
                             Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
                             context.BindComputePipeline(commands, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
                         }
                         firstChunk = false;
-                        dispatchChunk(commands, std::min(limit[0], record.x - xBase), std::min(limit[1], record.y - yBase), std::min(limit[2], record.z - zBase));
+                        dispatchChunk(commands, std::min(stepX, record.x - xBase) * groupMultiplier, std::min(limit[1], record.y - yBase), std::min(limit[2], record.z - zBase));
                     }
                 }
             }

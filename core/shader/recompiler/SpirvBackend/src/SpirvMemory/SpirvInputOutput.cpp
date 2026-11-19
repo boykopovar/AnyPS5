@@ -201,7 +201,7 @@ namespace ShaderRecompiler
         return value;
     }
 
-    std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state) {
+    static std::uint32_t EmitHostLocalInvocationIndex(SpirvEmitterState& state) {
         if (state.spannedWave && !state.spannedAnySubgroup) {
             const auto subgroup = state.module.AllocateId();
             const auto invocation = state.module.AllocateId();
@@ -220,5 +220,13 @@ namespace ShaderRecompiler
             return EmitAddU32(state, EmitAddU32(state, value, waveBase), ConstantU32(state, state.laneHalf * 32));
         }
         return value;
+    }
+
+    std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state) {
+        const auto index = EmitHostLocalInvocationIndex(state);
+        if (state.splitWaves <= 1u) return index;
+        const auto group = EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u);
+        const auto wave = EmitBinaryU32(state, spv::OpUMod, group, ConstantU32(state, state.splitWaves));
+        return EmitAddU32(state, index, EmitBinaryU32(state, spv::OpIMul, wave, ConstantU32(state, 64u)));
     }
 }

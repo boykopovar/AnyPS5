@@ -225,6 +225,7 @@ void DefineInputs(SpirvEmitterState& state) {
         })) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
+        if (state.splitWaves > 1u) addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
     }
     if ((state.requirements.ldsLock || ScratchPoolActive(state)) && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
         return input.kind == StageInputKind::LocalInvocationIndex;

@@ -47,6 +47,24 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInputFor(const SpirvEmitterState&
     }
 }
 
+std::uint32_t SplitWaveCount(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup) {
+    const auto& program = state.program;
+    if (program.Resources().stage != IrShaderStage::Compute || state.inputInfo.compute == nullptr || state.inputInfo.compute->partialGroups) return 1u;
+    const auto threads = std::max(workgroup.threadsNum[0], 1u) * std::max(workgroup.threadsNum[1], 1u) * std::max(workgroup.threadsNum[2], 1u);
+    if (threads <= 64u || threads % 64u != 0u) return 1u;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().scratchDwords != 0u) return 1u;
+    const auto& requirements = state.requirements;
+    if (requirements.functionLds || requirements.ldsLock || requirements.ldsBufferInt64Atomics || requirements.functionScratch || requirements.gdsInt64Atomics || requirements.sharedInt64Atomics) return 1u;
+    for (const auto* block : program.BlockOrder()) {
+        for (const auto* instruction : block->Instructions()) {
+            const auto opcode = instruction->Opcode();
+            if (SharedAccessOf(opcode) != SharedAccess::None) return 1u;
+            if (opcode == IrOpcode::Barrier || opcode == IrOpcode::Sendmsg || opcode == IrOpcode::DataAppend || opcode == IrOpcode::DataConsume || opcode == IrOpcode::DataOrderedCount || opcode == IrOpcode::DataOrderedSwap) return 1u;
+        }
+    }
+    return threads / 64u;
+}
+
 // Lanes of one guest wave run in lockstep, so a lane reads LDS another lane of its wave wrote without a
 // barrier. Host invocations need one; it can be issued wherever the guest wave's control flow is
 // uniform across the barrier's scope: the host subgroup when it holds exactly one guest wave, or the
@@ -289,6 +307,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
+    state.windowSelectsRequested = target.windowSelects;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
         state.requirements.subgroupLocalInvocationId = true;
@@ -316,7 +335,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);
     const bool halfHost = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u;
-    state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
+    state.splitWaves = halfHost && target.spannedWaves && target.splitWaveGroups && !state.requirements.computeDerivatives ? SplitWaveCount(state, *workgroup) : 1u;
+    state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && (std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u || state.splitWaves > 1u);
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
     if (state.spannedWave) {
@@ -352,8 +372,11 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         const auto snapshots = snapshotLoads && state.flattenedSrtVariable != 0u ? std::span<const std::uint32_t>(snapshotVariables) : std::span<const std::uint32_t>();
         if (auto reason = SpannedBarrierInDivergentFlow(words, snapshots)) throw SpannedWaveUnsupported(*reason);
     }
+    if (state.splitWaves > 1u && state.numWorkgroupsVariable != 0u) throw SpannedWaveUnsupported(std::string("a workgroup split into its waves reads the number of workgroups, which the split changes"));
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
+        info->groupMultiplier = state.splitWaves;
+        info->windowSelects = state.vectorWindowSelects;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
