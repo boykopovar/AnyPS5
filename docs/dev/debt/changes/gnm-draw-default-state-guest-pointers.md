@@ -1,0 +1,5 @@
+# libSceGnmDriver
+
+## change [sceGnmDrawInitDefaultHardwareState200]
+
+- [sceGnmDrawInitDefaultHardwareState200](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - writes the context reset and the register sequence of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e7626e3c7de8d0f0fda6a91f620b42f6c762/src/core/libraries/gnmdriver/gnmdriver.cpp): its `InitSequence200` for a base title and its `InitSequence200Neo`, the one `libSceGnmDriverForNeoMode` writes, when `sceKernelIsNeoMode` answers 1, padded with one NOP to 256 dwords; a buffer below 256 dwords returns 0 unwritten. Neither sequence is compared with console output, and whether the console's regular module chooses by Neo mode is not measured. A null or unwritable buffer of 256 dwords or more returns -1 unwritten, as `sceGnmDrawInitDefaultHardwareState350` does; the console's answer is unmeasured. It throws where `sceKernelIsNeoMode` throws (a title with `param.json`, or without metadata). Closes when: compared with a PS4 and a PS4 Pro
