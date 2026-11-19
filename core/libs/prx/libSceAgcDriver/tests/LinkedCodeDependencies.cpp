@@ -91,6 +91,10 @@ struct DriverTestAccess {
     static bool Adopt(std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderSnapshot& shader, const PreparedShaderState::UserDataLink* linking) {
         return Driver::capturedCurrent(captured, shader, linking);
     }
+
+    static bool KnownValueCurrent(const WrittenBuffer& writer) {
+        return Driver::knownValueCurrent(writer);
+    }
 };
 
 }
@@ -148,7 +152,35 @@ void CountCompare(std::uint64_t address, std::size_t bytes) {
     if (dependency) ++dependencyCompares;
 }
 
+#ifdef _WIN32
+void RunKnownValueBesideUncommittedPages() {
+    constexpr std::size_t Block = 65536u;
+    constexpr std::size_t committed = Block - 4u * 4096u;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2u * Block, Block));
+    Require(memory != nullptr, "cannot allocate the known value");
+    std::unique_ptr<std::uint8_t, void (*)(std::uint8_t*)> release(memory, [](std::uint8_t* pointer) {
+        GuestArena::GuestArenaReset_nid_postfix(pointer, 2u * Block);
+        GuestArena::GuestArenaRelease_nid_postfix(pointer, 2u * Block);
+    });
+    GuestArena::GuestArenaCommit_nid_postfix(memory, committed, 0x04u, committed);
+    std::fill_n(memory, committed, std::uint8_t{17});
+    const auto begin = reinterpret_cast<std::uint64_t>(memory);
+    Require(AgcDriver::GuestMemory::CollectWrites(begin, committed) != 0, "the known value's committed pages were not collected");
+    const WrittenBuffer writer{1u, begin, begin + Block, 1u, 0u, false, std::make_shared<const std::vector<std::byte>>(Block), AgcDriver::GuestMemory::TrackerGeneration()};
+    Require(DriverTestAccess::KnownValueCurrent(writer), "an unchanged known value beside uncommitted pages read as changed");
+    static_cast<volatile std::uint8_t*>(memory)[8] = 19u;
+    Require(!DriverTestAccess::KnownValueCurrent(writer), "a known value read as current after the CPU changed it beside pages a collect cannot walk");
+    std::puts("known value beside uncommitted pages: unchanged kept, a CPU write rejects it");
+}
+#endif
+
 void Run(const std::string& mode, std::string_view watch) {
+#ifdef _WIN32
+    if (mode == "known-value-refused") {
+        RunKnownValueBesideUncommittedPages();
+        return;
+    }
+#endif
     const bool watched = !watch.empty();
     auto ordinary = std::make_unique<Inputs>();
     constexpr std::size_t ArenaBytes = 65536u;
