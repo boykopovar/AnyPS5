@@ -13,8 +13,8 @@ SELECTORS = (0, 1, 2, 4)
 
 def without_arguments(function):
     for parameter in inspect.signature(function).parameters.values():
-        positional = parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
-        if positional and parameter.default is inspect.Parameter.empty:
+        variadic = parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
+        if not variadic and parameter.default is inspect.Parameter.empty:
             return False
     return True
 
