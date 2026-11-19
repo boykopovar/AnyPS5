@@ -164,6 +164,47 @@ class RebaseVerifyTests(unittest.TestCase):
         problems = self.verify()
         self.assertTrue(any("a line is added that the branch did not add" in problem for problem in problems), problems)
 
+    def amend_bytes(self, branch, data):
+        self.git("checkout", "-q", branch)
+        (self.root / "n.txt").write_bytes(data)
+        self.git("-c", "core.autocrlf=false", "add", "n.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+
+    def test_a_dropped_final_newline_is_reported(self):
+        self.amend_bytes("old", b"first\nlast\n")
+        self.amend_bytes("new", b"first\nlast")
+        self.assertEqual(self.verify(), [
+            "n.txt: an added line is missing (1x): last",
+            "n.txt: a line is added that the branch did not add (1x): last (no newline at end of file)",
+        ])
+        self.amend_bytes("new", b"first\nlast\n")
+        self.assertEqual(self.verify(), [])
+
+    def commit_bytes(self, data, message):
+        (self.root / "n.txt").write_bytes(data)
+        self.git("-c", "core.autocrlf=false", "add", "n.txt")
+        self.git("commit", "-q", "-m", message)
+
+    def check_deletion_across_upstream_newline_change(self, base, upstream):
+        self.git("checkout", "-q", "main")
+        self.commit_bytes(base, "docs(tools): add n")
+        self.git("checkout", "-q", "-B", "old", "main")
+        self.commit_bytes(b"keep\n", "fix(tools): drop the last line")
+        self.git("checkout", "-q", "main")
+        self.commit_bytes(upstream, "docs(tools): change the end of n")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.commit_bytes(b"keep\n", "fix(tools): drop the last line")
+        self.assertEqual(self.verify(), [])
+        self.git("reset", "-q", "--hard", "main")
+        self.git("commit", "-q", "--allow-empty", "-m", "fix(tools): drop the last line")
+        self.assertEqual(self.verify(), ["n.txt: a deleted line is missing (1x): last"])
+
+    def test_a_deletion_is_checked_after_main_adds_the_final_newline(self):
+        self.check_deletion_across_upstream_newline_change(b"keep\nlast", b"keep\nlast\n")
+
+    def test_a_deletion_is_checked_after_main_drops_the_final_newline(self):
+        self.check_deletion_across_upstream_newline_change(b"keep\nlast\n", b"keep\nlast")
+
     def test_a_rebase_that_substitutes_a_different_deleted_line_is_reported(self):
         self.git("checkout", "-q", "old")
         self.git("reset", "-q", "--hard", self.base)
@@ -294,6 +335,20 @@ class RebaseDiffTextTests(unittest.TestCase):
         old, _ = self.changes("before")
         new, _ = self.changes("after")
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+    def test_only_an_added_line_without_a_final_newline_differs_from_the_terminated_line(self):
+        marker = "\n" + rebase_verify.NO_NEWLINE
+        old, _ = self.changes("tail")
+        new, _ = self.changes("tail" + marker)
+        self.assertEqual(new["f.cpp"], {"tail" + marker: 1})
+        self.assertEqual(rebase_verify.differences(old, new), [
+            "f.cpp: an added line is missing (1x): tail",
+            "f.cpp: a line is added that the branch did not add (1x): tail (no newline at end of file)",
+        ])
+        _, deleted = self.changes("tail" + marker, "-")
+        self.assertEqual(deleted["f.cpp"], {"tail": 1})
+        spoofed, _ = self.changes("tail\n\\literal")
+        self.assertEqual(spoofed["f.cpp"], {"tail": 1})
 
 
 class CountHelperTests(unittest.TestCase):
