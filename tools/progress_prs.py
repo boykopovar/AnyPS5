@@ -27,19 +27,20 @@ def timestamp():
 
 def collect_open_prs(repo, root):
     pr_overlap.REPO = repo
-    pull_requests = pr_overlap.open_prs("main")
-    refspecs = [f"+refs/heads/main:{REFS}/base"]
-    for number, pr in sorted(pull_requests.items()):
-        pr["ref"] = f"{REFS}/{number}"
-        refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
     remote = f"{REMOTE}/{repo}.git"
-    for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
-        git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
-    changed = [number for number, pr in pull_requests.items()
-               if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
-    if changed:
-        raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
-    return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+    for _ in range(2):
+        pull_requests = pr_overlap.open_prs("main")
+        refspecs = [f"+refs/heads/main:{REFS}/base"]
+        for number, pr in sorted(pull_requests.items()):
+            pr["ref"] = f"{REFS}/{number}"
+            refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
+        for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
+            git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
+        changed = [number for number, pr in pull_requests.items()
+                   if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
+        if not changed:
+            return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+    raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
 
 
 def closed_dependency_status(repo, number):
@@ -156,10 +157,16 @@ def estimate(repo, root):
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return {"available": False, "generated_at": timestamp(), "reason": str(error)}
     finally:
-        refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
-        if refs.returncode == 0:
-            for ref in refs.stdout.splitlines():
-                git(root, "update-ref", "-d", ref, check=False)
+        try:
+            refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
+        except OSError:
+            refs = None
+        if refs is not None and refs.returncode == 0:
+            try:
+                for ref in refs.stdout.splitlines():
+                    git(root, "update-ref", "-d", ref, check=False)
+            except OSError:
+                pass
 
 
 def main(argv=None):
