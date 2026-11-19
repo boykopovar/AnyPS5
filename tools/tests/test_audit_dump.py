@@ -983,6 +983,20 @@ class AuditDirectoriesTests(unittest.TestCase):
                 audited = audit_dump.audit_directories([source], source)
             self.assertEqual((audited[0] / "a.prx").read_bytes(), b"a")
 
+class ElfTypeTests(unittest.TestCase):
+    def test_reads_the_little_endian_type_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "m.elf"
+            path.write_bytes(b"\x7fELF" + bytes(12) + (3).to_bytes(2, "little") + bytes(4))
+            self.assertEqual(audit_dump.elf_type(path), 3)
+
+    def test_file_shorter_than_the_type_field_has_no_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for size in (0, 17):
+                path = Path(directory) / f"short{size}"
+                path.write_bytes(bytes(size))
+                self.assertIsNone(audit_dump.elf_type(path))
+
 
 if __name__ == "__main__":
     unittest.main()
