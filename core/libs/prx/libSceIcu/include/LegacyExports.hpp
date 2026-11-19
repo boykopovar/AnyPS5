@@ -2024,7 +2024,6 @@ int APS5_VABI _ZN6icu_6813ResourceValueD2Ev_nid_postfix();
 int APS5_VABI utrie2_get32_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString13doLastIndexOfEDsii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tiMMuYmTWRo_nid_no_patch();
-int APS5_VABI ucnv_cbFromUWriteSub_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tmx6qeUDqns_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl9recomposeERNS_16ReorderingBufferEia_nid_postfix();
 int APS5_VABI ucnv_getType_nid_postfix();
