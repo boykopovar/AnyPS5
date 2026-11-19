@@ -2288,7 +2288,6 @@ int APS5_VABI _ZN7WebCore16DOMGuardedObjectD1Ev();
 int APS5_VABI _ZN7WebCore16DOMGuardedObjectD2Ev();
 int APS5_VABI _ZN7WebCore16DatabaseProviderC2Ev();
 int APS5_VABI _ZN7WebCore16DatabaseProviderD0Ev();
-int APS5_VABI _ZN7WebCore16DeviceMotionData6createEv();
 int APS5_VABI _ZN7WebCore16FileReaderLoader5startEPNS_22ScriptExecutionContextERNS_4BlobE();
 int APS5_VABI _ZN7WebCore16FileReaderLoader6cancelEv();
 int APS5_VABI _ZN7WebCore16FileReaderLoaderC1ENS0_8ReadTypeEPNS_22FileReaderLoaderClientE();
