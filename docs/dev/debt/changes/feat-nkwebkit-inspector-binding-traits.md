@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [Inspector protocol BindingTraits assertions](../../../core/libs/prx/libSceNKWebKit/src/InspectorBindingTraits.cpp) (libSceNKWebKit) - the 20 `Inspector::Protocol::BindingTraits<T>::assertValueHasExpectedType(JSON::Value*)` exports do nothing: in WebKit they are `ASSERT`-only checks, and in PS4's `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`) each one is a single `ret` (release build, assertions compiled out). The PS5 module is not checked directly; its release build is assumed to compile them out the same way.
+- [Inspector protocol BindingTraits assertions](../../../core/libs/prx/libSceNKWebKit/src/InspectorBindingTraits.cpp) (libSceNKWebKit) - the 20 `Inspector::Protocol::BindingTraits<T>::assertValueHasExpectedType(JSON::Value*)` exports do nothing: in WebKit they are `ASSERT`-only checks, and in the `libSceNKWebKit.sprx` with SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d` (the module the Constant-return exports entry reads as 11.00) each one is a single `ret` (release build, assertions compiled out).
 
 ## remove | `_ZN9Inspector8Protocol13BindingTraitsINS0_7Runtime12EntryPreviewEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE` | `SHKtkCDxH6c` |
 
