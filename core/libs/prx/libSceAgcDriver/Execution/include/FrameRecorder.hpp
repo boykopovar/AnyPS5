@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -43,6 +44,8 @@ public:
     void Suspend(const std::function<void()>& accept);
     void PresentBuffer(const DisplayBuffer& buffer);
     void FrameBoundary();
+    void RewindTailFlips(std::uint64_t flips);
+    static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -71,6 +74,7 @@ private:
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
     void writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void frameBoundaryLocked();
     bool triggered();
     void start();
     void finish();
@@ -101,6 +105,7 @@ private:
     std::map<std::uint64_t, DisplayBuffer> displayBuffers;
     std::uint64_t ordinal = 0;
     std::uint64_t boundaries = 0;
+    std::uint64_t rewindTailFlips = 0;
     std::uint64_t startBoundary = 0;
     std::uint64_t recordedFrames = 0;
     std::uint64_t startGeneration = 0;
@@ -109,6 +114,8 @@ private:
     std::uint64_t snapshotBytes = 0;
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
+    std::atomic<std::uint64_t> unrecordedAccepts{0};
+    inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;

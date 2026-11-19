@@ -129,7 +129,7 @@ void FreeKeyedContext() {
 }
 
 int main() {
-    std::array<void*, 7> api{
+    std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch), reinterpret_cast<void*>(Calloc_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedReallocate_nid_no_patch), reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch), reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};

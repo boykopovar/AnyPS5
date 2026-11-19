@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -20,6 +21,14 @@
 #include <string_view>
 #include <tuple>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -53,6 +62,40 @@ alignas(256) std::array<std::array<float, 4>, Corners.size()> Vertices{};
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
+}
+
+struct StateTrace {
+    PFN_vkCmdSetViewport viewport = nullptr;
+    PFN_vkCmdSetScissor scissor = nullptr;
+    std::uint32_t viewports = 0;
+    std::uint32_t scissors = 0;
+    AgcDriver::Graphics::DeviceFunctions functions;
+};
+
+StateTrace Trace;
+bool Counting = false;
+
+VKAPI_ATTR void VKAPI_CALL SetViewport(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkViewport* viewports) {
+    if (Counting) ++Trace.viewports;
+    Trace.viewport(commands, first, count, viewports);
+}
+
+VKAPI_ATTR void VKAPI_CALL SetScissor(VkCommandBuffer commands, std::uint32_t first, std::uint32_t count, const VkRect2D* scissors) {
+    if (Counting) ++Trace.scissors;
+    Trace.scissor(commands, first, count, scissors);
+}
+
+AgcDriver::Graphics::Context TracedContext(const AgcDriver::VulkanDevice& device) {
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Trace.viewport = reinterpret_cast<PFN_vkCmdSetViewport>(context.deviceProc(context.device, "vkCmdSetViewport"));
+    Trace.scissor = reinterpret_cast<PFN_vkCmdSetScissor>(context.deviceProc(context.device, "vkCmdSetScissor"));
+    Trace.functions = context.functions != nullptr ? *context.functions : AgcDriver::Graphics::DeviceFunctions{};
+    Trace.functions.cmdSetViewport = SetViewport;
+    Trace.functions.cmdSetScissor = SetScissor;
+    Trace.viewports = 0;
+    Trace.scissors = 0;
+    context.functions = &Trace.functions;
+    return context;
 }
 
 void Draw(AgcDriver::VulkanDevice& device, float frontBias, float backBias) {
@@ -121,8 +164,13 @@ void Draw(AgcDriver::VulkanDevice& device, float frontBias, float backBias) {
     state.blends = {state.blend};
     state.blendConstants = {};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Vertices.size()), 0, 1, 0, false};
-    device.Draw(state, draw, shaders);
+    const auto context = TracedContext(device);
+    Counting = true;
+    AgcDriver::Graphics::Draw(context, state, draw, shaders);
     device.WaitIdle();
+    Counting = false;
+    const std::uint32_t expected = state.depthBiasPerFace ? 2u : 1u;
+    Require(Trace.viewports == expected && Trace.scissors == expected, "the synchronous draw set the viewport " + std::to_string(Trace.viewports) + " times and the scissor " + std::to_string(Trace.scissors) + " times, expected " + std::to_string(expected) + " since only recorded draws skip commands");
 }
 
 void Check(bool frontDrawn, bool backDrawn, std::string_view what) {
@@ -168,7 +216,7 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-void DepthDrawRecipe(AgcDriver::VulkanDevice& device) {
+void DepthDrawRecipe(AgcDriver::VulkanDevice& device, bool perFace) {
     constexpr std::uint32_t TargetWidth = 128;
     constexpr std::uint32_t TargetHeight = 128;
     const AgcDriver::Graphics::ColorTargetLayout colorLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
@@ -234,8 +282,8 @@ void DepthDrawRecipe(AgcDriver::VulkanDevice& device) {
     state.depthCompare = VK_COMPARE_OP_LESS;
     state.depthBias = true;
     state.depthBiasConstant = -Bias;
-    state.depthBiasPerFace = false;
-    state.backDepthBiasConstant = -Bias;
+    state.depthBiasPerFace = perFace;
+    state.backDepthBiasConstant = perFace ? Bias : -Bias;
     state.renderExtent = {TargetWidth, TargetHeight};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(TargetHeight), static_cast<float>(TargetWidth), -static_cast<float>(TargetHeight), 0, 1};
@@ -249,8 +297,15 @@ void DepthDrawRecipe(AgcDriver::VulkanDevice& device) {
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Corners.size()), 0, 1, 0, false};
 
     std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
-    device.Draw(state, draw, shaders, {}, &recipe);
+    const auto context = TracedContext(device);
+    Counting = true;
+    AgcDriver::Graphics::Draw(context, state, draw, shaders, {}, &recipe);
     device.WaitIdle();
+    Counting = false;
+    const bool suppressing = std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr;
+    const std::uint32_t expected = perFace && !suppressing ? 2u : 1u;
+    Require(Trace.viewports == expected && Trace.scissors == expected, std::string("the recorded draw set the viewport ") + std::to_string(Trace.viewports) + " times and the scissor " + std::to_string(Trace.scissors) + " times, expected " + std::to_string(expected) + (perFace ? " for a draw of both faces " : " for a draw of one pass ") + (suppressing ? "with" : "without") + " state suppression");
+    if (perFace) return;
     Require(recipe != nullptr, "a direct draw with depth target must produce a recipe");
     Require(recipe->hasDepth, "the recipe must record depth target presence");
     Require(recipe->targetViews.size() == 2, "the recipe must record color and depth views");
@@ -284,7 +339,8 @@ int main() {
         Check(true, true, "both faces pulled closer");
         Draw(*device, -Bias, 0.0f);
         Check(true, false, "only front faces biased");
-        DepthDrawRecipe(*device);
+        if (std::getenv("APS5_DRAW_TRANSITIONS") == nullptr) DepthDrawRecipe(*device, false);
+        DepthDrawRecipe(*device, true);
         std::puts("per-face depth bias tests passed");
         return 0;
     } catch (const std::exception& error) {

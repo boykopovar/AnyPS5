@@ -74,6 +74,20 @@ Bytes TlsFixture(const std::uint64_t address, const std::uint64_t fileSize, cons
     return bytes;
 }
 
+Bytes CoveredRelroFixture(const std::uint64_t offset, const std::uint64_t fileSize, const std::uint64_t memorySize) {
+    auto bytes = Fixture();
+    Write<std::uint16_t>(bytes, 56, 2);
+    Write<std::uint64_t>(bytes, 104, 128);
+    Write<std::uint32_t>(bytes, 120, 0x61000010);
+    Write<std::uint64_t>(bytes, 128, offset);
+    Write<std::uint64_t>(bytes, 136, 0x1000);
+    Write<std::uint64_t>(bytes, 144, 0x1000);
+    Write<std::uint64_t>(bytes, 152, fileSize);
+    Write<std::uint64_t>(bytes, 160, memorySize);
+    Write<std::uint64_t>(bytes, 168, 1);
+    return bytes;
+}
+
 void Require(const bool condition) {
     if (!condition) throw std::runtime_error("Unexpected parsed value");
 }
@@ -301,6 +315,12 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"covered SCE RELRO file size exceeds memory size", [] {
+            RejectProgramHeaders(CoveredRelroFixture(0x240, 64, 32));
+        }},
+        {"covered SCE RELRO file range past end of file", [] {
+            RejectProgramHeaders(CoveredRelroFixture(0x2f0, 64, 64));
+        }},
         {"TLS image inside load memory and empty TLS placeholders", [] {
             for (const auto& [address, fileSize, memorySize, alignment] : {std::tuple<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>{0x1008, 8, 16, 8}, {0x1030, 16, 16, 16}, {0x9000, 0, 0, 0}, {0x9000, 0, 16, 16}}) {
                 const auto headers = Relinker::ElfReader(TlsFixture(address, fileSize, memorySize, alignment)).ReadProgramHeaders();
@@ -399,6 +419,15 @@ int main() {
             Write<std::uint64_t>(bytes, 240, 3);
             const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Type == 0 && sections[1].Alignment == 3);
+        }},
+        {"SHT_NULL section names are ignored", [] {
+            for (const std::size_t offset : {128u, 192u}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, offset, std::numeric_limits<std::uint32_t>::max());
+                Write<std::uint32_t>(bytes, offset + 4, 0);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[(offset - 128) / 64].Name.empty());
+            }
         }},
         {"SHT_SYMTAB section entry size mismatch", [] {
             for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL, 0xffffffffffffffffULL}) {

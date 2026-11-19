@@ -1,6 +1,7 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 static void Require(bool condition) {
@@ -20,6 +21,12 @@ static void APS5_VABI Unlock(CURL* easy, curl_lock_data data, void* argument) {
     Require(argument == &callbackCount);
     ++callbackCount;
 }
+
+static int APS5_VABI DenyPush(CURL*, CURL*, size_t, struct curl_pushheaders*, void*) {
+    return CURL_PUSH_DENY;
+}
+
+extern "C" int Push_nid_no_patch(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
 
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
@@ -62,6 +69,8 @@ int main() {
     int64_t timeout = 99;
     Require(curl_multi_timeout_nid_postfix(multi, &timeout) == CURLM_OK && timeout == -1);
     Require(curl_multi_timeout_nid_postfix(multi, nullptr) == CURLM_BAD_FUNCTION_ARGUMENT);
+    errno = 71;
+    Require(curl_multi_timeout_nid_postfix(multi, reinterpret_cast<int64_t*>(0x10)) == CURLM_BAD_FUNCTION_ARGUMENT && errno == 71);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_OK);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_ADDED_ALREADY);
     Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK && running == 0);
@@ -74,8 +83,13 @@ int main() {
     Require(curl_multi_remove_handle_nid_postfix(multi, easy) == CURLM_OK);
     Require(curl_multi_socket_all_nid_postfix(multi, &running) == CURLM_OK && running == 0);
     Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(nullptr, CURLMOPT_PUSHFUNCTION, DenyPush) == CURLM_BAD_HANDLE);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHFUNCTION, DenyPush) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHDATA, &callbackCount) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHFUNCTION, nullptr) == CURLM_OK);
     Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
     curl_easy_cleanup_nid_postfix(easy);
+    Require(Push_nid_no_patch(easy, nullptr, 0, nullptr, nullptr) == CURL_PUSH_DENY);
     curl_easy_cleanup_nid_postfix(nullptr);
     curl_global_cleanup_nid_postfix();
 }

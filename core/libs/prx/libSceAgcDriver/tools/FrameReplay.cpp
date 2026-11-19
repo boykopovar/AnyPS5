@@ -494,6 +494,7 @@ struct Replay {
             const std::unique_lock lock(memoryMutex);
             const bool pacing = options.pace && recording;
             bool parkedAsCaptured = true;
+            std::vector<StagedWord> staged;
             {
                 const auto began = Clock::now();
                 const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
@@ -501,8 +502,9 @@ struct Replay {
                 paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
                 if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
                 parkedAsCaptured = !pacing || !settled || call.values.size() < 2 || atCapturedPark(call);
-                restoreGroup(call.values.at(0), false);
+                staged = restoreGroup(call.values.at(0), false, heldWaits());
             }
+            releaseStaged(staged);
             if (!parkedAsCaptured) restoreAtCapturedPark(call);
             return;
         }
@@ -545,9 +547,52 @@ struct Replay {
         paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
     }
 
-    void restoreGroup(std::uint64_t group, bool again) {
+    void awaitTailsRead() {
+        const auto began = Clock::now();
+        while (AgcDriverRewindTailsUnread_nid_postfix()) {
+            if (Clock::now() - began >= options.busyTimeout) {
+                std::fprintf(stderr, "[frame-replay] a released REWIND tail was not read before the next memory delta, blocked on%s\n", describeBlocked().c_str());
+                ++paceTimeouts;
+                if (options.strict) throw std::runtime_error("frame replay: a released REWIND tail was not read before the next memory delta");
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+    }
+
+    struct StagedWord {
+        std::uint64_t address;
+        std::vector<std::byte> value;
+    };
+
+    static std::vector<AgcDriver::AwaitedWait> heldWaits() {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<AgcDriver::AwaitedWait> held;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            if (!rewindWait(awaited[slot]) && awaited[slot].bytes != 0) held.push_back(awaited[slot]);
+        }
+        if (held.size() < 2) held.clear();
+        return held;
+    }
+
+    void releaseStaged(const std::vector<StagedWord>& words) {
+        for (const auto& word : words) {
+            const bool settled = AgcDriverHoldSettled_nid_postfix(options.busyTimeout.count());
+            const SettledHold hold{true};
+            if (!settled) return;
+            AgcDriverPrepareCommandWrite_nid_no_patch(word.address, word.value.size());
+            std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(word.address)), word.value.data(), word.value.size());
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+        }
+    }
+
+    std::vector<StagedWord> restoreGroup(std::uint64_t group, bool again, const std::vector<AgcDriver::AwaitedWait>& held = {}) {
+        std::vector<StagedWord> staged;
         const auto found = groups.find(group);
-        if (found == groups.end()) return;
+        if (found == groups.end()) return staged;
+        awaitTailsRead();
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
         std::vector<std::uint64_t> parked;
@@ -560,21 +605,41 @@ struct Replay {
             auto bytes = reader.Read(*chunk);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
             AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
+            std::vector<std::size_t> kept;
             for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if ((value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                if ((value & AgcDriver::Pm4::RewindValid) == 0 || at < 4) continue;
                 std::uint32_t header = 0;
-                if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
-                const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
-                if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
-                if (!again) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
-                std::memcpy(bytes.data() + at, target + at, sizeof(value));
+                std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
+                if ((header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u) kept.push_back(at);
             }
-            std::memcpy(target, bytes.data(), bytes.size());
+            for (const auto address : parked) {
+                if (address % 4 == 0 && address >= chunk->address && address + 4 <= chunk->address + bytes.size()) kept.push_back(static_cast<std::size_t>(address - chunk->address));
+            }
+            std::ranges::sort(kept);
+            kept.erase(std::ranges::unique(kept).begin(), kept.end());
+            for (const auto at : kept) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if (!again || (value & AgcDriver::Pm4::RewindValid) == 0) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+            }
+            for (const auto& wait : held) {
+                if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
+                const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
+                staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
+                std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
+            }
+            std::size_t from = 0;
+            for (const auto at : kept) {
+                std::memcpy(target + from, bytes.data() + from, at - from);
+                from = at + 4;
+            }
+            std::memcpy(target + from, bytes.data() + from, bytes.size() - from);
             deltaBytes += chunk->bytes;
         }
         for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
+        return staged;
     }
 
     bool releaseRewind(const FrameCall& call, const AgcDriver::AwaitedWait& wait) {
@@ -736,7 +801,13 @@ struct Replay {
             });
         }
         for (auto& worker : workers) worker.join();
-        if (failure == nullptr) drain();
+        if (failure == nullptr) {
+            try {
+                drain();
+            } catch (...) {
+                failure = std::current_exception();
+            }
+        }
         finished.store(true);
         breaker.join();
         if (failure != nullptr) std::rethrow_exception(failure);
@@ -747,6 +818,7 @@ struct Replay {
         auto lastProgress = Clock::now();
         auto lastReport = lastProgress;
         while (true) {
+            AgcDriverCheckFailure_nid_postfix();
             const auto [accepted, completed] = progress();
             unfinished = accepted - completed;
             if (unfinished == 0) return;
@@ -1185,6 +1257,7 @@ int run(const Options& options) {
     relaunchIfHostRegionBlocks(reader);
 #endif
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
+    AgcDriverTrackRewindTails_nid_postfix();
     auto skipped = restoreMemory(reader);
     const auto loaded = Clock::now();
     Replay replay{options, reader};
