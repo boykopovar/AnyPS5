@@ -240,17 +240,6 @@ int APS5_VABI EC_KEY_set_private_key_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ENGINE_get_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ENGINE_set_default_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;

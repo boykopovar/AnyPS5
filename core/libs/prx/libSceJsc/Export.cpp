@@ -1882,10 +1882,6 @@ int APS5_VABI _ZNK3WTF10StringView10tryGetUtf8ENS_14ConversionModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF6String10tryGetUtf8ENS_14ConversionModeE() {
     NotImplemented_nid_no_patch(__func__);
 }

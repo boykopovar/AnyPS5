@@ -44,7 +44,7 @@ git submodule update --init --recursive
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
 
 ```sh
-git diff --name-only origin/main...HEAD > changed.txt
+git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
 ninja -C build -f select.ninja selected
