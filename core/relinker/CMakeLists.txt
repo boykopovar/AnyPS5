@@ -59,6 +59,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DepositExtractLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
@@ -141,6 +142,11 @@ if(BUILD_TESTING)
     target_link_libraries(bitfield_lowering_tests PRIVATE relinker_core)
     add_test(NAME bitfield_lowering COMMAND bitfield_lowering_tests)
     set_tests_properties(bitfield_lowering PROPERTIES TIMEOUT 60)
+
+    add_test_executable(deposit_extract_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/DepositExtractLoweringTests.cpp)
+    target_link_libraries(deposit_extract_lowering_tests PRIVATE relinker_core)
+    add_test(NAME deposit_extract_lowering COMMAND deposit_extract_lowering_tests)
+    set_tests_properties(deposit_extract_lowering PROPERTIES TIMEOUT 60)
 
     add_test_executable(count_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/CountLoweringTests.cpp)
     target_link_libraries(count_lowering_tests PRIVATE relinker_core)
@@ -334,6 +340,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DepositExtractLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
@@ -658,6 +665,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DepositExtractLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
