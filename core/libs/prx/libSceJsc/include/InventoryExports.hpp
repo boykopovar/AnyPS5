@@ -276,7 +276,6 @@ int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent21willDispatchAsyncCallENS0_1
 int APS5_VABI _ZN9Inspector22RemoteInspectionTarget25setRemoteDebuggingAllowedEb();
 int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher15messagesClearedEv();
 int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcher25messageRepeatCountUpdatedEi();
-int APS5_VABI _ZNK3JSC11RegisterSet4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC14JSGlobalObject22remoteDebuggingEnabledEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame12functionNameEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame29deprecatedVMEntryGlobalObjectEv();

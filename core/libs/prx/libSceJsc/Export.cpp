@@ -1826,10 +1826,6 @@ std::uint64_t APS5_VABI _ZNK10Deprecated11ScriptValue7jsValueEv(const void* self
     return slot == nullptr ? 0 : *slot;
 }
 
-int APS5_VABI _ZNK3JSC11RegisterSet4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC14JSGlobalObject22remoteDebuggingEnabledEv() {
     NotImplemented_nid_no_patch(__func__);
 }
