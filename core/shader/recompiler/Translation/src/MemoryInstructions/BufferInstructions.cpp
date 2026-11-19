@@ -137,18 +137,36 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
 }
 
 IrValue* TranslationContext::bufferPreviousValue(const RdnaInstruction& inst, const MemoryInfo& memory) {
+    if (!memory.d16) {
+        if (memory.dataDwords <= 1u) return readOperand(inst.destination, IrType::U32);
+        std::array<IrValue*, 4> previous{};
+        for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
+            previous[component] = readOperand(offsetOperand(inst.destination, component), IrType::U32);
+        }
+        switch (memory.dataDwords) {
+        case 2u:
+            return &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {previous[0], previous[1]});
+        case 3u:
+            return &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {previous[0], previous[1], previous[2]});
+        default:
+            return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {previous[0], previous[1], previous[2], previous[3]});
+        }
+    }
     if (memory.dataDwords <= 1u) return readOperand(inst.destination, IrType::U32);
-    std::array<IrValue*, 4> previous{};
-    for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
-        previous[component] = readOperand(offsetOperand(inst.destination, component), IrType::U32);
+    std::array<IrValue*, 4> halves{};
+    for (std::uint32_t half = 0u; half < memory.dataDwords; ++half) {
+        IrValue& word = *readOperand(plainOperand(offsetOperand(inst.destination, half / 2u)), IrType::U32);
+        halves[half] = half % 2u == 0u
+            ? &ir.BitwiseAnd(word, ir.Constant(0xffffu))
+            : &ir.ShiftRightLogical(word, ir.Constant(16u));
     }
     switch (memory.dataDwords) {
     case 2u:
-        return &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {previous[0], previous[1]});
+        return &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {halves[0], halves[1]});
     case 3u:
-        return &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {previous[0], previous[1], previous[2]});
+        return &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {halves[0], halves[1], halves[2]});
     default:
-        return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {previous[0], previous[1], previous[2], previous[3]});
+        return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {halves[0], halves[1], halves[2], halves[3]});
     }
 }
 
