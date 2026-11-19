@@ -9,6 +9,13 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 
 static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
@@ -137,6 +144,43 @@ static void CheckAudioOutOutputsBounds() {
     Require(errno == 56, "misaligned null output param preserves errno");
 }
 
+static void CheckSparseBedWrite(std::uint32_t portId) {
+    if (sizeof(void*) < 8) return;
+    const auto bytes = static_cast<std::size_t>(std::uint64_t{0x40000000} * 8 * 4);
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* base = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS));
+    Require(base != nullptr, "reserve sparse bed range succeeds");
+    Require(VirtualAlloc(base, page, MEM_COMMIT, PAGE_READWRITE) != nullptr, "commit first sparse bed page succeeds");
+    Require(VirtualAlloc(base + bytes - page, page, MEM_COMMIT, PAGE_READWRITE) != nullptr,
+            "commit last sparse bed page succeeds");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "page size query succeeds");
+    const auto page = static_cast<std::size_t>(pageSize);
+    void* mapped = mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    Require(mapped != MAP_FAILED, "reserve sparse bed range succeeds");
+    auto* base = static_cast<unsigned char*>(mapped);
+    Require(mprotect(base, page, PROT_READ | PROT_WRITE) == 0, "map first sparse bed page succeeds");
+    Require(mprotect(base + bytes - page, page, PROT_READ | PROT_WRITE) == 0, "map last sparse bed page succeeds");
+#endif
+    std::memset(base, 0, page);
+    std::memset(base + bytes - page, 0, page);
+
+    errno = 64;
+    Require(sceAudio3dBedWrite2(portId, 8, 1, base, 0x40000000, 0, false) == static_cast<int>(0x80EA0004),
+            "sparse 32 GiB bed write with readable ends must fail with invalid parameter");
+    Require(errno == 64, "sparse 32 GiB bed write preserves errno");
+
+#ifdef _WIN32
+    Require(VirtualFree(base, 0, MEM_RELEASE) != 0, "release sparse bed range succeeds");
+#else
+    Require(munmap(base, bytes) == 0, "unmap sparse bed range succeeds");
+#endif
+}
+
 static void CheckBedWriteBounds() {
     Require(sceAudio3dInitialize(0) == 0, "initialize for bed bounds check succeeds");
     Audio3dOpenParameters parameters{};
@@ -163,6 +207,8 @@ static void CheckBedWriteBounds() {
             == static_cast<int>(0x80EA0004),
             "wrapping 4-byte bed write must fail with invalid parameter");
     Require(errno == 63, "wrapping 4-byte bed write preserves errno");
+
+    CheckSparseBedWrite(portId);
 
     Require(sceAudio3dPortClose(portId) == 0, "close large-granularity port succeeds");
 

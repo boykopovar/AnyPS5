@@ -645,15 +645,15 @@ int APS5_VABI sceAudio3dBedWrite2(uint32_t port_id, uint32_t num_channels, uint3
         const std::size_t bytes = static_cast<std::size_t>(samples) * num_channels * sample_size;
         if (g_port.beds.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
         if (bytes > UINTPTR_MAX - bufferAddress) return AUDIO3D_ERROR_INVALID_PARAMETER;
-        std::uint8_t edge = 0;
-        const int savedErrno = errno;
-        const bool readableBounds = GuestCopyIn_nid_no_patch(&edge, buffer, 1)
-            && GuestCopyIn_nid_no_patch(&edge, reinterpret_cast<const void*>(bufferAddress + (bytes - 1)), 1);
-        errno = savedErrno;
-        if (!readableBounds) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        constexpr std::size_t copyChunk = 0x10000;
         Audio3dBed bed;
-        bed.pcm.resize(bytes);
-        const bool copied = GuestCopyIn_nid_no_patch(bed.pcm.data(), buffer, bytes);
+        const int savedErrno = errno;
+        bool copied = true;
+        for (std::size_t offset = 0; copied && offset < bytes; offset += copyChunk) {
+            const std::size_t length = std::min(copyChunk, bytes - offset);
+            bed.pcm.resize(offset + length);
+            copied = GuestCopyIn_nid_no_patch(bed.pcm.data() + offset, reinterpret_cast<const void*>(bufferAddress + offset), length);
+        }
         errno = savedErrno;
         if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         bed.channels = num_channels;
