@@ -915,6 +915,16 @@ int main(int argc, char** argv) {
     }
     SetTimeZone("UTC0");
 
+    for (const std::uint64_t value : {unixEpochTick - 1, maxTick, unixEpochTick}) {
+        const RtcTick input{value};
+        RtcTick output{};
+        errno = 71;
+        Require(sceRtcConvertUtcToLocalTime(&input, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+        Require(sceRtcConvertLocalTimeToUtc(&output, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+    }
+
 #ifndef _WIN32
     SetTimeZone("STD0DST,J1/0,J2/0");
     const std::time_t beforeTransition = -1;
@@ -978,7 +988,9 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 0, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999Z") == 0);
         Require(sceRtcFormatRFC3339Precise(precise, &nines, 0, 1) == 0 && std::strcmp(precise, "2026-10-02T13:05:09.9Z") == 0);
         std::memset(precise, '#', sizeof(precise));
-        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidValue && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &huge, 1, 6) == 0 && std::strcmp(precise, "0001-01-01T00:00:59.999999+00:01") == 0);
+        std::memset(precise, '#', sizeof(precise));
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 60, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, 0, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &huge, 0, 6) == invalidYear && precise[0] == '#');
@@ -1027,9 +1039,15 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
+    const RtcTick lastTick{UINT64_MAX};
+    char sdkBoundary[40]{};
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == 0);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
     SetCompiledSdkVersion(process.data(), 0x03000000);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == invalidValue);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 1, 1) == invalidYear);
     SetCompiledSdkVersion(process.data(), 0x05050001);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(2024, 0, 1) == invalidMonth);

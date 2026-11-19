@@ -28,6 +28,15 @@ public:
         std::uint64_t retired = 0;
         std::size_t items = 0;
         std::vector<Range> writes;
+        Watch() = default;
+        Watch(std::uint64_t retired, std::size_t items) : retired(retired), items(items) {}
+        Watch(Watch&& other) noexcept : retired(other.retired), items(other.items), writes(std::move(other.writes)), pinned(std::exchange(other.pinned, nullptr)) {}
+        Watch(const Watch&) = delete;
+        Watch& operator=(const Watch&) = delete;
+        ~Watch();
+    private:
+        friend class DrawPipeline;
+        DrawPipeline* pinned = nullptr;
     };
     enum class DrainReason : std::uint8_t { Packet, Flush, Labels, Capture, Indirect, Submission, Count };
     enum class QueuedWrite : std::uint8_t { None, Stored, Unknown };
@@ -55,8 +64,10 @@ public:
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     bool OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static bool CountedWatch();
+    std::uint64_t CountedLookups() const { return countedLookups.load(std::memory_order_relaxed); }
     Watch WatchWrites();
-    bool WrittenSince(const Watch& watch, const std::vector<Range>& reads);
+    bool WrittenSince(Watch& watch, const std::vector<Range>& reads);
     std::uint64_t Retired() const { return retiredItems.load(std::memory_order_acquire); }
     void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
     std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
@@ -87,6 +98,8 @@ private:
     void rethrowFailure();
     void report(std::chrono::steady_clock::time_point now);
     void countWrites(const std::vector<Range>& writes, bool added);
+    void releaseWatch(Watch& watch);
+    void unpinWatch(Watch& watch);
 
     std::mutex mutex;
     std::condition_variable wake;
@@ -94,6 +107,9 @@ private:
     std::deque<Item> items;
     std::vector<std::pair<Range, std::uint32_t>> queuedWrites;
     std::vector<Item> retired;
+    std::uint64_t reclaimedItems = 0;
+    std::size_t watchers = 0;
+    std::atomic<std::uint64_t> countedLookups{0};
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
     std::atomic<std::uint64_t> retiredItems{0};

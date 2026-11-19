@@ -147,6 +147,13 @@ void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, 
     if ((value & mask) != 0) throw std::runtime_error(zeroMessage(offset, value, name));
 }
 
+bool viewportProgrammed(const Registers& registers) {
+    for (std::uint32_t word = 0; word < 6; ++word) {
+        if (read(registers, 0x10f + word) != (word % 2 == 0 ? 0x3f800000u : 0u)) return true;
+    }
+    return false;
+}
+
 std::string vteMessage(std::uint32_t viewportControl) {
     std::ostringstream message;
     message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms, or 0 for positions without a viewport transform; other combinations are unsupported";
@@ -1463,7 +1470,10 @@ std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& que
     return DepthRenderControl{address & ~std::uint64_t{65535u}, 1u << ((zInfo->second >> 2u) & 3u), control->second};
 }
 
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants) {
+namespace {
+
+template <typename TReadConstant>
+ReversedBlend translateReversedBlendWith(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, TReadConstant&& readConstant) {
     const auto refuse = [&](const char* reason) {
         char text[320];
         std::snprintf(text, sizeof(text), "AGC graphics: blending into a color target with a reversed component order %s (CB_BLEND_CONTROL 0x%08x, component mapping 0x%02x, VkFormat %d)", reason, blendControl, componentMapping, static_cast<int>(format));
@@ -1498,7 +1508,10 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     for (const auto factor : color) {
         if (factor == VK_BLEND_FACTOR_DST_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA || factor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE) refuse("with a factor of the destination alpha in the color equation, which the target keeps in its first channel, is not implemented");
     }
-    const auto guestConstant = [&](std::uint32_t component) { return format == VK_FORMAT_R16G16B16A16_SFLOAT ? constants[component] : std::clamp(constants[component], 0.0f, 1.0f); };
+    const auto guestConstant = [&](std::uint32_t component) {
+        const float value = readConstant(component);
+        return format == VK_FORMAT_R16G16B16A16_SFLOAT ? value : std::clamp(value, 0.0f, 1.0f);
+    };
     const auto fixedValue = [&](VkBlendFactor factor, std::uint32_t component) -> std::optional<float> {
         switch (factor) {
             case VK_BLEND_FACTOR_ZERO: return 0.0f;
@@ -1559,6 +1572,12 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     result.blend.srcAlphaBlendFactor = factors[2];
     result.blend.dstAlphaBlendFactor = factors[3];
     return result;
+}
+
+}
+
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants) {
+    return translateReversedBlendWith(blendControl, componentMapping, format, forceDestinationAlphaOne, [&](std::uint32_t component) { return constants[component]; });
 }
 
 void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled) {
@@ -1920,7 +1939,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
     bool collapsed = false;
-    if (viewportControl == 0u) {
+    if (viewportControl == 0u && !viewportProgrammed(cx)) {
         result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
     } else {
         const auto xs = readFloat(cx, 0x10f);
@@ -2017,9 +2036,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
             const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
-            for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
+            const auto recordBlendConstant = [&](std::uint32_t channel, float value) {
+                Require((requiredBlendMask & (1u << channel)) == 0 || requiredBlendConstants[channel] == value, "color targets require conflicting blend constants after component swap");
+                requiredBlendConstants[channel] = value;
+                requiredBlendMask |= 1u << channel;
+            };
             if (reversed) {
-                const auto translated = TranslateReversedBlend(blend, mapping, color.format, opaqueDestination, result.blendConstants);
+                const auto translated = translateReversedBlendWith(blend, mapping, color.format, opaqueDestination, [&](std::uint32_t component) { return readFloat(cx, 0x105 + component); });
                 state.srcColorBlendFactor = translated.blend.srcColorBlendFactor;
                 state.dstColorBlendFactor = translated.blend.dstColorBlendFactor;
                 state.colorBlendOp = translated.blend.colorBlendOp;
@@ -2029,9 +2052,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if (translated.shaderCode != 0u) result.reversedBlend = translated.shaderCode;
                 for (std::uint32_t i = 0; i < 4; ++i) {
                     if ((translated.constantMask & (1u << i)) == 0u || (state.colorWriteMask & (1u << i)) == 0u) continue;
-                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == translated.constants[i], "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[i] = translated.constants[i];
-                    requiredBlendMask |= 1u << i;
+                    recordBlendConstant(i, translated.constants[i]);
                 }
             } else {
                 state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
@@ -2057,21 +2078,14 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 const auto factorsCount = [](VkBlendOp op) { return op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX; };
                 const bool colorReadsAlpha = (state.colorWriteMask & 7u) != 0 && factorsCount(state.colorBlendOp) && (constantAlpha(state.srcColorBlendFactor) || constantAlpha(state.dstColorBlendFactor));
                 const bool alphaReadsAlpha = (state.colorWriteMask & 8u) != 0 && factorsCount(state.alphaBlendOp) && (anyConstant(state.srcAlphaBlendFactor) || anyConstant(state.dstAlphaBlendFactor));
-                if (colorReadsAlpha || alphaReadsAlpha) {
-                    const auto value = result.blendConstants[3];
-                    Require((requiredBlendMask & 8u) == 0 || requiredBlendConstants[3] == value, "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[3] = value;
-                    requiredBlendMask |= 8u;
-                }
+                if (colorReadsAlpha || alphaReadsAlpha) recordBlendConstant(3u, readFloat(cx, 0x105 + 3u));
             }
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
-            if ((mapping == 0xe4u || mapping == 0xc6u) && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
+            if (!reversed && mapping != 0xecu && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
                 for (std::uint32_t i = 0; i < 3; ++i) {
                     if ((state.colorWriteMask & (1u << i)) == 0) continue;
-                    const auto value = result.blendConstants[(mapping >> (2u * i)) & 3u];
-                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == value, "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[i] = value;
-                    requiredBlendMask |= 1u << i;
+                    const std::uint32_t sourceChannel = (mapping == 0xe4u || mapping == 0xc6u) ? ((mapping >> (2u * i)) & 3u) : i;
+                    recordBlendConstant(i, readFloat(cx, 0x105 + sourceChannel));
                 }
             }
             if (mapping == 0xecu) {
@@ -2709,7 +2723,7 @@ bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTa
     }
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
-    const bool viewportCovers = viewportControl == 0u || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
+    const bool viewportCovers = (viewportControl == 0u && !viewportProgrammed(cx)) || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
     const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= extent.width && covered.extent.height >= extent.height;
     return viewportCovers && scissorCovers;
 }
@@ -2961,7 +2975,7 @@ bool PixelProgramSkipped(const QueueState& queue) {
     if (targetMask == cx.end() || shaderMask == cx.end() || shaderControl == cx.end()) return false;
     const auto alphaToMask = find(cx, 0x2dc);
     if (alphaToMask != cx.end() && (alphaToMask->second & 1u) != 0) return false;
-    return (targetMask->second & shaderMask->second) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
+    return ColorWriteMask(cx) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
 }
 
 std::string NullPixelProgramRejection(const QueueState& queue) {
