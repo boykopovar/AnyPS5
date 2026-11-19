@@ -3041,7 +3041,8 @@ void verifyUnsetFormatImageMaterialization() {
     expectInvalidType(15u, "an unimplemented TYPE 15 T# with an unset format was accepted as a null image");
 }
 
-void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2, bool faultBuffer = true) {
+template <class TAction>
+void WithDescriptorWebRequest(const std::vector<std::uint32_t>& code, std::uint32_t address, TAction action) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
     constexpr std::uint32_t Type2D = 9;
@@ -3079,13 +3080,33 @@ void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t 
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
-    const auto plan = GetResourcePlan(request);
-    require(plan->info.usesFaultBuffer == faultBuffer && plan->info.images.size() >= 2u && std::ranges::count_if(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) >= optionalImages, message);
-    AgcDriver::ShaderMemory memory({});
-    const auto capture = memory.Capture(request);
-    const auto memoryRegions = memory.Regions();
-    request.context.memory = memoryRegions;
-    static_cast<void>(Recompile(request, *capture));
+    action(request);
+}
+
+void RefuseDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* expected, const char* message) {
+    expectFailure([&] {
+        WithDescriptorWebRequest(code, address, [](ShaderRecompiler::RecompileRequest& request) {
+            static_cast<void>(ShaderRecompiler::GetResourcePlan(request));
+            AgcDriver::ShaderMemory memory({});
+            const auto capture = memory.Capture(request);
+            const auto memoryRegions = memory.Regions();
+            request.context.memory = memoryRegions;
+            static_cast<void>(ShaderRecompiler::Recompile(request, *capture));
+        });
+    }, expected, message);
+}
+
+void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2, bool faultBuffer = true) {
+    using namespace ShaderRecompiler;
+    WithDescriptorWebRequest(code, address, [&](RecompileRequest& request) {
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.usesFaultBuffer == faultBuffer && plan->info.images.size() >= 2u && std::ranges::count_if(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) >= optionalImages, message);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
+        static_cast<void>(Recompile(request, *capture));
+    });
 }
 
 
@@ -3114,6 +3135,26 @@ void verifyDescriptorWebDeepDwordChain() {
         0x80080881u, 0x80080881u, 0x80080881u, 0x80080881u,
         0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     CompileDescriptorWeb(code, 0x27000u, "descriptor web deep dword chain: a uniform dword chain longer than the phi search bound was folded into a faulting arm instead of rebuilt", 0, false);
+}
+
+void verifyDescriptorWebLaneInvariantDword() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
+        0xf40c0700u, 0xfa000060u, 0xbf8cc07fu, 0x7d880090u, 0x7e14021cu, 0x02041408u, 0xbf068010u, 0xbf85000au,
+        0x7d880088u, 0x7e1c0220u, 0x020c1c0cu, 0x7e1e0221u, 0x020e1e0du, 0x7e200222u, 0x0210200eu, 0x7e220223u,
+        0x0212220fu, 0xbf820004u, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu, 0x7e100502u, 0x7e180506u,
+        0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
+        0xbf810000u};
+    CompileDescriptorWeb(code, 0x28000u, "descriptor web lane-invariant dword: an SRT dword beside a per-lane selection was not replicated into both arms");
+}
+
+void verifyDescriptorWebLaneVariantRefusal() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
+        0xf40c0700u, 0xfa000060u, 0xbf8cc07fu, 0x7d880090u, 0x7e14021cu, 0x02041408u, 0x7e100502u, 0xbf068010u,
+        0xbf850003u, 0xd7650003u, 0x000100c1u, 0x7e120503u, 0xbf820002u, 0xd7650004u, 0x000100c1u, 0x7e120504u,
+        0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    RefuseDescriptorWeb(code, 0x29000u, "GetImageResource dword 0 is not a valid runtime value", "descriptor web lane variant: a descriptor with a per-lane dword that is not the selection was folded instead of refused");
 }
 
 void verifyDescriptorWebSelectOrder() {
@@ -13904,6 +13945,8 @@ int main(int argc, char** argv) {
         verifyDescriptorWebTexelFold();
         verifyDescriptorWebDeepDwordChain();
         verifyDescriptorWebSelectOrder();
+        verifyDescriptorWebLaneInvariantDword();
+        verifyDescriptorWebLaneVariantRefusal();
         verifySignedMinimum();
         verifyMayEvaluate();
         verifyMayDecideSharedConditions();
