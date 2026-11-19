@@ -31,7 +31,8 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const { data } = await github.rest.pulls.list({ owner, repo, state: 'open', base: 'main', head: `${owner}:sync/upstream` });
+            const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+            const data = pulls.filter(pr => pr.head.repo?.full_name === `${owner}/${repo}` && (pr.head.ref === 'sync/upstream' || pr.title.startsWith('chore(sync): merge upstream ')));
             core.setOutput('exists', String(data.length > 0));
             if (data.length) core.notice(`Review the existing upstream sync before generating another: ${data[0].html_url}`);
       - name: Merge upstream and refresh source metadata
