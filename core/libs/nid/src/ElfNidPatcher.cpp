@@ -385,6 +385,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
     std::uint32_t sysvHashLink = 0u;
     std::size_t versymOffset = 0u, versymSize = 0u;
+    std::uint32_t versymLink = 0u;
     bool hasDynamic = false;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t dynSymSectionLink = 0u;
@@ -418,6 +419,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtGnuVersym) {
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
             versymSize = static_cast<std::size_t>(shdr.sh_size);
+            versymLink = shdr.sh_link;
         }
         if (shdr.sh_type == kShtGnuVerdef)
             throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
@@ -441,6 +443,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
     if (versymOffset != 0u) {
+        if (versymLink != dynSymSectionIndex)
+            throw std::runtime_error("invalid ELF version symbol table link");
         RequireElfRange(elf, versymOffset, versymSize, "versym");
         if (versymSize < symCount * sizeof(std::uint16_t))
             throw std::runtime_error("invalid ELF version symbol table size");

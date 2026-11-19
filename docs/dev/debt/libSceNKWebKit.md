@@ -110,6 +110,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Inspector controls and state](../../../core/libs/prx/libSceNKWebKit/src/Inspector.cpp) (libSceNKWebKit) - WKPageGetInspector lazily creates and returns the page's host `WKInspector` instance, while WKInspectorAttach, WKInspectorClose, WKInspectorConnect, WKInspectorDetach, WKInspectorHide, WKInspectorShow, WKInspectorShowConsole, WKInspectorShowResources, WKInspectorToggleElementSelection, WKInspectorTogglePageProfiling and the WKInspectorIs* queries update and read it in memory; frontend window rendering, profiler integration and page creation exports remain unmodeled.
 - [Connection message posting and client configuration](../../../core/libs/prx/libSceNKWebKit/src/Connection.cpp) (libSceNKWebKit) - `WKConnectionPostMessage` and `WKConnectionSetConnectionClient` deliver message payloads and configure connection clients on host connection instances in memory; process IPC transmission is unmodeled.
 - [Mock media device testing](../../../core/libs/prx/libSceNKWebKit/src/MockMediaDevices.cpp) (libSceNKWebKit) - `WKClearMockMediaDevices`, `WKRemoveMockMediaDevice` and `WKResetMockMediaDevices` manage test mock media device state in host memory; hardware media capture pipeline integration is unmodeled.
+- [View scale factors, drawing and fullscreen state](../../../core/libs/prx/libSceNKWebKit/src/View.cpp) (libSceNKWebKit) - WKViewGetPageScaleFactor, WKViewSetPageScaleFactor, WKViewGetViewScaleFactor, WKViewSetViewScaleFactor, WKViewSetDrawsBackground, WKViewIsFullScreen, WKViewRequestExitFullScreen, WKViewWillEnterFullScreen, WKViewDidEnterFullScreen, WKViewWillExitFullScreen and WKViewDidExitFullScreen manage view scale factors, background drawing and fullscreen transitions in host memory; compositor integration is unmodeled.
 - [Process pools](../../../core/libs/prx/libSceNKWebKit/src/Context.cpp) (libSceNKWebKit) - `WKContextCreate`, `WKContextCreateWithConfiguration` and `WKContextCreateWithInjectedBundlePath` create a `ProcessPool` and retain its configuration; `WKContextGetUsesSingleWebProcess` and `WKContextSetUsesSingleWebProcess` inspect and store the single-process flag. Subprocess spawning and IPC are unmodeled; console execution and ABI are unverified.
 - [Process pool context settings and maintenance](../../../core/libs/prx/libSceNKWebKit/src/ContextSettings.cpp) (libSceNKWebKit) - WKContextGetCacheModel, WKContextSetCacheModel, WKContextGetAccessibilityEnabled, WKContextSetAccessibilityEnabled, WKContextSetAlwaysUsesComplexTextCodePath, WKContextSetMemoryCacheDisabled, WKContextSetHTTPPipeliningEnabled, WKContextSetShouldUseFontSmoothing, WKContextJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptGarbageCollectorTimerEnabled, WKContextGarbageCollectJavaScriptObjects and WKContextSetStorageAccessAPIEnabled inspect and configure process pool settings and maintenance in host memory. Subprocess IPC and console execution are unmodeled.
 - [Process pool process termination and visited links](../../../core/libs/prx/libSceNKWebKit/src/ContextTermination.cpp) (libSceNKWebKit) - `WKContextDisableProcessTermination`, `WKContextEnableProcessTermination`, `WKContextAddVisitedLink` and `WKContextClearVisitedLinks` control process termination policy and visited link cache on the process pool in host memory.
@@ -657,11 +658,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewAccessibilityHitTest` | `9XouNrl+xF0` |
 | `WKViewAccessibilityRootObject` | `7R83-mIE4ik` |
 | `WKViewCreate` | `HvpAPSloiLA` |
-| `WKViewDidEnterFullScreen` | `8Ji9q7l-y1I` |
-| `WKViewDidExitFullScreen` | `5mppAJEHox0` |
 | `WKViewGetPunchHoles` | `3MWI7gn4dfY` |
-| `WKViewIsFullScreen` | `NsRv+sKcZ6Y` |
-| `WKViewRequestExitFullScreen` | `CPpDO+iVEQY` |
 | `WKViewSetActive` | `mZQNSovP058` |
 | `WKViewSetFocus` | `eYcl-oTV7Ng` |
 | `WKViewSetSize` | `1DkPR0np8Xc` |
@@ -670,8 +667,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewSetViewPopupMenuClient` | `T-iLbWI4WfU` |
 | `WKViewSetVisible` | `8j9ZB-vGetc` |
 | `WKViewValueChangedForPopupMenu` | `rr8g0GkA+GE` |
-| `WKViewWillEnterFullScreen` | `Qv917g7goow` |
-| `WKViewWillExitFullScreen` | `6o4itIbqsY8` |
 | `WKWebsiteDataStoreClearAppBoundSession` | `YujMtLJPOok` |
 | `WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess` | `Mrp3OVQ9jI4` |
 | `WKWebsiteDataStoreCreateNonPersistentDataStore` | `hzBAQGt4hMw` |
@@ -5932,7 +5927,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Functional
 
 - [EmptyFrameLoaderClient load lifecycle callbacks](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) (libSceNKWebKit) - six wrappers follow the empty `void` bodies in pinned [EmptyClients.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp#L679-L727) for `dispatchWillSendRequest`, `dispatchDidReceiveAuthenticationChallenge`, `dispatchDidReceiveResponse`, `dispatchDidReceiveContentLength`, `dispatchDidFinishLoading` and `dispatchDidFailLoading`. Their console ABI has not been measured; the wrappers ignore arguments, and this source-derived behavior is not console parity evidence.
-- [HitTestResult getters](../../../core/libs/prx/libSceNKWebKit/src/HitTestResult.cpp) (libSceNKWebKit) - WKHitTestResult* getters return image/link/media/PDF URLs, link text, bounding box and content editable flag from the host object.
 
 - [WTF URL scalar helpers](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - The device WebKit revision and guest ABI are unmeasured. The port assumes a 16-byte release [StringView](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h), follows the published [UUID](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/UUID.cpp), [URL](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) and [URLParser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URLParser.cpp) behavior, and uses a synchronized map for default-port test overrides. Null override keys and nonempty views with null storage throw.
 - [WTF URL scheme and form exports](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - console behavior and ABI are unverified. The historical [URLParser.cpp](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/URLParser.cpp) matches the String-reference scheme signature and form exports. The return layouts use the [historical Optional](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/Optional.h) engagement flag at offset 0 and String at offset 8, and the existing release Vector layout for pairs of Strings. Null backing storage for nonempty views, malformed vector metadata and string lengths outside the supported range throw.

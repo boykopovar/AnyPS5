@@ -320,6 +320,11 @@ if(BUILD_TESTING)
     target_include_directories(pad_input_script_tests PRIVATE core/libs)
     add_test(NAME pad_input_script COMMAND pad_input_script_tests)
     set_tests_properties(pad_input_script PROPERTIES TIMEOUT 20)
+    set(anyps5HostTestTemp ${CMAKE_BINARY_DIR}/test-temp)
+    file(MAKE_DIRECTORY ${anyps5HostTestTemp})
+    set_property(TEST shader_cache_file_read pad_command_file pad_recording pad_input_script APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION
+        "TMPDIR=set:${anyps5HostTestTemp};TEMP=set:${anyps5HostTestTemp};TMP=set:${anyps5HostTestTemp}")
     if(Python3_Interpreter_FOUND)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
@@ -574,11 +579,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
             SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)
         add_test(NAME check_skips_privilege COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CheckSkipsTests)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CheckSkipsTests SymlinkPrivilegeLimitationTests)
         add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
         add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests EnvironmentLoaderRetentionTests)
         add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
         set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
@@ -1043,6 +1048,7 @@ set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_HVF ON CACHE BOOL "" FORCE)
+set(FT_ENABLE_ERROR_STRINGS ON CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     add_subdirectory(3rdparty/freetype EXCLUDE_FROM_ALL)
