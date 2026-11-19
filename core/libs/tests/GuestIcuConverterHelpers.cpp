@@ -28,13 +28,40 @@ void Require(bool condition, const char* message) {
 }
 
 template<class TCall>
-void RequiresInvalidArgument(TCall call) {
+void RequiresInvalidArgument(TCall call, const char* message = "null normalization argument must throw") {
     try {
         call();
     } catch (const std::invalid_argument&) {
         return;
     }
-    Require(false, "null normalization argument must throw");
+    Require(false, message);
+}
+
+void DefaultConverterLifecycle() {
+    u_flushDefaultConverter_nid_postfix();
+    u_releaseDefaultConverter_nid_postfix(nullptr);
+    RequiresInvalidArgument([] { u_getDefaultConverter_nid_postfix(nullptr); }, "null acquire status must throw");
+    std::uint64_t foreign = 0;
+    RequiresInvalidArgument([&] { u_releaseDefaultConverter_nid_postfix(reinterpret_cast<UConverter*>(&foreign)); },
+                            "release must reject a pointer that acquire did not issue");
+
+    std::int32_t status = 0;
+    auto* first = u_getDefaultConverter_nid_postfix(&status);
+    Require(first && status <= 0, "acquire returns a live converter");
+    u_releaseDefaultConverter_nid_postfix(first);
+    RequiresInvalidArgument([&] { u_releaseDefaultConverter_nid_postfix(first); }, "already returned converter must be rejected");
+
+    status = 1;
+    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "incoming failure leaves the cache untouched");
+    status = 0;
+    auto* reused = u_getDefaultConverter_nid_postfix(&status);
+    Require(reused == first && status <= 0, "get, release, get reuses the cached converter");
+    auto* second = u_getDefaultConverter_nid_postfix(&status);
+    Require(second && second != reused && status <= 0, "checked-out converters are distinct");
+    u_releaseDefaultConverter_nid_postfix(second);
+    u_flushDefaultConverter_nid_postfix();
+    u_releaseDefaultConverter_nid_postfix(reused);
+    u_flushDefaultConverter_nid_postfix();
 }
 
 char Ebcdic(unsigned char value) {
@@ -253,6 +280,7 @@ void SignatureGuestPointers() {
 }
 
 int main() {
+    DefaultConverterLifecycle();
     NameMatching();
     Signatures();
     SignatureGuestPointers();
