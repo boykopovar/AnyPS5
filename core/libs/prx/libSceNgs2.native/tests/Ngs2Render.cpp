@@ -1765,7 +1765,9 @@ static void TestMasteringLimiter() {
         pcm[Grain + i] = static_cast<std::int16_t>(24576.0 * std::sin(i * std::numbers::pi / 16.0));
     }
 
-    const auto render = [&](bool enabled) {
+    std::fill_n(pcm.begin() + 3 * Grain, Grain, 24576);
+
+    const auto render = [&](float configuredThreshold, bool resetSetup = false) {
         const auto system = CreateSystem();
         const auto master = Mastering(system, channels);
         const auto source = Sampler(system, pcm, 0);
@@ -1774,12 +1776,18 @@ static void TestMasteringLimiter() {
         Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
         Patch(source, master);
         Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
-        if (enabled) Require(ControlMasteringEffect(master, limiter, 16, 1, std::bit_cast<std::uint32_t>(threshold)) == SCE_NGS2_OK);
+        Require(ControlMasteringEffect(master, limiter, 16, 1, std::bit_cast<std::uint32_t>(configuredThreshold)) == SCE_NGS2_OK);
 
         std::vector<float> output(pcm.size() * channels);
         for (std::size_t grain = 0; grain < numGrains; grain++) {
-            if (enabled && grain == 2) Require(ControlMasteringEffect(master, limiter, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
-            if (enabled && grain == 3) Require(ControlMasteringEffect(master, limiter, 16, 0, 0) == SCE_NGS2_OK);
+            if (grain == 3) {
+                if (resetSetup) {
+                    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, channels, 0});
+                    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+                } else {
+                    Require(ControlMasteringEffect(master, limiter, 16, 1, 0x7fc00000) == SCE_NGS2_OK);
+                }
+            }
             const Ngs2RenderBufferInfo info{output.data() + grain * Grain * channels, Grain * channels * sizeof(float),
                 SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
             Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
@@ -1788,8 +1796,15 @@ static void TestMasteringLimiter() {
         return output;
     };
 
-    const auto dry = render(false);
-    const auto wet = render(true);
+    const auto dry = render(NAN);
+    const auto wet = render(threshold);
+    const auto afterSetup = render(threshold, true);
+    const auto zero = render(0.0f);
+    Require(zero != dry);
+    Require(render(-1.0f) == zero);
+    Require(render(-INFINITY) == zero);
+    Require(render(2.0f) == render(1.0f));
+    Require(render(INFINITY) == render(1.0f));
     double gain = 1.0;
     const std::size_t activeSamples = (numGrains - 1) * Grain;
     for (std::size_t start = 0; start < activeSamples; start += 32) {
@@ -1809,6 +1824,8 @@ static void TestMasteringLimiter() {
         }
         if (std::abs(gain - target) <= 0.01) gain = target;
     }
+    Require(std::equal(afterSetup.begin(), afterSetup.begin() + activeSamples * channels, wet.begin()));
+    Require(std::equal(afterSetup.begin() + activeSamples * channels, afterSetup.end(), dry.begin() + activeSamples * channels));
     Require(std::equal(wet.begin() + activeSamples * channels, wet.end(), dry.begin() + activeSamples * channels));
 }
 
