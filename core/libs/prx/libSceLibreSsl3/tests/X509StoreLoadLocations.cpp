@@ -310,14 +310,15 @@ void TestHashedDirectory() {
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
     Require(std::filesystem::create_directories(directory));
-    const std::filesystem::path hashedFile = directory / HashedNameA;
-    WriteFile(hashedFile.string(), CertificateA);
+    AddPathAlias_nid_no_patch("/ca-test", directory.string().c_str());
+    const std::string guestDir = "/ca-test";
+    WriteFile(guestDir + "/" + HashedNameA, CertificateA);
 
     LibreSslX509Store* store = NewStore();
-    Require(X509_STORE_load_locations_nid_postfix(store, nullptr, directory.string().c_str()) == 1);
+    Require(X509_STORE_load_locations_nid_postfix(store, nullptr, guestDir.c_str()) == 1);
     Require(ObjectCount(store) == 0);
     Require(LookupCount(store) == 1);
-    Require(X509_STORE_load_locations_nid_postfix(store, nullptr, directory.string().c_str()) == 1);
+    Require(X509_STORE_load_locations_nid_postfix(store, nullptr, guestDir.c_str()) == 1);
     Require(LookupCount(store) == 1);
 
     const auto* lookups = static_cast<const LibreSslStack*>(store->lookupMethods);
