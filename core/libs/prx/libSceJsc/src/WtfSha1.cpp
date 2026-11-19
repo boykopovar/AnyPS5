@@ -32,7 +32,10 @@
 
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 
+#include "prx/libc/include/General.hpp"
+
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -136,15 +139,20 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     if (self->cursor >= BlockSize) throw std::invalid_argument("WTF::SHA1::computeHash: buffer cursor out of range");
     Finalize(*self);
 
+    Jsc::WtfAbi::SHA1Digest result{};
     for (std::size_t i = 0; i < 5; ++i) {
         std::uint32_t hashValue = self->hash[i];
         for (int j = 0; j < 4; ++j) {
-            (*digest)[4 * i + (3 - j)] = hashValue & 0xFF;
+            result[4 * i + (3 - j)] = hashValue & 0xFF;
             hashValue >>= 8;
         }
     }
 
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(digest, result.data(), result.size());
+    errno = savedErrno;
     Reset(*self);
+    if (!written) throw std::invalid_argument("WTF::SHA1::computeHash: digest is not writable");
 }
 
 }
