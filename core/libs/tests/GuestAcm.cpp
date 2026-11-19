@@ -93,17 +93,21 @@ int main() {
     Require(sceAcmBatchWait(context1, batch1, 0) == 0);
 
     std::uint32_t batch2 = 0;
-    Require(sceAcmBatchStartBuffers(0, 0, nullptr, nullptr, &batch2) == BadContext);
-    Require(sceAcmBatchStartBuffers(999999, 0, nullptr, nullptr, &batch2) == BadContext);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, nullptr) == BadPointer);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, badError, &batch2) == BadPointer);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, &validError, &batch2) == BadPointer);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, badBatch) == BadPointer);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == 0 && batch2 != 0);
+    const AcmBatchInfo* const noInfos[1] = {nullptr};
+    Require(sceAcmBatchStartBuffers(0, 0, nullptr, nullptr, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == BadPointer && batch2 == 0);
+    Require(sceAcmBatchStartBuffers(context2, 1, nullptr, nullptr, &batch2) == BadPointer && batch2 == 0);
+    Require(sceAcmBatchStartBuffers(0, 0, noInfos, nullptr, &batch2) == BadContext);
+    Require(sceAcmBatchStartBuffers(999999, 0, noInfos, nullptr, &batch2) == BadContext);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, nullptr) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, badError, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, &validError, &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, badBatch) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, &batch2) == 0 && batch2 != 0);
     errno = 0;
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
     Require(errno == 0);
-    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, reinterpret_cast<AcmBatchError*>(0x10), &batch2) == BadPointer);
+    Require(sceAcmBatchStartBuffers(context2, 0, noInfos, reinterpret_cast<AcmBatchError*>(0x10), &batch2) == BadPointer);
     Require(errno == 0);
     Require(sceAcmBatchWait(context2, batch2, 0) == 0);
 
@@ -565,7 +569,8 @@ int main() {
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
-    Require(sceAcmBatchStartBuffers(context1, 0, nullptr, nullptr, &batch1) == BadContext);
+    const AcmBatchInfo* const noInfosAfter[1] = {nullptr};
+    Require(sceAcmBatchStartBuffers(context1, 0, noInfosAfter, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchWait(context1, batch1, 0) == BadContext);
 
     Require(sceAcmContextDestroy(context2) == 0);

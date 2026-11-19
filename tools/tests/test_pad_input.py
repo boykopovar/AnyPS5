@@ -62,6 +62,13 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(command[1:], [64, 300])
         self.assertEqual(self.queue(1001, "cross"), [command[0] + 1, 16384, 300])
 
+    def test_previous_command_size_limit_matches_runtime(self):
+        for command in (b"2000 16384 300\n", b"APS5_PAD_TIMELINE 1 2000 1\n0 1 16384\n"):
+            for length, expected in ((65536, 2001), (65537, 1000)):
+                with self.subTest(command=command, length=length):
+                    self.path.write_bytes(command.ljust(length, b" "))
+                    self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
     def test_timeline_command_is_advanced_after_clock_reset(self):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
