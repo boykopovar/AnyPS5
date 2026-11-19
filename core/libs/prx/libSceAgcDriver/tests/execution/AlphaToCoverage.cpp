@@ -1140,7 +1140,7 @@ void MutateDccDuringCopy() {
 void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "color unwatch test requires the guest write watch");
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u}) {
         const auto samples = mode >= 7u ? 8u : 4u;
         Block source(layout.Bytes() * samples);
         Block metadata(BlockBytes);
@@ -1205,14 +1205,17 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
         if (mode == 4u || mode >= 6u) {
             if (mode == 7u) fmask->data[0] = 0x55u;
             else if (mode == 6u) cmask->data[0] = 0xffu;
-            else metadata.data[0] = 0xffu;
+            else if (mode == 9u) {
+                const std::array<std::byte, 1> same{static_cast<std::byte>(metadata.data[0])};
+                AgcDriver::GuestMemory::StoreOwnBytes(metadata.Address(), same);
+            } else metadata.data[0] = 0xffu;
             bool changedRefused = false;
             try {
                 device.ColorMetadataPass(pass);
             } catch (const std::runtime_error& error) {
                 changedRefused = std::string_view(error.what()).find("writes to a resident") != std::string_view::npos;
             }
-            Require(changedRefused, "a DCC metadata write after unwatch was accepted");
+            Require(changedRefused, mode == 9u ? "a same-value DCC metadata store after unwatch was accepted" : "a DCC metadata write after unwatch was accepted");
         }
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());

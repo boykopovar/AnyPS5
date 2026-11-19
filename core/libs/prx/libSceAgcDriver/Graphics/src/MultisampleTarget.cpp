@@ -977,6 +977,7 @@ private:
 
     static bool copyCurrent(const GuestMemory::UnchangedQuery& range, DccCopy& copy) {
         const auto stamp = GuestMemory::NewestStamp(range.address, range.bytes);
+        if (stamp != copy.stamp && !GuestMemory::OnlyRewatchedSince(range.address, range.bytes, copy.stamp)) return false;
         const auto epoch = GuestMemory::CollectEpoch();
         const std::array<std::uint64_t, 2> seen{epoch, GuestMemory::ForgetSerial()};
         if (stamp == copy.stamp && epoch != 0 && (seen[1] & 1u) == 0 && copy.checked == seen) return true;
