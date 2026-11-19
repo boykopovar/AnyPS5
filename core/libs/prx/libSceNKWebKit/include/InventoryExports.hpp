@@ -2243,7 +2243,6 @@ int APS5_VABI _ZN7WebCore15XPathExpression8evaluateERNS_4NodeEtPNS_11XPathResult
 int APS5_VABI _ZN7WebCore15XPathExpressionD1Ev();
 int APS5_VABI _ZN7WebCore15XPathExpressionD2Ev();
 int APS5_VABI _ZN7WebCore15XPathNSResolverC2Ev();
-int APS5_VABI _ZN7WebCore15XPathNSResolverD0Ev();
 int APS5_VABI _ZN7WebCore15addToBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectENS0_7JSValueE();
 int APS5_VABI _ZN7WebCore15clearBackingMapERN3JSC14JSGlobalObjectERNS0_8JSObjectE();
 int APS5_VABI _ZN7WebCore15clearBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectE();
@@ -3287,8 +3286,6 @@ int APS5_VABI _ZN7WebCore27CSSComputedStyleDeclaration5derefEv();
 int APS5_VABI _ZN7WebCore27CSSComputedStyleDeclaration6createERNS_7ElementEbN3WTF10StringViewE();
 int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientC2ERKS0_();
 int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientC2Ev();
-int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientD0Ev();
-int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientD1Ev();
 int APS5_VABI _ZN7WebCore27DeviceOrientationClientMockC1Ev();
 int APS5_VABI _ZN7WebCore27DeviceOrientationClientMockC2Ev();
 int APS5_VABI _ZN7WebCore27DocumentTimelinesController16resumeAnimationsEv();

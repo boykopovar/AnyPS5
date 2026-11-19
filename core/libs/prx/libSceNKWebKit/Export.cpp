@@ -17133,10 +17133,6 @@ int APS5_VABI _ZN7WebCore15XPathNSResolverC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15XPathNSResolverD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15addToBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectENS0_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -20933,14 +20929,6 @@ int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientC2ERKS0_() {
 }
 
 int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
