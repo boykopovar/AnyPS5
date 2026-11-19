@@ -10,6 +10,17 @@ The online converter can save Linux output as an uncompressed folder in supporte
 
 Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
 
+## Verify a release download
+
+Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
+
+- Windows PowerShell: `Get-FileHash -Algorithm SHA256 -LiteralPath "path\to\downloaded-file"`
+- Linux: `sha256sum -- "path/to/downloaded-file"`
+
+Compare the hash with the part after `sha256:`, ignoring letter case. If it differs, discard the file. A matching hash confirms that the file matches the published asset.
+
+If a browser or antivirus blocks the download, leave it blocked. Report the release link, file name, exact warning and the browser or antivirus that showed it. Include the file size in bytes and the hash if the file is available.
+
 ## Input and conversion
 
 The relinker does not extract or decrypt package files. It needs an extracted, decrypted ELF executable and its bundled modules.
