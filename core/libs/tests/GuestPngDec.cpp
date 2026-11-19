@@ -657,6 +657,40 @@ int main() {
     Require(opaquePaletteImage == std::vector<std::uint8_t>({192, 176, 160, 255, 16, 32, 48, 255, 16, 32, 48, 255, 192, 176, 160, 255}));
     Require(info.color_space == 4 && info.bit_depth == 1 && info.image_flag == 1);
 
+    constexpr std::size_t paletteSize = 256 * 4;
+    std::vector<std::uint8_t> indexedImage(paletteSize + 10, 0xCC);
+    decode = DecodeParam(palettePng, indexedImage);
+    decode.pixel_format = 132;
+    decode.image_mem_size = paletteSize + 4;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(info.color_space == 4 && info.bit_depth == 2 && info.image_flag == 2);
+    Require(std::equal(paletteImage.begin(), paletteImage.end(), indexedImage.begin()));
+    Require(std::all_of(indexedImage.begin() + paletteImage.size(), indexedImage.begin() + paletteSize,
+                        [](std::uint8_t byte) { return byte == 0; }));
+    const std::uint8_t tightlyPacked[] = {0, 1, 2, 3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
+    Require(std::equal(std::begin(tightlyPacked), std::end(tightlyPacked), indexedImage.begin() + paletteSize));
+    --decode.image_mem_size;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidSize);
+
+    std::fill(indexedImage.begin(), indexedImage.end(), 0xCC);
+    decode = DecodeParam(lowDepthPalettePng, indexedImage);
+    decode.pixel_format = 132;
+    decode.image_pitch = 5;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(info.color_space == 4 && info.bit_depth == 1 && info.image_flag == 1);
+    const std::uint8_t indexedPalette[] = {16, 32, 48, 255, 192, 176, 160, 255};
+    Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+    const std::uint8_t paddedIndices[] = {1, 0, 0xCC, 0xCC, 0xCC, 0, 1, 0xCC, 0xCC, 0xCC};
+    Require(std::equal(std::begin(paddedIndices), std::end(paddedIndices), indexedImage.begin() + paletteSize));
+    --decode.image_mem_size;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+    decode.image_pitch = 1;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+
+    decode = DecodeParam(rgbPng, indexedImage);
+    decode.pixel_format = 132;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+
     const std::vector<std::uint8_t> gray16Png(GRAY16, GRAY16 + sizeof(GRAY16));
     std::vector<std::uint8_t> gray16Image(2 * 4, 0xCC);
     decode = DecodeParam(gray16Png, gray16Image);

@@ -293,7 +293,7 @@ jobs:
     needs: eligibility
     if: ${{ needs.eligibility.outputs.relinker == 'true' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
       fail-fast: false
       matrix:
