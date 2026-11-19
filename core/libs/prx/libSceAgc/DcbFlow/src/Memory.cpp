@@ -2,6 +2,7 @@
 
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -10,18 +11,7 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcDcbAcquireMem(CommandBuffer* buf, std::uint8_t engine, std::uint32_t cbDbOp, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles) {
-    Agc::Command::CheckBits(engine, 1, __func__);
-    Agc::Command::CheckBits(cbDbOp, 0x7fffffffu, __func__);
-    Agc::Command::CheckBits(gcrControl, 0x7ffffu, __func__);
-    // The range only scopes cache maintenance, so round it outward to the 256-byte granularity the
-    // packet encodes instead of rejecting unaligned ranges.
-    const auto requested = reinterpret_cast<std::uintptr_t>(base);
-    auto address = requested & ~static_cast<std::uintptr_t>(0xffu);
-    const auto wholeAddressSpace = sizeBytes == 0xffffffffffffffffull || (address >> 40u) != 0 || sizeBytes > (1ull << 40u);
-    if (wholeAddressSpace) address = 0;
-    else sizeBytes = (sizeBytes + (requested - address) + 0xffu) & ~0xffull;
-    Agc::Command::Require(pollCycles / 40u <= 0xffffu, __func__, "acquire poll interval overflow");
-    return Agc::Command::Emit(buf, 0x58u, {(static_cast<std::uint32_t>(engine) << 31u) | cbDbOp, wholeAddressSpace ? 0u : static_cast<std::uint32_t>(sizeBytes >> 8u), 0, static_cast<std::uint32_t>(address >> 8u), 0, pollCycles / 40u, gcrControl}, __func__);
+    return Agc::Command::WriteAcquireMem(buf, engine, cbDbOp, gcrControl, base, sizeBytes, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbAcquireMemGetSize(void) {
@@ -44,8 +34,8 @@ std::uint32_t APS5_VABI sceAgcDcbDmaDataGetSize() {
     return 28;
 }
 
-std::uint32_t* APS5_VABI sceAgcDcbAtomicMem(CommandBuffer* buf, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
-    return Agc::Command::WriteAtomicMem(buf, atomicOp, command, cachePolicy, address, srcData, compareData, loopInterval, __func__);
+std::uint32_t* APS5_VABI sceAgcDcbAtomicMem(CommandBuffer* buf, std::uint8_t engine, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
+    return Agc::Command::WriteAtomicMem(buf, engine, atomicOp, command, cachePolicy, reinterpret_cast<std::uintptr_t>(address), srcData, compareData, loopInterval, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbAtomicMemGetSize() {

@@ -100,10 +100,27 @@ void testVariant(const Variant& variant) {
     check(nop == nopBefore, "patch of another packet modified it");
 }
 
+void testAddressAlignment() {
+    constexpr std::uint64_t Misaligned = Address + 2;
+    Packet graphics;
+    auto* written = sceAgcDcbWriteData(&graphics.buffer, 5, 1, Address, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
+    const auto before = graphics.words;
+    expectFailure([&] { sceAgcWriteDataPatchSetAddressOrOffset(written, Misaligned); });
+    check(graphics.words == before, "a rejected misaligned graphics address patch modified the packet");
+
+    Packet compute;
+    auto* computed = sceAgcAcbWriteData(&compute.buffer, 5, 1, Address, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
+    check(sceAgcAsyncWriteDataPatchSetAddressOrOffset(computed, Misaligned) == 0, "compute address patch rejected a misaligned address the emitter accepts");
+    Packet expected;
+    sceAgcAcbWriteData(&expected.buffer, 5, 1, Misaligned, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
+    check(compute.words == expected.words, "compute address patch does not match a packet built with that address");
+}
+
 }
 
 int main() {
     try {
+        testAddressAlignment();
         testVariant({sceAgcDcbWriteData, sceAgcWriteDataPatchSetAddressOrOffset, sceAgcWriteDataPatchSetDst, sceAgcWriteDataPatchSetCachePolicy, 0x1f});
         testVariant({sceAgcAcbWriteData, sceAgcAsyncWriteDataPatchSetAddressOrOffset, sceAgcAsyncWriteDataPatchSetDst, sceAgcAsyncWriteDataPatchSetCachePolicy, 0xf});
         std::puts("AGC write data patch tests passed");

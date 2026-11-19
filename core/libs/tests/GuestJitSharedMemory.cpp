@@ -141,6 +141,7 @@ void InvalidArgumentsAreRejected() {
     Require(sceKernelJitCreateSharedMemory(nullptr, Size + 0x2000, Read | Write | Execute, &fd) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelJitCreateSharedMemory(nullptr, Size, 0x10, &fd) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelJitCreateSharedMemory(nullptr, Size, Read | Write | Execute, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelJitCreateSharedMemory(nullptr, Size, Read | Write | Execute, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(fd == -1);
 
     fd = Create(nullptr, Read | Execute);
@@ -149,11 +150,20 @@ void InvalidArgumentsAreRejected() {
     Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read | Write, &alias) == SCE_KERNEL_ERROR_EACCES);
     Require(sceKernelJitCreateAliasOfSharedMemory(fd, 0x20, &alias) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelJitCreateAliasOfSharedMemory(-1, Read, &alias) == SCE_KERNEL_ERROR_EBADF);
     Require(alias == -1);
     Require(sceKernelJitMapSharedMemory(fd, Read | Write, &address) == SCE_KERNEL_ERROR_EACCES);
     Require(sceKernelJitMapSharedMemory(fd, 0x8, &address) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelJitMapSharedMemory(fd, Read, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelJitMapSharedMemory(fd, Read, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    void* roPage = mmap_nid_postfix(nullptr, 0x4000, Read | Write, 0x1002, -1, 0);
+    Require(roPage != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    auto* roOut = static_cast<void**>(roPage);
+    *roOut = nullptr;
+    Require(mprotect_nid_postfix(roPage, 0x4000, Read) == 0);
+    Require(sceKernelJitMapSharedMemory(fd, Read, roOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(munmap_nid_postfix(roPage, 0x4000) == 0);
     Require(sceKernelJitMapSharedMemory(-1, Read, &address) == SCE_KERNEL_ERROR_EBADF);
     Require(address == nullptr);
     Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, &alias) == 0);

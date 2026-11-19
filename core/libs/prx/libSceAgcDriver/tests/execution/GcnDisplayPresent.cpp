@@ -186,15 +186,20 @@ void CheckScreenshot(const std::filesystem::path& path, const std::vector<std::b
     Require(worst <= 1, std::string(what) + ": the screenshot differs from the expected pixels by " + std::to_string(worst));
 }
 
-int Run() {
+int Run(bool fileTrigger) {
     SetEnvironment("APS5_DUMP_FRAMES", "3");
     SetEnvironment("APS5_DUMP_SCALE", "1");
     VideoOutTestEnvironment environment;
     const auto screenshots = std::filesystem::current_path() / "screenshots";
     std::filesystem::create_directories(screenshots);
     SetEnvironment("ANYPS5_SCREENSHOTS", screenshots.string());
+    const auto trigger = std::filesystem::current_path() / "screenshot.request";
+    SetEnvironment("APS5_SCREENSHOT_TRIGGER", fileTrigger ? trigger.string() : "");
 
     SDL_SetMainReady();
+#ifdef __linux__
+    SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
+#endif
     const auto noDisplay = [](const char* error) {
         if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw std::runtime_error(error);
         std::printf("skipped, no display: %s\n", error);
@@ -238,11 +243,17 @@ int Run() {
     };
     const auto takeScreenshot = [&](const AgcDriver::DisplayBuffer& buffer, const char* what) {
         const auto before = ListFiles(screenshots);
-        AgcDriver::Screenshot::Request();
+        if (fileTrigger) {
+            std::ofstream request(trigger);
+            Require(request.good(), "cannot create screenshot trigger");
+        } else {
+            AgcDriver::Screenshot::Request();
+        }
         for (int attempt = 0; attempt < 400 && ListFiles(screenshots).size() == before.size(); ++attempt) {
             present(buffer);
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
+        if (fileTrigger) Require(!std::filesystem::exists(trigger), "the native presentation did not consume its screenshot trigger");
         const auto after = ListFiles(screenshots);
         Require(after.size() == before.size() + 1u, std::string(what) + ": the screenshot was not written");
         return *std::find_if(after.begin(), after.end(), [&](const auto& path) { return std::find(before.begin(), before.end(), path) == before.end(); });
@@ -292,9 +303,10 @@ int Run() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        return Run();
+        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "trigger"), "usage: agc_driver_gcn_display_present_tests [trigger]");
+        return Run(argc == 2);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         try {
