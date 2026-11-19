@@ -50,14 +50,14 @@ jobs:
             exit 0
           fi
           git switch -c sync/upstream
-          if ! git merge --no-ff --no-commit "$upstream_sha"; then
+          if ! git merge --no-ff -m "chore(sync): merge upstream ${upstream_sha:0:12}" "$upstream_sha"; then
             git status --short
             git merge --abort
             echo 'Upstream conflicts with fork changes. Resolve a manual sync; main and the existing sync branch were not replaced.' >&2
             exit 1
           fi
           git submodule sync --recursive
-          git -c protocol.file.allow=never submodule update --init --recursive --jobs 4
+          git -c protocol.file.allow=never submodule update --init --recursive --depth 1 --jobs 4
           python3 tools/engine/sources.py --write
           UPSTREAM_SHA="$upstream_sha" python3 - <<'PY'
           import json
@@ -69,7 +69,7 @@ jobs:
           path.write_text(json.dumps(configuration, indent=2) + '\n')
           PY
           git add tools/engine/dependencies.lock tools/engine/upstream.lock
-          git commit -m "chore(sync): merge upstream ${upstream_sha:0:12}"
+          git commit -m "chore(engine): align metadata with upstream ${upstream_sha:0:12}"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
           echo "upstream=$upstream_sha" >> "$GITHUB_OUTPUT"
       - name: Verify dependency metadata and fork integration
