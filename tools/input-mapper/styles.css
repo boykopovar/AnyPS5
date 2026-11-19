@@ -98,6 +98,7 @@ input::placeholder { color: #b6b9c4; }
 .output-heading h2 { font-size: 22px; font-weight: 300; margin: 0; }
 .tag { font-size: 11px; color: #b6bcc9; white-space: nowrap; }
 .configuration-panel label { display: block; margin: 20px 0 10px; color: #d0d3db; font-size: 12px; direction: ltr; }
+#profile-title-id { width: min(100%, 32ch); }
 textarea { width: 100%; height: 340px; resize: vertical; padding: 18px; border: 1px solid #ffffff18; border-radius: 4px; background: #090b1290; color: #edf0f8; font: 14px/1.9 Consolas, ui-monospace, monospace; text-align: left; }
 .export-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
 .export-actions button { border-radius: 30px; }

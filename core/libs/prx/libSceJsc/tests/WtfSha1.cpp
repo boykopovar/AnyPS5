@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+using Jsc::WtfAbi::OptionalSHA1Digest;
+using Jsc::WtfAbi::PersistenceDecoder;
 using Jsc::WtfAbi::SHA1;
 using Jsc::WtfAbi::SHA1Digest;
 
@@ -120,6 +122,53 @@ int main() {
         for (auto byte : digest) Check(byte == 0xA5, __LINE__);
         Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(nullptr, &digest); }), __LINE__);
         Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, nullptr); }), __LINE__);
+    }
+
+    const auto encoded = Sequence(0, 25, 7, 3);
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 2, encoded.data() + encoded.size(), Make(cases[0])};
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(result.hasValue, __LINE__);
+        Check(std::memcmp(result.value.data(), encoded.data() + 2, 20) == 0, __LINE__);
+        Check(decoder.buffer == encoded.data() && decoder.bufferPosition == encoded.data() + 22, __LINE__);
+        Check(decoder.sha1.cursor == 24 && decoder.sha1.totalBytes == 24, __LINE__);
+        const std::uint8_t salt[4] = {101, 0, 0, 0};
+        Check(std::memcmp(decoder.sha1.buffer, salt, 4) == 0, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&decoder.sha1, &checksum);
+        Check(Hex(checksum) == "6FED4A05DD4D2D6D8271FAE31449335D648D60A9", __LINE__);
+    }
+
+    {
+        Case pending{InitialHash, Sequence(0, 50, 1, 0), 50, nullptr};
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 2, encoded.data() + 22, Make(pending)};
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(result.hasValue && decoder.bufferPosition == decoder.bufferEnd, __LINE__);
+        Check(decoder.sha1.cursor == 10 && decoder.sha1.totalBytes == 74, __LINE__);
+        SHA1Digest checksum;
+        _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&decoder.sha1, &checksum);
+        Check(Hex(checksum) == "32A66B256525A031D02A2F31DCC62AB1099703EF", __LINE__);
+    }
+
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data() + 6, encoded.data() + encoded.size(), Make(cases[1])};
+        const auto before = decoder;
+        const OptionalSHA1Digest result = _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder);
+        Check(!result.hasValue, __LINE__);
+        for (auto byte : result.value) Check(byte == 0, __LINE__);
+        Check(std::memcmp(&before, &decoder, sizeof(decoder)) == 0, __LINE__);
+    }
+
+    {
+        PersistenceDecoder decoder{encoded.data(), encoded.data(), encoded.data() + encoded.size(), Make(cases[0])};
+        decoder.sha1.cursor = 64;
+        const auto before = decoder;
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder); }), __LINE__);
+        Check(std::memcmp(&before, &decoder, sizeof(decoder)) == 0, __LINE__);
+        decoder.sha1.cursor = 0;
+        decoder.bufferPosition = decoder.bufferEnd + 1;
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(&decoder); }), __LINE__);
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(nullptr); }), __LINE__);
     }
     return 0;
 }
