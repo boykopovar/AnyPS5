@@ -516,6 +516,17 @@ bool APS5_VABI WKUserContentURLPatternMatchesURL(const void* urlPatternRef, cons
 std::uint32_t APS5_VABI WKUserMediaPermissionCheckGetTypeID();
 std::uint32_t APS5_VABI WKUserMediaPermissionRequestGetTypeID();
 std::uint32_t APS5_VABI WKUserScriptGetTypeID();
+void APS5_VABI WKViewDidEnterFullScreen(const void* viewRef);
+void APS5_VABI WKViewDidExitFullScreen(const void* viewRef);
+double APS5_VABI WKViewGetPageScaleFactor(const void* viewRef);
+double APS5_VABI WKViewGetViewScaleFactor(const void* viewRef);
+bool APS5_VABI WKViewIsFullScreen(const void* viewRef);
+void APS5_VABI WKViewRequestExitFullScreen(const void* viewRef);
+void APS5_VABI WKViewSetDrawsBackground(const void* viewRef, bool drawsBackground);
+void APS5_VABI WKViewSetPageScaleFactor(const void* viewRef, double scale);
+void APS5_VABI WKViewSetViewScaleFactor(const void* viewRef, double scale);
+void APS5_VABI WKViewWillEnterFullScreen(const void* viewRef);
+void APS5_VABI WKViewWillExitFullScreen(const void* viewRef);
 std::uint32_t APS5_VABI WKViewportAttributesGetTypeID();
 std::uint32_t APS5_VABI WKWebsiteDataStoreConfigurationGetTypeID();
 std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
@@ -542,6 +553,8 @@ void APS5_VABI WKContextSetAlwaysUsesComplexTextCodePath(const void* contextRef,
 void APS5_VABI WKContextSetMemoryCacheDisabled(const void* contextRef, bool disabled);
 void APS5_VABI WKContextSetHTTPPipeliningEnabled(const void* contextRef, bool enabled);
 void APS5_VABI WKContextSetShouldUseFontSmoothing(const void* contextRef, bool useFontSmoothing);
+void APS5_VABI WKContextSetPrewarmsProcessesAutomatically(const void* contextRef, bool value);
+void APS5_VABI WKContextSetFontAllowList(const void* contextRef, const void* arrayRef);
 bool APS5_VABI WKContextJavaScriptConfigurationFileEnabled(const void* contextRef);
 void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contextRef, bool enable);
 void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
