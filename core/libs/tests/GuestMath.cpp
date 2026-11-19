@@ -4729,6 +4729,20 @@ static void CheckAsinEdgeFlags() {
     }
 }
 
+static void CheckTinyInverseTrigFlags() {
+    for (const auto function : {asin_nid_postfix, atan_nid_postfix}) {
+        for (const double input : {0.0, -0.0, 0x1p-30, -0x1p-30,
+                                   std::numeric_limits<double>::denorm_min(), -std::numeric_limits<double>::denorm_min()}) {
+            const auto bits = std::bit_cast<std::uint64_t>(input);
+            const int expected = (bits << 1) == 0 ? 0 : FE_INEXACT;
+            errno = 1234;
+            std::feclearexcept(FE_ALL_EXCEPT);
+            const auto result = std::bit_cast<std::uint64_t>(function(input));
+            Require(result == bits && errno == 1234 && std::fetestexcept(FE_ALL_EXCEPT) == expected);
+        }
+    }
+}
+
 static void CheckAcosEdgeFlags() {
     for (const double input : {2.0, -2.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::quiet_NaN()}) {
         errno = 0;
@@ -5224,6 +5238,7 @@ int main() {
     CheckAsinConsoleBits();
     CheckAcosEdgeFlags();
     CheckAsinEdgeFlags();
+    CheckTinyInverseTrigFlags();
     CheckPowConsoleBits();
     CheckPowRangeFlags();
     CheckLogConsoleBits();

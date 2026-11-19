@@ -1304,6 +1304,7 @@ double APS5_VABI asin_nid_postfix(double x) {
     }
     if (ix < 0x3fe00000) {
         if (ix < 0x3e500000) {
+            if ((bits << 1) != 0) std::feraiseexcept(FE_INEXACT);
             return x;
         }
         return x + x * AsinRational(x * x);
@@ -1780,6 +1781,7 @@ double APS5_VABI atan_nid_postfix(double x) {
     }
     if (ix < 0x3fdc0000) {
         if (ix < 0x3e400000) {
+            if ((bits << 1) != 0) std::feraiseexcept(FE_INEXACT);
             return x;
         }
         id = -1;
