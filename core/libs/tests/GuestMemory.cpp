@@ -39,6 +39,7 @@
 #include <fstream>
 #include <string>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/statvfs.h>
 #include <time.h>
 #include <unistd.h>
@@ -3583,6 +3584,46 @@ static void CheckFlexibleMemorySharedBacking() {
     Require(!GuestArena::GuestArenaSharedBacking_nid_postfix(address + page * 2, page, &file, &offset) && file == -1);
 }
 
+static void CheckFlexibleMemoryFallbacks() {
+    constexpr std::size_t page = 0x4000;
+    void* mapped = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapped, page * 2, 3, 0) == 0 && mapped != nullptr);
+    const auto address = reinterpret_cast<std::uintptr_t>(mapped);
+    Require(GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address, page * 2));
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address, page * 3));
+    Require(sceKernelMunmap(address, page * 2) == 0);
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address, page));
+
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &physical) == 0);
+    void* direct = nullptr;
+    Require(sceKernelMapDirectMemory(&direct, page, 3, 0, physical, 0) == 0);
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(reinterpret_cast<std::uintptr_t>(direct), page));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(direct), page) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page) == 0);
+
+    rlimit previous{};
+    Require(getrlimit(RLIMIT_NOFILE, &previous) == 0);
+    const int lowest = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    Require(lowest >= 0);
+    close(lowest);
+    rlimit limited = previous;
+    limited.rlim_cur = static_cast<rlim_t>(lowest);
+    Require(setrlimit(RLIMIT_NOFILE, &limited) == 0);
+    void* starved = nullptr;
+    const int result = sceKernelMapFlexibleMemory(&starved, page * 2, 3, 0);
+    Require(setrlimit(RLIMIT_NOFILE, &previous) == 0);
+    Require(result == 0 && starved != nullptr);
+    auto* bytes = static_cast<volatile unsigned char*>(starved);
+    bytes[page + 7] = 0x6c;
+    Require(bytes[page + 7] == 0x6c && bytes[0] == 0);
+    int file = -1;
+    std::uint64_t offset = 0;
+    Require(!GuestArena::GuestArenaSharedBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(starved), page, &file, &offset) && file == -1);
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(reinterpret_cast<std::uintptr_t>(starved), page));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(starved), page * 2) == 0);
+}
+
 static void CheckDirectMemorySharedBackingRuns() {
     constexpr std::size_t page = 0x4000;
     std::int64_t physical = 0;
@@ -4841,6 +4882,7 @@ int main(int argc, char** argv) {
     CheckDirectMemoryBackingNeedsNoFilesystem();
     CheckDirectMemorySharedBackingRuns();
     CheckFlexibleMemorySharedBacking();
+    CheckFlexibleMemoryFallbacks();
     CheckDirectMemorySharedBacking();
     CheckVirtualQueryFindsNeighbours();
     CheckReleaseFindsEveryDirectMapping();

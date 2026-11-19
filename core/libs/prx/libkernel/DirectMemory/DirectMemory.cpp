@@ -802,18 +802,33 @@ void ForgetFlexibleFiles(std::uintptr_t start, std::uintptr_t end) {
     }
 }
 
+void RegisterSharedBacking();
+
 void BackFlexibleMapping(void* mapped, size_t len, int prot) {
     constexpr std::size_t ChunkBytes = std::size_t{64} << 20u;
     constexpr std::size_t HugePageBytes = std::size_t{2} << 20u;
-    const int file = memfd_create("flexible memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
-    if (file < 0) throw std::system_error(errno, std::generic_category(), "create a flexible memory backing");
     const auto start = reinterpret_cast<std::uintptr_t>(mapped);
+    const auto stayAnonymous = [&](const char* step, int error) {
+        ForgetFlexibleFiles(start, start + len);
+        static std::atomic<std::uint64_t> fallbacks{0};
+        const auto count = fallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[memory] flexible memory %p+0x%zx stays anonymous: %s failed (%s); %llu such maps\n", mapped, len, step, std::strerror(error), static_cast<unsigned long long>(count));
+    };
+    const int file = memfd_create("flexible memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (file < 0) return stayAnonymous("memfd_create", errno);
     const std::uint64_t lead = start % HugePageBytes;
     const auto fileBytes = (lead + len + ChunkBytes - 1) / ChunkBytes * ChunkBytes;
-    if (ftruncate(file, static_cast<off_t>(fileBytes)) != 0 || fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) != 0 || ::mmap(mapped, len, LinuxProtFromSce(prot), MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(lead)) == MAP_FAILED) {
+    const char* step = nullptr;
+    void* view = MAP_FAILED;
+    if (ftruncate(file, static_cast<off_t>(fileBytes)) != 0) step = "ftruncate";
+    else if (fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) != 0) step = "seal";
+    else if ((view = ::mmap(nullptr, len, LinuxProtFromSce(prot), MAP_SHARED, file, static_cast<off_t>(lead))) == MAP_FAILED) step = "mmap";
+    else if (::mremap(view, len, len, MREMAP_MAYMOVE | MREMAP_FIXED, mapped) == MAP_FAILED) step = "mremap";
+    if (step != nullptr) {
         const int error = errno;
+        if (view != MAP_FAILED) ::munmap(view, len);
         ::close(file);
-        throw std::system_error(error, std::generic_category(), "map a flexible memory backing");
+        return stayAnonymous(step, error);
     }
     ::madvise(mapped, len, MADV_HUGEPAGE);
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, len);
@@ -822,6 +837,7 @@ void BackFlexibleMapping(void* mapped, size_t len, int prot) {
     std::lock_guard lock(g_flexibleFilesLock);
     g_flexibleFiles[start] = FlexibleFile{start + len, lead, std::make_shared<FlexibleDescriptor>(file)};
     Trace("flexible backing %p+0x%zx", mapped, len);
+    RegisterSharedBacking();
 }
 
 bool FlexibleBacking(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
@@ -932,6 +948,24 @@ bool WriteSharedBacking(std::uintptr_t address, const void* source, std::size_t 
         input += span.bytes;
     }
     return true;
+}
+
+bool FlexibleHostFallback(std::uintptr_t address, std::size_t bytes) {
+    std::lock_guard lock(g_flexibleFilesLock);
+    auto it = g_flexibleFiles.upper_bound(address);
+    if (it == g_flexibleFiles.begin()) return false;
+    --it;
+    return address >= it->first && bytes <= it->second.end - std::min(it->second.end, address);
+}
+
+void RegisterSharedBacking() {
+    static std::once_flag registered;
+    std::call_once(registered, [] {
+        GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking);
+        GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(&SharedBackingRuns);
+        GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(&WriteSharedBacking);
+        GuestArena::GuestArenaSetSharedBackingHostFallback_nid_no_patch(&FlexibleHostFallback);
+    });
 }
 #endif
 
@@ -1833,12 +1867,7 @@ void CreateDirectMemoryBacking(int64_t start, size_t len) {
     const auto last = first + len;
     if (auto block = g_physBlocks.upper_bound(first); (block != g_physBlocks.end() && block->first < last) || (block != g_physBlocks.begin() && std::prev(block)->second.end > first)) throw std::runtime_error("physical allocation overlaps live direct memory");
 #if defined(__linux__)
-    static std::once_flag registered;
-    std::call_once(registered, [] {
-        GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking);
-        GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(&SharedBackingRuns);
-        GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(&WriteSharedBacking);
-    });
+    RegisterSharedBacking();
 #endif
     const auto backing = std::make_shared<PhysicalBacking>(len, first);
     std::map<std::uint64_t, PhysicalPage> pages;
