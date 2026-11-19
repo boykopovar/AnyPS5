@@ -622,5 +622,39 @@ class BenchmarkContextTests(unittest.TestCase):
         self.assertFalse([key for key in context if key.startswith("env.")])
 
 
+class BenchmarkMetricsTests(unittest.TestCase):
+    def test_quantiles_fps_and_means_from_one_interval(self):
+        interval = {"frame_us": [3000, 1000, 2000], "start_s": 0.0, "end_s": 1.5, "gpu_busy_ms": 3.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["frames"], 3)
+        self.assertEqual(metrics["elapsed_s"], 1.5)
+        self.assertEqual(metrics["fps"], 2.0)
+        self.assertEqual(metrics["mean_frame_ms"], 2.0)
+        self.assertEqual(metrics["frame_ms"], {"p50": 2.0, "p90": 3.0, "p99": 3.0, "max": 3.0})
+        self.assertEqual(metrics["gpu_busy_ms_per_frame"], 1.0)
+        self.assertEqual((metrics["zero_frames"], metrics["saturated_frames"]), (0, 0))
+
+    def test_no_frames_gives_no_rates(self):
+        metrics = benchmark_compare.benchmark_metrics([])
+        self.assertEqual(metrics["frames"], 0)
+        self.assertIsNone(metrics["fps"])
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["gpu_busy_ms_per_frame"])
+        self.assertEqual(metrics["frame_ms"], {"p50": None, "p90": None, "p99": None, "max": None})
+
+    def test_saturated_frame_hides_mean_and_its_quantile(self):
+        interval = {"frame_us": [1000, benchmark_compare.UINT32_MAX], "start_s": 0.0, "end_s": 1.0, "gpu_busy_ms": 0.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["saturated_frames"], 1)
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["frame_ms"]["max"])
+
+    def test_zero_length_wall_span_has_no_fps_and_counts_zero_frames(self):
+        interval = {"frame_us": [0, 5000], "start_s": 2.0, "end_s": 2.0, "gpu_busy_ms": 1.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertIsNone(metrics["fps"])
+        self.assertEqual(metrics["zero_frames"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
