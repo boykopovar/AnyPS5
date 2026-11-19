@@ -95,6 +95,31 @@ void TestUtf8ToUtf16() {
     Check(Throws<std::length_error>([&] {
         _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(text, text + std::size_t{1} + std::numeric_limits<int>::max(), &target, buffer + 4, nullptr);
     }), __LINE__);
+
+    target = buffer;
+    bool ascii = false;
+    Check(_ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(nullptr, nullptr, &target, buffer + 4, &ascii) && target == buffer && ascii, __LINE__);
+    ascii = false;
+    Check(_ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(nullptr, nullptr, &target, buffer + 4, &ascii) && target == buffer && ascii, __LINE__);
+
+    char16_t sentinel[4];
+    std::fill(sentinel, sentinel + 4, u'\x5A5A');
+    char16_t* target2 = sentinel;
+    ascii = true;
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(nullptr, reinterpret_cast<const char*>(4), &target2, sentinel + 4, &ascii);
+    }), __LINE__);
+    Check(target2 == sentinel && sentinel[0] == u'\x5A5A' && ascii, __LINE__);
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(nullptr, reinterpret_cast<const char*>(4), &target2, sentinel + 4, &ascii);
+    }), __LINE__);
+    Check(target2 == sentinel && sentinel[0] == u'\x5A5A' && ascii, __LINE__);
+
+    char16_t* nullTarget = nullptr;
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(text, text + 1, &nullTarget, reinterpret_cast<char16_t*>(sizeof(char16_t) * 4), &ascii);
+    }), __LINE__);
+    Check(nullTarget == nullptr && ascii, __LINE__);
 }
 
 void TestUtf16ToUtf8() {
@@ -128,8 +153,21 @@ void TestUtf16ToUtf8() {
     char sentinel[4];
     std::memset(sentinel, 0x5A, sizeof(sentinel));
     char* target2 = sentinel;
-    Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&nullSource, nullptr, &target2, sentinel + 4, true); }), __LINE__);
-    Check(target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&nullSource, nullptr, &target2, sentinel + 4, true) == ConversionResult::ConversionOK, __LINE__);
+    Check(nullSource == nullptr && target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&nullSource, reinterpret_cast<const char16_t*>(sizeof(char16_t) * 4), &target2, sentinel + 4, true);
+    }), __LINE__);
+    Check(nullSource == nullptr && target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+
+    const char16_t unit = u'a';
+    const char16_t* validSource = &unit;
+    char* nullTarget = nullptr;
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&validSource, &unit + 1, &nullTarget, reinterpret_cast<char*>(4), true);
+    }), __LINE__);
+    Check(validSource == &unit && nullTarget == nullptr, __LINE__);
 }
 
 void TestLatin1ToUtf8() {
@@ -153,8 +191,20 @@ void TestLatin1ToUtf8() {
     char sentinel[4];
     std::memset(sentinel, 0x5A, sizeof(sentinel));
     char* target2 = sentinel;
-    Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&nullSource, input + 5, &target2, sentinel + 4); }), __LINE__);
-    Check(target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+    Check(_ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&nullSource, nullptr, &target2, sentinel + 4), __LINE__);
+    Check(nullSource == nullptr && target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&nullSource, reinterpret_cast<const unsigned char*>(5), &target2, sentinel + 4);
+    }), __LINE__);
+    Check(nullSource == nullptr && target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
+
+    source = input;
+    char* nullTarget = nullptr;
+    Check(Throws<std::invalid_argument>([&] {
+        _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&source, input + 5, &nullTarget, reinterpret_cast<char*>(16));
+    }), __LINE__);
+    Check(source == input && nullTarget == nullptr, __LINE__);
 }
 
 }

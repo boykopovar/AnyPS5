@@ -89,7 +89,6 @@ extern "C" {
 bool APS5_VABI _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(const unsigned char** sourceStart, const unsigned char* sourceEnd, char** targetStart, char* targetEnd) {
     RequireCursor(sourceStart, __func__);
     RequireCursor(targetStart, __func__);
-    if (!*sourceStart) throw std::invalid_argument(std::string(__func__) + ": null source");
     RequireRange(*sourceStart, sourceEnd, __func__);
     RequireRange(*targetStart, targetEnd, __func__);
     const unsigned char* source;
@@ -110,7 +109,6 @@ bool APS5_VABI _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(const unsigned
 ConversionResult APS5_VABI _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(const char16_t** sourceStart, const char16_t* sourceEnd, char** targetStart, char* targetEnd, bool strict) {
     RequireCursor(sourceStart, __func__);
     RequireCursor(targetStart, __func__);
-    if (!*sourceStart) throw std::invalid_argument(std::string(__func__) + ": null source");
     RequireRange(*sourceStart, sourceEnd, __func__);
     RequireRange(*targetStart, targetEnd, __func__);
     auto result = ConversionResult::ConversionOK;
