@@ -448,6 +448,18 @@ if(BUILD_TESTING)
         set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
+        add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
+        set_tests_properties(package_headers PROPERTIES TIMEOUT 60)
+        add_test(NAME package_headers_package COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers_package.py)
+        set_tests_properties(package_headers_package PROPERTIES TIMEOUT 60)
+        add_test(NAME prepare_release_notes_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_prepare_release_notes.py)
+        set_tests_properties(prepare_release_notes_output PROPERTIES TIMEOUT 60)
+        add_test(NAME run_job_manager_cli_path COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_run_job_manager_reference.py)
+        set_tests_properties(run_job_manager_cli_path PROPERTIES TIMEOUT 60)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME tools_compile_plan COMMAND ${Python3_EXECUTABLE}
@@ -575,6 +587,9 @@ if(BUILD_TESTING)
         add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
         set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
+        add_test(NAME prepare_release_notes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_prepare_release_notes.py)
+        set_tests_properties(prepare_release_notes PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
             SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)
