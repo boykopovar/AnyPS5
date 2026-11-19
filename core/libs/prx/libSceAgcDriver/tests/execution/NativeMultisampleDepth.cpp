@@ -2113,6 +2113,10 @@ void CheckBufferWrites(Context context, VkFormat format, std::uint32_t fragments
         std::printf("skipped native depth buffer writes: the device lacks VK_EXT_external_memory_host, VK_KHR_buffer_device_address or the bufferDeviceAddress feature\n");
         return;
     }
+    if (!SharedMemoryReachableByGpuStores()) {
+        std::printf("skipped native depth buffer writes: /dev/udmabuf cannot be opened, so the fixture is not bound as a host import\n");
+        return;
+    }
     for (const auto write : {BufferWrite::DepthPlane, BufferWrite::Htile}) CheckBufferWrite(context, format, fragments, write);
     std::printf("Native depth format=%u samples=%u: a GPU buffer write over the depth or HTILE released the unwritten surface\n", static_cast<std::uint32_t>(format), fragments);
 }
@@ -5017,8 +5021,12 @@ int main(int argc, char** argv) {
             ++checked;
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::ImportWindowWrite, ClearSource::HtileDispatch, lock);
             ++checked;
-            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverDispatch, ClearSource::HtileDispatch, lock);
-            ++checked;
+            if (SharedMemoryReachableByGpuStores()) {
+                CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverDispatch, ClearSource::HtileDispatch, lock);
+                ++checked;
+            } else {
+                std::puts("skipped native depth clear through the driver: /dev/udmabuf cannot be opened");
+            }
             std::printf("Native depth completed clear cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
@@ -5213,6 +5221,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--buffer-clear") {
+            if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverBufferDispatch, ClearSource::HtileDispatch, lock);
             std::puts("Native depth clear by the buffer HTILE mask kernel through PM4 checked");
             return 0;

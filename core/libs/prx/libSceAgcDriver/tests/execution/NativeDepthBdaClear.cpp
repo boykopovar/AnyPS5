@@ -267,6 +267,7 @@ int main() {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
         for (const auto consumer : {ClearConsumer::Owner, ClearConsumer::Texture, ClearConsumer::Attachment}) {
             const auto result = RunNativeClear(*device, consumer);
             if (result != 0) return result;
