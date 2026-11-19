@@ -298,8 +298,10 @@ async function onMessage({ data }, currentWorker) {
         $("result-info").textContent += translate(locale, "resultSavedIn", { name: outputTransaction.name });
         if (document.querySelector('input[name="target"]:checked').value === "linux") $("result-info").textContent += translate(locale, "resultLinuxChmod", { name: data.outputName });
       }
-      $("result-note").textContent = data.apps > 1 ? translate(locale, "resultNoteBatch") : translate(locale, "resultNoteSingle");
-      $("result-note").hidden = data.mode === "disk";
+      const resultNote = $("result-note");
+      resultNote.dataset.i18n = data.apps > 1 ? "resultNoteBatch" : "resultNoteSingle";
+      resultNote.textContent = translate(locale, resultNote.dataset.i18n);
+      resultNote.hidden = data.mode === "disk";
       outputDirectory = null;
       outputTransaction?.commit();
       outputTransaction = null;
