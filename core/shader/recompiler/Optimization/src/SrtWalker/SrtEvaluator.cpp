@@ -223,7 +223,7 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     if (!argsEvaluated) {
         return false;
     }
-    const auto base = ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
+    const auto base = inst.Opcode() == IrOpcode::ReadConstBuffer ? ConstBufferBase(low, high) : ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
     const auto immediate = static_cast<std::int64_t>(static_cast<std::int32_t>(mem.offset));
     std::uint64_t address = 0;
     if (inst.Opcode() == IrOpcode::ReadConstBuffer) {

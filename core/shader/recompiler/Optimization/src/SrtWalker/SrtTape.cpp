@@ -417,7 +417,7 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::ShaderBase: result = frame.runtime.shaderBase; return true;
         case Op::Read:
         case Op::ReadConstBuffer: {
-            const auto base = ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
+            const auto base = node.op == Op::ReadConstBuffer ? ConstBufferBase(a, b) : ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
             const auto immediate = static_cast<std::int64_t>(node.immediate);
             std::uint64_t address = 0;
             if (node.op == Op::ReadConstBuffer) {
