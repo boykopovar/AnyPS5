@@ -19,6 +19,8 @@ void Require(bool value, const char* message) {
 int InitializeSdlAudio_nid_no_patch() { return 0; }
 bool WasapiDefaultOutputAbsent_nid_no_patch() { return false; }
 extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
+extern "C" int SDLCALL SDL_GetDefaultAudioInfo(char**, SDL_AudioSpec*, int) { return -1; }
+extern "C" void SDLCALL SDL_free(void*) {}
 extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return 1; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int, int) { return "Main speakers"; }
 extern "C" int SDLCALL SDL_GetAudioDeviceSpec(int, int, SDL_AudioSpec* spec) {

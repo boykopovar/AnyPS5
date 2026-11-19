@@ -3,10 +3,15 @@
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <thread>
 
 namespace {
 SDL_AudioDeviceID device = 7;
@@ -19,6 +24,8 @@ int opened = 0;
 int closed = 0;
 int queuedLive = 0;
 int queuedDead = 0;
+const char* defaultName = nullptr;
+std::string openedName;
 
 void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -37,9 +44,19 @@ extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return outputDevices; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int, int) { return "Main speakers"; }
 extern "C" int SDLCALL SDL_GetAudioDeviceSpec(int, int, SDL_AudioSpec* spec) { *spec = {}; spec->channels = 2; return 0; }
 extern "C" const char* SDLCALL SDL_GetCurrentAudioDriver() { return driver; }
+extern "C" int SDLCALL SDL_GetDefaultAudioInfo(char** name, SDL_AudioSpec* spec, int capture) {
+    Require(capture == 0 && spec != nullptr, "the default output was not queried as an output");
+    if (defaultName == nullptr) return -1;
+    const auto bytes = std::strlen(defaultName) + 1;
+    *name = static_cast<char*>(std::malloc(bytes));
+    std::memcpy(*name, defaultName, bytes);
+    return 0;
+}
+extern "C" void SDLCALL SDL_free(void* memory) { std::free(memory); }
 extern "C" const char* SDLCALL SDL_GetError() { return "test error"; }
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int capture, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int) {
-    Require(name == nullptr && capture == 0, "the main port did not open the default output");
+    Require(capture == 0 && (defaultName == nullptr ? name == nullptr : name != nullptr && std::string_view(name) == defaultName), "the main port did not open the default output");
+    openedName = name != nullptr ? name : "";
     device = static_cast<SDL_AudioDeviceID>(7 + opened);
     ++opened;
     unplugged = false;
@@ -83,8 +100,26 @@ int main(int argc, char** argv) {
         } else if (mode == "disconnect") {
             driver = "wasapi";
             outputDevices = 2;
+        } else if (mode == "named_default" || mode == "default_switch") {
+            driver = "wasapi";
+            outputDevices = 2;
+            defaultName = "Main speakers";
         } else {
             Require(false, "invalid default open mode");
+        }
+        if (mode == "default_switch") {
+            const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
+            Require(port >= 1 && opened == 1 && openedName == "Main speakers", "the main port did not open the default output by name");
+            defaultName = "Headset";
+            std::array<std::int16_t, 256 * 2> samples{};
+            Require(sceAudioOutOutput(port, samples.data()) == 256 && opened == 1, "the default output was checked again within a second");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            Require(sceAudioOutOutput(port, samples.data()) == 256, "output after the host changed its default output failed");
+            Require(opened == 2 && closed == 1 && openedName == "Headset", "the port did not follow the new default output");
+            Require(queuedLive == 2 && queuedDead == 0, "output was queued to the replaced default output");
+            Require(sceAudioOutClose(port) == 0 && closed == 2, "the new default output was not closed with its port");
+            std::puts("default output open tests passed");
+            return 0;
         }
         if (mode == "disconnect") {
             const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
