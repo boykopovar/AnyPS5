@@ -139,6 +139,7 @@ void CheckOfflineSetters(int context) {
 }
 
 void CheckOfflineSettersBeforeInit() {
+    Require(sceHttpGetEpollId(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpGetEpollId answered before sceHttpInit");
     Require(sceHttpSetHttp09Enabled(UnknownId, 1) == BeforeInit, "sceHttpSetHttp09Enabled answered before sceHttpInit");
     Require(sceHttpSetPriorityOption(UnknownId, 1) == BeforeInit, "sceHttpSetPriorityOption answered before sceHttpInit");
     Require(sceHttpSetPolicyOption(UnknownId, 1) == BeforeInit, "sceHttpSetPolicyOption answered before sceHttpInit");
@@ -175,6 +176,14 @@ void CheckEpoll(int context) {
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
     const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
     int marker = 0;
+    int epollId = 7;
+    void* idArgument = &marker;
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpGetEpollId(id, &epollId, &idArgument) == 0 && epollId == -1 && idArgument == &marker, "sceHttpGetEpollId did not return the inherited default without touching its user argument");
+        epollId = 7;
+    }
+    Require(sceHttpGetEpollId(UnknownId, nullptr, &idArgument) == InvalidValue, "the epoll id output is not checked before the id");
+    Require(sceHttpGetEpollId(UnknownId, &epollId, &idArgument) == InvalidId && epollId == 7 && idArgument == &marker, "sceHttpGetEpollId changed outputs for an unknown id");
     HttpEpollHandle bound = epoll;
     void* argument = &marker;
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr && argument == nullptr, "a new request is bound to an epoll");
@@ -209,6 +218,7 @@ void CheckTermEndsOptions() {
     Require(sceHttpSetNonblock(connection, 1) == BeforeInit && sceHttpTrySetNonblock(connection, 1) == BeforeInit, "the nonblocking setters work after the last sceHttpTerm");
     Require(sceHttpGetAcceptEncodingGZIPEnabled(pattern, &value) == BeforeInit && sceHttpSetAcceptEncodingGZIPEnabled(pattern, 1) == BeforeInit, "the gzip option outlived the last sceHttpTerm");
     Require(sceHttpGetEpoll(connection, &bound, nullptr) == BeforeInit && sceHttpUnsetEpoll(connection) == BeforeInit, "the epoll binding outlived the last sceHttpTerm");
+    Require(sceHttpGetEpollId(connection, nullptr, nullptr) == BeforeInit, "the epoll id binding outlived the last sceHttpTerm");
     Require(sceHttpCacheRedirectedConnectionEnabled(connection, 1) == BeforeInit, "sceHttpCacheRedirectedConnectionEnabled works after the last sceHttpTerm");
     Require(sceHttpSetProxy(connection, 1, 0, "proxy.example", 3128) == BeforeInit, "sceHttpSetProxy works after the last sceHttpTerm");
     Require(sceHttpsEnableOptionPrivate(connection, 0x4000u) == BeforeInit && sceHttpsDisableOptionPrivate(connection, 0x4000u) == BeforeInit, "the private SSL options work after the last sceHttpTerm");
