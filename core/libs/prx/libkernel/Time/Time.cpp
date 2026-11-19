@@ -115,12 +115,6 @@ static std::uint64_t ClockOrigin() {
     return origin;
 }
 
-static std::uint64_t ScaledNanos(std::uint64_t raw) {
-    if (TimeScale() == 1.0) return raw;
-    const auto origin = ClockOrigin();
-    return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
-}
-
 namespace {
 
 struct GuestClockPause {
@@ -150,7 +144,10 @@ static std::uint64_t PausedRawMonotonicNanos() {
 }
 
 static std::uint64_t GetMonotonicNanos() {
-    return ScaledNanos(PausedRawMonotonicNanos());
+    if (TimeScale() == 1.0) return PausedRawMonotonicNanos();
+    const auto origin = ClockOrigin();
+    const auto raw = PausedRawMonotonicNanos();
+    return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
 }
 
 extern "C" void KernelPauseGuestClock_nid_no_patch() {
