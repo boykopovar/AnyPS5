@@ -543,8 +543,17 @@ int APS5_VABI libkernel_sysUnknown_2wKjID0iGVM_nid_no_patch() {
 
 APS5_EXPORT("2wKjID0iGVM", libkernel_sysUnknown_2wKjID0iGVM_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(KernelModule handle, const void* address) {
+    ModuleInfo info{};
+    info.st_size = sizeof(info);
+    if (sceKernelGetModuleInfo(handle, &info) != 0) return 0;
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    for (std::uint32_t index = 0; index < info.segment_count; ++index) {
+        const auto& segment = info.segments[index];
+        if ((segment.prot & 4) == 0) continue;
+        return value >= segment.address && value - segment.address < segment.size ? 1 : 0;
+    }
+    return 0;
 }
 
 APS5_EXPORT("2xg4JXvaJ6k", libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch);
