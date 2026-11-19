@@ -52,6 +52,7 @@
 #include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
+#include "prx/libSceNKWebKit/include/PlatformTimeRangesDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfThreadingExports.hpp"
 #include "prx/libSceNKWebKit/include/SerializedCryptoKeyWrapExports.hpp"
 #include "prx/libSceNKWebKit/include/SettingsBaseDefaultsExports.hpp"
