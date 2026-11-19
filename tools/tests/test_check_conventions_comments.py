@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, links, output
+from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output
 
 CONVENTIONS_TEST_SHARDS = 12
 
@@ -1061,6 +1061,17 @@ class RepositoryChecksTests(unittest.TestCase):
                 os.environ["GITHUB_ACTIONS"] = original
         annotation = captured.getvalue().splitlines()[0]
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
+
+
+class IsDebtTests(unittest.TestCase):
+    def test_index_and_top_level_markdown_files_are_debt(self):
+        self.assertTrue(is_debt("docs/dev/TechnicalDebt.md"))
+        self.assertTrue(is_debt("docs/dev/debt/libkernel.md"))
+
+    def test_nested_non_markdown_and_other_paths_are_not_debt(self):
+        for path in ("docs/dev/debt/changes/x.md", "docs/dev/debt/x.txt", "docs/dev/debt/", "docs/dev/other.md", "debt/x.md"):
+            with self.subTest(path=path):
+                self.assertFalse(is_debt(path))
 
 
 if __name__ == "__main__":

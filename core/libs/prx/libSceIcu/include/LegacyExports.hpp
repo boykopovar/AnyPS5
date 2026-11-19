@@ -7,6 +7,8 @@ namespace Icu {
 struct Converter;
 } // namespace Icu
 
+struct UEnumeration;
+
 extern "C" {
 
 int APS5_VABI sceIcuLegacyUnknown__plus__plus_DD8eRY6mw_nid_no_patch();
@@ -287,7 +289,7 @@ int APS5_VABI sceIcuLegacyUnknown_661mp52xIO4_nid_no_patch();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer213normalizeUTF8EjNS_11StringPieceERNS_8ByteSinkEPNS_5EditsER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EEaSEOS1__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_68uKzUhNGcw_nid_no_patch();
-int APS5_VABI ucnv_openAllNames_nid_postfix();
+UEnumeration* APS5_VABI ucnv_openAllNames_nid_postfix(std::int32_t*);
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator18handleSafePreviousEi_nid_postfix();
 int APS5_VABI utext_current32_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_6E6JYwebVac_nid_no_patch();
@@ -1866,7 +1868,7 @@ int APS5_VABI sceIcuLegacyUnknown_osoom0ghhoE_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl20hasCompBoundaryAfterEPKhS2_a_nid_postfix();
 int APS5_VABI _ZNK6icu_689ErrorCode13assertSuccessEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch();
-int APS5_VABI uprv_tzname_clear_cache_nid_postfix();
+void APS5_VABI uprv_tzname_clear_cache_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch();
 int APS5_VABI _ZN6icu_6810Normalizer5resetEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer211composePairEii_nid_postfix();
@@ -2103,7 +2105,7 @@ int APS5_VABI _ZN6icu_6816LocaleKeyFactoryC1Ei_nid_postfix();
 int APS5_VABI _ZNK6icu_6816LocaleKeyFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6823UnicodeStringAppendable15getAppendBufferEiiPDsiPi_nid_postfix();
 int APS5_VABI _ZN6icu_689UVector327setSizeEi_nid_postfix();
-int APS5_VABI ucnv_getAliases_nid_postfix();
+void APS5_VABI ucnv_getAliases_nid_postfix(const char* alias, const char** aliases, std::int32_t* error);
 int APS5_VABI uhash_count_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet20ensureBufferCapacityEi_nid_postfix();
 int APS5_VABI _ZN6icu_6816ICULocaleService16registerInstanceEPNS_7UObjectERKNS_6LocaleEiiR10UErrorCode_nid_postfix();
