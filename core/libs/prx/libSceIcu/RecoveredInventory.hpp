@@ -21,7 +21,6 @@ int APS5_VABI ucol_strcollUTF8_nid_postfix();
 int APS5_VABI udat_countSymbols_nid_postfix();
 int APS5_VABI udat_getCalendar_nid_postfix();
 int APS5_VABI udtitvfmt_resultAsValue_nid_postfix();
-int APS5_VABI ufieldpositer_next_nid_postfix();
 int APS5_VABI uldn_keyValueDisplayName_nid_postfix();
 int APS5_VABI uldn_localeDisplayName_nid_postfix();
 int APS5_VABI uldn_regionDisplayName_nid_postfix();
