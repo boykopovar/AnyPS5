@@ -5842,16 +5842,20 @@ double APS5_VABI logb_nid_postfix(double x) {
     }
     return static_cast<double>(static_cast<int>(bits >> 52) - 1023);
 }
-int APS5_VABI ilogb_nid_postfix(double x) {
-    if (x == 0.0) {
-        return INT_MIN;
-    }
-    if (!std::isfinite(x)) {
-        return INT_MAX;
-    }
-    return std::ilogb(x);
+extern "C++" {
+template<typename TBits, int FractionBits>
+static int BinaryExponent(TBits bits) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    const TBits magnitude = bits & ~(TBits{1} << (sizeof(TBits) * 8 - 1));
+    const int field = static_cast<int>(magnitude >> FractionBits);
+    if (magnitude == 0) return INT_MIN;
+    if (field == (1 << ExponentBits) - 1) return INT_MAX;
+    return field != 0 ? field - Bias : static_cast<int>(std::bit_width(magnitude)) - FractionBits - Bias;
 }
-int APS5_VABI ilogbf_nid_postfix(float x) { return ilogb_nid_postfix(static_cast<double>(x)); }
+}
+int APS5_VABI ilogb_nid_postfix(double x) { return BinaryExponent<std::uint64_t, 52>(std::bit_cast<std::uint64_t>(x)); }
+int APS5_VABI ilogbf_nid_postfix(float x) { return BinaryExponent<std::uint32_t, 23>(std::bit_cast<std::uint32_t>(x)); }
 double APS5_VABI remainder_nid_postfix(double x, double y) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);

@@ -4189,6 +4189,24 @@ static void CheckDoubleRounding(double value, std::int64_t expected, bool invali
     }
 }
 
+static void CheckIlogbReadsTheBits() {
+    const auto saved = _mm_getcsr();
+    for (const bool denormalsAreZero : {false, true}) {
+        _mm_setcsr(0x1f80u | (denormalsAreZero ? 0x40u : 0u));
+        const int smallest = ilogb_nid_postfix(std::bit_cast<double>(std::uint64_t{1}));
+        const int largestSubnormal = ilogb_nid_postfix(std::bit_cast<double>(0x800fffffffffffffull));
+        const int smallestSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x80000001u));
+        const int largestSubnormalSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x007fffffu));
+        const int signaling = ilogb_nid_postfix(std::bit_cast<double>(0x7ff0000000000001ull));
+        const int signalingSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x7f800001u));
+        const int zero = ilogb_nid_postfix(-0.0);
+        const unsigned flags = _mm_getcsr() & 0x3fu;
+        _mm_setcsr(saved);
+        Require(smallest == -1074 && largestSubnormal == -1023 && smallestSingle == -149 && largestSubnormalSingle == -127);
+        Require(signaling == INT_MAX && signalingSingle == INT_MAX && zero == INT_MIN && flags == 0);
+    }
+}
+
 static void CheckFloatRounding(float value, std::int64_t expected, bool invalid) {
     for (const bool useLlround : {false, true}) {
         std::feclearexcept(FE_ALL_EXCEPT);
@@ -5157,6 +5175,7 @@ int main() {
     CheckExp2Errno();
     CheckFloorAndCeilWithDenormalsAreZero();
     CheckExactOperations();
+    CheckIlogbReadsTheBits();
     CheckNearbyint();
     CheckNearbyintEnvironment();
     CheckFegetenv();
