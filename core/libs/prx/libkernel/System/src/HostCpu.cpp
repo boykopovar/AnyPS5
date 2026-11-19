@@ -136,15 +136,8 @@ std::optional<std::uint32_t> RecordedExtensions() {
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0) return std::nullopt;
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return std::nullopt;
-    const auto* sections = IMAGE_FIRST_SECTION(nt);
-    for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index) {
-        const auto& section = sections[index];
-        if (std::memcmp(section.Name, ".aps5cpu", 8) != 0) continue;
-        if (section.Misc.VirtualSize < 16) return std::nullopt;
-        return ParseCpuExtensionRecord(image + section.VirtualAddress, 16);
-    }
-    return std::nullopt;
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return std::nullopt;
+    return ParseCpuExtensionImage(image, nt->OptionalHeader.SizeOfImage);
 #elif defined(__linux__)
     struct State {
         std::optional<std::uint32_t> Extensions;
@@ -226,6 +219,60 @@ std::optional<std::uint32_t> ParseCpuExtensionRecord(const std::uint8_t* record,
     std::memcpy(&mask, record + 12, 4);
     if (version != 1 || (mask & ~known) != 0) return std::nullopt;
     return mask;
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionImage(const std::uint8_t* image, const std::size_t size) {
+    constexpr std::size_t kDosHeaderSize = 64;
+    constexpr std::size_t kLfanewOffset = 0x3C;
+    constexpr std::size_t kNtSignatureSize = 4;
+    constexpr std::size_t kFileHeaderSize = 20;
+    constexpr std::size_t kSectionCountOffset = 2;
+    constexpr std::size_t kOptionalSizeOffset = 16;
+    constexpr std::size_t kSectionHeaderSize = 40;
+    constexpr std::size_t kSizeOfImageOffset = 56;
+    constexpr std::uint16_t kDosMagic = 0x5A4D;
+    constexpr std::uint32_t kPeSignature = 0x00004550;
+    constexpr std::uint16_t kPe32PlusMagic = 0x20B;
+    const auto read = [&](const std::size_t offset, auto& value) {
+        if (offset > size || sizeof(value) > size - offset) return false;
+        std::memcpy(&value, image + offset, sizeof(value));
+        return true;
+    };
+    if (image == nullptr || size < kDosHeaderSize) return std::nullopt;
+    std::uint16_t dosMagic = 0;
+    if (!read(0, dosMagic) || dosMagic != kDosMagic) return std::nullopt;
+    std::uint32_t ntOffset = 0;
+    if (!read(kLfanewOffset, ntOffset)) return std::nullopt;
+    if (ntOffset > size || size - ntOffset < kNtSignatureSize + kFileHeaderSize) return std::nullopt;
+    std::uint32_t signature = 0;
+    if (!read(ntOffset, signature) || signature != kPeSignature) return std::nullopt;
+    const std::size_t fileHeader = ntOffset + kNtSignatureSize;
+    std::uint16_t sectionCount = 0;
+    std::uint16_t optionalSize = 0;
+    if (!read(fileHeader + kSectionCountOffset, sectionCount)) return std::nullopt;
+    if (!read(fileHeader + kOptionalSizeOffset, optionalSize)) return std::nullopt;
+    const std::size_t optional = fileHeader + kFileHeaderSize;
+    std::uint16_t optionalMagic = 0;
+    if (!read(optional, optionalMagic) || optionalMagic != kPe32PlusMagic) return std::nullopt;
+    if (optionalSize < kSizeOfImageOffset + sizeof(std::uint32_t)) return std::nullopt;
+    std::uint32_t sizeOfImage = 0;
+    if (!read(optional + kSizeOfImageOffset, sizeOfImage)) return std::nullopt;
+    if (sizeOfImage == 0 || sizeOfImage > size) return std::nullopt;
+    const std::size_t sectionTable = optional + optionalSize;
+    if (sectionTable > sizeOfImage) return std::nullopt;
+    const std::size_t sectionBytes = static_cast<std::size_t>(sectionCount) * kSectionHeaderSize;
+    if (sectionBytes > sizeOfImage - sectionTable) return std::nullopt;
+    for (std::size_t index = 0; index < sectionCount; ++index) {
+        const std::size_t header = sectionTable + index * kSectionHeaderSize;
+        if (std::memcmp(image + header, ".aps5cpu", 8) != 0) continue;
+        std::uint32_t virtualSize = 0;
+        std::uint32_t virtualAddress = 0;
+        if (!read(header + 8, virtualSize)) return std::nullopt;
+        if (!read(header + 12, virtualAddress)) return std::nullopt;
+        if (virtualSize < 16 || virtualAddress > sizeOfImage || 16 > sizeOfImage - virtualAddress) return std::nullopt;
+        return ParseCpuExtensionRecord(image + virtualAddress, 16);
+    }
+    return std::nullopt;
 }
 
 HostCpuRegisters ReadHostCpuRegisters() {

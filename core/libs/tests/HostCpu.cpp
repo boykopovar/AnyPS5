@@ -1,5 +1,6 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <iostream>
 #include <stdexcept>
@@ -157,6 +158,49 @@ static void CheckRecordParsers() {
     Require(!ParseCpuExtensionRecord(recordUnknown.data(), recordUnknown.size()).has_value(), "a record with an unknown extension bit was accepted");
 }
 
+static std::vector<std::uint8_t> ExtensionImage(const std::uint32_t sizeOfImage) {
+    constexpr std::size_t nt = 0x40;
+    constexpr std::size_t optional = nt + 4 + 20;
+    constexpr std::uint16_t optionalSize = 0xF0;
+    constexpr std::size_t sectionTable = optional + optionalSize;
+    std::vector<std::uint8_t> image(static_cast<std::size_t>(sizeOfImage) + 0x200, 0);
+    const auto put = [&](const std::size_t offset, const auto value) { std::memcpy(image.data() + offset, &value, sizeof(value)); };
+    put(0, std::uint16_t{0x5A4D});
+    put(0x3C, std::uint32_t{static_cast<std::uint32_t>(nt)});
+    put(nt, std::uint32_t{0x00004550});
+    put(nt + 4 + 2, std::uint16_t{1});
+    put(nt + 4 + 16, optionalSize);
+    put(optional, std::uint16_t{0x20B});
+    put(optional + 56, sizeOfImage);
+    std::memcpy(image.data() + sectionTable, ".aps5cpu", 8);
+    put(sectionTable + 8, std::uint32_t{16});
+    put(sectionTable + 12, std::uint32_t{sizeOfImage - 16});
+    const auto record = ExtensionRecord(1, 0x21);
+    std::memcpy(image.data() + sizeOfImage - 16, record.data(), record.size());
+    return image;
+}
+
+static void CheckRecordImage() {
+    const auto image = ExtensionImage(0x400);
+    Require(ParseCpuExtensionImage(image.data(), image.size()) == 0x21u, "a well-formed image was rejected");
+    Require(!ParseCpuExtensionImage(image.data(), 0x30).has_value(), "a truncated DOS header was accepted");
+    Require(!ParseCpuExtensionImage(image.data(), 0x400 - 1).has_value(), "an image whose SizeOfImage exceeds the buffer was accepted");
+    auto outside = image;
+    const std::uint32_t pastImage = 0x400 - 8;
+    std::memcpy(outside.data() + 0x40 + 24 + 0xF0 + 12, &pastImage, 4);
+    Require(!ParseCpuExtensionImage(outside.data(), outside.size()).has_value(), "a section past SizeOfImage was accepted");
+    auto shortSection = image;
+    const std::uint32_t tiny = 8;
+    std::memcpy(shortSection.data() + 0x40 + 24 + 0xF0 + 8, &tiny, 4);
+    Require(!ParseCpuExtensionImage(shortSection.data(), shortSection.size()).has_value(), "a section shorter than the record was accepted");
+    auto slack = image;
+    const auto record = ExtensionRecord(1, 0x21);
+    std::memcpy(slack.data() + 0x400, record.data(), record.size());
+    const std::uint32_t atImageEnd = 0x400;
+    std::memcpy(slack.data() + 0x40 + 24 + 0xF0 + 12, &atImageEnd, 4);
+    Require(!ParseCpuExtensionImage(slack.data(), slack.size()).has_value(), "a record past SizeOfImage was accepted");
+}
+
 static void CheckExportedHelpers() {
     const auto registers = ReadHostCpuRegisters_nid_no_patch();
     const auto direct = ReadHostCpuRegisters();
@@ -206,6 +250,7 @@ int main() {
         CheckAvxWithoutOsState();
         CheckPreHaswell();
         CheckRecordParsers();
+        CheckRecordImage();
         CheckRecordedExtensions();
         CheckError();
     } catch (const std::exception& error) {

@@ -40,6 +40,7 @@ HostCpuRegisters ReadHostCpuRegisters();
 std::string HostCpuModel();
 std::optional<std::uint32_t> ParseCpuExtensionNote(const std::uint8_t* note, std::size_t size);
 std::optional<std::uint32_t> ParseCpuExtensionRecord(const std::uint8_t* record, std::size_t size);
+std::optional<std::uint32_t> ParseCpuExtensionImage(const std::uint8_t* image, std::size_t size);
 
 std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers);
 std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers);
