@@ -8,6 +8,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import errno
 from pathlib import Path
 from unittest.mock import patch
 
@@ -661,6 +662,24 @@ class PrintMetadataTests(unittest.TestCase):
             {"stage": "load", "result": "pass", "evidence": "log"},
             {"stage": "run", "result": "fail", "evidence": "video", "environment": "linux", "date": "2026-01-02"}]}
         self.assertEqual(self.render(metadata), "  Contributor: a\n  Contributor: b\n  Tested: load pass: log\n  Tested: run fail on linux (2026-01-02): video\n")
+
+
+class PathErrorTests(unittest.TestCase):
+    def test_symlink_loop_error_names_the_path(self):
+        error = suggest_patches.path_error("a/b", OSError(errno.ELOOP, "too many levels"))
+        self.assertIsInstance(error, ValueError)
+        self.assertTrue(str(error).startswith("Symlink loop from 'a/b': "))
+
+    def test_other_errors_keep_their_own_text(self):
+        original = OSError(errno.ENOENT, "missing file")
+        error = suggest_patches.path_error("a/b", original)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), str(original))
+
+    def test_windows_symlink_loop_code_is_a_loop(self):
+        original = OSError(errno.EINVAL, "loop")
+        original.winerror = 1921
+        self.assertTrue(str(suggest_patches.path_error("p", original)).startswith("Symlink loop from 'p'"))
 
 
 if __name__ == "__main__":
