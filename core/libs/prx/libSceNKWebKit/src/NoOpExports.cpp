@@ -2,6 +2,36 @@
 
 extern "C" {
 
+void APS5_VABI WKBundleRemoveAllWebNotificationPermissions() {
+}
+
+void APS5_VABI WKBundleSetServiceWorkerProxyCreationCallback() {
+}
+
+void APS5_VABI WKContextTerminateServiceWorkers() {
+}
+
+void APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting() {
+}
+
+void APS5_VABI WKTextCheckerSetTestingMode() {
+}
+
+void APS5_VABI _ZN7WebCore14JSWebAnimation14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore21JSTextTrackCueGeneric14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore6JSFile14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore6JSNode14finishCreationERN3JSC2VME() {
+}
+
+void APS5_VABI _ZN7WebCore7JSRange14finishCreationERN3JSC2VME() {
+}
+
 void APS5_VABI JSRemoteInspectorSetParentProcessInformation() {
 }
 
@@ -348,12 +378,6 @@ void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev() {
 }
 
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev() {
-}
-
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev() {
-}
-
-void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev() {
 }
 
 void APS5_VABI _ZN7WebCore4IconD1Ev() {

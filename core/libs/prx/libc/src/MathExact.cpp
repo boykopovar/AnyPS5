@@ -646,7 +646,7 @@ TFloat LanczosLogGamma(TFloat x, TLogarithm logarithm, TCoefficient series, TCoe
     return logarithm(sum * root / x) - rest;
 }
 
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_fmal.c */
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/s_fmal.c */
 struct ExtendedPair {
     long double hi;
     long double lo;
@@ -658,24 +658,6 @@ ExtendedPair AddExact(long double a, long double b) {
     const long double shift = result.hi - a;
     result.lo = (a - (result.hi - shift)) + (b - shift);
     return result;
-}
-
-long double AddAdjusted(long double a, long double b) {
-    ExtendedPair sum = AddExact(a, b);
-    if (sum.lo != 0 && (Bits(sum.hi).mantissa & 1) == 0)
-        sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
-    return sum.hi;
-}
-
-long double AddAndDenormalize(long double a, long double b, int scale) {
-    ExtendedPair sum = AddExact(a, b);
-    if (sum.lo != 0) {
-        const ExtendedBits bits = Bits(sum.hi);
-        const int bitsLost = -(bits.signExponent & 0x7fff) - scale + 1;
-        if ((bitsLost != 1) != ((bits.mantissa & 1) != 0))
-            sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
-    }
-    return std::ldexp(sum.hi, scale);
 }
 
 ExtendedPair MultiplyExact(long double a, long double b) {
@@ -694,6 +676,30 @@ ExtendedPair MultiplyExact(long double a, long double b) {
     result.hi = p + q;
     result.lo = p - result.hi + q + la * lb;
     return result;
+}
+
+long double FmaProductDominates(long double x, long double y, long double z, int rounding) {
+    std::feraiseexcept(FE_INEXACT);
+    constexpr long double Infinity = std::numeric_limits<long double>::infinity();
+    const auto stepped = [&](long double toward) {
+        std::fenv_t environment;
+        std::feholdexcept(&environment);
+        volatile long double product = x * y;
+        long double result = product;
+        if (!std::fetestexcept(FE_INEXACT)) result = std::nextafter(result, toward);
+        std::feupdateenv(&environment);
+        return result;
+    };
+    switch (rounding) {
+    case FE_TONEAREST:
+        return x * y;
+    case FE_TOWARDZERO:
+        return ((x > 0.0L) != (y < 0.0L)) != (z < 0.0L) ? x * y : stepped(0.0L);
+    case FE_DOWNWARD:
+        return z > 0.0L ? x * y : stepped(-Infinity);
+    default:
+        return z < 0.0L ? x * y : stepped(Infinity);
+    }
 }
 
 long double FmaFarApart(long double x, long double y, long double z, int rounding) {
@@ -717,21 +723,22 @@ long double FmaScaled(long double xs, long double ys, long double zs, int spread
     std::fesetround(FE_TONEAREST);
     volatile long double vxs = xs;
     const ExtendedPair xy = MultiplyExact(vxs, ys);
-    const ExtendedPair r = AddExact(xy.hi, zs);
-    if (r.hi == 0.0L) {
+    const ExtendedPair sum = AddExact(xy.hi, zs);
+    volatile long double rest = sum.lo + xy.lo;
+    const ExtendedBits bits = Bits(sum.hi);
+    const unsigned exponent = sum.hi == 0.0L ? 0x80000000u : static_cast<unsigned>((bits.signExponent & 0x7fff) - 16383);
+    if (static_cast<int>(static_cast<unsigned>(spread) + exponent) > -16383) {
+        volatile long double high = sum.hi;
         std::fesetround(rounding);
-        volatile long double vzs = zs;
-        return xy.hi + vzs + std::ldexp(xy.lo, spread);
+        return std::ldexp(high + rest, spread);
     }
-    if (rounding != FE_TONEAREST) {
-        std::fesetround(rounding);
-        volatile long double vrlo = r.lo;
-        const long double adj = vrlo + xy.lo;
-        return std::ldexp(r.hi + adj, spread);
-    }
-    const long double adj = AddAdjusted(r.lo, xy.lo);
-    if (spread + std::ilogb(r.hi) > -16383) return std::ldexp(r.hi + adj, spread);
-    return AddAndDenormalize(r.hi, adj, spread);
+    const long double floor = std::ldexp(std::copysign(0x1p-16382L, sum.hi), -spread);
+    const ExtendedPair lifted = AddExact(sum.hi, floor);
+    volatile long double high = lifted.hi;
+    volatile long double low = lifted.lo + rest;
+    volatile long double anchor = floor;
+    std::fesetround(rounding);
+    return std::ldexp((high + low) - anchor, spread);
 }
 
 }
@@ -819,9 +826,22 @@ long double APS5_VABI sqrtl_nid_postfix(long double x) {
     return std::sqrt(x);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_modfl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_modfl.c */
 long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
+    const ExtendedBits bits = Bits(x);
+    const int exponent = (bits.signExponent & 0x7fff) - 16383;
+    const long double zero = JoinExtended(0, static_cast<std::uint16_t>(bits.signExponent & 0x8000));
     long double whole = x;
-    const long double fraction = std::isnan(x) ? x : std::modf(x, &whole);
+    long double fraction = zero;
+    if (exponent < 0) {
+        whole = zero;
+        fraction = x;
+    } else if (exponent >= 63) {
+        if (x != x) fraction = x;
+    } else if (const std::uint64_t mask = (std::uint64_t{1} << (63 - exponent)) - 1; (bits.mantissa & mask) != 0) {
+        whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
+        fraction = x - whole;
+    }
     GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
     return fraction;
 }
@@ -841,17 +861,14 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     int xExponent = 0, yExponent = 0, zExponent = 0;
     const long double xs = std::frexp(x, &xExponent);
     const long double ys = std::frexp(y, &yExponent);
-    long double zs = std::frexp(z, &zExponent);
+    const long double zs = std::frexp(z, &zExponent);
     const int rounding = std::fegetround();
     const int spread = xExponent + yExponent - zExponent;
+    if (spread > std::numeric_limits<long double>::digits * 2) return FmaProductDominates(x, y, z, rounding);
     if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
-    if (spread <= std::numeric_limits<long double>::digits * 2) zs = std::ldexp(zs, -spread);
-    else zs = std::copysign(std::numeric_limits<long double>::min(), zs);
-    return FmaScaled(xs, ys, zs, xExponent + yExponent, rounding);
+    return FmaScaled(xs, ys, std::ldexp(zs, -spread), xExponent + yExponent, rounding);
 }
 
-double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
-float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::floor(x); }
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rintf(x); }
@@ -1035,96 +1052,10 @@ short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFract
 
 namespace {
 
-struct ExtendedStep {
-    short code;
-    bool stored;
-};
-
-ExtendedStep TruncateExtended(long double& value, short scale) {
-    ExtendedBits bits = Bits(value);
-    const int field = bits.signExponent & 0x7fff;
-    if (field == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) return {Zero, false};
-    const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
-    if (drop <= 0) return {Zero, false};
-    if (drop >= 64) {
-        StoreExtended(&value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
-        return {Finite, true};
-    }
-    const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
-    const std::uint64_t lost = bits.mantissa & mask;
-    bits.mantissa &= ~mask;
-    StoreExtended(&value, bits);
-    return {lost != 0 ? Finite : Zero, true};
-}
-
-ExtendedStep ScaleExtendedBits(long double& value, std::int64_t exponent) {
-    const ExtendedBits bits = Bits(value);
-    if ((bits.signExponent & 0x7fff) == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) {
-        StoreExtended(&value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
-        return {Zero, true};
-    }
-    const std::uint16_t sign = bits.signExponent & 0x8000;
-    const int field = bits.signExponent & 0x7fff;
-    const int shift = std::countl_zero(bits.mantissa);
-    const std::uint64_t mantissa = bits.mantissa << shift;
-    const std::int64_t normalized = (field != 0 ? field : 1) - shift;
-    ExtendedBits scaled{mantissa, sign};
-    short code = Finite;
-    if (exponent > 0 && 0x7fff - normalized <= exponent) {
-        scaled = {0x8000000000000000ull, static_cast<std::uint16_t>(sign | 0x7fff)};
-        code = Infinite;
-    } else if (-normalized < exponent) {
-        scaled.signExponent = static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(normalized + exponent));
-    } else if (normalized + exponent < -63) {
-        scaled = {0, 0};
-        code = Zero;
-    } else {
-        const int dropped = static_cast<int>(1 - normalized - exponent);
-        const std::uint64_t lost = dropped == 64 ? mantissa : mantissa & ((std::uint64_t{1} << dropped) - 1);
-        scaled.mantissa = dropped == 64 ? 0 : mantissa >> dropped;
-        if (lost != 0) {
-            const std::uint64_t half = std::uint64_t{1} << (dropped - 1);
-            const int rounding = _Fltrounds_nid_postfix();
-            const bool up = rounding == 3 ? sign != 0 : rounding == 2 ? sign == 0 : rounding != 0 && (lost > half || (lost == half && (scaled.mantissa & 1) != 0));
-            if (up) ++scaled.mantissa;
-        }
-        if (scaled.mantissa == 0x8000000000000000ull) scaled.signExponent = static_cast<std::uint16_t>(sign | 1);
-        if (scaled.mantissa == 0) code = Zero;
-    }
-    StoreExtended(&value, scaled);
-    return {code, true};
-}
-
-ExtendedStep UnscaleExtended(short& exponent, long double& value) {
-    const ExtendedBits bits = Bits(value);
-    exponent = 0;
-    if ((bits.signExponent & 0x7fff) == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) return {Zero, false};
-    const int field = bits.signExponent & 0x7fff;
-    const int shift = std::countl_zero(bits.mantissa);
-    exponent = static_cast<short>((field != 0 ? field - 0x3ffe : -16381) - shift);
-    StoreExtended(&value, {bits.mantissa << shift, static_cast<std::uint16_t>((bits.signExponent & 0x8000) | 0x3ffe)});
-    return {Finite, true};
-}
-
-}
-
-template<>
-struct LibcDetail::Precision<long double> {
-    static constexpr short PartBits = 32;
-    static constexpr std::int64_t FirstExponent = 0x8000;
-    static constexpr long double NanBits = std::numeric_limits<long double>::quiet_NaN();
-    static short Test(long double* value) { return TestExtended(Bits(*value)); }
-    static short Unscale(short* exponent, long double* value) { return UnscaleExtended(*exponent, *value).code; }
-    static void Truncate(long double* value, short bits) { TruncateExtended(*value, bits); }
-    static void Scale(long double* value, std::int64_t exponent) { ScaleExtendedBits(*value, exponent); }
-    static long double Ldexp(long double value, int exponent) { return ldexpl_nid_postfix(value, exponent); }
-    static void Raise(int exceptions) { _Feraise_nid_postfix(exceptions); }
-};
-
-namespace {
+using LibcDetail::ExtendedStep;
+using LibcDetail::ScaleExtendedBits;
+using LibcDetail::TruncateExtended;
+using LibcDetail::UnscaleExtended;
 
 using PowerLogarithm = std::array<long double, 3>;
 

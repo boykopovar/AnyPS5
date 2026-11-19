@@ -483,10 +483,6 @@ int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_fixFileSeparator_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6812ResourceSinkD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8255,10 +8251,6 @@ int APS5_VABI ures_initStackObject_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_getInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

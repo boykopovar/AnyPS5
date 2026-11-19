@@ -6526,6 +6526,7 @@ void vertexWindowMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
     if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    if (SkipOnCpuVulkan(device, "a kept vertex window was not mirrored in device memory")) return;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
     struct Release {
