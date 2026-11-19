@@ -5,7 +5,6 @@
 !cmake/**
 !core/**
 !tools/**
-!README.md
 !Install-Helper.cmd
 !Pair-Browser.cmd
 tools/launcher/web/**

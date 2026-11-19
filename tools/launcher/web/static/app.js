@@ -19,7 +19,9 @@ function unavailable() { return !authenticated || !state?.online || state.busy |
 function launchPending() { return state?.commands?.some(command => command.verb === 'launch' && ['queued', 'delivered'].includes(command.status)); }
 function navigate(next) {
     view = next;
-    byId('engine-panel').hidden = byId('engine-panel').dataset.configured === 'false' || (authenticated && view !== 'settings');
+    byId('about-view').hidden = view !== 'about';
+    byId('pairing').hidden = authenticated || view === 'about';
+    byId('engine-panel').hidden = byId('engine-panel').dataset.configured === 'false' || (authenticated && !['settings', 'about'].includes(view));
     for (const [name, id] of [['library', 'library'], ['folders', 'folders-view'], ['settings', 'settings-view']]) byId(id).hidden = !authenticated || view !== name;
     document.querySelectorAll('[data-view]').forEach(item => { item.classList.toggle('selected', item.dataset.view === view); item.setAttribute('aria-current', item.dataset.view === view ? 'page' : 'false'); });
 }
@@ -148,7 +150,8 @@ function renderPreparation() {
     if (panel.hidden) return;
     const detail = preparation.detail || {};
     byId('preparation-title').textContent = (preparation.active ? 'Preparing ' : 'Preparation: ') + preparation.title;
-    byId('preparation-status').textContent = (preparation.active ? [detail.phase, detail.message] : [preparation.message, preparation.status === 'failed' ? detail.message : '']).filter(Boolean).join(' \u00b7 ');
+    const message = typeof detail.message === 'string' ? detail.message.split(/\r?\n/)[0] : '';
+    byId('preparation-status').textContent = (preparation.active ? [detail.phase, message] : [preparation.message, preparation.status === 'failed' ? message : '']).filter(Boolean).join(' \u00b7 ');
     byId('preparation-output').textContent = preparation.output;
     const progress = byId('preparation-progress');
     progress.max = detail.total_bytes || 1;
@@ -189,7 +192,7 @@ async function refresh() {
         if (failure && byId('error').dataset.command !== failure.id) { byId('error').dataset.command = failure.id; byId('error').textContent = failure.result; if (byId('add-dialog').open) byId('scan-error').textContent = failure.result; }
         if (!failure && byId('error').dataset.command) { byId('error').textContent = ''; delete byId('error').dataset.command; }
     } catch (error) {
-        if (error.status === 401) { authenticated = false; byId('preparation-panel').hidden = true; byId('pairing').hidden = false; navigate(view); byId('connection').textContent = 'Pair this browser'; }
+        if (error.status === 401) { authenticated = false; byId('preparation-panel').hidden = true; byId('pairing').hidden = view === 'about'; navigate(view); byId('connection').textContent = 'Pair this browser'; }
         else { byId('notice').hidden = false; byId('notice').textContent = 'The local app is reconnecting. Check Docker Desktop and run Start-AnyPS5.cmd if needed. Your library is retained.'; if (state) state.online = false; renderGames(); renderScan(); }
     } finally { refreshing = false; }
 }
@@ -222,12 +225,15 @@ async function refreshEngine() {
         const response = await fetch('/engine/status', {cache: 'no-store'});
         const engine = await response.json();
         byId('engine-panel').dataset.configured = String(engine.status !== 'not_configured');
+        const upstream = engine.source?.upstream;
+        byId('build-provenance').textContent = engine.status === 'ready' ? (upstream ? 'Upstream ' + upstream.ref + ' at ' + upstream.revision + '. Built source fingerprint: ' + engine.source.fingerprint + '. Engine bundle: ' + engine.id + '.' : 'This engine predates automatic upstream provenance. Rebuild to record the resolved upstream revision.') : engine.message || 'Complete the container build to see its source revision.';
         if (engine.status === 'not_configured') byId('setup-instructions').textContent = 'Keep Docker Desktop running. Run Start-AnyPS5.cmd once to install the desktop helper and start the app.';
-        byId('engine-panel').hidden = engine.status === 'not_configured' || (authenticated && view !== 'settings');
+        byId('engine-panel').hidden = engine.status === 'not_configured' || (authenticated && !['settings', 'about'].includes(view));
         byId('engine-download').hidden = engine.status !== 'ready';
         byId('engine-status').textContent = engine.status === 'ready'
             ? `Ready for Windows x86-64 · ${engine.library_count} runtime libraries · Source ${engine.source.fingerprint.slice(0, 20)} · Bundle ${engine.id.slice(0, 12)}`
             : engine.message || 'Preparing the Windows engine. Check docker compose logs engine.';
+        if (engine.status === 'ready' && upstream) byId('engine-status').textContent += ' \u00b7 Upstream ' + upstream.ref + ' @ ' + upstream.revision.slice(0, 12);
         if (engine.status === 'ready' && authenticated && state.online && state.helper_revision !== 'source-' + engine.source.fingerprint.slice(0, 20)) {
             byId('engine-status').textContent += ' · Desktop helper update available. Close games and run the downloaded installer.';
         }

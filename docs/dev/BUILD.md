@@ -593,5 +593,5 @@ With the variable set, archive members have mode `0644`, TAR ownership is zero w
 =======
 # Container-built Windows distribution
 
-This fork can build the full Windows engine, native launcher and desktop helper inside Linux containers. See [DOCKER](../user/DOCKER.md) for the Compose workflow, dependency lock and exported artifacts. The existing native build instructions remain available below.
+This fork can build the full Windows engine, native launcher and desktop helper inside Linux containers. See [DOCKER](../user/DOCKER.md) for the Compose workflow, automatic upstream integration, tested toolchain lock and exported artifacts. Engine builds resolve upstream main (or ANYPS5_UPSTREAM_REF), merge fork changes against tools/engine/upstream.lock, and fail on conflicts; they do not modify the host checkout. The existing native build instructions remain available below.
 >>>>>>> Stashed changes
