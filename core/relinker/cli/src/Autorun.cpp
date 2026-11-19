@@ -14,6 +14,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char** environ;
 #endif
 
 namespace Cli {
@@ -57,16 +63,33 @@ int Autorun(const std::string& absPath, bool toWindows) {
     exitCode = rawCode;
     std::cout << "\nExit code: " << rawCode << '\n';
 #else
-    std::string cmd = "'";
-    for (const char character : absPath) {
-        if (character == '\'') cmd += "'\\''";
-        else cmd += character;
+    struct sigaction ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    struct sigaction oldInterrupt{};
+    struct sigaction oldQuit{};
+    sigaction(SIGINT, &ignore, &oldInterrupt);
+    sigaction(SIGQUIT, &ignore, &oldQuit);
+    sigset_t defaults;
+    sigemptyset(&defaults);
+    sigaddset(&defaults, SIGINT);
+    sigaddset(&defaults, SIGQUIT);
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setsigdefault(&attributes, &defaults);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF);
+    std::string file = absPath;
+    char* arguments[] = {file.data(), nullptr};
+    pid_t child = 0;
+    int runError = posix_spawn(&child, file.c_str(), nullptr, &attributes, arguments, environ);
+    posix_spawnattr_destroy(&attributes);
+    while (runError == 0 && waitpid(child, &rawCode, 0) < 0) {
+        if (errno != EINTR) runError = errno;
     }
-    cmd += '\'';
-    rawCode = std::system(cmd.c_str());
+    sigaction(SIGINT, &oldInterrupt, nullptr);
+    sigaction(SIGQUIT, &oldQuit, nullptr);
 
-    if (rawCode == -1) {
-        const int runError = errno;
+    if (runError != 0) {
         throw Domain::RelinkerException("Cannot run or wait for the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
     }
     const int signal = rawCode & 0x7F;
