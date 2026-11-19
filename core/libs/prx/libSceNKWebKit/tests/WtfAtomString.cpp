@@ -448,6 +448,35 @@ static void TestThreadTables() {
     Require(still.impl == mine.impl);
 }
 
+static void TestAtomOutlivesWorkerTable() {
+    String mine = _ZN3WTF14AtomStringImpl3addEPKhj(Bytes("outlive"), 7);
+    Require(mine.impl && (mine.impl->hashAndFlags & 16));
+    std::vector<String> held;
+    std::thread worker([&] {
+        for (const char* text : {"outlive", "outlive-two", "outlive-three"}) {
+            String atom = _ZN3WTF14AtomStringImpl3addEPKhj(Bytes(text), std::strlen(text));
+            Require(atom.impl && (atom.impl->hashAndFlags & 16));
+            held.push_back(atom);
+        }
+        String again = _ZN3WTF14AtomStringImpl3addEPKhj(Bytes("outlive"), 7);
+        Require(again.impl == held[0].impl && held[0].impl->refCount == 4);
+    });
+    worker.join();
+    Require(held.size() == 3);
+    for (auto& atom : held) {
+        Require(!(atom.impl->hashAndFlags & 16));
+        Require(atom.impl->refCount == 2);
+        Require(atom.impl != mine.impl);
+    }
+    String extra = held[0];
+    Require(extra.impl->refCount == 4);
+    extra = String();
+    held.clear();
+    String still = _ZN3WTF14AtomStringImpl6lookUpEPKhj(Bytes("outlive"), 7);
+    Require(still.impl == mine.impl);
+    Require(!_ZN3WTF14AtomStringImpl6lookUpEPKhj(Bytes("outlive-two"), 11).impl);
+}
+
 static void TestEdges() {
     Require(!_ZN3WTF14AtomStringImpl3addEPKhj(nullptr, 3).impl);
     String empty = _ZN3WTF14AtomStringImpl3addEPKDsj(u"", 0);
@@ -513,6 +542,7 @@ int main() {
     TestTranscripts();
     TestTableLifetime();
     TestThreadTables();
+    TestAtomOutlivesWorkerTable();
     TestEdges();
     return 0;
 }
