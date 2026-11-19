@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -1925,13 +1926,15 @@ int InitialReuse(AgcDriver::VulkanDevice& device) {
     return 0;
 }
 
-int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, bool automatic) {
+int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, std::string_view route) {
     using namespace AgcDriver::Graphics;
-    Require(cause == "live" || cause == "claimed" || cause == "written", "unknown publication reuse case");
+    const bool automatic = route != "explicit";
+    Require(route == "explicit" || route == "cpu" || route == "display" || route == "display_texels", "unknown publication read route");
+    Require(cause == "live" || cause == "claimed" || cause == "written" || cause == "same_cpu" || cause == "same_driver" || cause == "same_gpu" || cause == "adjacent_driver", "unknown publication reuse case");
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
     Block block(2u * BlockBytes, true);
-    if (cause == "written" && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return VulkanTestSkipped;
+    if ((cause == "written" || cause.starts_with("same_") || cause == "adjacent_driver") && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return VulkanTestSkipped;
     const auto color = DecodeTarget(block);
     StoreInitial(block, Samples, 0u, false);
     Draw(device, TargetState(color));
@@ -1942,18 +1945,40 @@ int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, b
     if (cause == "written") Require(AgcDriver::GuestMemory::Watched(block.Address(), colorBytes), "the publication reuse target lost write watching");
     if (cause == "claimed") ClaimMultisampleTargetMemory(color.address, colorBytes);
     if (cause == "written") std::memset(block.data + colorBytes - 256u, 0x5a, 256u);
+    const auto tail = block.Address() + colorBytes - 16u;
+    if (cause == "same_cpu") {
+        auto* destination = reinterpret_cast<volatile std::uint8_t*>(tail);
+        *destination = *destination;
+    }
+    if (cause == "same_driver") {
+        const auto* data = reinterpret_cast<const std::byte*>(tail);
+        const std::vector<std::byte> current(data, data + 16u);
+        auto original = current;
+        original.front() ^= std::byte{1u};
+        AgcDriver::GuestMemory::WriteChanged(tail, current, original);
+    }
+    if (cause == "same_gpu") AgcDriver::GuestMemory::MarkWritten(tail, 16u);
+    if (cause == "adjacent_driver") AgcDriver::GuestMemory::MarkWritten(block.Address() + colorBytes, 16u);
     const auto* begin = reinterpret_cast<const std::byte*>(block.data);
     const std::vector<std::byte> before(begin, begin + block.bytes);
     auto expected = before;
-    if (cause == "live") {
+    if (cause == "live" || cause == "adjacent_driver") {
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, color.elementBytes, Samples, Side, Side, 1u, 0u);
         layout.Tile(HalfSamples(loaded), std::span(expected).first(colorBytes));
         Require(expected != before, "the live publication control has no changed native samples");
     }
     if (automatic) {
         std::array<std::byte, 16> read{};
-        AgcDriver::GuestMemory::Read(block.Address(), read);
-        Require(std::equal(read.begin(), read.end(), expected.begin()), "the synchronized read changed the reused or live owner's bytes");
+        if (route == "cpu") {
+            AgcDriver::GuestMemory::Read(block.Address(), read);
+            Require(std::equal(read.begin(), read.end(), expected.begin()), "the synchronized read changed the reused or live owner's bytes");
+        } else {
+            const AgcDriver::DisplayBuffer display{block.Address(), 0x8000000022000000ull, Side, Side, 1u};
+            const auto image = route == "display" ? AgcDriver::ReadDisplayBuffer(display) : AgcDriver::ReadDisplayBufferTexels(display);
+            const auto footprint = std::span(expected).first(AgcDriver::DisplayBufferSize(display));
+            const auto expectedImage = route == "display" ? AgcDriver::DecodeDisplayBuffer(display, footprint) : AgcDriver::DisplayBufferTexels(display, footprint);
+            Require(image == expectedImage, "the display read observed stale bytes of a native color owner");
+        }
     } else PublishMultisampleTargetColor_nid_no_patch(context, color);
     Require(std::equal(expected.begin(), expected.end(), begin), "publication overwrote reused guest data or lost live native samples");
     RequireReadbackRefused(context, color, "requires an existing resident target");
@@ -2702,8 +2727,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
         if (argc == 4 && std::string_view(argv[1]) == "--reused-publication") {
-            Require(std::string_view(argv[3]) == "explicit" || std::string_view(argv[3]) == "cpu", "unknown publication reuse path");
-            return ReusedPublication(*device, argv[2], std::string_view(argv[3]) == "cpu");
+            return ReusedPublication(*device, argv[2], argv[3]);
         }
         if (argc == 2 && std::string_view(argv[1]) == "--publication") { Publication(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-recipe") { DrawRecipePublication(device); return 0; }

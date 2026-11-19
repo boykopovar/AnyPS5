@@ -78,11 +78,21 @@ static bool RefusesAsNotImplemented(const char* function, auto call) {
     return false;
 }
 
+static bool RefusesAsInvalidArgument(const char* message, auto call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument& error) {
+        return errno == 71 && std::string(error.what()) == message;
+    }
+    return false;
+}
+
 static void CheckUnreadableLibrary() {
     auto* const unreadable = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
     std::array<std::int32_t, 3> values{11, 22, 33};
     const auto before = values;
-    Require(RefusesAsNotImplemented("FT_Library_Version_nid_postfix", [&] {
+    Require(RefusesAsInvalidArgument("FT_Library_Version: unreadable library", [&] {
         FT_Library_Version_nid_postfix(unreadable, &values[0], &values[1], &values[2]);
     }));
     Require(values == before);
@@ -91,7 +101,7 @@ static void CheckUnreadableLibrary() {
     }));
     alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
     auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
-    Require(RefusesAsNotImplemented("FT_Library_Version_nid_postfix", [&] {
+    Require(RefusesAsInvalidArgument("FT_Library_Version: unreadable library", [&] {
         FT_Library_Version_nid_postfix(misaligned, &values[0], &values[1], &values[2]);
     }));
     Require(values == before);

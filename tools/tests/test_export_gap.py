@@ -203,6 +203,23 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
 
+    def test_gap_report_distinguishes_data_definitions_from_declarations(self):
+        names = ["Exported", "Declared", "Private"]
+        nids = [nid_of(name) for name in names]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {
+                "Export.cpp": 'extern "C" { int Exported_nid_postfix = 1; static int Private_nid_postfix; }',
+                "Api.hpp": 'extern "C" int Declared_nid_postfix;',
+            })
+            write_table(tables, MODULE, nids)
+            db = write_db(directory, zip(nids, names))
+            out = Path(directory) / "gaps.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(out.read_text().splitlines()), set(nids[1:]))
+            self.assertIn("defined as data", report)
+
     def test_assembly_postfix_name_counts_as_provided(self):
         name = "sceExampleAsm_nid_postfix"
         source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\n'
@@ -927,6 +944,49 @@ class ExportGapTests(unittest.TestCase):
                 export_gap.parse_nids_file(missing)
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_export_table(missing)
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+class MaskCodeTests(unittest.TestCase):
+    def test_comments_are_blanked_and_layout_is_preserved(self):
+        source = "int a; // note\nint b; /* block\nmore */ int c;\n"
+        masked = export_gap.mask_code(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("note", masked)
+        self.assertNotIn("block", masked)
+        self.assertNotIn("more", masked)
+        for kept in ("int a;", "int b;", "int c;"):
+            self.assertIn(kept, masked)
+
+    def test_string_literal_contents_are_blanked(self):
+        masked = export_gap.mask_code('call("hidden text");\n')
+        self.assertNotIn("hidden", masked)
+        self.assertTrue(masked.startswith("call("))
+        self.assertTrue(masked.endswith(");\n"))
 
 
 if __name__ == "__main__":
