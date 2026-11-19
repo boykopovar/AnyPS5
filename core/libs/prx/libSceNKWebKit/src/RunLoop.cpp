@@ -1,73 +1,56 @@
-#include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <queue>
-#include <thread>
-#include <utility>
+// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebKit/UIProcess/API/C/playstation/WKRunLoop.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2021 Sony Interactive Entertainment Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
-namespace {
-std::mutex s_mutex;
-std::condition_variable s_cv;
-std::queue<std::pair<WKRunLoopFunction, void*>> s_taskQueue;
-std::atomic<bool> s_stopRequested{false};
-std::atomic<bool> s_isRunning{false};
-std::atomic<bool> s_isInitialized{false};
-std::thread::id s_mainThreadId;
-}
+#include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfRunLoopExports.hpp"
 
 extern "C" {
 
 void APS5_VABI WKRunLoopInitializeMain() {
-    std::lock_guard<std::mutex> lock(s_mutex);
-    s_mainThreadId = std::this_thread::get_id();
-    s_isInitialized.store(true, std::memory_order_release);
-    s_stopRequested.store(false, std::memory_order_release);
-    std::queue<std::pair<WKRunLoopFunction, void*>> emptyQueue;
-    std::swap(s_taskQueue, emptyQueue);
+    _ZN3WTF20initializeMainThreadEv();
 }
 
 void APS5_VABI WKRunLoopRunMain() {
-    s_isRunning.store(true, std::memory_order_release);
-    while (!s_stopRequested.load(std::memory_order_acquire)) {
-        std::pair<WKRunLoopFunction, void*> task{nullptr, nullptr};
-        {
-            std::unique_lock<std::mutex> lock(s_mutex);
-            s_cv.wait(lock, [] {
-                return s_stopRequested.load(std::memory_order_acquire) || !s_taskQueue.empty();
-            });
-            if (s_stopRequested.load(std::memory_order_acquire)) {
-                break;
-            }
-            if (!s_taskQueue.empty()) {
-                task = s_taskQueue.front();
-                s_taskQueue.pop();
-            }
-        }
-        if (task.first) {
-            task.first(task.second);
-        }
-    }
-    s_isRunning.store(false, std::memory_order_release);
+    _ZN3WTF7RunLoop4mainEv();
+    _ZN3WTF7RunLoop3runEv();
 }
 
 void APS5_VABI WKRunLoopStopMain() {
-    {
-        std::lock_guard<std::mutex> lock(s_mutex);
-        s_stopRequested.store(true, std::memory_order_release);
-    }
-    s_cv.notify_all();
+    _ZN3WTF7RunLoop4stopEv(_ZN3WTF7RunLoop4mainEv());
 }
 
 void APS5_VABI WKRunLoopCallOnMainThread(WKRunLoopFunction function, void* context) {
     if (!function) {
         return;
     }
-    {
-        std::lock_guard<std::mutex> lock(s_mutex);
-        s_taskQueue.push({function, context});
-    }
-    s_cv.notify_one();
+    NKWebKit::WtfAbi::OwnedFunction callback = NKWebKit::WtfAbi::MakeHostFunction([function, context]() {
+        function(context);
+    });
+    _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(callback.Pass());
 }
 
 }
