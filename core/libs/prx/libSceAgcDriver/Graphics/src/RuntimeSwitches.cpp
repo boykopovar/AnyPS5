@@ -29,6 +29,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_SHARED_COLLECT_WALKS",
     "APS5_NO_EXTENDED_FAST_PROOFS",
     "APS5_DRAW_TABLE_SNAPSHOT",
+    "APS5_NO_ALIAS_VIEWS",
     "APS5_NO_TARGET_MEMO",
     "APS5_NO_TARGET_MEMO_OVERLAP_CACHE",
 };
@@ -49,6 +50,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_SHARED_COLLECT_WALKS") != nullptr,
             std::getenv("APS5_NO_EXTENDED_FAST_PROOFS") != nullptr,
             std::getenv("APS5_DRAW_TABLE_SNAPSHOT") != nullptr,
+            std::getenv("APS5_NO_ALIAS_VIEWS") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO_OVERLAP_CACHE") != nullptr,
         };
