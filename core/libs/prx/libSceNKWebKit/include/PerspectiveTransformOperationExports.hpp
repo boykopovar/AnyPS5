@@ -9,19 +9,11 @@
 
 namespace WebCore {
 
-struct TransformOperation {
-    void* m_vptr;
-    std::uint32_t m_refCount;
-    std::uint32_t m_type;
-};
-
 struct PerspectiveTransformOperation {
     TransformOperation m_base;
     Length m_p;
 };
 
-static_assert(sizeof(TransformOperation) == 16);
-static_assert(offsetof(TransformOperation, m_type) == 12);
 static_assert(sizeof(PerspectiveTransformOperation) == 24);
 static_assert(offsetof(PerspectiveTransformOperation, m_p) == 16);
 
