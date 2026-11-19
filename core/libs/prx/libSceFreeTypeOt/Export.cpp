@@ -273,6 +273,11 @@ int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y
 }
 
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
+    const auto negate = [](std::int64_t value) { return static_cast<std::int64_t>(0 - static_cast<std::uint64_t>(value)); };
+    if (in_y == 0) return static_cast<int>(in_x >= 0 ? out_y : negate(out_y));
+    if (in_x == 0) return static_cast<int>(in_y >= 0 ? negate(out_x) : out_x);
+    if (out_y == 0) return static_cast<int>(out_x >= 0 ? in_y : negate(in_y));
+    if (out_x == 0) return static_cast<int>(out_y >= 0 ? negate(in_x) : in_x);
     const auto delta = static_cast<std::int64_t>(
         static_cast<std::uint64_t>(in_x) * static_cast<std::uint64_t>(out_y) -
         static_cast<std::uint64_t>(in_y) * static_cast<std::uint64_t>(out_x)
