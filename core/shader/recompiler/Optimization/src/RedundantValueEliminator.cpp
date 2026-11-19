@@ -43,6 +43,7 @@ bool Recomputable(IrOpcode opcode) {
         case IrOpcode::FPAbs32:
         case IrOpcode::FPNeg32:
         case IrOpcode::FPSaturate32:
+        case IrOpcode::SplatLowU16x2:
         case IrOpcode::IAdd16x2:
         case IrOpcode::ISub16x2:
         case IrOpcode::IMul16x2:
