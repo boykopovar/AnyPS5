@@ -7951,7 +7951,11 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     recorder.Sync();
 }
 
-bool addressShadowTests(const Device& device, Recorder& recorder) {
+bool addressShadowTests(const Device& device, Recorder& recorder, bool inPlace, bool retiles = false) {
+    Require(ShaderResources::ReadsShadowsInPlace(true, true, false), "a read-only address-based build that is not a space-reuse candidate does not read unit shadows in place");
+    Require(!ShaderResources::ReadsShadowsInPlace(true, false, false), "a build whose programs store through addresses would read unit shadows in place through read-only table entries");
+    Require(!ShaderResources::ReadsShadowsInPlace(true, true, true), "a space-reuse candidate would read unit shadows in place");
+    Require(!ShaderResources::ReadsShadowsInPlace(false, true, false), "a build without an address table would read unit shadows in place");
     const auto& base = device.GetContext();
     if (!UnitShadowEnabled() || base.hostImportAlignment == 0) {
         std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -8038,10 +8042,13 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
         bool copied;
         bool current;
     };
-    const auto build = [&](std::array<std::uint8_t, 4> texel) {
+    const auto build = [&](std::array<std::uint8_t, 4> texel, const std::function<void(GuestBufferMemory&)>& prepare = {}, const std::function<void(GuestBufferMemory&)>& inspect = {}) {
         GuestBufferMemory leased(context);
+        leased.SetShadowReadsInPlace(inPlace);
         leased.AcquireRegistered();
+        if (prepare) prepare(leased);
         leased.Upload(true);
+        if (inspect) inspect(leased);
         Build result{recorder.PendingWriteOverlaps(address, bytes), false};
         recorder.Submit();
         device.WaitQueue();
@@ -8072,6 +8079,98 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
         }
         Require(holds({0x55, 0x55, 0x55, 0x55}), "a write-back into the unit shadow reached the import");
         static_cast<void>(ShadowReport());
+        if (inPlace && ShadowReadsEnabled() && !retiles) {
+            std::vector<ShaderRecompiler::BdaAbi::Range> table;
+            bool cachedTable = true;
+            const auto read = build({0x55, 0x55, 0x55, 0x55}, {}, [&](GuestBufferMemory& leased) {
+                table = leased.AddressRanges();
+                cachedTable = leased.CachedAddressTable().has_value();
+            });
+            const auto readReport = ShadowReport();
+            Require(!read.copied && read.current, "a read-only address-based build copied the unit shadow into the import instead of reading it in place");
+            Require(AnyShadowedOverlaps(address, bytes), "a read-only address-based build published the unit shadow it reads in place");
+            Require(!cachedTable, "a build that reads unit shadows in place offered the cached address table, which maps those ranges to the import");
+            Require(readReport.find(" read in place 1/2.0 ") != std::string::npos && readReport.find(" address 1/") == std::string::npos, "the in-place read of the whole 2 MiB heap was not counted, or a publish was counted instead:" + readReport);
+            const auto runs = ShadowReadRuns(address, bytes);
+            Require(runs.has_value() && !runs->empty(), "the unit shadow read in place has no live slab runs");
+            const auto empty = ShadowReadRuns(address + 1, 0);
+            Require(empty.has_value() && empty->empty(), "an empty range read in place produced slab runs");
+            const auto half = ShadowReadRuns(address, bytes / 2);
+            Require(half.has_value() && !half->empty() && std::all_of(half->begin(), half->end(), [&](const auto& run) { return run.begin >= address && run.end <= address + bytes / 2; }), "slab runs of the first half of the heap reach past the requested range");
+            for (const auto& run : *runs) {
+                std::uint64_t mapped = 0;
+                for (const auto& entry : table) {
+                    if (entry.end <= run.begin || run.end <= entry.begin) continue;
+                    Require(entry.begin >= run.begin && entry.end <= run.end && entry.deviceAddress == run.address + (entry.begin - run.begin) && entry.permissions == ShaderRecompiler::BdaAbi::Read, "a guest range with live unit-shadow bytes is not mapped read-only to its slab in the build's address table");
+                    mapped += entry.end - entry.begin;
+                }
+                Require(mapped == run.end - run.begin, "part of a live unit-shadow run is missing from the build's address table");
+            }
+            const auto& first = runs->front();
+            const auto runBytes = static_cast<std::size_t>(first.end - first.begin);
+            Buffer readback(context, runBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            const auto commands = recorder.Commands();
+            recorder.Keep(first.slab);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, first.slab->buffer, first.address - first.slab->address, readback.Handle(), 0, runBytes);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            settle();
+            readback.Invalidate();
+            const auto slabBytes = readback.Bytes();
+            const std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+            for (std::size_t i = 0; i < runBytes; ++i) Require(static_cast<std::uint8_t>(slabBytes[i]) == red[(first.begin - address + i) % 4], "the slab the address table maps does not hold the image's stored results");
+            const auto described = build({255, 0, 0, 255}, [&](GuestBufferMemory& leased) { leased.AddReadable(address, bytes); });
+            Require(described.copied && described.current && !AnyShadowedOverlaps(address, bytes), "an address-based build that also reads the heap through a descriptor left the descriptor's bytes unpublished");
+            StorageTexture::FlushPending(address, bytes, nullptr, "memory access");
+            settle();
+            recorder.Sync();
+            std::cout << "read-only address-based builds read the unit shadow in place, and descriptor reads still publish (address space cache " << (std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr ? "off" : "on") << ")\n";
+            return true;
+        }
+        if (inPlace && ShadowReadsEnabled()) {
+            if (SkipOnCpuVulkan(device, "the write watch reads the CPU rasterizer's publish copies as host stores, so the later write-backs do not retile into the unit shadow")) return false;
+            draw({{0.0f, 0.0f, 1.0f, 1.0f}});
+            StorageTexture::FlushPending(address, bytes, nullptr, "storage refresh", PublishScope::None);
+            settle();
+            Require(AnyShadowedOverlaps(address, bytes), "the second write-back did not retile into the unit shadow");
+            const auto stored = build({0, 0, 255, 255}, [&](GuestBufferMemory& leased) { leased.AddWritable(address, 256); });
+            Require(stored.copied && stored.current && !AnyShadowedOverlaps(address, bytes), "an address-based build that stores through a descriptor read the unit shadow in place instead of publishing it");
+            draw({{1.0f, 1.0f, 0.0f, 1.0f}});
+            StorageTexture::FlushPending(address, bytes, nullptr, "storage refresh", PublishScope::None);
+            settle();
+            Require(AnyShadowedOverlaps(address, bytes), "the third write-back did not retile into the unit shadow");
+            const auto middle = address + bytes / 2;
+            const auto quarter = address + bytes / 4;
+            Require(AnyShadowedOverlaps(middle, 1) && AnyShadowedOverlaps(quarter, 1), "the third write-back left the middle of the heap unshadowed");
+            StorageTexture::PublishShadowsOnly(quarter, 1, PublishScope::Whole, "memory access");
+            settle();
+            Require(!AnyShadowedOverlaps(quarter, 1) && AnyShadowedOverlaps(middle, 1), "publishing one unit of the heap did not end that unit alone");
+            static_cast<void>(ShadowReport());
+            reinterpret_cast<volatile std::uint8_t*>(block)[bytes / 2] = 0;
+            const auto covers = [](const std::vector<ShadowReadRun>& runs, std::uint64_t at) { return std::any_of(runs.begin(), runs.end(), [&](const auto& run) { return run.begin <= at && at < run.end; }); };
+            const auto direct = ShadowReadRuns(address, bytes);
+            const auto directReport = ShadowReport();
+            Require(direct.has_value() && !direct->empty() && !covers(*direct, middle) && !AnyShadowedOverlaps(middle, 1), "a unit the CPU wrote after the retile was read from its slab or stayed shadowed");
+            Require(!covers(*direct, quarter), "a published unit between live ones was read from its slab");
+            Require(directReport.find("(cpu 1,") != std::string::npos, "the unit the CPU wrote was not dropped as stale:" + directReport);
+            std::vector<ShaderRecompiler::BdaAbi::Range> droppedTable;
+            const auto dropped = build({255, 255, 0, 255}, {}, [&](GuestBufferMemory& leased) { droppedTable = leased.AddressRanges(); });
+            const auto left = ShadowReadRuns(address, bytes);
+            Require(!dropped.copied && left.has_value() && !left->empty() && !covers(*left, middle) && !covers(*left, quarter), "a unit the CPU wrote or a published unit was still read from its slab");
+            const auto* import = HostImportFor(base, address, bytes);
+            Require(import != nullptr, "the heap lost its import");
+            const auto start = HostImportBufferStart(*import);
+            for (const auto at : {middle, quarter}) {
+                const auto entry = std::find_if(droppedTable.begin(), droppedTable.end(), [&](const auto& candidate) { return candidate.begin <= at && at < candidate.end; });
+                Require(entry != droppedTable.end() && entry->deviceAddress + (at - entry->begin) == start.device + (at - start.guest), "guest bytes that are not live in the unit shadow are not mapped to the import in the build's address table");
+            }
+            draw({{0.0f, 1.0f, 0.0f, 1.0f}});
+            StorageTexture::FlushPending(address, bytes, nullptr, "memory access");
+            settle();
+            recorder.Sync();
+            std::cout << "read-only address-based builds read the unit shadow in place (address space cache " << (std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr ? "off" : "on") << ")\n";
+            return true;
+        }
         const auto shadowed = build({255, 0, 0, 255});
         const auto report = ShadowReport();
         Require(shadowed.current, "an address-based build over a heap left the unit shadow's stored results unpublished: the import held the earlier bytes at its submission");
@@ -18351,7 +18450,13 @@ int main(int argc, char** argv) {
             return smallTiledShadowLabelTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-shadowed-results-only") {
-            return addressShadowTests(device, recorder) ? 0 : 77;
+            return addressShadowTests(device, recorder, false) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bda-shadow-reads-in-place-only") {
+            return addressShadowTests(device, recorder, true) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bda-shadow-reads-in-place-retiles-only") {
+            return addressShadowTests(device, recorder, true, true) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--hook-clear-access-only") {
             return hookClearAccessTests(device, recorder) ? 0 : 77;

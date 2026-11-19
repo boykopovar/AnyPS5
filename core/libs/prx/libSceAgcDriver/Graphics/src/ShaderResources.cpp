@@ -2922,6 +2922,7 @@ void ShaderResources::buildComplete() {
         Require(registeredImageViewsCurrent(registeredImageViews), "AGC graphics: registered image range changed during resource materialization");
         timing.bindingsMs += phase(BuildPhase::Images);
         requireGuestBuffers();
+        guestMemory.SetShadowReadsInPlace(ReadsShadowsInPlace(usesBda, bdaReadOnly, SpaceReuseShape()));
         guestMemory.UploadFinish(usesBda, htileClear);
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory, faultReportOnly);
@@ -3125,7 +3126,7 @@ bool LoopGuardEnabled() {
 }
 
 void ShaderResources::noteReusable() {
-    const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
+    const bool spaceReusable = SpaceReuseShape() && usesBda && bdaReadOnly && !guestMemory.HasShadowOverlays() && !guestMemory.HasCopiedWrites() && !(bda != nullptr && LoopGuardEnabled());
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation(spaceReusable);
     reusable = false;

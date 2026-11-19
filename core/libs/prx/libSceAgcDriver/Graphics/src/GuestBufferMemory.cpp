@@ -7113,7 +7113,10 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         if (profile) copyUs += microsecondsSince(copyStart);
     }
     if (addressable) StoreDepthExpandWrites(context);
-    if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
+    if (heapsEnd > heapsBegin) {
+        const bool inPlace = shadowReadsInPlace && writes.empty() && recorder != nullptr && redirectShadowReads(heapsBegin, heapsEnd, *recorder);
+        if (!inPlace) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
+    }
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     publishIntoMirrors();
     takeHeapReferences();
@@ -7728,6 +7731,43 @@ std::vector<AddressRange> MergeByBegin(const std::vector<AddressRange>& left, co
     return merged;
 }
 
+std::vector<AddressRange> ClipToCovered(const std::vector<AddressRange>& ranges, const std::vector<AddressRange>& pieces) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> covered;
+    covered.reserve(ranges.size());
+    for (const auto& range : ranges) covered.emplace_back(range.begin, range.end);
+    std::sort(covered.begin(), covered.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> joined;
+    for (const auto& [begin, end] : covered) {
+        if (!joined.empty() && begin <= joined.back().second) joined.back().second = std::max(joined.back().second, end);
+        else joined.emplace_back(begin, end);
+    }
+    std::vector<AddressRange> clipped;
+    clipped.reserve(pieces.size());
+    for (const auto& piece : pieces) {
+        auto interval = std::partition_point(joined.begin(), joined.end(), [&](const auto& candidate) { return candidate.second <= piece.begin; });
+        for (; interval != joined.end() && interval->first < piece.end; ++interval) AppendFrom(piece, std::max(piece.begin, interval->first), std::min(piece.end, interval->second), clipped);
+    }
+    return clipped;
+}
+
+}
+
+bool GuestBufferMemory::redirectShadowReads(std::uint64_t begin, std::uint64_t end, Recorder& recorder) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (!AnyShadowedOverlaps(begin, static_cast<std::size_t>(end - begin))) return true;
+    if (AnyShadowedOverlaps(reads)) {
+        for (const auto& [readBegin, readEnd] : reads) StorageTexture::PublishShadowsOnly(readBegin, static_cast<std::size_t>(readEnd - readBegin), PublishScope::Whole, "address-based heaps");
+    }
+    const auto runs = ShadowReadRuns(begin, static_cast<std::size_t>(end - begin));
+    if (!runs.has_value()) return false;
+    if (runs->empty()) return true;
+    RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    shadowOverlays.reserve(runs->size());
+    for (const auto& run : *runs) {
+        recorder.Keep(run.slab);
+        shadowOverlays.push_back({run.begin, run.end, run.address, ShaderRecompiler::BdaAbi::Read, 0});
+    }
+    return true;
 }
 
 std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() const {
@@ -7763,6 +7803,13 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
     } else {
         result.reserve(regions.size());
         for (const auto& region : regions) result.push_back(addressRange(region));
+    }
+    if (!shadowOverlays.empty()) {
+        const auto clipped = ClipToCovered(result, shadowOverlays);
+        std::vector<ShaderRecompiler::BdaAbi::Range> cut;
+        cut.reserve(result.size() + clipped.size());
+        AppendUncovered(result, clipped, cut);
+        result = MergeByBegin(cut, clipped);
     }
     if (writes.empty()) return result;
     auto sortedWrites = writes;
@@ -7816,7 +7863,7 @@ std::optional<std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderR
 }
 
 std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTable() const {
-    if (space == nullptr) return std::nullopt;
+    if (space == nullptr || !shadowOverlays.empty()) return std::nullopt;
     Require(uploaded && !committed, "guest GPU address ranges are not available");
     if (writes.empty() && regions.empty()) return CachedTable{space->serial, &space->ranges};
     if (tableRanges != nullptr) return CachedTable{tableSerial, tableRanges.get()};

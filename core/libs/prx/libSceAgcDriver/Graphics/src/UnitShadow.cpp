@@ -74,6 +74,7 @@ struct Statistics {
     std::atomic<std::uint64_t> detiledShadow{0}, detiledShadowBytes{0}, detiledImport{0}, detiledImportBytes{0}, tailPublishes{0};
     std::array<std::atomic<std::uint64_t>, ReasonCount> published{}, publishedBytes{};
     std::atomic<std::uint64_t> staleDroppedCpu{0}, staleDroppedDriver{0}, skippedInCompletion{0}, evictions{0}, lostOnRetire{0}, droppedOnRetire{0}, slabLost{0}, verified{0}, mismatches{0};
+    std::atomic<std::uint64_t> readInPlace{0}, readInPlaceBytes{0}, readInPlaceRefused{0};
 };
 
 Statistics& Stats() {
@@ -233,13 +234,16 @@ void changedUnits(const UnitShadow& shadow, std::uint64_t first, std::uint64_t l
 std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t firstUnit, std::uint32_t units) {
     VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.size = static_cast<VkDeviceSize>(units) * UnitBytes;
-    info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    const bool addressed = context.bufferDeviceAddress && ShadowReadsEnabled();
+    info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
     if (context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer) != VK_SUCCESS) return nullptr;
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+    const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    if (addressed) allocation.pNext = &flags;
     allocation.allocationSize = requirements.size;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     try {
@@ -256,7 +260,12 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
         context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
         return nullptr;
     }
-    return std::make_shared<ShadowSlab>(context, buffer, memory, firstUnit, units);
+    auto slab = std::make_shared<ShadowSlab>(context, buffer, memory, firstUnit, units);
+    if (addressed) {
+        const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
+        slab->address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    }
+    return slab;
 }
 
 struct SlabCopies {
@@ -632,6 +641,87 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
     std::size_t units = 0;
     for (const auto& shadow : shadows) units += publishRange(shadow, address, end, scope, reason);
     return units;
+}
+
+bool ShadowReadsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_SHADOW_READS") == nullptr;
+    return enabled;
+}
+
+std::optional<std::vector<ShadowReadRun>> ShadowReadRuns(std::uint64_t address, std::size_t bytes) {
+    std::vector<ShadowReadRun> runs;
+    if (!UnitShadowEnabled() || bytes == 0) return runs;
+    if (!ShadowReadsEnabled()) return std::nullopt;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    auto& registry = Registry();
+    std::vector<std::shared_ptr<UnitShadow>> shadows;
+    {
+        std::lock_guard lock(registry.mutex);
+        for (const auto& shadow : overlapping(registry, address, end)) {
+            const auto begin = std::max(address, shadow->importBase);
+            const auto stop = std::min(end, shadow->ImportEnd());
+            if (shadow->liveUnits == 0) continue;
+            for (auto unit = shadow->UnitOf(begin); unit <= shadow->UnitOf(stop - 1); ++unit) {
+                const auto& slab = shadow->slabs[static_cast<std::size_t>(unit / SlabUnits())];
+                if (shadow->Live(unit) && slab != nullptr && slab->address == 0) {
+                    Stats().readInPlaceRefused.fetch_add(1, std::memory_order_relaxed);
+                    return std::nullopt;
+                }
+            }
+            shadows.push_back(shadow);
+        }
+    }
+    const auto present = Recorder::Presents();
+    std::uint64_t total = 0;
+    for (const auto& shadow : shadows) {
+        const auto begin = std::max(address, shadow->importBase);
+        const auto stop = std::min(end, shadow->ImportEnd());
+        const auto first = shadow->UnitOf(begin);
+        const auto last = shadow->UnitOf(stop - 1);
+        std::uint64_t walkFirst = last + 1, walkLast = first;
+        {
+            std::lock_guard lock(registry.mutex);
+            for (auto unit = first; unit <= last; ++unit) {
+                if (!shadow->Live(unit)) continue;
+                walkFirst = std::min(walkFirst, unit);
+                walkLast = std::max(walkLast, unit);
+            }
+        }
+        if (walkFirst > walkLast) continue;
+        const auto walkBegin = std::max(shadow->UnitBegin(walkFirst), shadow->importBase);
+        const auto walkEnd = std::min(shadow->UnitBegin(walkLast + 1), shadow->ImportEnd());
+        if (walkEnd > walkBegin) GuestMemory::CollectWritesUncached(walkBegin, static_cast<std::size_t>(walkEnd - walkBegin));
+        std::lock_guard lock(registry.mutex);
+        std::vector<std::uint8_t> changed, cpu;
+        changedUnits(*shadow, walkFirst, walkLast, changed, cpu);
+        std::uint32_t ended = 0;
+        for (auto unit = walkFirst; unit <= walkLast; ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto k = static_cast<std::size_t>(unit - walkFirst);
+            const auto& slab = shadow->slabs[static_cast<std::size_t>(unit / SlabUnits())];
+            if (changed[k] == GuestMemory::BlockWritten || slab == nullptr) {
+                shadow->generation[unit] = 0;
+                ++ended;
+                if (slab != nullptr) (cpu[k] != 0 ? Stats().staleDroppedCpu : Stats().staleDroppedDriver).fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            const auto pieceBegin = std::max(unitBegin, address);
+            const auto pieceEnd = std::min(unitEnd, end);
+            const auto device = slab->address + (unit - slab->firstUnit) * UnitBytes + (pieceBegin - shadow->UnitBegin(unit));
+            if (!runs.empty() && runs.back().slab == slab && runs.back().end == pieceBegin) runs.back().end = pieceEnd;
+            else runs.push_back({pieceBegin, pieceEnd, device, slab});
+            slab->lastUse = present;
+            total += pieceEnd - pieceBegin;
+        }
+        shadow->liveUnits -= ended;
+        if (ended != 0) liveChanged();
+    }
+    if (!runs.empty()) {
+        Stats().readInPlace.fetch_add(1, std::memory_order_relaxed);
+        Stats().readInPlaceBytes.fetch_add(total, std::memory_order_relaxed);
+    }
+    return runs;
 }
 
 namespace {
@@ -1080,6 +1170,8 @@ std::string ShadowReport() {
         retired = registry.retired;
     }
     std::snprintf(text, sizeof(text), " %llu/%.1f by reason {%s }, stale-dropped %llu (cpu %llu, driver %llu), skipped-in-completion %llu, slabs %llu live %.1f MiB / peak %.1f MiB, evictions %llu, slab lost %llu, retired %llu, dropped on retire %llu, lost on retire %llu", publishedTotal, mib(publishedBytesTotal), reasons.c_str(), cpuDropped + driverDropped, cpuDropped, driverDropped, take(statistics.skippedInCompletion), liveSlabs, mib(liveBytes), mib(peakBytes), take(statistics.evictions), take(statistics.slabLost), retired, take(statistics.droppedOnRetire), take(statistics.lostOnRetire));
+    line += text;
+    std::snprintf(text, sizeof(text), ", read in place %llu/%.1f (refused %llu)", take(statistics.readInPlace), mib(take(statistics.readInPlaceBytes)), take(statistics.readInPlaceRefused));
     line += text;
     if (ShadowVerify()) {
         std::snprintf(text, sizeof(text), ", verified %llu, mismatches %llu", take(statistics.verified), take(statistics.mismatches));

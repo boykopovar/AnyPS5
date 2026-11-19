@@ -72,6 +72,7 @@ struct ShadowSlab {
     std::uint64_t firstUnit;
     std::uint32_t units;
     std::uint64_t lastUse = 0;
+    VkDeviceAddress address = 0;
     // Destinations handed out for a write-back in progress: such a slab is never evicted.
     std::atomic<std::uint32_t> pins{0};
 };
@@ -102,6 +103,14 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
 // No GpuMutex, no tracker: conservative (a unit with a generation and no publish counts), for
 // hook-free readers and a build's stage A.
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes);
+struct ShadowReadRun {
+    std::uint64_t begin;
+    std::uint64_t end;
+    VkDeviceAddress address;
+    std::shared_ptr<ShadowSlab> slab;
+};
+bool ShadowReadsEnabled();
+std::optional<std::vector<ShadowReadRun>> ShadowReadRuns(std::uint64_t address, std::size_t bytes);
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
 bool LiveUnitsClear(std::uint64_t address, std::size_t bytes);
 bool AnyPublishInProgress();

@@ -477,6 +477,8 @@ public:
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
     bool SpaceOnly() const;
+    void SetShadowReadsInPlace(bool readOnly) { shadowReadsInPlace = readOnly; }
+    bool HasShadowOverlays() const { return !shadowOverlays.empty(); }
     std::shared_ptr<const void> ReleaseSpace();
     bool RetakeSpace();
     bool SpaceHeld() const;
@@ -657,6 +659,9 @@ private:
     bool regionsSorted = false;
     bool regionsOverlap = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    bool shadowReadsInPlace = false;
+    std::vector<ShaderRecompiler::BdaAbi::Range> shadowOverlays;
+    bool redirectShadowReads(std::uint64_t begin, std::uint64_t end, Recorder& recorder);
     std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
