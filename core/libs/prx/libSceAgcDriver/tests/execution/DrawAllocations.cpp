@@ -355,10 +355,6 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
     draws = submits * MeasuredDrawsPerSubmit;
     auto empty = shape.build(LeadingDrawsPerSubmit);
     auto repeated = shape.build(LeadingDrawsPerSubmit + MeasuredDrawsPerSubmit);
-    // The first submission links this shape's pipeline and queues its link-time-optimized relink on the pipeline
-    // library worker. With a cold driver cache that relink compiles for long enough to land in either window and
-    // move the subtraction by hundreds of allocations, so it finishes first, and the warm-up then runs the
-    // optimized pipeline the measured draws bind.
     auto& driver = AgcDriver::DriverDetail::Driver::Get();
     Submit(repeated);
     (void)driver.SettledPipelineLibraryWork();
