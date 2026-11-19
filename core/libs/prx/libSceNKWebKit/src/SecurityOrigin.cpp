@@ -639,7 +639,12 @@ SecurityOriginData APS5_VABI _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(co
 }
 
 SecurityOriginData APS5_VABI _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(void* frame) {
-    if (!frame) return SecurityOriginData{};
+    if (!frame) {
+        SecurityOriginData result;
+        new (&result.storage.tuple) SecurityOriginTuple{};
+        result.index = kSecurityOriginTupleIndex;
+        return result;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
