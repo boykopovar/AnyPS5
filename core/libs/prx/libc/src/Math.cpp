@@ -5283,6 +5283,107 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nextafterl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nextafterl.c */
+long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) {
+    const ExtendedParts ux = SplitExtended(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if (((ux.signExponent & 0x7fff) == 0x7fff && (ux.mantissa << 1) != 0) || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return x + y;
+    }
+    if (x == y) {
+        return y;
+    }
+    if (x == 0.0L) {
+        const volatile long double smallest = JoinExtended(1, static_cast<std::uint16_t>(uy.signExponent & 0x8000));
+        volatile long double product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    auto high = static_cast<std::uint32_t>(ux.mantissa >> 32);
+    auto low = static_cast<std::uint32_t>(ux.mantissa);
+    std::uint16_t exponent = ux.signExponent & 0x7fff;
+    const std::uint32_t integer = high & 0x80000000u;
+    if ((x > 0.0L) != (x < y)) {
+        if (low == 0) {
+            if ((high & 0x7fffffffu) == 0) exponent = static_cast<std::uint16_t>((exponent - 1) & 0x7fff);
+            high = (high - 1) | integer;
+        }
+        --low;
+    } else {
+        ++low;
+        if (low == 0) {
+            high = (high + 1) | integer;
+            if ((high & 0x7fffffffu) == 0) exponent = static_cast<std::uint16_t>((exponent + 1) & 0x7fff);
+        }
+    }
+    if (exponent == 0x7fff) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) high &= 0x7fffffffu;
+    const long double next = JoinExtended(std::uint64_t{high} << 32 | low, static_cast<std::uint16_t>(exponent | (ux.signExponent & 0x8000)));
+    if (exponent == 0) {
+        volatile long double product = next * next;
+        if (product != next) _Feraise_nid_postfix(0x10);
+    }
+    return next;
+}
+long double APS5_VABI nexttowardl_nid_postfix(long double x, long double y) {
+    return nextafterl_nid_postfix(x, y);
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttoward.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttoward.c */
+double APS5_VABI nexttoward_nid_postfix(double x, long double y) {
+    const std::uint64_t ux = std::bit_cast<std::uint64_t>(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if ((ux & 0x7fffffffffffffffull) > 0x7ff0000000000000ull || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return static_cast<double>(x + y);
+    }
+    if (x == y) {
+        return static_cast<double>(y);
+    }
+    if (x == 0.0) {
+        const volatile double smallest = std::bit_cast<double>(static_cast<std::uint64_t>(uy.signExponent & 0x8000u) << 48 | 1u);
+        volatile double product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const std::uint64_t next = (static_cast<std::int32_t>(ux >> 32) > 0) != (x < y) ? ux - 1 : ux + 1;
+    const std::uint64_t exponent = next & 0x7ff0000000000000ull;
+    if (exponent == 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        volatile double product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<double>(next);
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttowardf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttowardf.c */
+float APS5_VABI nexttowardf_nid_postfix(float x, long double y) {
+    const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if ((ux & 0x7fffffffu) > 0x7f800000u || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return static_cast<float>(x + y);
+    }
+    if (x == y) {
+        return static_cast<float>(y);
+    }
+    if ((ux & 0x7fffffffu) == 0) {
+        const volatile float smallest = std::bit_cast<float>(static_cast<std::uint32_t>(uy.signExponent & 0x8000u) << 16 | 1u);
+        volatile float product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const std::uint32_t next = (static_cast<std::int32_t>(ux) >= 0) != (x < y) ? ux - 1 : ux + 1;
+    const std::uint32_t exponent = next & 0x7f800000u;
+    if (exponent == 0x7f800000u) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        volatile float product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<float>(next);
+}
 int APS5_VABI __isfinite_nid_postfix(double x) {
     const auto exponent = std::bit_cast<std::uint64_t>(x) & 0x7ff0000000000000ull;
     return exponent != 0x7ff0000000000000ull ? 1 : 0;
