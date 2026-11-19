@@ -7,19 +7,30 @@
 
 extern "C" {
 
-int APS5_VABI physhm_open_nid_postfix(void) {
+int APS5_VABI physhm_open_nid_no_patch(void) {
     NotImplemented_nid_no_patch("physhm_open");
     return 0;
 }
+int APS5_VABI physhm_open_nid_postfix(void) {
+    return physhm_open_nid_no_patch();
+}
 
-int APS5_VABI physhm_unlink_nid_postfix(void) {
+
+int APS5_VABI physhm_unlink_nid_no_patch(void) {
     NotImplemented_nid_no_patch("physhm_unlink");
     return 0;
 }
+int APS5_VABI physhm_unlink_nid_postfix(void) {
+    return physhm_unlink_nid_no_patch();
+}
 
-int APS5_VABI rfork_thread_nid_postfix(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
+
+int APS5_VABI rfork_thread_nid_no_patch(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
     NotImplemented_nid_no_patch("rfork_thread");
     return 0;
+}
+int APS5_VABI rfork_thread_nid_postfix(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
+    return rfork_thread_nid_no_patch(flags, stack, function, argument);
 }
 
 int APS5_VABI sceKernelRdup(int pid, int fd) {

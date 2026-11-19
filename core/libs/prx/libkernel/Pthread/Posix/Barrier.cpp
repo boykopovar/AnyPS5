@@ -18,7 +18,7 @@ constexpr std::size_t MAX_BARRIER_NAME = 1024;
 
 extern "C" {
 
-int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** attr) {
+int APS5_VABI pthread_barrierattr_init_nid_no_patch(PthreadBarrierattrPrivate** attr) {
     if (!attr) return 22;
     try {
         auto* value = new PthreadBarrierattrPrivate;
@@ -31,8 +31,12 @@ int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** a
         return 12;
     }
 }
+int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** attr) {
+    return pthread_barrierattr_init_nid_no_patch(attr);
+}
 
-int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate** attr) {
+
+int APS5_VABI pthread_barrierattr_destroy_nid_no_patch(PthreadBarrierattrPrivate** attr) {
     if (!attr) return 22;
     PthreadBarrierattrPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
@@ -41,8 +45,12 @@ int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate*
     delete value;
     return 0;
 }
+int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate** attr) {
+    return pthread_barrierattr_destroy_nid_no_patch(attr);
+}
 
-int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+
+int APS5_VABI pthread_barrierattr_getpshared_nid_no_patch(PthreadBarrierattrPrivate* const* attr, int* pshared) {
     if (!attr) return 22;
     PthreadBarrierattrPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
@@ -50,8 +58,12 @@ int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPriva
     if (!GuestCopyOut_nid_no_patch(pshared, &value->pshared, sizeof(value->pshared))) return 14;
     return 0;
 }
+int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+    return pthread_barrierattr_getpshared_nid_no_patch(attr, pshared);
+}
 
-int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
+
+int APS5_VABI pthread_barrierattr_setpshared_nid_no_patch(PthreadBarrierattrPrivate** attr, int pshared) {
     if (!attr) return 22;
     PthreadBarrierattrPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
@@ -59,8 +71,12 @@ int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPriva
     value->pshared = pshared;
     return 0;
 }
+int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
+    return pthread_barrierattr_setpshared_nid_no_patch(attr, pshared);
+}
 
-int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
+
+int APS5_VABI pthread_barrier_init_nid_no_patch(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
     (void)attr;
     if (!barrier || count == 0 || count > INT_MAX) return 22;
     try {
@@ -75,8 +91,12 @@ int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, 
         return 12;
     }
 }
+int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
+    return pthread_barrier_init_nid_no_patch(barrier, attr, count);
+}
 
-int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) {
+
+int APS5_VABI pthread_barrier_wait_nid_no_patch(PthreadBarrierPrivate** barrier) {
     if (!barrier) return 22;
     PthreadBarrierPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, barrier, sizeof(value)) || !value) return 22;
@@ -94,8 +114,12 @@ int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) 
     if (--value->active == 0) value->changed.notify_all();
     return 0;
 }
+int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) {
+    return pthread_barrier_wait_nid_no_patch(barrier);
+}
 
-int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrier) {
+
+int APS5_VABI pthread_barrier_destroy_nid_no_patch(PthreadBarrierPrivate** barrier) {
     if (!barrier) return 22;
     PthreadBarrierPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, barrier, sizeof(value)) || !value) return 22;
@@ -109,8 +133,12 @@ int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrie
     delete value;
     return 0;
 }
+int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrier) {
+    return pthread_barrier_destroy_nid_no_patch(barrier);
+}
 
-int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** barrier, const char* name) {
+
+int APS5_VABI pthread_barrier_setname_np_nid_no_patch(PthreadBarrierPrivate** barrier, const char* name) {
     if (!barrier) throw std::invalid_argument("pthread_barrier_setname_np: null barrier");
     PthreadBarrierPrivate* handle = nullptr;
     if (!GuestCopyIn_nid_no_patch(&handle, barrier, sizeof(handle))) return 14;
@@ -126,5 +154,9 @@ int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** bar
     }
     return 0;
 }
+int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** barrier, const char* name) {
+    return pthread_barrier_setname_np_nid_no_patch(barrier, name);
+}
+
 
 }

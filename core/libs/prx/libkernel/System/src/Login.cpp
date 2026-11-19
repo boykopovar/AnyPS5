@@ -78,7 +78,7 @@ extern "C" int SetLogin_nid_no_patch(const char* name) {
     return 0;
 }
 
-extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {
+extern "C" int APS5_VABI getlogin_r_nid_no_patch(char* output, int size) {
     if (size <= 0) return 34;
     if (output == nullptr) return 14;
     {
@@ -107,3 +107,7 @@ extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {
     errno = saved;
     return copied ? 0 : 14;
 }
+extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {
+    return getlogin_r_nid_no_patch(output, size);
+}
+

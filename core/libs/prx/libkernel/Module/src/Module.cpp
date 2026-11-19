@@ -335,7 +335,7 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
 
 extern "C" {
 
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr) {
+int APS5_VABI __elf_phdr_match_addr_nid_no_patch(const ModuleInfoEx* module, void* addr) {
     if (module == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: module info is null");
     static_assert(offsetof(ModuleInfoEx, segment_count) == offsetof(ModuleInfoEx, segments) + sizeof(ModuleInfoEx::segments));
     struct {
@@ -354,5 +354,9 @@ int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void
     }
     return 0;
 }
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr) {
+    return __elf_phdr_match_addr_nid_no_patch(module, addr);
+}
+
 
 }

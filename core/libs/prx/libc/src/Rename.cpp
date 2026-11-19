@@ -237,6 +237,10 @@ extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
     }
 }
 
-extern "C" int APS5_VABI rename_nid_postfix(const char* from, const char* to) {
+extern "C" int APS5_VABI rename_nid_no_patch(const char* from, const char* to) {
     return RenameGuestPath_nid_no_patch(from, to);
 }
+extern "C" int APS5_VABI rename_nid_postfix(const char* from, const char* to) {
+    return rename_nid_no_patch(from, to);
+}
+

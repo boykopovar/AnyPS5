@@ -45,7 +45,7 @@ int Fail(int error) {
 
 extern "C" {
 
-int APS5_VABI cpuset_nid_postfix(int* setid) {
+int APS5_VABI cpuset_nid_no_patch(int* setid) {
     int id = 0;
     {
         std::lock_guard lock(setMutex);
@@ -64,8 +64,12 @@ int APS5_VABI cpuset_nid_postfix(int* setid) {
     }
     return 0;
 }
+int APS5_VABI cpuset_nid_postfix(int* setid) {
+    return cpuset_nid_no_patch(setid);
+}
 
-int APS5_VABI cpuset_setid_nid_postfix(int which, std::int64_t id, int setid) {
+
+int APS5_VABI cpuset_setid_nid_no_patch(int which, std::int64_t id, int setid) {
     if (which != WhichProcess) {
         return Fail(GuestEinval);
     }
@@ -82,8 +86,12 @@ int APS5_VABI cpuset_setid_nid_postfix(int which, std::int64_t id, int setid) {
     currentProcessSetId = setid;
     return 0;
 }
+int APS5_VABI cpuset_setid_nid_postfix(int which, std::int64_t id, int setid) {
+    return cpuset_setid_nid_no_patch(which, id, setid);
+}
 
-int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, int* setid) {
+
+int APS5_VABI cpuset_getid_nid_no_patch(int level, int which, std::int64_t id, int* setid) {
     if (level == LevelWhich && which != WhichCpuset) {
         return Fail(GuestEinval);
     }
@@ -143,5 +151,9 @@ int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, in
     }
     return 0;
 }
+int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, int* setid) {
+    return cpuset_getid_nid_no_patch(level, which, id, setid);
+}
+
 
 }

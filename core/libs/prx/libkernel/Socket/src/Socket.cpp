@@ -151,13 +151,21 @@ int HostPoll(KernelSocketPoll::Entry* descriptors, int count, int timeoutMillise
 
 extern "C" {
 
-const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, uint32_t size) {
+const char* APS5_VABI inet_ntop_nid_no_patch(int af, const void* src, char* dst, uint32_t size) {
     return __inet_ntop_nid_postfix(af, src, dst, size);
 }
+const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, uint32_t size) {
+    return inet_ntop_nid_no_patch(af, src, dst, size);
+}
 
-int APS5_VABI inet_pton_nid_postfix(int af, const char* src, void* dst) {
+
+int APS5_VABI inet_pton_nid_no_patch(int af, const char* src, void* dst) {
     return __inet_pton_nid_postfix(af, src, dst);
 }
+int APS5_VABI inet_pton_nid_postfix(int af, const char* src, void* dst) {
+    return inet_pton_nid_no_patch(af, src, dst);
+}
+
 
 void KernelSetSocketPoller_nid_no_patch(KernelSocketPoll::Poller poller) {
     g_socketPoller.store(poller);
@@ -429,7 +437,7 @@ int KernelSelectCheckedSets_nid_no_patch(int scanned, void* readfds, void* write
     return result;
 }
 
-int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+int APS5_VABI select_nid_no_patch(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
     GuestTimeval limit{};
     if (timeout != nullptr && !GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
         *__error_nid_postfix() = GuestEfault;
@@ -447,5 +455,9 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
     }
     return KernelSelectCheckedSets_nid_no_patch(scanned, readfds, writefds, exceptfds, timeout != nullptr ? &limit : nullptr);
 }
+int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+    return select_nid_no_patch(nfds, readfds, writefds, exceptfds, timeout);
+}
+
 
 }

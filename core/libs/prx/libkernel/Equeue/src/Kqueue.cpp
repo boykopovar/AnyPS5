@@ -712,7 +712,7 @@ void KqueueDescriptorReadShut(int descriptor) {
 
 extern "C" {
 
-int APS5_VABI kqueue_nid_postfix() {
+int APS5_VABI kqueue_nid_no_patch() {
     const int descriptor = ReserveDescriptor();
     if (descriptor < 0) {
         if (errno == EMFILE) return PosixFailure(GUEST_EMFILE);
@@ -725,8 +725,12 @@ int APS5_VABI kqueue_nid_postfix() {
     g_kqueues[descriptor] = std::move(queue);
     return descriptor;
 }
+int APS5_VABI kqueue_nid_postfix(void) {
+    return kqueue_nid_no_patch();
+}
 
-int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
+
+int APS5_VABI kevent_nid_no_patch(int descriptor, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
     KernelTimespec limit{};
     if (timeout != nullptr) {
         if (!GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
@@ -806,5 +810,9 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
     }
     return count;
 }
+int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
+    return kevent_nid_no_patch(descriptor, changelist, nchanges, eventlist, nevents, timeout);
+}
+
 
 }

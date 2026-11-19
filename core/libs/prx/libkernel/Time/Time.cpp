@@ -370,11 +370,15 @@ static void SleepUntilComplete(std::uint64_t nanos) {
     ThreadCancel::Check();
 }
 
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
+int APS5_VABI sceKernelUsleep_nid_no_patch(KernelUseconds microseconds) {
     TraceSleep(__builtin_return_address(0), microseconds);
     SleepUntilComplete(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
+int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
+    return sceKernelUsleep_nid_no_patch(microseconds);
+}
+
 
 static int SleepForRequest(const KernelTimespec* rqtp, bool cancellable) {
     constexpr int guestFault = 14;
@@ -402,21 +406,33 @@ int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmt
     return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+int APS5_VABI nanosleep_nid_no_patch(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
     const int error = SleepForRequest(rqtp, true);
     if (error == 0) return 0;
     *__error_nid_postfix() = error;
     return -1;
 }
-
-int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    return nanosleep_nid_postfix(rqtp, rmtp);
+int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    return nanosleep_nid_no_patch(rqtp, rmtp);
 }
 
-int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
+
+int APS5_VABI _nanosleep_nid_no_patch(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    return nanosleep_nid_postfix(rqtp, rmtp);
+}
+int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    return _nanosleep_nid_no_patch(rqtp, rmtp);
+}
+
+
+int APS5_VABI usleep_nid_no_patch(KernelUseconds microseconds) {
     CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
+int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
+    return usleep_nid_no_patch(microseconds);
+}
+
 
 #ifdef _WIN32
 int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
@@ -642,7 +658,7 @@ static bool MeasuredIoErrorClock(int clockId) {
     return clockId >= 16 && clockId <= 19;
 }
 
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+int APS5_VABI clock_gettime_nid_no_patch(int clockId, KernelTimespec* tp) {
     if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32 || MeasuredInvalidClock(clockId))) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
@@ -660,8 +676,12 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     *tp = value;
     return 0;
 }
+int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_no_patch(clockId, tp);
+}
 
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zoneOutput) {
+
+int APS5_VABI gettimeofday_nid_no_patch(KernelTimeval* output, KernelTimezone* zoneOutput) {
     KernelTimeval current{};
     auto* tv = &current;
     KernelTimezone zone{};
@@ -690,8 +710,12 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
     }
     return 0;
 }
+int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
+    return gettimeofday_nid_no_patch(tv, tz);
+}
 
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
+
+int APS5_VABI clock_getres_nid_no_patch(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
     if (IsCpuClock(clockId)) clockId = GUEST_CLOCK_THREAD_CPUTIME_ID;
     switch (clockId) {
@@ -722,8 +746,12 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
             return -1;
     }
 }
+int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
+    return clock_getres_nid_no_patch(clockId, res);
+}
 
-int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
+
+int APS5_VABI clock_settime_nid_no_patch(int clockId, const KernelTimespec* tp) {
     KernelTimespec time{};
     if (tp == nullptr || !ReadGuestTime(&time, tp, sizeof(time))) {
         *__error_nid_postfix() = GUEST_EFAULT;
@@ -733,6 +761,10 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
     *__error_nid_postfix() = GUEST_EPERM;
     return -1;
 }
+int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
+    return clock_settime_nid_no_patch(clockId, tp);
+}
+
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
     KernelTimeval time{};

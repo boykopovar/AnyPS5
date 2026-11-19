@@ -955,7 +955,7 @@ int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count) {
     return WakeAddress(reinterpret_cast<std::uintptr_t>(address), count, true);
 }
 
-int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument) {
+int APS5_VABI _umtx_op_nid_no_patch(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument) {
     const void* caller = __builtin_return_address(0);
     int error = 0;
     switch (operation) {
@@ -1040,5 +1040,9 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
     *__error_nid_postfix() = error;
     return -1;
 }
+int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument) {
+    return _umtx_op_nid_no_patch(object, operation, value, sizeArgument, timeArgument);
+}
+
 
 }

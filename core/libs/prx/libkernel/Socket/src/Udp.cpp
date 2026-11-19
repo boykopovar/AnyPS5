@@ -1526,23 +1526,13 @@ extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors) {
 }
 
 extern "C" {
-int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
+int APS5_VABI fcntl_nid_no_patch(int descriptor, int command, std::uint64_t v0, std::uint64_t v1) {
+    static_cast<void>(v1);
     const auto type = File::FcntlArgumentOf(command);
     std::intptr_t argument = 0;
     if (type != File::FcntlArgument::None) {
-#ifdef _WIN32
-        __builtin_sysv_va_list arguments;
-        __builtin_sysv_va_start(arguments, command);
-        argument = type == File::FcntlArgument::Int ? __builtin_va_arg(arguments, int)
-                                                    : reinterpret_cast<std::intptr_t>(__builtin_va_arg(arguments, void*));
-        __builtin_sysv_va_end(arguments);
-#else
-        std::va_list arguments;
-        va_start(arguments, command);
-        argument = type == File::FcntlArgument::Int ? va_arg(arguments, int)
-                                                    : reinterpret_cast<std::intptr_t>(va_arg(arguments, void*));
-        va_end(arguments);
-#endif
+        argument = type == File::FcntlArgument::Int ? static_cast<int>(v0)
+                                                    : static_cast<std::intptr_t>(v0);
     }
     if (!GuestSockets::IsOpen(descriptor)) {
         int result = 0;
@@ -1587,21 +1577,45 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
     if ((command >= 7 && command <= 9) || (command >= 11 && command <= 13) || command == 15 || command == 16) return Fail(9);
     return Fail(22);
 }
-int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
+int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, command);
-    const auto argument = __builtin_va_arg(arguments, std::uint64_t);
+    const std::uint64_t v0 = __builtin_va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = __builtin_va_arg(arguments, std::uint64_t);
     __builtin_sysv_va_end(arguments);
 #else
     std::va_list arguments;
     va_start(arguments, command);
-    const auto argument = va_arg(arguments, std::uint64_t);
+    const std::uint64_t v0 = va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = va_arg(arguments, std::uint64_t);
     va_end(arguments);
 #endif
-    return fcntl_nid_postfix(descriptor, command, argument);
+    return fcntl_nid_no_patch(descriptor, command, v0, v1);
 }
-int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
+
+int APS5_VABI _fcntl_nid_no_patch(int descriptor, int command, std::uint64_t v0, std::uint64_t v1) {
+    static_cast<void>(v1);
+    return fcntl_nid_postfix(descriptor, command, v0);
+}
+int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, command);
+    const std::uint64_t v0 = __builtin_va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = __builtin_va_arg(arguments, std::uint64_t);
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
+    va_start(arguments, command);
+    const std::uint64_t v0 = va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = va_arg(arguments, std::uint64_t);
+    va_end(arguments);
+#endif
+    return _fcntl_nid_no_patch(descriptor, command, v0, v1);
+}
+
+int APS5_VABI setsockopt_nid_no_patch(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     if (!value && length != 0) return Fail(14);
     if (static_cast<std::int32_t>(length) < 0) return Fail(22);
@@ -1620,7 +1634,11 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     : GuestSockets::SetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
     return error == 0 ? 0 : Fail(error);
 }
-int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
+int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option, const void* value, std::uint32_t length) {
+    return setsockopt_nid_no_patch(descriptor, level, option, value, length);
+}
+
+int APS5_VABI getsockopt_nid_no_patch(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
     std::uint32_t declared = 0;
     if (value && !GuestCopyIn_nid_no_patch(&declared, length, sizeof(declared))) return Fail(14);
@@ -1642,7 +1660,11 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     if (error != 0) return Fail(error);
     return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
 }
-int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
+int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option, void* value, std::uint32_t* length) {
+    return getsockopt_nid_no_patch(descriptor, level, option, value, length);
+}
+
+int APS5_VABI socket_nid_no_patch(int family, int type, int protocol) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
     const int plainType = type & ~(GuestCloseOnExec | GuestNonBlocking);
     if (family != 2 && family != 28) return Fail(47);
@@ -1683,11 +1705,19 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
         return Fail(12);
     }
 }
-int APS5_VABI __sys_socketex_nid_postfix(const char* name, int family, int type, int protocol) {
+int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
+    return socket_nid_no_patch(family, type, protocol);
+}
+
+int APS5_VABI __sys_socketex_nid_no_patch(const char* name, int family, int type, int protocol) {
     static_cast<void>(name);
     return socket_nid_postfix(family, type, protocol);
 }
-int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* descriptors) {
+int APS5_VABI __sys_socketex_nid_postfix(const char* name, int family, int type, int protocol) {
+    return __sys_socketex_nid_no_patch(name, family, type, protocol);
+}
+
+int APS5_VABI socketpair_nid_no_patch(int family, int type, int protocol, int* descriptors) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
     const int plainType = type & ~(GuestCloseOnExec | GuestNonBlocking);
     if (family != GuestUnix && family != 2 && family != 28) return Fail(47);
@@ -1749,6 +1779,10 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         return Fail(12);
     }
 }
+int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* descriptors) {
+    return socketpair_nid_no_patch(family, type, protocol, descriptors);
+}
+
 #ifdef _WIN32
 static int ConnectFailure(Socket& socket) {
     std::lock_guard lock(socket.modeMutex);
@@ -1770,7 +1804,7 @@ static int NoteConnectError(Socket& socket) {
     return error;
 }
 #endif
-int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+int APS5_VABI connect_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
     std::array<unsigned char, 255> addressCopy;
     if (!GuestCopyIn_nid_no_patch(addressCopy.data(), address, length)) return Fail(14);
@@ -1821,6 +1855,10 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
+int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return connect_nid_no_patch(descriptor, address, length);
+}
+
 #ifdef _WIN32
 bool BindUnboundStream(Socket& socket) {
     if (socket.family != 2 && socket.family != 28) return false;
@@ -1833,7 +1871,7 @@ bool BindUnboundStream(Socket& socket) {
     return ::bind(socket.value, reinterpret_cast<sockaddr*>(&wildcard), wildcardSize) == 0;
 }
 #endif
-int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
+int APS5_VABI listen_nid_no_patch(int descriptor, int backlog) {
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if (const int error = forwards->listen(descriptor, backlog)) return Fail(error);
         return 0;
@@ -1851,7 +1889,11 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
 #endif
     return Fail(error == 56 ? 22 : error);
 }
-int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
+    return listen_nid_no_patch(descriptor, backlog);
+}
+
+int APS5_VABI accept_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (address && !GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
     const auto listener = Lookup(descriptor);
@@ -1900,7 +1942,11 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         return Fail(12);
     }
 }
-std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags) {
+int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return accept_nid_no_patch(descriptor, address, length);
+}
+
+std::int64_t APS5_VABI send_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length, int flags) {
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if ((flags & ~GuestSendFlags) != 0) return Fail(45);
         if (length > INT_MAX) return Fail(40);
@@ -1923,7 +1969,11 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     return result < 0 ? Fail(SendError(*socket)) : result;
 }
-std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags) {
+    return send_nid_no_patch(descriptor, buffer, length, flags);
+}
+
+std::int64_t APS5_VABI recv_nid_no_patch(int descriptor, void* buffer, std::uint64_t length, int flags) {
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
         if (length > INT_MAX) return Fail(40);
@@ -1952,7 +2002,11 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 #endif
     return result < 0 ? Fail(NativeError()) : result;
 }
-int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+    return recv_nid_no_patch(descriptor, buffer, length, flags);
+}
+
+int APS5_VABI bind_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
     std::array<unsigned char, 255> addressCopy;
     if (!GuestCopyIn_nid_no_patch(addressCopy.data(), address, length)) return Fail(14);
@@ -1978,6 +2032,10 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
+int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return bind_nid_no_patch(descriptor, address, length);
+}
+
 namespace {
 bool AlreadyShut(NativeSocket socket, int how) {
 #ifdef __APPLE__
@@ -1997,7 +2055,7 @@ bool AlreadyShut(NativeSocket socket, int how) {
 }
 }
 
-int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
+int APS5_VABI shutdown_nid_no_patch(int descriptor, int how) {
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if (const int error = forwards->shutdown(descriptor, how)) return Fail(error);
         if (how != 1) {
@@ -2026,6 +2084,10 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
     }
     return unconnected ? Fail(57) : 0;
 }
+int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
+    return shutdown_nid_no_patch(descriptor, how);
+}
+
 namespace {
 int CopyAddressOut(const sockaddr_storage& native, bool unnamed, void* address, std::uint32_t* length, std::uint32_t size) {
     unsigned char bytes[28]{};
@@ -2036,7 +2098,7 @@ int CopyAddressOut(const sockaddr_storage& native, bool unnamed, void* address, 
     return 0;
 }
 }
-int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI getsockname_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
@@ -2062,7 +2124,11 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
     }
     return CopyAddressOut(native, false, address, length, capacity);
 }
-int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getsockname_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI getpeername_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
     std::shared_ptr<void> owner;
@@ -2081,7 +2147,11 @@ int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32
     if (::getpeername(nativeSocket, reinterpret_cast<sockaddr*>(&native), &size)) return Fail(NativeError());
     return CopyAddressOut(native, false, address, length, capacity);
 }
-int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
+int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getpeername_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI ioctl_nid_no_patch(int descriptor, std::uint64_t request, void* argument) {
     if (!GuestSockets::IsOpen(descriptor)) {
         const auto command = static_cast<std::uint32_t>(request);
         std::shared_ptr<void> owner;
@@ -2137,10 +2207,18 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     }
     return 0;
 }
-int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
+int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
+    return ioctl_nid_no_patch(descriptor, request, argument);
+}
+
+int APS5_VABI _ioctl_nid_no_patch(int descriptor, std::uint64_t request, void* argument) {
     return ioctl_nid_postfix(descriptor, request, argument);
 }
-std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
+int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
+    return _ioctl_nid_no_patch(descriptor, request, argument);
+}
+
+std::int64_t APS5_VABI sendto_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length,
     int flags, const void* address, std::uint32_t addressLength) {
     std::array<unsigned char, 255> destinationCopy;
     if (address) {
@@ -2198,7 +2276,11 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     const int error = SendError(*socket);
     return socket->type == 2 && address && SourceFaults(buffer, length) ? Fail(14) : Fail(error);
 }
-std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength) {
+    return sendto_nid_no_patch(descriptor, buffer, length, flags, address, addressLength);
+}
+
+std::int64_t APS5_VABI recvfrom_nid_no_patch(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
     std::uint32_t capacity = 0;
     if (addressLength && !GuestCopyIn_nid_no_patch(&capacity, addressLength, sizeof(capacity))) return Fail(14);
@@ -2270,6 +2352,10 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     }
     return ReportAddress(address, addressLength, name, reported) ? result : Fail(14);
 }
+std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
+    return recvfrom_nid_no_patch(descriptor, buffer, length, flags, address, addressLength);
+}
+
 
 static_assert(sizeof(GuestMsghdr) == 48 && offsetof(GuestMsghdr, iov) == 16 && offsetof(GuestMsghdr, control) == 32 && offsetof(GuestMsghdr, flags) == 44);
 static std::int64_t MessageLength(const GuestMsghdr* message) {
@@ -2430,7 +2516,7 @@ private:
 };
 #endif
 static bool ReadGuest(void* destination, const void* source, std::size_t bytes);
-std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+std::int64_t APS5_VABI sendmsg_nid_no_patch(int descriptor, const GuestMsghdr* message, int flags) {
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
     if (header.iovLength < 0 || header.iovLength > 1024) return Fail(40);
@@ -2469,6 +2555,10 @@ std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* me
 #endif
     return sendto_nid_postfix(descriptor, buffer.data(), buffer.size(), flags, header.name ? name : nullptr, header.name ? header.nameLength : 0u);
 }
+std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+    return sendmsg_nid_no_patch(descriptor, message, flags);
+}
+
 #ifdef _WIN32
 static bool GuestPagesAllow(std::uintptr_t start, std::size_t bytes, DWORD allowed) {
     return GuestPrefix(reinterpret_cast<const void*>(start), bytes, allowed) == bytes;
@@ -2558,7 +2648,7 @@ static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int ke
     if (micro) append(2, seconds, nanoseconds / 1000);
     return records;
 }
-std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+std::int64_t APS5_VABI recvmsg_nid_no_patch(int descriptor, GuestMsghdr* message, int flags) {
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
     if (header.iovLength < 0 || header.iovLength > 1024) return Fail(40);
@@ -2709,6 +2799,10 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
 #endif
     return received;
 }
+std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+    return recvmsg_nid_no_patch(descriptor, message, flags);
+}
+
 
 static_assert(sizeof(GuestSendfileHeaders) == 32 && offsetof(GuestSendfileHeaders, trailers) == 16);
 
@@ -2739,7 +2833,7 @@ static int SendIovecs(const Socket& socket, const KernelIovec* iov, int count, s
         if (const int error = SendAll(socket, iov[i].base, iov[i].length, sent)) return error;
     return 0;
 }
-int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset, std::uint64_t length,
+int APS5_VABI sendfile_nid_no_patch(int file, int descriptor, std::int64_t offset, std::uint64_t length,
     const GuestSendfileHeaders* headers, std::int64_t* sbytes, int flags) {
     (void)flags;
     if (offset < 0) return Fail(22);
@@ -2815,6 +2909,10 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         if (const int error = SendIovecs(*socket, trailerIovecs.data(), static_cast<int>(trailerIovecs.size()), sent)) return finish(error);
     return finish(0);
 }
+int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset, std::uint64_t length, const GuestSendfileHeaders* headers, std::int64_t* sbytes, int flags) {
+    return sendfile_nid_no_patch(file, descriptor, offset, length, headers, sbytes, flags);
+}
+
 static bool SocketStillHeld(int descriptor, const void* owner) {
     if (auto socket = Find(descriptor)) return socket.get() == owner;
     std::shared_ptr<void> current;
@@ -3095,7 +3193,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     }
 }
 
-int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+int APS5_VABI poll_nid_no_patch(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
     if (timeout < -1) return Fail(22);
     if (count > 1024) {
         GuestResourceLimit limit{};
@@ -3114,6 +3212,10 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     if (result >= 0 && count && !GuestCopyOut_nid_no_patch(descriptors, local.data(), bytes)) return Fail(14);
     return result;
 }
+int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+    return poll_nid_no_patch(descriptors, count, timeout);
+}
+
 }
 
 extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
@@ -3177,42 +3279,90 @@ std::int64_t GuestSockets::Writev(int descriptor, const Iovec* iov, int iovcnt) 
 }
 
 extern "C" {
-int APS5_VABI _setsockopt_nid_postfix(int descriptor, int level, int option, const void* value, std::uint32_t length) {
+int APS5_VABI _setsockopt_nid_no_patch(int descriptor, int level, int option, const void* value, std::uint32_t length) {
     return setsockopt_nid_postfix(descriptor, level, option, value, length);
 }
-int APS5_VABI _getsockopt_nid_postfix(int descriptor, int level, int option, void* value, std::uint32_t* length) {
+int APS5_VABI _setsockopt_nid_postfix(int descriptor, int level, int option, const void* value, std::uint32_t length) {
+    return _setsockopt_nid_no_patch(descriptor, level, option, value, length);
+}
+
+int APS5_VABI _getsockopt_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length) {
     return getsockopt_nid_postfix(descriptor, level, option, value, length);
 }
-int APS5_VABI _connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+int APS5_VABI _getsockopt_nid_postfix(int descriptor, int level, int option, void* value, std::uint32_t* length) {
+    return _getsockopt_nid_no_patch(descriptor, level, option, value, length);
+}
+
+int APS5_VABI _connect_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
     return connect_nid_postfix(descriptor, address, length);
 }
-int APS5_VABI _listen_nid_postfix(int descriptor, int backlog) {
+int APS5_VABI _connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return _connect_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI _listen_nid_no_patch(int descriptor, int backlog) {
     return listen_nid_postfix(descriptor, backlog);
 }
-int APS5_VABI _accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI _listen_nid_postfix(int descriptor, int backlog) {
+    return _listen_nid_no_patch(descriptor, backlog);
+}
+
+int APS5_VABI _accept_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     return accept_nid_postfix(descriptor, address, length);
 }
-int APS5_VABI _bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+int APS5_VABI _accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return _accept_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI _bind_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
     return bind_nid_postfix(descriptor, address, length);
 }
-int APS5_VABI _getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI _bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return _bind_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI _getsockname_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     return getsockname_nid_postfix(descriptor, address, length);
 }
-int APS5_VABI _getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+int APS5_VABI _getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return _getsockname_nid_no_patch(descriptor, address, length);
+}
+
+int APS5_VABI _getpeername_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
     return getpeername_nid_postfix(descriptor, address, length);
 }
-std::int64_t APS5_VABI _sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
+int APS5_VABI _getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return _getpeername_nid_no_patch(descriptor, address, length);
+}
+
+std::int64_t APS5_VABI _sendto_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length,
     int flags, const void* address, std::uint32_t addressLength) {
     return sendto_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
 }
-std::int64_t APS5_VABI _recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+std::int64_t APS5_VABI _sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength) {
+    return _sendto_nid_no_patch(descriptor, buffer, length, flags, address, addressLength);
+}
+
+std::int64_t APS5_VABI _recvfrom_nid_no_patch(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
     return recvfrom_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
 }
-std::int64_t APS5_VABI _sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+std::int64_t APS5_VABI _recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
+    return _recvfrom_nid_no_patch(descriptor, buffer, length, flags, address, addressLength);
+}
+
+std::int64_t APS5_VABI _sendmsg_nid_no_patch(int descriptor, const GuestMsghdr* message, int flags) {
     return sendmsg_nid_postfix(descriptor, message, flags);
 }
-std::int64_t APS5_VABI _recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+std::int64_t APS5_VABI _sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+    return _sendmsg_nid_no_patch(descriptor, message, flags);
+}
+
+std::int64_t APS5_VABI _recvmsg_nid_no_patch(int descriptor, GuestMsghdr* message, int flags) {
     return recvmsg_nid_postfix(descriptor, message, flags);
 }
+std::int64_t APS5_VABI _recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+    return _recvmsg_nid_no_patch(descriptor, message, flags);
+}
+
 }

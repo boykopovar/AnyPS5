@@ -626,7 +626,7 @@ int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info
     return FillModuleInfo(handle, info, false);
 }
 
-std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** address, std::size_t* size) {
+std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_no_patch(void** address, std::size_t* size) {
     if (!address || !size) throw std::invalid_argument("sceKernelGetLibkernelTextLocation: null argument");
     const auto images = GuestImages();
     if (images.empty()) throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program is not loaded");
@@ -651,8 +651,12 @@ std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** addr
     errno = savedErrno;
     return 0;
 }
+std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** address, std::size_t* size) {
+    return sceKernelGetLibkernelTextLocation_nid_no_patch(address, size);
+}
 
-std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo* result) {
+
+std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_no_patch(InternalSegmentInfo* result) {
     if (!result) throw std::invalid_argument("sceKernelInternalMemoryGetModuleSegmentInfo: result is null");
     void* address = nullptr;
     std::size_t size = 0;
@@ -667,6 +671,10 @@ std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(I
     errno = savedErrno;
     return 0;
 }
+std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo* result) {
+    return sceKernelInternalMemoryGetModuleSegmentInfo_nid_no_patch(result);
+}
+
 
 std::uint64_t GuestImageSegmentBytes_nid_no_patch() {
     return GuestSegmentBytes();

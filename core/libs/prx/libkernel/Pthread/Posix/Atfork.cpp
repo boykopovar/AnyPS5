@@ -9,7 +9,7 @@ std::mutex atforkLock;
 std::vector<PthreadAtforkHandlers> atforkHandlers;
 }
 
-extern "C" int APS5_VABI pthread_atfork_nid_postfix(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child) {
+extern "C" int APS5_VABI pthread_atfork_nid_no_patch(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child) {
     std::lock_guard lock(atforkLock);
     try {
         atforkHandlers.push_back({prepare, parent, child});
@@ -18,6 +18,10 @@ extern "C" int APS5_VABI pthread_atfork_nid_postfix(PthreadAtforkHandler prepare
     }
     return 0;
 }
+extern "C" int APS5_VABI pthread_atfork_nid_postfix(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child) {
+    return pthread_atfork_nid_no_patch(prepare, parent, child);
+}
+
 
 std::vector<PthreadAtforkHandlers> PthreadAtforkHandlers_nid_no_patch() {
     std::lock_guard lock(atforkLock);

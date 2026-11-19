@@ -28,1181 +28,309 @@
 
 extern "C" {
 
-[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix();
-
-
-
 int APS5_VABI __Ux86_64_setcontext_nid_no_patch(void) {
     return __Ux86_64_setcontext();
 }
 
-int APS5_VABI __elf_phdr_match_addr_nid_no_patch(const ModuleInfoEx* module, void* addr) {
-    return __elf_phdr_match_addr_nid_postfix(module, addr);
-}
-
-int* APS5_VABI __error_nid_no_patch(void) {
-    return __error_nid_postfix();
-}
-
-const char* APS5_VABI __inet_ntop_nid_no_patch(int family, const void* source, char* destination, std::uint32_t capacity) {
-    return __inet_ntop_nid_postfix(family, source, destination, capacity);
-}
-
-int APS5_VABI __inet_pton_nid_no_patch(int family, const char* text, void* destination) {
-    return __inet_pton_nid_postfix(family, text, destination);
-}
-
-void APS5_VABI __pthread_cleanup_pop_imp_nid_no_patch(int execute) {
-    __pthread_cleanup_pop_imp_nid_postfix(execute);
-}
-
-void APS5_VABI __pthread_cleanup_push_imp_nid_no_patch(void (APS5_VABI* routine)(void*), void* argument, void* info) {
-    __pthread_cleanup_push_imp_nid_postfix(routine, argument, info);
-}
-
-void APS5_VABI __pthread_cxa_finalize_nid_no_patch(void* argument) {
-    __pthread_cxa_finalize_nid_postfix(argument);
-}
-
-[[noreturn]] void APS5_VABI __stack_chk_fail_nid_no_patch(void) {
-    __stack_chk_fail_nid_postfix();
-}
-
-int APS5_VABI __sys_socketex_nid_no_patch(const char* name, int family, int type, int protocol) {
-    return __sys_socketex_nid_postfix(name, family, type, protocol);
-}
-
-void* APS5_VABI __tls_get_addr_nid_no_patch(const KernelTlsIndex* index) {
-    return __tls_get_addr_nid_postfix(index);
-}
-
-int APS5_VABI _accept_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return _accept_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI _bind_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
-    return _bind_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI _close_nid_no_patch(int descriptor) {
-    return _close_nid_postfix(descriptor);
-}
-
-int APS5_VABI _connect_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
-    return _connect_nid_postfix(descriptor, address, length);
-}
-
-void APS5_VABI _exit_nid_no_patch(int status) {
-    _exit_nid_postfix(status);
-}
-
-int APS5_VABI _fcntl_nid_no_patch(int descriptor, int command, std::uint64_t v0, std::uint64_t v1) {
-    return _fcntl_nid_postfix(descriptor, command, v0, v1);
-}
-
-int64_t APS5_VABI _fstat_nid_no_patch(int d, FileStat* sb) {
-    return _fstat_nid_postfix(d, sb);
-}
-
-int APS5_VABI _fstatfs_nid_no_patch(int d, KernelStatfs* buf) {
-    return _fstatfs_nid_postfix(d, buf);
-}
-
-int APS5_VABI _getdirentries_nid_no_patch(int fd, char* buf, int nbytes, int64_t* basep) {
-    return _getdirentries_nid_postfix(fd, buf, nbytes, basep);
-}
-
-int APS5_VABI _getpeername_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return _getpeername_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI _getsockname_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return _getsockname_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI _getsockopt_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length) {
-    return _getsockopt_nid_postfix(descriptor, level, option, value, length);
-}
-
-int APS5_VABI _ioctl_nid_no_patch(int descriptor, std::uint64_t request, void* argument) {
-    return _ioctl_nid_postfix(descriptor, request, argument);
-}
-
-int APS5_VABI _is_signal_return_nid_no_patch(std::uint64_t programCounter) {
-    return _is_signal_return_nid_postfix(programCounter);
-}
-
-int APS5_VABI _listen_nid_no_patch(int descriptor, int backlog) {
-    return _listen_nid_postfix(descriptor, backlog);
-}
-
-int APS5_VABI _nanosleep_nid_no_patch(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    return _nanosleep_nid_postfix(rqtp, rmtp);
-}
-
-int APS5_VABI _open_nid_no_patch(const char* path, int flags, std::uint64_t v0, std::uint64_t v1) {
-    return _open_nid_postfix(path, flags, v0, v1);
-}
-
-std::int64_t APS5_VABI _read_nid_no_patch(int descriptor, void* buffer, std::size_t count) {
-    return _read_nid_postfix(descriptor, buffer, count);
-}
-
-int64_t APS5_VABI _readv_nid_no_patch(int d, const KernelIovec* iov, int iovcnt) {
-    return _readv_nid_postfix(d, iov, iovcnt);
-}
-
-std::int64_t APS5_VABI _recvfrom_nid_no_patch(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
-    return _recvfrom_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
-}
-
-std::int64_t APS5_VABI _recvmsg_nid_no_patch(int descriptor, GuestMsghdr* message, int flags) {
-    return _recvmsg_nid_postfix(descriptor, message, flags);
-}
-
-void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_no_patch(void* api[]) {
-    _sceKernelRtldSetApplicationHeapAPI_nid_postfix(api);
-}
-
-int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_no_patch(const void* dsoSymbol) {
-    return _sceKernelRtldThreadAtexitDecrement_nid_postfix(dsoSymbol);
-}
-
-int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_no_patch(const void* dsoSymbol) {
-    return _sceKernelRtldThreadAtexitIncrement_nid_postfix(dsoSymbol);
-}
-
-void APS5_VABI _sceKernelSetThreadDtors_nid_no_patch(thread_dtors_func_t callback) {
-    _sceKernelSetThreadDtors_nid_postfix(callback);
-}
-
-void APS5_VABI _sceKernelSetThreadAtexitCount_nid_no_patch(get_thread_atexit_count_func_t callback) {
-    _sceKernelSetThreadAtexitCount_nid_postfix(callback);
-}
-
-void APS5_VABI _sceKernelSetThreadAtexitReport_nid_no_patch(thread_atexit_report_func_t callback) {
-    _sceKernelSetThreadAtexitReport_nid_postfix(callback);
-}
-
-std::int64_t APS5_VABI _sendmsg_nid_no_patch(int descriptor, const GuestMsghdr* message, int flags) {
-    return _sendmsg_nid_postfix(descriptor, message, flags);
-}
-
-std::int64_t APS5_VABI _sendto_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength) {
-    return _sendto_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
-}
-
-int APS5_VABI _setsockopt_nid_no_patch(int descriptor, int level, int option, const void* value, std::uint32_t length) {
-    return _setsockopt_nid_postfix(descriptor, level, option, value, length);
-}
-
-int APS5_VABI _sigaction_nid_no_patch(int guest, const GuestSigaction* action, GuestSigaction* previous) {
-    return _sigaction_nid_postfix(guest, action, previous);
-}
-
-int APS5_VABI _sigprocmask_nid_no_patch(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    return _sigprocmask_nid_postfix(how, set, previousSet);
-}
-
-int APS5_VABI _sigsuspend_nid_no_patch(const GuestSignalSet* set) {
-    return _sigsuspend_nid_postfix(set);
-}
-
-int APS5_VABI _umtx_op_nid_no_patch(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument) {
-    return _umtx_op_nid_postfix(object, operation, value, sizeArgument, timeArgument);
-}
-
-std::int64_t APS5_VABI _write_nid_no_patch(int descriptor, const void* buffer, std::size_t count) {
-    return _write_nid_postfix(descriptor, buffer, count);
-}
-
-int64_t APS5_VABI _writev_nid_no_patch(int d, const KernelIovec* iov, int iovcnt) {
-    return _writev_nid_postfix(d, iov, iovcnt);
-}
-
-int APS5_VABI accept_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return accept_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI access_nid_no_patch(const char* path, int mode) {
-    return access_nid_postfix(path, mode);
-}
-
-int APS5_VABI bind_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
-    return bind_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI cfsetspeed_nid_no_patch(void* attributes, std::uint32_t speed) {
-    return cfsetspeed_nid_postfix(attributes, speed);
-}
-
-int APS5_VABI chdir_nid_no_patch(const char* path) {
-    return chdir_nid_postfix(path);
-}
-
-int APS5_VABI chflags_nid_no_patch(const char* path, std::uint64_t flags) {
-    return chflags_nid_postfix(path, flags);
-}
-
-int APS5_VABI chmod_nid_no_patch(const char* path, int mode) {
-    return chmod_nid_postfix(path, mode);
-}
-
-int APS5_VABI clock_getres_nid_no_patch(int clockId, KernelTimespec* res) {
-    return clock_getres_nid_postfix(clockId, res);
-}
-
-int APS5_VABI clock_gettime_nid_no_patch(int clockId, KernelTimespec* tp) {
-    return clock_gettime_nid_postfix(clockId, tp);
-}
-
-int APS5_VABI clock_settime_nid_no_patch(int clockId, const KernelTimespec* tp) {
-    return clock_settime_nid_postfix(clockId, tp);
-}
-
-int APS5_VABI close_nid_no_patch(int d) {
-    return close_nid_postfix(d);
-}
-
-int APS5_VABI connect_nid_no_patch(int descriptor, const void* address, std::uint32_t length) {
-    return connect_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI cpuset_getaffinity_nid_no_patch(int level, int which, std::int64_t id, std::size_t size, void* mask) {
-    return cpuset_getaffinity_nid_postfix(level, which, id, size, mask);
-}
-
-int APS5_VABI cpuset_getid_nid_no_patch(int level, int which, std::int64_t id, int* setid) {
-    return cpuset_getid_nid_postfix(level, which, id, setid);
-}
-
-int APS5_VABI cpuset_setaffinity_nid_no_patch(int level, int which, std::int64_t id, std::size_t size, const void* mask) {
-    return cpuset_setaffinity_nid_postfix(level, which, id, size, mask);
-}
-
-int APS5_VABI creat_nid_no_patch(const char* path, int mode) {
-    return creat_nid_postfix(path, mode);
-}
-
-int APS5_VABI dlclose_nid_no_patch(void* handle) {
-    return dlclose_nid_postfix(handle);
-}
-
-char* APS5_VABI dlerror_nid_no_patch(void) {
-    return dlerror_nid_postfix();
-}
-
-void* APS5_VABI dlopen_nid_no_patch(const char* path, int flags) {
-    return dlopen_nid_postfix(path, flags);
-}
-
-void* APS5_VABI dlsym_nid_no_patch(void* handle, const char* name) {
-    return dlsym_nid_postfix(handle, name);
-}
-
-int APS5_VABI dup_nid_no_patch(int d) {
-    return dup_nid_postfix(d);
-}
-
-int APS5_VABI dup2_nid_no_patch(int from, int to) {
-    return dup2_nid_postfix(from, to);
-}
-
-int APS5_VABI execv_nid_no_patch(const char* path, char* const* arguments) {
-    return execv_nid_postfix(path, arguments);
-}
-
-int APS5_VABI execve_nid_no_patch(const char* path, char* const* arguments, char* const* environment) {
-    return execve_nid_postfix(path, arguments, environment);
-}
-
-int APS5_VABI execvp_nid_no_patch(const char* file, char* const* arguments) {
-    return execvp_nid_postfix(file, arguments);
-}
-
-int APS5_VABI fchflags_nid_no_patch(int d, std::uint64_t flags) {
-    return fchflags_nid_postfix(d, flags);
-}
-
-int APS5_VABI fchmod_nid_no_patch(int d, int mode) {
-    return fchmod_nid_postfix(d, mode);
-}
-
-int APS5_VABI fcntl_nid_no_patch(int descriptor, int command, std::uint64_t v0, std::uint64_t v1) {
-    return fcntl_nid_postfix(descriptor, command, v0, v1);
-}
-
-int APS5_VABI flock_nid_no_patch(int d, int operation) {
-    return flock_nid_postfix(d, operation);
-}
-
-int APS5_VABI fsync_nid_no_patch(int fd) {
-    return fsync_nid_postfix(fd);
-}
-
-int APS5_VABI fdatasync_nid_no_patch(int fd) {
-    return fdatasync_nid_postfix(fd);
-}
-
-int APS5_VABI ftruncate_nid_no_patch(int d, int64_t length) {
-    return ftruncate_nid_postfix(d, length);
-}
-
-int APS5_VABI futimes_nid_no_patch(int d, const KernelTimeval* times) {
-    return futimes_nid_postfix(d, times);
-}
-
-int APS5_VABI getargc_nid_no_patch(void) {
-    return getargc_nid_postfix();
-}
-
-const char** APS5_VABI getargv_nid_no_patch(void) {
-    return getargv_nid_postfix();
-}
-
-int APS5_VABI getcontext_nid_no_patch(UserUcontext* context) {
-    return getcontext_nid_postfix(context);
-}
-
-int APS5_VABI getdents_nid_no_patch(int fd, char* buf, int nbytes) {
-    return getdents_nid_postfix(fd, buf, nbytes);
-}
-
-int APS5_VABI getdirentries_nid_no_patch(int fd, char* buf, int nbytes, int64_t* basep) {
-    return getdirentries_nid_postfix(fd, buf, nbytes, basep);
-}
-
-int APS5_VABI getdtablesize_nid_no_patch(void) {
-    return getdtablesize_nid_postfix();
-}
-
-int APS5_VABI getegid_nid_no_patch(void) {
-    return getegid_nid_postfix();
-}
-
-int APS5_VABI geteuid_nid_no_patch(void) {
-    return geteuid_nid_postfix();
-}
-
-int APS5_VABI getgid_nid_no_patch(void) {
-    return getgid_nid_postfix();
-}
-
-int APS5_VABI getgroups_nid_no_patch(int capacity, std::uint32_t* groups) {
-    return getgroups_nid_postfix(capacity, groups);
-}
-
-int APS5_VABI getitimer_nid_no_patch(int which, GuestItimerval* output) {
-    return getitimer_nid_postfix(which, output);
-}
-
-char* APS5_VABI getlogin_nid_no_patch(void) {
-    return getlogin_nid_postfix();
-}
-
-int APS5_VABI getlogin_r_nid_no_patch(char* output, int size) {
-    return getlogin_r_nid_postfix(output, size);
-}
-
-int APS5_VABI getpagesize_nid_no_patch(void) {
-    return getpagesize_nid_postfix();
-}
-
-int APS5_VABI getpeername_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return getpeername_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI getpid_nid_no_patch(void) {
-    return getpid_nid_postfix();
-}
-
-int APS5_VABI getppid_nid_no_patch(void) {
-    return getppid_nid_postfix();
-}
-
-int APS5_VABI getpriority_nid_no_patch(int which, int who) {
-    return getpriority_nid_postfix(which, who);
-}
-
-int APS5_VABI getrlimit_nid_no_patch(int resource, GuestResourceLimit* limit) {
-    return getrlimit_nid_postfix(resource, limit);
-}
-
-int APS5_VABI getrusage_nid_no_patch(int who, GuestResourceUsage* usage) {
-    return getrusage_nid_postfix(who, usage);
-}
-
-int APS5_VABI getsid_nid_no_patch(int pid) {
-    return getsid_nid_postfix(pid);
-}
-
-int APS5_VABI getsockname_nid_no_patch(int descriptor, void* address, std::uint32_t* length) {
-    return getsockname_nid_postfix(descriptor, address, length);
-}
-
-int APS5_VABI getsockopt_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length) {
-    return getsockopt_nid_postfix(descriptor, level, option, value, length);
-}
-
-int APS5_VABI gettimeofday_nid_no_patch(KernelTimeval* tv, KernelTimezone* tz) {
-    return gettimeofday_nid_postfix(tv, tz);
-}
-
-int APS5_VABI getuid_nid_no_patch(void) {
-    return getuid_nid_postfix();
-}
-
-std::uint32_t APS5_VABI htonl_nid_no_patch(std::uint32_t value) {
-    return htonl_nid_postfix(value);
-}
-
-std::uint16_t APS5_VABI htons_nid_no_patch(std::uint16_t value) {
-    return htons_nid_postfix(value);
-}
-
-const char* APS5_VABI inet_ntop_nid_no_patch(int af, const void* src, char* dst, uint32_t size) {
-    return inet_ntop_nid_postfix(af, src, dst, size);
-}
-
-int APS5_VABI inet_pton_nid_no_patch(int af, const char* src, void* dst) {
-    return inet_pton_nid_postfix(af, src, dst);
-}
-
-int APS5_VABI ioctl_nid_no_patch(int descriptor, std::uint64_t request, void* argument) {
-    return ioctl_nid_postfix(descriptor, request, argument);
-}
-
-int APS5_VABI issetugid_nid_no_patch(void) {
-    return issetugid_nid_postfix();
-}
-
-int APS5_VABI kevent_nid_no_patch(int descriptor, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
-    return kevent_nid_postfix(descriptor, changelist, nchanges, eventlist, nevents, timeout);
-}
-
-int APS5_VABI kill_nid_no_patch(int pid, int guest) {
-    return kill_nid_postfix(pid, guest);
-}
-
-int APS5_VABI kqueue_nid_no_patch(void) {
-    return kqueue_nid_postfix();
-}
-
-int APS5_VABI ksem_destroy_nid_no_patch(std::intptr_t id) {
-    return ksem_destroy_nid_postfix(id);
-}
-
-int APS5_VABI ksem_getvalue_nid_no_patch(std::intptr_t id, int* value) {
-    return ksem_getvalue_nid_postfix(id, value);
-}
-
-int APS5_VABI ksem_init_nid_no_patch(std::intptr_t* idp, unsigned int value) {
-    return ksem_init_nid_postfix(idp, value);
-}
-
-int APS5_VABI ksem_post_nid_no_patch(std::intptr_t id) {
-    return ksem_post_nid_postfix(id);
-}
-
-int APS5_VABI ksem_timedwait_nid_no_patch(std::intptr_t id, const KernelTimespec* abstime) {
-    return ksem_timedwait_nid_postfix(id, abstime);
-}
-
-int APS5_VABI ksem_trywait_nid_no_patch(std::intptr_t id) {
-    return ksem_trywait_nid_postfix(id);
-}
-
-int APS5_VABI ksem_wait_nid_no_patch(std::intptr_t id) {
-    return ksem_wait_nid_postfix(id);
-}
-
-int APS5_VABI ktimer_create_nid_no_patch(int clock, const GuestSigevent* event, int* timerid) {
-    return ktimer_create_nid_postfix(clock, event, timerid);
-}
-
-int APS5_VABI ktimer_delete_nid_no_patch(int id) {
-    return ktimer_delete_nid_postfix(id);
-}
-
-int APS5_VABI ktimer_getoverrun_nid_no_patch(int id) {
-    return ktimer_getoverrun_nid_postfix(id);
-}
-
-int APS5_VABI ktimer_gettime_nid_no_patch(int id, GuestItimerspec* value) {
-    return ktimer_gettime_nid_postfix(id, value);
-}
-
-int APS5_VABI ktimer_settime_nid_no_patch(int id, int flags, const GuestItimerspec* value, GuestItimerspec* oldValue) {
-    return ktimer_settime_nid_postfix(id, flags, value, oldValue);
-}
-
-int APS5_VABI listen_nid_no_patch(int descriptor, int backlog) {
-    return listen_nid_postfix(descriptor, backlog);
-}
-
-int64_t APS5_VABI lseek_nid_no_patch(int d, int64_t offset, int whence) {
-    return lseek_nid_postfix(d, offset, whence);
-}
-
-int APS5_VABI lstat_nid_no_patch(const char* path, FileStat* sb) {
-    return lstat_nid_postfix(path, sb);
-}
-
-int APS5_VABI madvise_nid_no_patch(void* address, std::size_t length, int advice) {
-    return madvise_nid_postfix(address, length, advice);
-}
-
-int APS5_VABI mincore_nid_no_patch(const void* address, std::size_t length, char* vec) {
-    return mincore_nid_postfix(address, length, vec);
-}
-
-int APS5_VABI mkdir_nid_no_patch(const char* path, uint16_t mode) {
-    return mkdir_nid_postfix(path, mode);
-}
-
-int APS5_VABI mlock_nid_no_patch(const void* address, std::size_t length) {
-    return mlock_nid_postfix(address, length);
-}
-
-int APS5_VABI mlockall_nid_no_patch(int flags) {
-    return mlockall_nid_postfix(flags);
-}
-
-void* APS5_VABI mmap_nid_no_patch(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) {
-    return mmap_nid_postfix(address, length, protection, flags, descriptor, offset);
-}
-
-int APS5_VABI mprotect_nid_no_patch(void* address, std::size_t length, int protection) {
-    return mprotect_nid_postfix(address, length, protection);
-}
-
-int APS5_VABI msync_nid_no_patch(void* address, std::size_t length, int flags) {
-    return msync_nid_postfix(address, length, flags);
-}
-
-int APS5_VABI munlock_nid_no_patch(const void* address, std::size_t length) {
-    return munlock_nid_postfix(address, length);
-}
-
-int APS5_VABI munlockall_nid_no_patch(void) {
-    return munlockall_nid_postfix();
-}
-
-int APS5_VABI munmap_nid_no_patch(void* address, std::size_t length) {
-    return munmap_nid_postfix(address, length);
-}
-
-int APS5_VABI nanosleep_nid_no_patch(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    return nanosleep_nid_postfix(rqtp, rmtp);
-}
-
-std::uint32_t APS5_VABI ntohl_nid_no_patch(std::uint32_t value) {
-    return ntohl_nid_postfix(value);
-}
-
-std::uint16_t APS5_VABI ntohs_nid_no_patch(std::uint16_t value) {
-    return ntohs_nid_postfix(value);
-}
-
-int APS5_VABI open_nid_no_patch(const char* path, int flags, int mode) {
-    return open_nid_postfix(path, flags, mode);
-}
-
-int APS5_VABI pause_nid_no_patch(void) {
-    return pause_nid_postfix();
-}
-
-int APS5_VABI physhm_open_nid_no_patch(void) {
-    return physhm_open_nid_postfix();
-}
-
-int APS5_VABI physhm_unlink_nid_no_patch(void) {
-    return physhm_unlink_nid_postfix();
-}
-
-int APS5_VABI pipe_nid_no_patch(int* descriptors) {
-    return pipe_nid_postfix(descriptors);
-}
-
-int APS5_VABI poll_nid_no_patch(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
-    return poll_nid_postfix(descriptors, count, timeout);
-}
-
-int64_t APS5_VABI pread_nid_no_patch(int d, void* buf, size_t nbytes, int64_t offset) {
-    return pread_nid_postfix(d, buf, nbytes, offset);
-}
-
-int64_t APS5_VABI preadv_nid_no_patch(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
-    return preadv_nid_postfix(d, iov, iovcnt, offset);
-}
-
-int APS5_VABI pselect_nid_no_patch(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask) {
-    return pselect_nid_postfix(nfds, readfds, writefds, exceptfds, timeout, sigmask);
-}
-
-int APS5_VABI pthread_atfork_nid_no_patch(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child) {
-    return pthread_atfork_nid_postfix(prepare, parent, child);
-}
-
-int APS5_VABI pthread_attr_destroy_nid_no_patch(PthreadAttr* attr) {
-    return pthread_attr_destroy_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_attr_get_np_nid_no_patch(Pthread thread, PthreadAttr* attr) {
-    return pthread_attr_get_np_nid_postfix(thread, attr);
-}
-
-int APS5_VABI pthread_attr_getdetachstate_nid_no_patch(const PthreadAttr* attr, int* state) {
-    return pthread_attr_getdetachstate_nid_postfix(attr, state);
-}
-
-int APS5_VABI pthread_attr_getguardsize_nid_no_patch(const PthreadAttr* attr, size_t* guardSize) {
-    return pthread_attr_getguardsize_nid_postfix(attr, guardSize);
-}
-
-int APS5_VABI pthread_attr_getinheritsched_nid_no_patch(const PthreadAttr* attr, int* inheritSched) {
-    return pthread_attr_getinheritsched_nid_postfix(attr, inheritSched);
-}
-
-int APS5_VABI pthread_attr_getschedparam_nid_no_patch(const PthreadAttr* attr, KernelSchedParam* param) {
-    return pthread_attr_getschedparam_nid_postfix(attr, param);
-}
-
-int APS5_VABI pthread_attr_getschedpolicy_nid_no_patch(const PthreadAttr* attr, int* policy) {
-    return pthread_attr_getschedpolicy_nid_postfix(attr, policy);
-}
-
-int APS5_VABI pthread_attr_getscope_nid_no_patch(const PthreadAttr* attr, int* scope) {
-    return pthread_attr_getscope_nid_postfix(attr, scope);
-}
-
-int APS5_VABI pthread_attr_getstack_nid_no_patch(const PthreadAttr* __restrict attr, void** __restrict stackAddr, size_t* __restrict stackSize) {
-    return pthread_attr_getstack_nid_postfix(attr, stackAddr, stackSize);
-}
-
-int APS5_VABI pthread_attr_getstackaddr_nid_no_patch(const PthreadAttr* __restrict attr, void** __restrict stackAddr) {
-    return pthread_attr_getstackaddr_nid_postfix(attr, stackAddr);
-}
-
-int APS5_VABI pthread_attr_getstacksize_nid_no_patch(const PthreadAttr* attr, size_t* stackSize) {
-    return pthread_attr_getstacksize_nid_postfix(attr, stackSize);
-}
-
-int APS5_VABI pthread_attr_init_nid_no_patch(PthreadAttr* attr) {
-    return pthread_attr_init_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_attr_setdetachstate_nid_no_patch(PthreadAttr* attr, int state) {
-    return pthread_attr_setdetachstate_nid_postfix(attr, state);
-}
-
-int APS5_VABI pthread_attr_setguardsize_nid_no_patch(PthreadAttr* attr, size_t guardSize) {
-    return pthread_attr_setguardsize_nid_postfix(attr, guardSize);
-}
-
-int APS5_VABI pthread_attr_setinheritsched_nid_no_patch(PthreadAttr* attr, int inheritSched) {
-    return pthread_attr_setinheritsched_nid_postfix(attr, inheritSched);
-}
-
-int APS5_VABI pthread_attr_setschedparam_nid_no_patch(PthreadAttr* attr, const KernelSchedParam* param) {
-    return pthread_attr_setschedparam_nid_postfix(attr, param);
-}
-
-int APS5_VABI pthread_attr_setschedpolicy_nid_no_patch(PthreadAttr* attr, int policy) {
-    return pthread_attr_setschedpolicy_nid_postfix(attr, policy);
-}
-
-int APS5_VABI pthread_attr_setscope_nid_no_patch(PthreadAttr* attr, int scope) {
-    return pthread_attr_setscope_nid_postfix(attr, scope);
-}
-
-int APS5_VABI pthread_attr_setsolosched_np_nid_no_patch(PthreadAttr* attr, int solosched) {
-    return pthread_attr_setsolosched_np_nid_postfix(attr, solosched);
-}
-
-int APS5_VABI pthread_attr_setstack_nid_no_patch(PthreadAttr* attr, void* stackAddr, size_t stackSize) {
-    return pthread_attr_setstack_nid_postfix(attr, stackAddr, stackSize);
-}
-
-int APS5_VABI pthread_attr_setstacksize_nid_no_patch(PthreadAttr* attr, size_t stackSize) {
-    return pthread_attr_setstacksize_nid_postfix(attr, stackSize);
-}
-
-int APS5_VABI pthread_barrier_destroy_nid_no_patch(PthreadBarrierPrivate** barrier) {
-    return pthread_barrier_destroy_nid_postfix(barrier);
-}
-
-int APS5_VABI pthread_barrier_init_nid_no_patch(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
-    return pthread_barrier_init_nid_postfix(barrier, attr, count);
-}
-
-int APS5_VABI pthread_barrier_setname_np_nid_no_patch(PthreadBarrierPrivate** barrier, const char* name) {
-    return pthread_barrier_setname_np_nid_postfix(barrier, name);
-}
-
-int APS5_VABI pthread_barrier_wait_nid_no_patch(PthreadBarrierPrivate** barrier) {
-    return pthread_barrier_wait_nid_postfix(barrier);
-}
-
-int APS5_VABI pthread_barrierattr_destroy_nid_no_patch(PthreadBarrierattrPrivate** attr) {
-    return pthread_barrierattr_destroy_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_barrierattr_getpshared_nid_no_patch(PthreadBarrierattrPrivate* const* attr, int* pshared) {
-    return pthread_barrierattr_getpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_barrierattr_init_nid_no_patch(PthreadBarrierattrPrivate** attr) {
-    return pthread_barrierattr_init_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_barrierattr_setpshared_nid_no_patch(PthreadBarrierattrPrivate** attr, int pshared) {
-    return pthread_barrierattr_setpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_cancel_nid_no_patch(Pthread thread) {
-    return pthread_cancel_nid_postfix(thread);
-}
-
-void APS5_VABI pthread_cleanup_pop_nid_no_patch(int execute) {
-    pthread_cleanup_pop_nid_postfix(execute);
-}
-
-void APS5_VABI pthread_cleanup_push_nid_no_patch(void (APS5_VABI* routine)(void*), void* argument) {
-    pthread_cleanup_push_nid_postfix(routine, argument);
-}
-
-int APS5_VABI pthread_cond_broadcast_nid_no_patch(PthreadCond* cond) {
-    return pthread_cond_broadcast_nid_postfix(cond);
-}
-
-int APS5_VABI pthread_cond_destroy_nid_no_patch(PthreadCond* cond) {
-    return pthread_cond_destroy_nid_postfix(cond);
-}
-
-int APS5_VABI pthread_cond_init_nid_no_patch(PthreadCond* cond, const PthreadCondattr* attr) {
-    return pthread_cond_init_nid_postfix(cond, attr);
-}
-
-int APS5_VABI pthread_cond_reltimedwait_np_nid_no_patch(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
-    return pthread_cond_reltimedwait_np_nid_postfix(cond, mutex, usec);
-}
-
-int APS5_VABI pthread_cond_setname_np_nid_no_patch(PthreadCond* cond, const char* name) {
-    return pthread_cond_setname_np_nid_postfix(cond, name);
-}
-
-int APS5_VABI pthread_cond_signal_nid_no_patch(PthreadCond* cond) {
-    return pthread_cond_signal_nid_postfix(cond);
-}
-
-int APS5_VABI pthread_cond_signalto_np_nid_no_patch(PthreadCond* cond, Pthread thread) {
-    return pthread_cond_signalto_np_nid_postfix(cond, thread);
-}
-
-int APS5_VABI pthread_cond_timedwait_nid_no_patch(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    return pthread_cond_timedwait_nid_postfix(cond, mutex, abstime);
-}
-
-int APS5_VABI pthread_cond_wait_nid_no_patch(PthreadCond* cond, PthreadMutex* mutex) {
-    return pthread_cond_wait_nid_postfix(cond, mutex);
-}
-
-int APS5_VABI pthread_condattr_destroy_nid_no_patch(PthreadCondattr* attr) {
-    return pthread_condattr_destroy_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_condattr_getclock_nid_no_patch(const PthreadCondattr* attr, KernelClockid* clockId) {
-    return pthread_condattr_getclock_nid_postfix(attr, clockId);
-}
-
-int APS5_VABI pthread_condattr_getpshared_nid_no_patch(const PthreadCondattr* attr, int* pshared) {
-    return pthread_condattr_getpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_condattr_init_nid_no_patch(PthreadCondattr* attr) {
-    return pthread_condattr_init_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_condattr_setclock_nid_no_patch(PthreadCondattr* attr, KernelClockid clockId) {
-    return pthread_condattr_setclock_nid_postfix(attr, clockId);
-}
-
-int APS5_VABI pthread_condattr_setpshared_nid_no_patch(PthreadCondattr* attr, int pshared) {
-    return pthread_condattr_setpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_create_nid_no_patch(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg) {
-    return pthread_create_nid_postfix(thread, attr, entry, arg);
-}
-
-int APS5_VABI pthread_create_name_np_nid_no_patch(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
-    return pthread_create_name_np_nid_postfix(thread, attr, entry, arg, name);
-}
-
-int APS5_VABI pthread_detach_nid_no_patch(Pthread thread) {
-    return pthread_detach_nid_postfix(thread);
-}
-
-int APS5_VABI pthread_equal_nid_no_patch(Pthread first, Pthread second) {
-    return pthread_equal_nid_postfix(first, second);
-}
-
-void APS5_VABI pthread_exit_nid_no_patch(void* value) {
-    pthread_exit_nid_postfix(value);
-}
-
-int APS5_VABI pthread_getaffinity_np_nid_no_patch(Pthread thread, std::size_t cpusetSize, void* cpuset) {
-    return pthread_getaffinity_np_nid_postfix(thread, cpusetSize, cpuset);
-}
-
-int APS5_VABI pthread_getconcurrency_nid_no_patch(void) {
-    return pthread_getconcurrency_nid_postfix();
-}
-
-int APS5_VABI pthread_getcpuclockid_nid_no_patch(Pthread thread, int* clockId) {
-    return pthread_getcpuclockid_nid_postfix(thread, clockId);
-}
-
-int APS5_VABI pthread_getname_np_nid_no_patch(Pthread thread, char* name) {
-    return pthread_getname_np_nid_postfix(thread, name);
-}
-
-int APS5_VABI pthread_getprio_nid_no_patch(Pthread thread) {
-    return pthread_getprio_nid_postfix(thread);
-}
-
-int APS5_VABI pthread_getschedparam_nid_no_patch(Pthread thread, int* policy, KernelSchedParam* param) {
-    return pthread_getschedparam_nid_postfix(thread, policy, param);
-}
-
-void* APS5_VABI pthread_getspecific_nid_no_patch(PthreadKey key) {
-    return pthread_getspecific_nid_postfix(key);
-}
-
-int APS5_VABI pthread_getthreadid_np_nid_no_patch(void) {
-    return pthread_getthreadid_np_nid_postfix();
-}
-
-int APS5_VABI pthread_join_nid_no_patch(Pthread thread, void** value) {
-    return pthread_join_nid_postfix(thread, value);
-}
-
-int APS5_VABI pthread_key_create_nid_no_patch(PthreadKey* key, pthread_key_destructor_func_t destructor) {
-    return pthread_key_create_nid_postfix(key, destructor);
-}
-
-int APS5_VABI pthread_key_delete_nid_no_patch(PthreadKey key) {
-    return pthread_key_delete_nid_postfix(key);
-}
-
-int APS5_VABI pthread_kill_nid_no_patch(Pthread thread, int guest) {
-    return pthread_kill_nid_postfix(thread, guest);
-}
-
-int APS5_VABI pthread_mutex_destroy_nid_no_patch(PthreadMutex* mutex) {
-    return pthread_mutex_destroy_nid_postfix(mutex);
-}
-
-int APS5_VABI pthread_mutex_getprioceiling_nid_no_patch(const PthreadMutex* mutex, int* prioceiling) {
-    return pthread_mutex_getprioceiling_nid_postfix(mutex, prioceiling);
-}
-
-int APS5_VABI pthread_mutex_getspinloops_np_nid_no_patch(PthreadMutex* mutex, int* count) {
-    return pthread_mutex_getspinloops_np_nid_postfix(mutex, count);
-}
-
-int APS5_VABI pthread_mutex_getyieldloops_np_nid_no_patch(PthreadMutex* mutex, int* count) {
-    return pthread_mutex_getyieldloops_np_nid_postfix(mutex, count);
-}
-
-int APS5_VABI pthread_mutex_init_nid_no_patch(PthreadMutex* mutex, const PthreadMutexattr* attr) {
-    return pthread_mutex_init_nid_postfix(mutex, attr);
-}
-
-int APS5_VABI pthread_mutex_isowned_np_nid_no_patch(PthreadMutex* mutex) {
-    return pthread_mutex_isowned_np_nid_postfix(mutex);
-}
-
-int APS5_VABI pthread_mutex_lock_nid_no_patch(PthreadMutex* mutex) {
-    return pthread_mutex_lock_nid_postfix(mutex);
-}
-
-int APS5_VABI pthread_mutex_reltimedlock_np_nid_no_patch(PthreadMutex* mutex, KernelUseconds usec) {
-    return pthread_mutex_reltimedlock_np_nid_postfix(mutex, usec);
-}
-
-int APS5_VABI pthread_mutex_setname_np_nid_no_patch(PthreadMutex* mutex, const char* name) {
-    return pthread_mutex_setname_np_nid_postfix(mutex, name);
-}
-
-int APS5_VABI pthread_mutex_setprioceiling_nid_no_patch(PthreadMutex* mutex, int ceiling, int* oldCeiling) {
-    return pthread_mutex_setprioceiling_nid_postfix(mutex, ceiling, oldCeiling);
-}
-
-int APS5_VABI pthread_mutex_setspinloops_np_nid_no_patch(PthreadMutex* mutex, int count) {
-    return pthread_mutex_setspinloops_np_nid_postfix(mutex, count);
-}
-
-int APS5_VABI pthread_mutex_setyieldloops_np_nid_no_patch(PthreadMutex* mutex, int count) {
-    return pthread_mutex_setyieldloops_np_nid_postfix(mutex, count);
-}
-
-int APS5_VABI pthread_mutex_timedlock_nid_no_patch(PthreadMutex* mutex, const KernelTimespec* abstime) {
-    return pthread_mutex_timedlock_nid_postfix(mutex, abstime);
-}
-
-int APS5_VABI pthread_mutex_trylock_nid_no_patch(PthreadMutex* mutex) {
-    return pthread_mutex_trylock_nid_postfix(mutex);
-}
-
-int APS5_VABI pthread_mutex_unlock_nid_no_patch(PthreadMutex* mutex) {
-    return pthread_mutex_unlock_nid_postfix(mutex);
-}
-
-int APS5_VABI pthread_mutexattr_destroy_nid_no_patch(PthreadMutexattr* attr) {
-    return pthread_mutexattr_destroy_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_mutexattr_getkind_np_nid_no_patch(PthreadMutexattr attr) {
-    return pthread_mutexattr_getkind_np_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_mutexattr_getprioceiling_nid_no_patch(const PthreadMutexattr* attr, int* prioceiling) {
-    return pthread_mutexattr_getprioceiling_nid_postfix(attr, prioceiling);
-}
-
-int APS5_VABI pthread_mutexattr_getprotocol_nid_no_patch(const PthreadMutexattr* attr, int* protocol) {
-    return pthread_mutexattr_getprotocol_nid_postfix(attr, protocol);
-}
-
-int APS5_VABI pthread_mutexattr_getpshared_nid_no_patch(const PthreadMutexattr* attr, int* pshared) {
-    return pthread_mutexattr_getpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_mutexattr_gettype_nid_no_patch(const PthreadMutexattr* attr, int* type) {
-    return pthread_mutexattr_gettype_nid_postfix(attr, type);
-}
-
-int APS5_VABI pthread_mutexattr_init_nid_no_patch(PthreadMutexattr* attr) {
-    return pthread_mutexattr_init_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_mutexattr_setkind_np_nid_no_patch(PthreadMutexattr* attr, int kind) {
-    return pthread_mutexattr_setkind_np_nid_postfix(attr, kind);
-}
-
-int APS5_VABI pthread_mutexattr_setprioceiling_nid_no_patch(PthreadMutexattr* attr, int prioceiling) {
-    return pthread_mutexattr_setprioceiling_nid_postfix(attr, prioceiling);
-}
-
-int APS5_VABI pthread_mutexattr_setprotocol_nid_no_patch(PthreadMutexattr* attr, int protocol) {
-    return pthread_mutexattr_setprotocol_nid_postfix(attr, protocol);
-}
-
-int APS5_VABI pthread_mutexattr_setpshared_nid_no_patch(PthreadMutexattr* attr, int pshared) {
-    return pthread_mutexattr_setpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_mutexattr_settype_nid_no_patch(PthreadMutexattr* attr, int type) {
-    return pthread_mutexattr_settype_nid_postfix(attr, type);
-}
-
-int APS5_VABI pthread_once_nid_no_patch(GuestOnce* control, void (APS5_VABI *initialize)()) {
-    return pthread_once_nid_postfix(control, initialize);
-}
-
-int APS5_VABI pthread_rename_np_nid_no_patch(Pthread thread, const char* name) {
-    return pthread_rename_np_nid_postfix(thread, name);
-}
-
-int APS5_VABI pthread_rwlock_destroy_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_destroy_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlock_init_nid_no_patch(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
-    return pthread_rwlock_init_nid_postfix(rwlock, attr);
-}
-
-int APS5_VABI pthread_rwlock_rdlock_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_rdlock_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_no_patch(PthreadRwlock* rwlock, KernelUseconds usec) {
-    return pthread_rwlock_reltimedrdlock_np_nid_postfix(rwlock, usec);
-}
-
-int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_no_patch(PthreadRwlock* rwlock, KernelUseconds usec) {
-    return pthread_rwlock_reltimedwrlock_np_nid_postfix(rwlock, usec);
-}
-
-int APS5_VABI pthread_rwlock_setname_np_nid_no_patch(PthreadRwlock* rwlock, const char* name) {
-    return pthread_rwlock_setname_np_nid_postfix(rwlock, name);
-}
-
-int APS5_VABI pthread_rwlock_timedrdlock_nid_no_patch(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
-    return pthread_rwlock_timedrdlock_nid_postfix(rwlock, abstime);
-}
-
-int APS5_VABI pthread_rwlock_timedwrlock_nid_no_patch(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
-    return pthread_rwlock_timedwrlock_nid_postfix(rwlock, abstime);
-}
-
-int APS5_VABI pthread_rwlock_tryrdlock_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_tryrdlock_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlock_trywrlock_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_trywrlock_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlock_unlock_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_unlock_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlock_wrlock_nid_no_patch(PthreadRwlock* rwlock) {
-    return pthread_rwlock_wrlock_nid_postfix(rwlock);
-}
-
-int APS5_VABI pthread_rwlockattr_destroy_nid_no_patch(PthreadRwlockattr* attr) {
-    return pthread_rwlockattr_destroy_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_rwlockattr_getpshared_nid_no_patch(const PthreadRwlockattr* attr, int* pshared) {
-    return pthread_rwlockattr_getpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_rwlockattr_gettype_np_nid_no_patch(const PthreadRwlockattr* attr, int* type) {
-    return pthread_rwlockattr_gettype_np_nid_postfix(attr, type);
-}
-
-int APS5_VABI pthread_rwlockattr_init_nid_no_patch(PthreadRwlockattr* attr) {
-    return pthread_rwlockattr_init_nid_postfix(attr);
-}
-
-int APS5_VABI pthread_rwlockattr_setpshared_nid_no_patch(PthreadRwlockattr* attr, int pshared) {
-    return pthread_rwlockattr_setpshared_nid_postfix(attr, pshared);
-}
-
-int APS5_VABI pthread_rwlockattr_settype_np_nid_no_patch(PthreadRwlockattr* attr, int type) {
-    return pthread_rwlockattr_settype_np_nid_postfix(attr, type);
-}
-
-Pthread APS5_VABI pthread_self_nid_no_patch(void) {
-    return pthread_self_nid_postfix();
-}
-
-void APS5_VABI pthread_set_name_np_nid_no_patch(Pthread thread, const char* name) {
-    pthread_set_name_np_nid_postfix(thread, name);
-}
-
-int APS5_VABI pthread_setaffinity_np_nid_no_patch(Pthread thread, std::size_t cpusetSize, const void* cpuset) {
-    return pthread_setaffinity_np_nid_postfix(thread, cpusetSize, cpuset);
-}
-
-int APS5_VABI pthread_setcancelstate_nid_no_patch(int state, int* oldState) {
-    return pthread_setcancelstate_nid_postfix(state, oldState);
-}
-
-int APS5_VABI pthread_setcanceltype_nid_no_patch(int type, int* oldType) {
-    return pthread_setcanceltype_nid_postfix(type, oldType);
-}
-
-int APS5_VABI pthread_setconcurrency_nid_no_patch(int newLevel) {
-    return pthread_setconcurrency_nid_postfix(newLevel);
-}
-
-int APS5_VABI pthread_setprio_nid_no_patch(Pthread thread, int prio) {
-    return pthread_setprio_nid_postfix(thread, prio);
-}
-
-int APS5_VABI pthread_setschedparam_nid_no_patch(Pthread thread, int policy, const KernelSchedParam* param) {
-    return pthread_setschedparam_nid_postfix(thread, policy, param);
-}
-
-int APS5_VABI pthread_setspecific_nid_no_patch(PthreadKey key, void* value) {
-    return pthread_setspecific_nid_postfix(key, value);
-}
-
-int APS5_VABI pthread_sigmask_nid_no_patch(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    return pthread_sigmask_nid_postfix(how, set, previousSet);
-}
-
-int APS5_VABI pthread_spin_destroy_nid_no_patch(PthreadSpinlockPrivate** lock) {
-    return pthread_spin_destroy_nid_postfix(lock);
-}
-
-int APS5_VABI pthread_spin_init_nid_no_patch(PthreadSpinlockPrivate** lock, int pshared) {
-    return pthread_spin_init_nid_postfix(lock, pshared);
-}
-
-int APS5_VABI pthread_spin_lock_nid_no_patch(PthreadSpinlockPrivate** lock) {
-    return pthread_spin_lock_nid_postfix(lock);
-}
-
-int APS5_VABI pthread_spin_trylock_nid_no_patch(PthreadSpinlockPrivate** lock) {
-    return pthread_spin_trylock_nid_postfix(lock);
-}
-
-int APS5_VABI pthread_spin_unlock_nid_no_patch(PthreadSpinlockPrivate** lock) {
-    return pthread_spin_unlock_nid_postfix(lock);
-}
-
-void APS5_VABI pthread_testcancel_nid_no_patch(void) {
-    pthread_testcancel_nid_postfix();
-}
-
-int APS5_VABI pthread_timedjoin_np_nid_no_patch(Pthread thread, void** value, const KernelTimespec* abstime) {
-    return pthread_timedjoin_np_nid_postfix(thread, value, abstime);
-}
-
-void APS5_VABI pthread_yield_nid_no_patch(void) {
-    pthread_yield_nid_postfix();
-}
-
-int64_t APS5_VABI pwritev_nid_no_patch(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
-    return pwritev_nid_postfix(d, iov, iovcnt, offset);
-}
-
-int APS5_VABI raise_nid_no_patch(int guest) {
-    return raise_nid_postfix(guest);
-}
-
-int64_t APS5_VABI read_nid_no_patch(int d, void* buf, uint64_t nbytes) {
-    return read_nid_postfix(d, buf, nbytes);
-}
-
-int64_t APS5_VABI readv_nid_no_patch(int d, const KernelIovec* iov, int iovcnt) {
-    return readv_nid_postfix(d, iov, iovcnt);
-}
-
-std::int64_t APS5_VABI recv_nid_no_patch(int descriptor, void* buffer, std::uint64_t length, int flags) {
-    return recv_nid_postfix(descriptor, buffer, length, flags);
-}
-
-std::int64_t APS5_VABI recvfrom_nid_no_patch(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
-    return recvfrom_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
-}
-
-std::int64_t APS5_VABI recvmsg_nid_no_patch(int descriptor, GuestMsghdr* message, int flags) {
-    return recvmsg_nid_postfix(descriptor, message, flags);
-}
-
-int APS5_VABI rename_nid_no_patch(const char* from, const char* to) {
-    return rename_nid_postfix(from, to);
-}
-
-int APS5_VABI rfork_thread_nid_no_patch(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
-    return rfork_thread_nid_postfix(flags, stack, function, argument);
-}
-
-int APS5_VABI rmdir_nid_no_patch(const char* path) {
-    return rmdir_nid_postfix(path);
-}
-
-int APS5_VABI rtprio_thread_nid_no_patch(int function, int lwpid, GuestRtPrio* priority) {
-    return rtprio_thread_nid_postfix(function, lwpid, priority);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 int APS5_VABI sceKernelAddFileEvent_nid_no_patch(KernelEqueue eq, int fd, int watch, void* udata) {
     return sceKernelAddFileEvent(eq, fd, watch, udata);
@@ -1352,9 +480,6 @@ int APS5_VABI sceKernelCheckedReleaseDirectMemory_nid_no_patch(int64_t start, si
     return sceKernelCheckedReleaseDirectMemory(start, len);
 }
 
-int APS5_VABI sceKernelChmod_nid_no_patch(const char* path, std::uint16_t mode) {
-    return sceKernelChmod_nid_postfix(path, mode);
-}
 
 int APS5_VABI sceKernelClearEventFlag_nid_no_patch(KernelEventFlag ef, uint64_t bitPattern) {
     return sceKernelClearEventFlag(ef, bitPattern);
@@ -1496,9 +621,6 @@ int APS5_VABI sceKernelFutimes_nid_no_patch(int d, const KernelTimeval* times) {
     return sceKernelFutimes(d, times);
 }
 
-int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_no_patch(std::uint32_t* version) {
-    return sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(version);
-}
 
 int APS5_VABI sceKernelGetAppInfo_nid_no_patch(int pid, void* info) {
     return sceKernelGetAppInfo(pid, info);
@@ -1564,9 +686,6 @@ std::uint64_t APS5_VABI sceKernelGetGPI_nid_no_patch(void) {
     return sceKernelGetGPI();
 }
 
-std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_no_patch(void** address, std::size_t* size) {
-    return sceKernelGetLibkernelTextLocation_nid_postfix(address, size);
-}
 
 int APS5_VABI sceKernelGetMainSocId_nid_no_patch(void) {
     return sceKernelGetMainSocId();
@@ -1612,9 +731,6 @@ std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency_nid_no_patch(voi
     return sceKernelGetProcessTimeCounterFrequency();
 }
 
-int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_no_patch(SceKernelProsperoSystemSwVersion* version) {
-    return sceKernelGetProsperoSystemSwVersion_nid_postfix(version);
-}
 
 int APS5_VABI sceKernelGetPrtAperture_nid_no_patch(int index, void** addr, size_t* len) {
     return sceKernelGetPrtAperture(index, addr, len);
@@ -1640,9 +756,6 @@ int APS5_VABI sceKernelGetSocSensorTemperature_nid_no_patch(int sensorId, int* o
     return sceKernelGetSocSensorTemperature(sensorId, outCelsius);
 }
 
-int APS5_VABI sceKernelGetSystemSwVersion_nid_no_patch(SceKernelSystemSwVersion* version) {
-    return sceKernelGetSystemSwVersion_nid_postfix(version);
-}
 
 int APS5_VABI sceKernelGetTraceMemoryStats_nid_no_patch(std::uint64_t* first, std::uint64_t* second) {
     return sceKernelGetTraceMemoryStats(first, second);
@@ -1680,9 +793,6 @@ int APS5_VABI sceKernelInternalMemoryGetAvailableSize_nid_no_patch(std::size_t* 
     return sceKernelInternalMemoryGetAvailableSize(size);
 }
 
-std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_no_patch(InternalSegmentInfo* result) {
-    return sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(result);
-}
 
 int APS5_VABI sceKernelIsAddressSanitizerEnabled_nid_no_patch(void) {
     return sceKernelIsAddressSanitizerEnabled();
@@ -1756,9 +866,6 @@ int APS5_VABI sceKernelMkdir_nid_no_patch(const char* path, uint16_t mode) {
     return sceKernelMkdir(path, mode);
 }
 
-int APS5_VABI sceKernelMlock_nid_no_patch(void* address, std::uint64_t length) {
-    return sceKernelMlock_nid_postfix(address, length);
-}
 
 int APS5_VABI sceKernelMmap_nid_no_patch(void* addr, size_t len, int prot, int flags, int fd, int64_t offset, void** res) {
     return sceKernelMmap(addr, len, prot, flags, fd, offset, res);
@@ -1772,13 +879,7 @@ int APS5_VABI sceKernelMtypeprotect_nid_no_patch(const void* addr, size_t len, i
     return sceKernelMtypeprotect(addr, len, type, prot);
 }
 
-int APS5_VABI sceKernelMunlock_nid_no_patch(void* address, std::uint64_t length) {
-    return sceKernelMunlock_nid_postfix(address, length);
-}
 
-int APS5_VABI sceKernelMunlockall_nid_no_patch(void) {
-    return sceKernelMunlockall_nid_postfix();
-}
 
 int APS5_VABI sceKernelMunmap_nid_no_patch(uint64_t vaddr, size_t len) {
     return sceKernelMunmap(vaddr, len);
@@ -1916,21 +1017,12 @@ int APS5_VABI sceKernelTriggerUserEvent_nid_no_patch(KernelEqueue eq, int id, vo
     return sceKernelTriggerUserEvent(eq, id, udata);
 }
 
-int APS5_VABI sceKernelTruncate_nid_no_patch(const char* path, std::int64_t length) {
-    return sceKernelTruncate_nid_postfix(path, length);
-}
 
 int APS5_VABI sceKernelUnlink_nid_no_patch(const char* path) {
     return sceKernelUnlink(path);
 }
 
-int APS5_VABI sceKernelUsleep_nid_no_patch(KernelUseconds microseconds) {
-    return sceKernelUsleep_nid_postfix(microseconds);
-}
 
-int APS5_VABI sceKernelUtimes_nid_no_patch(const char* path, const KernelTimeval* times) {
-    return sceKernelUtimes_nid_postfix(path, times);
-}
 
 int APS5_VABI sceKernelUuidCreate_nid_no_patch(std::uint32_t* uuid) {
     return sceKernelUuidCreate(uuid);
@@ -2392,265 +1484,70 @@ void APS5_VABI scePthreadYield_nid_no_patch(void) {
     scePthreadYield();
 }
 
-int APS5_VABI sched_get_priority_max_nid_no_patch(int policy) {
-    return sched_get_priority_max_nid_postfix(policy);
-}
-
-int APS5_VABI sched_get_priority_min_nid_no_patch(int policy) {
-    return sched_get_priority_min_nid_postfix(policy);
-}
-
-int APS5_VABI sched_getparam_nid_no_patch(int pid, KernelSchedParam* param) {
-    return sched_getparam_nid_postfix(pid, param);
-}
-
-int APS5_VABI sched_getscheduler_nid_no_patch(int pid) {
-    return sched_getscheduler_nid_postfix(pid);
-}
-
-int APS5_VABI sched_setparam_nid_no_patch(int pid, const KernelSchedParam* param) {
-    return sched_setparam_nid_postfix(pid, param);
-}
-
-int APS5_VABI sched_yield_nid_no_patch(void) {
-    return sched_yield_nid_postfix();
-}
-
-int APS5_VABI select_nid_no_patch(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
-    return select_nid_postfix(nfds, readfds, writefds, exceptfds, timeout);
-}
-
-int APS5_VABI sem_close_nid_no_patch(void* sem) {
-    return sem_close_nid_postfix(sem);
-}
-
-int APS5_VABI sem_destroy_nid_no_patch(void* sem) {
-    return sem_destroy_nid_postfix(sem);
-}
-
-int APS5_VABI sem_getvalue_nid_no_patch(void* sem, int* value) {
-    return sem_getvalue_nid_postfix(sem, value);
-}
-
-int APS5_VABI sem_init_nid_no_patch(void* sem, int pshared, unsigned int value) {
-    return sem_init_nid_postfix(sem, pshared, value);
-}
-
-void* APS5_VABI sem_open_nid_no_patch(const char* name, int flags, std::uint64_t v0, std::uint64_t v1) {
-    return sem_open_nid_postfix(name, flags, v0, v1);
-}
-
-int APS5_VABI sem_post_nid_no_patch(void* sem) {
-    return sem_post_nid_postfix(sem);
-}
-
-int APS5_VABI sem_reltimedwait_np_nid_no_patch(void* sem, uint32_t usec) {
-    return sem_reltimedwait_np_nid_postfix(sem, usec);
-}
-
-int APS5_VABI sem_setname_nid_no_patch(void* sem, const char* name) {
-    return sem_setname_nid_postfix(sem, name);
-}
-
-int APS5_VABI sem_timedwait_nid_no_patch(void* sem, const KernelTimespec* abstime) {
-    return sem_timedwait_nid_postfix(sem, abstime);
-}
-
-int APS5_VABI sem_trywait_nid_no_patch(void* sem) {
-    return sem_trywait_nid_postfix(sem);
-}
-
-int APS5_VABI sem_unlink_nid_no_patch(const char* name) {
-    return sem_unlink_nid_postfix(name);
-}
-
-int APS5_VABI sem_wait_nid_no_patch(void* sem) {
-    return sem_wait_nid_postfix(sem);
-}
-
-std::int64_t APS5_VABI send_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length, int flags) {
-    return send_nid_postfix(descriptor, buffer, length, flags);
-}
-
-int APS5_VABI sendfile_nid_no_patch(int file, int descriptor, std::int64_t offset, std::uint64_t length, const GuestSendfileHeaders* headers, std::int64_t* sbytes, int flags) {
-    return sendfile_nid_postfix(file, descriptor, offset, length, headers, sbytes, flags);
-}
-
-std::int64_t APS5_VABI sendmsg_nid_no_patch(int descriptor, const GuestMsghdr* message, int flags) {
-    return sendmsg_nid_postfix(descriptor, message, flags);
-}
-
-std::int64_t APS5_VABI sendto_nid_no_patch(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength) {
-    return sendto_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
-}
-
-int APS5_VABI setcontext_nid_no_patch(const UserUcontext* context) {
-    return setcontext_nid_postfix(context);
-}
-
-int APS5_VABI setegid_nid_no_patch(std::uint32_t egid) {
-    return setegid_nid_postfix(egid);
-}
-
-int APS5_VABI seteuid_nid_no_patch(std::uint32_t euid) {
-    return seteuid_nid_postfix(euid);
-}
-
-int APS5_VABI setgroups_nid_no_patch(int count, const std::uint32_t* groups) {
-    return setgroups_nid_postfix(count, groups);
-}
-
-int APS5_VABI setitimer_nid_no_patch(int which, const GuestItimerval* value, GuestItimerval* previous) {
-    return setitimer_nid_postfix(which, value, previous);
-}
-
-int APS5_VABI setpriority_nid_no_patch(int which, int who, int niceval) {
-    return setpriority_nid_postfix(which, who, niceval);
-}
-
-int APS5_VABI setregid_nid_no_patch(std::uint32_t rgid, std::uint32_t egid) {
-    return setregid_nid_postfix(rgid, egid);
-}
-
-int APS5_VABI setreuid_nid_no_patch(std::uint32_t ruid, std::uint32_t euid) {
-    return setreuid_nid_postfix(ruid, euid);
-}
-
-int APS5_VABI setrlimit_nid_no_patch(int resource, const GuestResourceLimit* limit) {
-    return setrlimit_nid_postfix(resource, limit);
-}
-
-int APS5_VABI setsockopt_nid_no_patch(int descriptor, int level, int option, const void* value, std::uint32_t length) {
-    return setsockopt_nid_postfix(descriptor, level, option, value, length);
-}
-
-int APS5_VABI setuid_nid_no_patch(std::uint32_t uid) {
-    return setuid_nid_postfix(uid);
-}
-
-int APS5_VABI shm_open_nid_no_patch(const char* path, int flags, int mode) {
-    return shm_open_nid_postfix(path, flags, mode);
-}
-
-int APS5_VABI shm_unlink_nid_no_patch(const char* path) {
-    return shm_unlink_nid_postfix(path);
-}
-
-int APS5_VABI shutdown_nid_no_patch(int descriptor, int how) {
-    return shutdown_nid_postfix(descriptor, how);
-}
-
-int APS5_VABI sigaction_nid_no_patch(int guest, const GuestSigaction* action, GuestSigaction* previous) {
-    return sigaction_nid_postfix(guest, action, previous);
-}
-
-int APS5_VABI sigaddset_nid_no_patch(GuestSignalSet* set, int signal) {
-    return sigaddset_nid_postfix(set, signal);
-}
-
-int APS5_VABI sigaltstack_nid_no_patch(const GuestStack* stack, GuestStack* previous) {
-    return sigaltstack_nid_postfix(stack, previous);
-}
-
-int APS5_VABI sigdelset_nid_no_patch(GuestSignalSet* set, int signal) {
-    return sigdelset_nid_postfix(set, signal);
-}
-
-int APS5_VABI sigemptyset_nid_no_patch(GuestSignalSet* set) {
-    return sigemptyset_nid_postfix(set);
-}
-
-int APS5_VABI sigfillset_nid_no_patch(GuestSignalSet* set) {
-    return sigfillset_nid_postfix(set);
-}
-
-int APS5_VABI sigismember_nid_no_patch(const GuestSignalSet* set, int signal) {
-    return sigismember_nid_postfix(set, signal);
-}
-
-void APS5_VABI siglongjmp_nid_no_patch(std::uint64_t* buffer, int value) {
-    siglongjmp_nid_postfix(buffer, value);
-}
-
-GuestHandler APS5_VABI signal_nid_no_patch(int guest, GuestHandler handler) {
-    return signal_nid_postfix(guest, handler);
-}
-
-int APS5_VABI sigpending_nid_no_patch(GuestSignalSet* set) {
-    return sigpending_nid_postfix(set);
-}
-
-int APS5_VABI sigprocmask_nid_no_patch(int how, const void* set, void* previousSet) {
-    return sigprocmask_nid_postfix(how, set, previousSet);
-}
-
-int APS5_VABI sigsetjmp_nid_no_patch(std::uint64_t* buffer, int saveMask) {
-    return sigsetjmp_nid_postfix(buffer, saveMask);
-}
-
-int APS5_VABI sigsuspend_nid_no_patch(const GuestSignalSet* set) {
-    return sigsuspend_nid_postfix(set);
-}
-
-int APS5_VABI sigtimedwait_nid_no_patch(const GuestSignalSet* set, void* info, const KernelTimespec* timeout) {
-    return sigtimedwait_nid_postfix(set, info, timeout);
-}
-
-int APS5_VABI sigwait_nid_no_patch(const GuestSignalSet* set, int* received) {
-    return sigwait_nid_postfix(set, received);
-}
-
-int APS5_VABI sigwaitinfo_nid_no_patch(const GuestSignalSet* set, void* info) {
-    return sigwaitinfo_nid_postfix(set, info);
-}
-
-unsigned int APS5_VABI sleep_nid_no_patch(unsigned int seconds) {
-    return sleep_nid_postfix(seconds);
-}
-
-int APS5_VABI socket_nid_no_patch(int family, int type, int protocol) {
-    return socket_nid_postfix(family, type, protocol);
-}
-
-int APS5_VABI socketpair_nid_no_patch(int family, int type, int protocol, int* descriptors) {
-    return socketpair_nid_postfix(family, type, protocol, descriptors);
-}
-
-int APS5_VABI stat_nid_no_patch(const char* path, FileStat* sb) {
-    return stat_nid_postfix(path, sb);
-}
-
-int APS5_VABI swapcontext_nid_no_patch(UserUcontext* oucp, const UserUcontext* ucp) {
-    return swapcontext_nid_postfix(oucp, ucp);
-}
-
-void APS5_VABI sync_nid_no_patch(void) {
-    sync_nid_postfix();
-}
-
-int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_no_patch(void) {
-    return sysKernelGetIntdevModeForRcmgr_nid_postfix();
-}
-
-int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_no_patch(void) {
-    return sysKernelGetIntdevModeForInternalLibc_nid_postfix();
-}
-
-int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_no_patch(std::uint32_t* version) {
-    return sysKernelGetLowerLimitUpdVersion_nid_postfix(version);
-}
-
-int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_no_patch(char* version) {
-    return sysKernelGetLowerLimitSysexVersion_nid_postfix(version);
-}
-
-int APS5_VABI sysKernelGetManufacturingMode_nid_no_patch(void) {
-    return sysKernelGetManufacturingMode_nid_postfix();
-}
-
-int APS5_VABI sysKernelGetUpdVersion_nid_no_patch(std::uint32_t* version) {
-    return sysKernelGetUpdVersion_nid_postfix(version);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 int APS5_VABI sceKernelGetSystemExVersion_nid_no_patch(char* first, char* second) {
     return sceKernelGetSystemExVersion(first, second);
@@ -2660,93 +1557,27 @@ int APS5_VABI sysarch_nid_no_patch(int operation, void* parameters) {
     return sysarch(operation, parameters);
 }
 
-std::int64_t APS5_VABI sysconf_nid_no_patch(int name) {
-    return sysconf_nid_postfix(name);
-}
 
-int APS5_VABI sysctl_nid_no_patch(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
-    return sysctl_nid_postfix(name, nameLength, oldValue, oldLength, newValue, newLength);
-}
 
-int APS5_VABI sysctlbyname_nid_no_patch(const char* name, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
-    return sysctlbyname_nid_postfix(name, oldValue, oldLength, newValue, newLength);
-}
 
-int APS5_VABI sysctlnametomib_nid_no_patch(const char* name, int* mib, std::size_t* size) {
-    return sysctlnametomib_nid_postfix(name, mib, size);
-}
 
-int APS5_VABI system_nid_no_patch(const char* command) {
-    return system_nid_postfix(command);
-}
 
-int APS5_VABI tcdrain_nid_no_patch(int descriptor) {
-    return tcdrain_nid_postfix(descriptor);
-}
 
-int APS5_VABI tcflow_nid_no_patch(int descriptor, int action) {
-    return tcflow_nid_postfix(descriptor, action);
-}
 
-int APS5_VABI tcflush_nid_no_patch(int descriptor, int queue) {
-    return tcflush_nid_postfix(descriptor, queue);
-}
 
-int APS5_VABI tcgetattr_nid_no_patch(int descriptor, void* attributes) {
-    return tcgetattr_nid_postfix(descriptor, attributes);
-}
 
-int APS5_VABI tcgetpgrp_nid_no_patch(int descriptor) {
-    return tcgetpgrp_nid_postfix(descriptor);
-}
 
-int APS5_VABI tcgetsid_nid_no_patch(int descriptor) {
-    return tcgetsid_nid_postfix(descriptor);
-}
 
-int APS5_VABI tcsendbreak_nid_no_patch(int descriptor, int duration) {
-    return tcsendbreak_nid_postfix(descriptor, duration);
-}
 
-int APS5_VABI tcsetattr_nid_no_patch(int descriptor, int action, const void* attributes) {
-    return tcsetattr_nid_postfix(descriptor, action, attributes);
-}
 
-int APS5_VABI tcsetpgrp_nid_no_patch(int descriptor, int group) {
-    return tcsetpgrp_nid_postfix(descriptor, group);
-}
 
-int APS5_VABI truncate_nid_no_patch(const char* path, std::int64_t length) {
-    return truncate_nid_postfix(path, length);
-}
 
-int APS5_VABI unlink_nid_no_patch(const char* path) {
-    return unlink_nid_postfix(path);
-}
 
-int APS5_VABI usleep_nid_no_patch(KernelUseconds microseconds) {
-    return usleep_nid_postfix(microseconds);
-}
 
-int APS5_VABI utimes_nid_no_patch(const char* path, const KernelTimeval* times) {
-    return utimes_nid_postfix(path, times);
-}
 
-int APS5_VABI wait_nid_no_patch(int* status) {
-    return wait_nid_postfix(status);
-}
 
-int APS5_VABI waitpid_nid_no_patch(int pid, int* status, int options) {
-    return waitpid_nid_postfix(pid, status, options);
-}
 
-int64_t APS5_VABI write_nid_no_patch(int d, const char* str, int64_t size) {
-    return write_nid_postfix(d, str, size);
-}
 
-int64_t APS5_VABI writev_nid_no_patch(int d, const KernelIovec* iov, int iovcnt) {
-    return writev_nid_postfix(d, iov, iovcnt);
-}
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds_nid_no_patch(const char** paths, uint32_t count, uint32_t* ids, uint32_t* errorIndex) {
     return sceKernelAprResolveFilepathsToIds(paths, count, ids, errorIndex);
@@ -2804,21 +1635,9 @@ int APS5_VABI sceKernelAprWaitCommandBuffer_nid_no_patch(uint32_t id) {
     return sceKernelAprWaitCommandBuffer(id);
 }
 
-int APS5_VABI cpuset_nid_no_patch(int* setid) {
-    return cpuset_nid_postfix(setid);
-}
 
-int APS5_VABI cpuset_setid_nid_no_patch(int which, std::int64_t id, int setid) {
-    return cpuset_setid_nid_postfix(which, id, setid);
-}
 
-int APS5_VABI lutimes_nid_no_patch(const char* path, const KernelTimeval* times) {
-    return lutimes_nid_postfix(path, times);
-}
 
-int APS5_VABI nmount_nid_no_patch(const KernelIovec* iov, unsigned int niov, int flags) {
-    return nmount_nid_postfix(iov, niov, flags);
-}
 
 int APS5_VABI sceKernelJitCreateAliasOfSharedMemory_nid_no_patch(int fd, int maxProt, int* fdOut) {
     return sceKernelJitCreateAliasOfSharedMemory(fd, maxProt, fdOut);
@@ -2832,9 +1651,6 @@ int APS5_VABI sceKernelJitMapSharedMemory_nid_no_patch(int fd, int prot, void** 
     return sceKernelJitMapSharedMemory(fd, prot, startOut);
 }
 
-int APS5_VABI setpgid_nid_no_patch(int pid, int pgid) {
-    return setpgid_nid_postfix(pid, pgid);
-}
 
 int APS5_VABI sceKernelGetOpenPsId_nid_no_patch(void* openPsIdOutput) {
     return sceKernelGetOpenPsId(openPsIdOutput);
@@ -2902,8 +1718,5 @@ int APS5_VABI sceKernelGetModuleList2_nid_no_patch(KernelModule* handles, std::s
 
 
 
-int64_t APS5_VABI pwrite_nid_no_patch(int d, const void* buf, size_t nbytes, int64_t offset) {
-    return pwrite_nid_disambig1_nid_postfix(d, buf, nbytes, offset);
-}
 
 }

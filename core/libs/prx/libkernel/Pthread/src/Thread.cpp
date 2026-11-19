@@ -1528,7 +1528,7 @@ int APS5_VABI scePthreadCancel(Pthread thread) {
     }
 }
 
-void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info) {
+void APS5_VABI __pthread_cleanup_push_imp_nid_no_patch(void (APS5_VABI* routine)(void*), void* argument, void* info) {
     auto* handler = static_cast<CleanupHandler*>(info);
     handler->routine = routine;
     handler->argument = argument;
@@ -1536,24 +1536,38 @@ void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(
     handler->previous = CurrentGuestState().cleanupHandlers;
     CurrentGuestState().cleanupHandlers = handler;
 }
+void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info) {
+    __pthread_cleanup_push_imp_nid_no_patch(routine, argument, info);
+}
 
-void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute) {
+void APS5_VABI __pthread_cleanup_pop_imp_nid_no_patch(int execute) {
     auto* handler = CurrentGuestState().cleanupHandlers;
     if (!handler) return;
     CurrentGuestState().cleanupHandlers = handler->previous;
     if (execute) handler->routine(handler->argument);
     if (handler->onHeap) delete handler;
 }
+void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute) {
+    __pthread_cleanup_pop_imp_nid_no_patch(execute);
+}
 
-void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*), void* argument) {
+
+void APS5_VABI pthread_cleanup_push_nid_no_patch(void (APS5_VABI* routine)(void*), void* argument) {
     auto* handler = new CleanupHandler{CurrentGuestState().cleanupHandlers, routine, argument, 1};
     CurrentGuestState().cleanupHandlers = handler;
 }
+void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*), void* argument) {
+    pthread_cleanup_push_nid_no_patch(routine, argument);
+}
 
-void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute) {
+void APS5_VABI pthread_cleanup_pop_nid_no_patch(int execute) {
     __pthread_cleanup_pop_imp_nid_postfix(execute);
 
 }
+void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute) {
+    pthread_cleanup_pop_nid_no_patch(execute);
+}
+
 
 int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2) {
     return thread1 == thread2 ? 1 : 0;
@@ -1707,8 +1721,12 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
 
 extern "C" {
 
-void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) {
+void APS5_VABI __pthread_cxa_finalize_nid_no_patch(void* argument) {
     CxaFinalize_nid_no_patch(argument);
 }
+void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) {
+    __pthread_cxa_finalize_nid_no_patch(argument);
+}
+
 
 }
