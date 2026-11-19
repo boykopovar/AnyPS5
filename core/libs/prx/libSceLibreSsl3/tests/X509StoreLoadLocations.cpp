@@ -90,6 +90,8 @@ HUjYGQdeM1aWaa04GOwWioxt/yZiPQGDxfuNtA==
 
 const unsigned char SubjectEncodingA[] = {0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
     0x0c, 0x09, 't', 'e', 's', 't', ' ', 'c', 'a', ' ', 'a'};
+const unsigned char SubjectEncodingB[] = {0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
+    0x0c, 0x09, 't', 'e', 's', 't', ' ', 'c', 'a', ' ', 'b'};
 const unsigned char SubjectA[] = "Test CA A";
 const unsigned char OidCommonName[] = {0x55, 0x04, 0x03};
 constexpr const char* HashedNameA = "8deb836d.0";
@@ -195,9 +197,10 @@ void TestFileBundle() {
         Require(certificate->certInfo != nullptr);
         const auto* info = reinterpret_cast<const LibreSsl3CertificateInfo*>(certificate->certInfo);
         const auto* subject = static_cast<const LibreSslX509Name*>(info->subject);
+        const unsigned char* const expectedSubject = index == 0 ? SubjectEncodingA : SubjectEncodingB;
         Require(subject != nullptr && subject->canonEnclen == static_cast<int>(sizeof(SubjectEncodingA)));
         Require(subject->canonEnclen == 20 && subject->canonEnc != nullptr);
-        Require(std::memcmp(subject->canonEnc, SubjectEncodingA, sizeof(SubjectEncodingA)) == 0);
+        Require(std::memcmp(subject->canonEnc, expectedSubject, sizeof(SubjectEncodingA)) == 0);
         const auto* encoding = reinterpret_cast<const EncodingView*>(info->encoding);
         Require(encoding->length > 0 && encoding->bytes != nullptr && encoding->modified == 0);
         Require(encoding->bytes[0] == 0x30);
