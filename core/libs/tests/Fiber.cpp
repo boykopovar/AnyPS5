@@ -626,21 +626,38 @@ int main(int argc, char** argv) {
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
     Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "null opt param");
     Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x10)) == FiberErrorInvalid, "unwritable opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x1)) == FiberErrorAlignment, "misaligned opt param");
     struct alignas(8) AlignedOptParamBuffer {
-        std::uint8_t bytes[0x80];
+        std::uint8_t bytes[0x80 + 0x40];
         std::uint32_t sentinel = 0x5a5a5a5a;
     } storage;
-    std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
-    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes)) == 0, "initialize opt param");
-    bool allZero = true;
-    for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
-        if (storage.bytes[i] != 0) {
-            allZero = false;
-            break;
+    constexpr std::size_t OptParamSize = 0x80;
+    constexpr std::uint8_t OptParamMagic[4] = {0x4d, 0xe6, 0x40, 0xbb};
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{8}, std::size_t{16}, std::size_t{32}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == 0, "initialize opt param");
+        Require(std::memcmp(storage.bytes + offset, OptParamMagic, sizeof(OptParamMagic)) == 0, "opt param magic");
+        bool restZero = true;
+        for (std::size_t i = sizeof(OptParamMagic); i < OptParamSize; ++i) {
+            if (storage.bytes[offset + i] != 0) restZero = false;
         }
+        Require(restZero, "opt param bytes 4..127 cleared");
+        bool outsideIntact = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if ((i < offset || i >= offset + OptParamSize) && storage.bytes[i] != 0xA5) outsideIntact = false;
+        }
+        Require(outsideIntact, "bytes outside the opt param intact");
+        Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
     }
-    Require(allZero, "opt param cleared");
-    Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
+    for (const std::size_t offset : {std::size_t{1}, std::size_t{2}, std::size_t{4}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == FiberErrorAlignment, "misaligned opt param offset");
+        bool untouched = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if (storage.bytes[i] != 0xA5) untouched = false;
+        }
+        Require(untouched, "misaligned opt param writes nothing");
+    }
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
     Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
     const auto threadCsr = _mm_getcsr();

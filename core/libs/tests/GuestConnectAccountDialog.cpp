@@ -62,6 +62,9 @@ void RequireNotices() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
     Require(sceConnectAccountDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceConnectAccountDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(!PsnNoticeShown());
     Require(sceConnectAccountDialogOpen(&param) == 0);
     Require(PsnNoticeShown());
@@ -93,6 +96,9 @@ int main() {
     Require(sceConnectAccountDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceConnectAccountDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceConnectAccountDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceConnectAccountDialogGetResult(result) == kErrNotFinished);
 
     Require(sceConnectAccountDialogOpen(&param) == 0);

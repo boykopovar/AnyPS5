@@ -438,6 +438,17 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(group["done_names"], [])
             self.assertEqual(group["todo_names"], ["sceExampleSupportFormat"])
 
+    def test_noreturn_stub_wrappers_keep_callers_unimplemented(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "static [[noreturn]] void Unsupported() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI Pending() { Unsupported(); }\n")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], [])
+            self.assertEqual(group["todo_names"], ["Pending"])
+
     def test_stub_wrapper_calls_allow_whitespace(self):
         for separator in ("", " ", "\t", "\n", " /* separator */ "):
             with self.subTest(separator=separator), tempfile.TemporaryDirectory() as directory:
@@ -1061,6 +1072,99 @@ class ProgressConstantReturnTests(unittest.TestCase):
             "int APS5_VABI Updated(int value) { ++value; return 0; }\n")
         self.assertEqual(group["done_names"], ["Discarded", "Updated"])
         self.assertEqual(group["inert_names"], ["Discarded"])
+
+
+class ProgressOverloadTests(unittest.TestCase):
+    def scan(self, files):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            for name, source in files.items():
+                (library / name).parent.mkdir(parents=True, exist_ok=True)
+                (library / name).write_text(source, encoding="utf-8")
+            return progress.scan_library(library)
+
+    TYPES = ("struct Text { char* data; };\n"
+             "struct String { Text* text; };\n"
+             "struct Value { String* string; };\n"
+             "struct Holder { Value* value; };\n")
+
+    def test_reference_overloads_resolve_by_argument_type(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "void Destroy(Value& value) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI StringDestroy(String* self) { Destroy(*self); }\n"
+            "void APS5_VABI ValueDestroy(Value* self) { Destroy(*self); }\n"
+            "void APS5_VABI LocalDestroy() { String local{}; Destroy(local); }\n"})
+        self.assertEqual(group["done_names"], ["LocalDestroy", "StringDestroy"])
+        self.assertEqual(group["todo_names"], ["ValueDestroy"])
+
+    def test_unknown_argument_types_keep_every_overload(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "void Destroy(Value& value) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI Member(Holder* holder) { Destroy(*holder->value); }\n"
+            "void APS5_VABI Deduced(String* self) { auto& other = *self; Destroy(other); }\n"
+            "void APS5_VABI Shadowed(String* self, Value* other) { [&](Value* self) { Destroy(*self); }(other); }\n"})
+        self.assertEqual(group["done_names"], [])
+        self.assertEqual(group["todo_names"], ["Deduced", "Member", "Shadowed"])
+
+    def test_overloads_resolve_by_argument_count(self):
+        group = self.scan({"Export.cpp":
+            "void Release(void* memory) { free(memory); }\n"
+            "void Release(int context, void* memory) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void Fill(void* memory, int value = 0) { memset(memory, value, 4); }\n"
+            "void Fill(void* memory, int value, int count, int stride) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void APS5_VABI One(void* memory) { Release(memory); Fill(memory); Fill(memory, 1); }\n"
+            "void APS5_VABI Two(void* memory) { Release(0, memory); }\n"
+            "void APS5_VABI Four(void* memory) { Fill(memory, 1, 2, 3); }\n"})
+        self.assertEqual(group["done_names"], ["One"])
+        self.assertEqual(group["todo_names"], ["Four", "Two"])
+
+    def test_templates_packs_and_bases_stay_conservative(self):
+        group = self.scan({"Export.cpp": self.TYPES +
+            "struct Derived : Value {};\n"
+            "using Node = Value;\n"
+            "void Destroy(String& string) { string.text = nullptr; }\n"
+            "template<typename T>\nvoid Destroy(T*& pointer) { NotImplemented_nid_no_patch(__func__); }\n"
+            "void Clear(String& string) { string.text = nullptr; }\n"
+            "void Clear(Node& node) { NotImplemented_nid_no_patch(__func__); }\n"
+            "template<typename... TArgs>\nvoid Forward(const TArgs&... arguments) { Destroy(arguments...); }\n"
+            "void APS5_VABI ByValue(String* self) { Destroy(*self); }\n"
+            "void APS5_VABI ByPointer(String* self) { Destroy(self); }\n"
+            "void APS5_VABI ByBase(Derived* self) { Clear(*self); }\n"
+            "void APS5_VABI ByAlias(Value* self) { Clear(*self); }\n"
+            "void APS5_VABI ByPack(String* self) { Forward(*self); }\n"})
+        self.assertEqual(group["done_names"], ["ByValue"])
+        self.assertEqual(group["todo_names"], ["ByAlias", "ByBase", "ByPack", "ByPointer"])
+
+    def test_exports_follow_the_classification_of_called_exports(self):
+        group = self.scan({
+            "Export.cpp":
+                "int APS5_VABI Primary() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                "int APS5_VABI Ready() { return 0; }\n"
+                "int APS5_VABI PrimaryAlias() { return Primary(); }\n"
+                "int APS5_VABI ReadyAlias() { return Ready(); }\n"
+                "int APS5_VABI Member(Object* object) { return object->Primary(); }\n"
+                "int Forward_nid_no_patch() { return Primary(); }\n"
+                "int APS5_VABI Internal() { return Forward_nid_no_patch(); }\n",
+            "Other.cpp":
+                "int APS5_VABI Primary();\n"
+                "static int Helper() { return Primary(); }\n"
+                "int APS5_VABI OtherAlias() { return Helper(); }\n"})
+        self.assertEqual(group["done_names"], ["Member", "Ready", "ReadyAlias"])
+        self.assertEqual(group["todo_names"], ["Internal", "OtherAlias", "Primary", "PrimaryAlias"])
+
+    def test_called_export_with_an_implemented_definition_counts_as_implemented(self):
+        group = self.scan({"Export.cpp":
+            "#ifdef __EMSCRIPTEN__\n"
+            "int APS5_VABI Twice() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+            "#else\n"
+            "int APS5_VABI Twice() { return 2; }\n"
+            "#endif\n"
+            "int APS5_VABI TwiceAlias() { return Twice(); }\n"})
+        self.assertEqual(group["done_names"], ["Twice", "TwiceAlias"])
+        self.assertEqual(group["todo_names"], [])
 
 
 if __name__ == "__main__":
