@@ -44,7 +44,7 @@ git submodule update --init --recursive
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
 
 ```sh
-git diff --name-only origin/main...HEAD > changed.txt
+git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
 ninja -C build -f select.ninja selected
@@ -64,6 +64,7 @@ python3 tools/select_tests.py ctest build --output-on-failure
 - Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can block or quarantine the executables that the relinker tests create and run, which fails `optional_plt`, `empty_tls`, `windows_address_space`, `windows_bss`, `windows_fixed_base`, `windows_icon`, `loadexec_arguments`, `exec_arguments` and `exec_sys_*_arguments`. CTest sets `TMPDIR`, `TEMP` and `TMP` of the relinker tests to `core/relinker/test-temp` in the build directory, so setting them before running `ctest` does not move these files; add that directory (or the build directory if `relinker.exe` itself is quarantined) to the scanner's exclusions instead.
 - On Windows, Microsoft Defender quarantines some AGC test executables as `Trojan:Win64/ShellCode.MKA!MTB`, because they carry generated machine code: 34 targets in one full build on Windows 11, `agc_shader_replay.exe` and 33 `tests/agc_*_tests.exe`. The `objcopy` post-step of those targets then fails with `Invalid argument`, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
+- Smart App Control (Windows 11) blocks the executables the build and the relinker tests produce, because none of them is signed, and it is not an antivirus setting, so scanner exclusions do not apply to it. The Python relinker tests then fail with `OSError: [WinError 4551] An Application Control policy has blocked this file` when they start `relinker.exe` or a converted program, and CTest reports the native test executables as `Not Run` (`Process not started`). `VerifiedAndReputablePolicyState` under `HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` is 1 while it is on and 0 once it is off. Turn it off under Windows Security > App & browser control > Smart App Control settings before building; only recent Windows updates allow turning it back on afterwards without a reinstall.
 - Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
 
 `tools/package_release.py --output <dir>` writes the release packages. With `--docs <dir>` it collects the documentation into the output folder. Otherwise `--platform` picks the package: `headers` writes the public header package for `--version` (and takes no `--build` or `--revision`); `linux`, `windows` and `web` package the build tree given by `--build` for `--version`, and `web` also needs `--revision`, which the other platforms refuse.
@@ -177,12 +178,23 @@ Build configuration parameters:
 | `-DANYPS5_NODE=<path>`                 | Node.js 26 or newer that runs the memory64 Emscripten tests `guest_long_double` and `emscripten_module_unwind`; `node` by default, Emscripten builds only. |
 | `-DANYPS5_VIDEO_OUT_TEST_DRIVER=<driver>` | SDL video driver for the VideoOut flip tests; `windows` on Windows and `offscreen` elsewhere. |
 | `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
+| `-DAPS5_AGC_PROFILE=<mode>`           | Profile-guided build of `libSceAgcDriver` and its shader recompiler (GCC): `generate` instruments them, `use` builds them with the recorded profile. Empty by default. See [profile-guided driver build](#profile-guided-driver-build). |
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg`, `vorbis`, `opus`, `libusb-cmake`, `mbedtls`, `vgmstream`, `zstd`, `ZArchive` and, on Windows, `mimalloc` always stay bundled and still need `git submodule update --init`.
 
 `tools/configure_seed.py` writes the configure check results of a configured tree's `CMakeCache.txt` as an initial cache file for `cmake -C`. `--include` and `--exclude` take glob patterns on the check names, and `--stdout` prints the seed instead of writing a file. `tools/check_configure_seed.py` checks an unfiltered seed against its cache without writing anything.
+
+## Profile-guided driver build
+
+The AGC driver's hot paths (the queue worker, the draw finisher and the draw committer) gain from a profile-guided build. Use a separate build directory:
+
+1. Configure with `-DAPS5_AGC_PROFILE=generate` and build `libs`. Only `libSceAgcDriver` and `shader_recompiler_agc_driver` are instrumented: the runtime libraries export all their symbols, so instrumenting every library fails at link time.
+2. Play the scenes to optimize for. The instrumented driver writes its `.gcda` files next to its objects every 20 seconds and resets its counters, so a session ended by closing the emulator keeps everything up to the last dump.
+3. Configure the same directory with `-DAPS5_AGC_PROFILE=use` and build `libs` again. Functions changed after the recording lose their profile (`-Wno-coverage-mismatch`), so record again after large changes.
+
+`-DCMAKE_CXX_FLAGS="-march=x86-64-v3"` adds a further small gain on CPUs that have AVX2; such a build does not run on older CPUs. libc keeps `-ffp-contract=off` either way.
 
 ## HTTP locale tests
 

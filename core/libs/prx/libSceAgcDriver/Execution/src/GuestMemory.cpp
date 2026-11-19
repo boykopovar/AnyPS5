@@ -3527,6 +3527,14 @@ void ForgetKnownZero(std::uint64_t address, std::size_t bytes) {
 #endif
 }
 
+std::uint64_t KnownZeroMarks() {
+#ifdef _WIN32
+    return GuestArena::GuestArenaKnownZeroMarks_nid_no_patch();
+#else
+    return 0;
+#endif
+}
+
 void MaterializeKnownZero(std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     GuestArena::GuestArenaKnownZero_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, [](void*, std::uintptr_t first, std::uintptr_t last) {
