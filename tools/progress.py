@@ -387,9 +387,9 @@ def reaching_definitions(texts, headers, asm_names):
         for definition in local:
             for call in CALL.finditer(definition.body):
                 name = call.group(1)
-                if name != STUB and name not in helpers and name not in exports:
-                    continue
                 if not definition.follow_qualified and QUALIFIED.search(definition.body, 0, call.start()):
+                    continue
+                if name != STUB and name not in helpers and name not in exports:
                     continue
                 if name == STUB:
                     definition.calls.append(None)
@@ -1020,8 +1020,9 @@ def summary(libraries, shaders, shader_source=None, open_pr_progress=None):
         "daily, and when the Pages workflow is run manually. "
         'Raw numbers: <a href="progress.json">progress.json</a>.</p>',
         table("System libraries", "Library", libraries),
-        "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>; "
-        "comparison reports separately mark implemented functions whose body only returns a constant or throws. "
+        "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>. "
+        "A call to <code>GuestFault_nid_no_patch</code>, for an input the console does not define, is a throw and does not make it pending. "
+        "Comparison reports separately mark implemented functions whose body only returns a constant or throws. "
         f'The total only includes functions already declared in <a href="{SOURCE}/core/libs/prx">core/libs/prx</a>, '
         "not every function exported by the PS5 firmware. Shared-source libraries are counted only at their source library. "
         "Libraries with no exports only provide an empty module for titles that load them. "

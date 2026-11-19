@@ -1171,6 +1171,16 @@ extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName,
     throw std::runtime_error(std::string(funcName) + " not implemented");
 }
 
+extern "C" [[noreturn]] void (GuestFault_nid_no_patch)(const char* funcName) {
+    GuestFaultAt_nid_no_patch(funcName, "", 0);
+}
+
+extern "C" [[noreturn]] void GuestFaultAt_nid_no_patch(const char* funcName, const char* file, int line) {
+    std::string message = std::string(funcName) + " called with an input the console does not define";
+    if (file != nullptr && *file != '\0') message += std::string(" at ") + file + ":" + std::to_string(line);
+    throw std::runtime_error(message);
+}
+
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch() {
     return notImplementedCalls.load(std::memory_order_relaxed);
 }
