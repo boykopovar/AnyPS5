@@ -311,6 +311,17 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertIn(r"| `unexpected` | stack&lt;Foo&gt;&#92;\|Bar &amp; Baz |", text)
         self.assertIn(r"| `known` | guest&lt;arg&gt;&#92;\|host &amp; fallback |", text)
 
+    def test_cell_collapses_whitespace_and_escapes_pipes(self):
+        self.assertEqual(sanitizer_report.cell("  foo \n  bar | baz  "), r"foo bar \| baz")
+        self.assertEqual(sanitizer_report.cell("plain text"), "plain text")
+        self.assertEqual(sanitizer_report.cell("a | b | c"), r"a \| b \| c")
+
+    def test_detail_cell_escapes_html_and_consecutive_pipe_backslashes(self):
+        self.assertEqual(sanitizer_report.detail_cell('  <foo> & "bar" | baz  '), '&lt;foo&gt; &amp; "bar" \\| baz')
+        self.assertEqual(sanitizer_report.detail_cell(r"foo \| bar"), r"foo &#92;\| bar")
+        self.assertEqual(sanitizer_report.detail_cell(r"foo \\| bar"), r"foo &#92;&#92;\| bar")
+        self.assertEqual(sanitizer_report.detail_cell(r"C:\dir\file.cpp:10"), r"C:\dir\file.cpp:10")
+
     def test_names_remain_literal_in_every_summary_table(self):
         names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
         for name in names:
