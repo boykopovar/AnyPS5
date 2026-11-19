@@ -1,4 +1,4 @@
-#include "prx/libSceNKWebKit/include/LiftedWrappersExports.hpp"
+#include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "LiftedAbi.hpp"
 
 using NKWebKit::Lifted::Read;
@@ -8,88 +8,6 @@ using NKWebKit::Lifted::Bytes;
 using NKWebKit::Lifted::Call;
 
 extern "C" {
-
-void _ZN3JSC11VMInspector22dumpCellMemoryToStreamEPNS_6JSCellERN3WTF11PrintStreamE();
-void _ZN3JSC12HeapCellTypeD1Ev();
-void _ZN3JSC14JSRunLoopTimerD1Ev();
-void _ZN3JSC16CompleteSubspaceD1Ev();
-void _ZN3JSC16SamplingProfiler18reportTopBytecodesERN3WTF11PrintStreamE();
-void _ZN3JSC16SamplingProfiler18reportTopFunctionsERN3WTF11PrintStreamE();
-void _ZN3JSC17DeferredWorkTimerD2Ev();
-void _ZN3JSC19HeapSnapshotBuilderD1Ev();
-void _ZN3JSC22createOutOfMemoryErrorEPNS_14JSGlobalObjectE();
-void _ZN3JSC22createOutOfMemoryErrorEPNS_14JSGlobalObjectERKN3WTF6StringE();
-void _ZN3JSC2VM14throwExceptionEPNS_14JSGlobalObjectENS_7JSValueE();
-void _ZN3JSC7Options10initializeEv();
-void _ZN3JSC7Options10setOptionsEPKc();
-void _ZN3JSC8Bindings10RootObjectD1Ev();
-void _ZN3JSC8DebuggerD1Ev();
-void _ZN3JSC8JSCalleeC1ERNS_2VMEPNS_14JSGlobalObjectEPNS_9StructureE();
-void _ZN3WTF10fastMallocEm();
-void _ZN3WTF20initializeMainThreadEv();
-void _ZN3WTF3URL10invalidateEv();
-void _ZN3WTF7RunLoop3runEv();
-void _ZN3WTF8dataFileEv();
-void _ZN3WTF8fastFreeEPv();
-void _ZN7WebCore11ContentType15codecsParameterEv();
-void _ZN7WebCore11MediaPlayer19originsInMediaCacheERKN3WTF6StringE();
-void _ZN7WebCore11MediaPlayerD1Ev();
-void _ZN7WebCore12ISOWebVTTCueD2Ev();
-void _ZN7WebCore12PrintContextD1Ev();
-void _ZN7WebCore13MIMETypeCacheD2Ev();
-void _ZN7WebCore14CredentialBaseC1Ev();
-void _ZN7WebCore14DocumentLoaderC1ERKNS_15ResourceRequestERKNS_14SubstituteDataE();
-void _ZN7WebCore14DocumentLoaderD1Ev();
-void _ZN7WebCore14FrameSelection16updateAppearanceEv();
-void _ZN7WebCore14JSVoidCallbackC1EPN3JSC8JSObjectEPNS_17JSDOMGlobalObjectE();
-void _ZN7WebCore14JSVoidCallbackD1Ev();
-void _ZN7WebCore14SQLiteDatabaseC1Ev();
-void _ZN7WebCore14ScrollableArea17willEndLiveResizeEv();
-void _ZN7WebCore14ScrollableArea19willStartLiveResizeEv();
-void _ZN7WebCore14XMLHttpRequestD1Ev();
-void _ZN7WebCore15DatabaseTracker29deleteAllDatabasesImmediatelyEv();
-void _ZN7WebCore15DatabaseTracker9singletonEv();
-void _ZN7WebCore16JSStringCallbackC1EPN3JSC8JSObjectEPNS_17JSDOMGlobalObjectE();
-void _ZN7WebCore16JSStringCallbackD1Ev();
-void _ZN7WebCore16ScriptController37executeScriptInWorldIgnoringExceptionERNS_15DOMWrapperWorldERKN3WTF6StringEb();
-void _ZN7WebCore17HTMLCanvasElement9toDataURLERKN3WTF6StringEN3JSC7JSValueE();
-void _ZN7WebCore17NowPlayingManagerD1Ev();
-void _ZN7WebCore18DOMWindowExtensionD1Ev();
-void _ZN7WebCore18TextureMapperLayerD1Ev();
-void _ZN7WebCore19MediaResourceLoaderD1Ev();
-void _ZN7WebCore21mainThreadNormalWorldEv();
-void _ZN7WebCore24CoordinatedGraphicsLayerD1Ev();
-void _ZN7WebCore27AuthenticationChallengeBaseC1ERKNS_15ProtectionSpaceERKNS_10CredentialEjRKNS_16ResourceResponseERKNS_13ResourceErrorE();
-void _ZN7WebCore27AuthenticationChallengeBaseC1Ev();
-void _ZN7WebCore4Page16setActivityStateEN3WTF9OptionSetINS_13ActivityState4FlagEEE();
-void _ZN7WebCore5ColorC1ERKS0_();
-void _ZN7WebCore5FrameD1Ev();
-void _ZN7WebCore5Range6createERNS_8DocumentE();
-void _ZN7WebCore7Element16getAttributeNodeERKN3WTF10AtomStringE();
-void _ZN7WebCore7Element16setAttributeNodeERNS_4AttrE();
-void _ZN7WebCore7Element18getAttributeNodeNSERKN3WTF10AtomStringES4_();
-void _ZN7WebCore7Element9innerTextEv();
-void _ZN7WebCore8Document36updateLayoutIgnorePendingStylesheetsENS0_18RunPostLayoutTasksE();
-void _ZN7WebCore9DOMWindowD1Ev();
-void _ZN7WebCore9FrameView26adjustTiledBackingCoverageEv();
-void _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE();
-void _ZN9Inspector14InspectorAgentD2Ev();
-void _ZN9Inspector15RemoteInspector16pushListingsSoonEv();
-void _ZN9Inspector15RemoteInspector24updateClientCapabilitiesEv();
-void _ZN9Inspector18InjectedScriptBaseaSERKS0_();
-void _ZN9Inspector20InspectorTargetAgentD1Ev();
-void _ZN9Inspector21InjectedScriptManagerD1Ev();
-void _ZN9Inspector21InspectorConsoleAgentD1Ev();
-void _ZN9Inspector28InspectorScriptProfilerAgentD1Ev();
-void _ZNK7WebCore11ContentType13containerTypeEv();
-void _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE();
-void _ZNK7WebCore11FrameLoader14cancelledErrorERKNS_15ResourceRequestE();
-void _ZNK7WebCore15FocusController18focusedOrMainFrameEv();
-void _ZNK7WebCore16VisibleSelection19rootEditableElementEv();
-void _ZNK7WebCore4Node11textContentEb();
-void _ZNK7WebCore9DOMWindow8documentEv();
-void _ZNK9Inspector14FrontendRouter16hasLocalFrontendEv();
-void _ZNKR3WTF6String12isolatedCopyEv();
 
 std::uint64_t APS5_VABI JSRunLoop(std::uint64_t a0, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5) {
     Call<std::uint64_t>(_ZN3WTF20initializeMainThreadEv, a0, a1, a2, a3, a4, a5);
