@@ -1333,6 +1333,52 @@ static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultMediaHasAudio(ref));
     Require(WKBundleHitTestResultMediaIsInFullscreen(ref));
 
+    Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
+    Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
+
+    auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    hit->nodeHandle = node;
+    hit->urlElementHandle = urlElem;
+    hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
+
+    auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
+    Require(copiedNode == node.Get());
+    WKRelease(copiedNode);
+
+    auto* copiedUrlElem = WKBundleHitTestResultCopyURLElementHandle(ref);
+    Require(copiedUrlElem == urlElem.Get());
+    WKRelease(copiedUrlElem);
+
+    auto rect = WKBundleHitTestResultGetImageRect(ref);
+    Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
+    Require(rect.size.width == 30.0 && rect.size.height == 40.0);
+
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto* createdHit = WKBundleFrameCreateHitTestResult(frame.Get(), NKWebKit::PointValue{15.0, 25.0});
+    Require(createdHit != nullptr);
+    Require(WKGetTypeID(createdHit) == WKBundleHitTestResultGetTypeID());
+    auto* hitNode = WKBundleHitTestResultCopyNodeHandle(createdHit);
+    Require(hitNode != nullptr);
+    auto* hitFrame = WKBundleNodeHandleCopyDocumentFrame(hitNode);
+    Require(hitFrame == frame.Get());
+    WKRelease(hitFrame);
+    WKRelease(hitNode);
+    Require(WKBundleHitTestResultCopyURLElementHandle(createdHit) == nullptr);
+    auto createdRect = WKBundleHitTestResultGetImageRect(createdHit);
+    Require(createdRect.origin.x == 15.0 && createdRect.origin.y == 25.0);
+    WKRelease(createdHit);
+
+    bool frameThrew = false;
+    try {
+        WKBundleFrameCreateHitTestResult(nullptr, NKWebKit::PointValue{0.0, 0.0});
+    } catch (const std::invalid_argument&) {
+        frameThrew = true;
+    }
+    Require(frameThrew);
+
     bool threw = false;
     try {
         WKBundleHitTestResultCopyLinkLabel(nullptr);
@@ -2955,6 +3001,161 @@ static void TestRenderTree() {
     requireThrows([&] { WKRenderObjectGetChildren(layer.Get()); });
 }
 
+static void TestView() {
+    auto view = NKWebKit::Make<NKWebKit::View>();
+    const void* ref = view.Get();
+
+    Require(WKViewGetPageScaleFactor(ref) == 1.0);
+    Require(WKViewGetViewScaleFactor(ref) == 1.0);
+    Require(!WKViewIsFullScreen(ref));
+    Require(view->drawsBackground);
+
+    WKViewSetPageScaleFactor(ref, 2.5);
+    Require(WKViewGetPageScaleFactor(ref) == 2.5);
+
+    WKViewSetViewScaleFactor(ref, 1.75);
+    Require(WKViewGetViewScaleFactor(ref) == 1.75);
+
+    WKViewSetDrawsBackground(ref, false);
+    Require(!view->drawsBackground);
+    WKViewSetDrawsBackground(ref, true);
+    Require(view->drawsBackground);
+
+    WKViewWillEnterFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewDidEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewWillExitFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+
+    WKViewDidEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewRequestExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+
+    bool threw = false;
+    try {
+        WKViewSetPageScaleFactor(ref, 0.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetPageScaleFactor(ref, -1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(ref, 0.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(ref, -0.5);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewDidEnterFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewDidExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewRequestExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewWillEnterFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewWillExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewGetPageScaleFactor(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewGetViewScaleFactor(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewIsFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetDrawsBackground(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetPageScaleFactor(nullptr, 1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(nullptr, 1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -3010,6 +3211,7 @@ int main() {
     }
     TestFrame();
     TestRenderTree();
+    TestView();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
