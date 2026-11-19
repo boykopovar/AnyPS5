@@ -660,14 +660,16 @@ int main() {
             invalidCieIdRejected = std::string(error.what()).find("invalid CIE identifier") != std::string::npos;
         }
         Require(invalidCieIdRejected);
-        auto unsupportedCieVersion = Fixture();
-        unsupportedCieVersion[72] = 2;
-        bool unsupportedCieVersionRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unsupportedCieVersion, {augLoad, augEh}, {}, {}); }
-        catch (const Domain::RelinkerException& error) {
-            unsupportedCieVersionRejected = std::string(error.what()).find("unsupported CIE version") != std::string::npos;
+        for (const std::uint8_t badVersion : {std::uint8_t{0}, std::uint8_t{2}, std::uint8_t{5}, std::uint8_t{255}}) {
+            auto unsupportedCieVersion = Fixture();
+            unsupportedCieVersion[72] = badVersion;
+            bool unsupportedCieVersionRejected = false;
+            try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unsupportedCieVersion, {augLoad, augEh}, {}, {}); }
+            catch (const Domain::RelinkerException& error) {
+                unsupportedCieVersionRejected = std::string(error.what()).find("unsupported CIE version") != std::string::npos;
+            }
+            Require(unsupportedCieVersionRejected);
         }
-        Require(unsupportedCieVersionRejected);
         auto cieVersion3 = Fixture();
         cieVersion3[72] = 3;
         const auto v3Regions = Relinker::UnusedNidFilter::ReadExceptionFunctions(cieVersion3, {augLoad, augEh}, {}, {});
@@ -1011,6 +1013,6 @@ int main() {
             cieUnterminatedRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
         }
         Require(cieUnterminatedRejected);
-        std::cout << "83 unwind record cases passed\n";
+        std::cout << "86 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
