@@ -706,6 +706,26 @@ class ExportScanTests(unittest.TestCase):
                          {("libA", nid_names.compute_nid("sceFoo")): {"sceFoo"}})
         self.assertEqual(pr_overlap.source_exports("int APS5_VABI sceFoo_nid_no_patch(int a) { return a; }\n", "libA"), {})
 
+class BlobTextsTests(unittest.TestCase):
+    def test_empty_blob_list_runs_no_command(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            self.assertEqual(pr_overlap.blob_texts("root", []), {})
+        run.assert_not_called()
+
+    def test_batch_output_is_split_by_declared_sizes(self):
+        output = b"aaa blob 5\nhello\nbbb blob 6\nab\ncde\nccc blob 0\n\n"
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            texts = pr_overlap.blob_texts("root", ["aaa", "bbb", "ccc"])
+        self.assertEqual(texts, {"aaa": "hello", "bbb": "ab\ncde", "ccc": ""})
+        self.assertEqual(run.call_args.kwargs["input"], b"aaa\nbbb\nccc\n")
+
+    def test_invalid_utf8_is_replaced(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b"aaa blob 2\n\xff\xfe\n"
+            texts = pr_overlap.blob_texts("root", ["aaa"])
+        self.assertEqual(texts["aaa"], "\ufffd\ufffd")
+
 
 if __name__ == "__main__":
     unittest.main()
