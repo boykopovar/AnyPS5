@@ -616,6 +616,11 @@ int main(int argc, char** argv) {
         Require(sceHttpUriUnescape(escaped, nullptr, size, row[0]) == 0);
         Require(Equal(escaped, row[1]) && escaped[size] == 'Z');
     }
+    std::memset(escaped, 'Z', sizeof(escaped));
+    required = 55;
+    Require(sceHttpUriUnescape(escaped, &required, sizeof(escaped), reinterpret_cast<const char*>(0x10)) == invalidValue && required == 55 && escaped[0] == 'Z');
+    Require(sceHttpUriUnescape(reinterpret_cast<char*>(0x10), &required, sizeof(escaped), "a%20b") == invalidValue && required == 55);
+    Require(sceHttpUriUnescape(escaped, reinterpret_cast<std::size_t*>(0x10), sizeof(escaped), "a%20b") == invalidValue && Equal(escaped, "a b"));
     for (const char* malformed : {"%", "%1", "%1g", "%gg", "%+1", "%-1", "% 1", "abc%", "%%41", "%4%41"}) {
         std::memset(escaped, 'Z', sizeof(escaped));
         required = 77;
