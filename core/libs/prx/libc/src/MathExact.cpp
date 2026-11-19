@@ -773,11 +773,11 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         ErrnoGuard guard;
         result = std::remquo(x, y, &bits);
     }
-    if (domain) errno = EDOM;
     if (!std::isnan(result)) {
         const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
-        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low))) throw std::invalid_argument("remquol: unwritable quotient");
     }
+    if (domain) errno = EDOM;
     return result;
 }
 
@@ -787,9 +787,11 @@ long double APS5_VABI logbl_nid_postfix(long double x) {
 }
 
 int APS5_VABI ilogbl_nid_postfix(long double x) {
-    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return INT_MAX;
-    ErrnoGuard guard;
-    return std::ilogb(x);
+    const ExtendedBits bits = Bits(x);
+    const int field = bits.signExponent & 0x7fff;
+    if (field == 0x7fff) return INT_MAX;
+    if (field != 0) return field - 16383;
+    return bits.mantissa != 0 ? static_cast<int>(std::bit_width(bits.mantissa)) - 16446 : INT_MIN;
 }
 
 long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
@@ -842,7 +844,7 @@ long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
         whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
         fraction = x - whole;
     }
-    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modfl: unwritable integral");
     return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }

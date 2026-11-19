@@ -153,6 +153,16 @@ static void CheckFiniteClassification() {
     for (const double value : {static_cast<double>(INFINITY), -static_cast<double>(INFINITY), static_cast<double>(NAN)}) Require(__isfinite_nid_postfix(value) == 0);
 }
 
+static void CheckIlogblReadsTheBits() {
+    Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+    const int zero = ilogbl_nid_postfix(-0.0L);
+    const int smallest = ilogbl_nid_postfix(Extended(0x0000, 0x0000000000000001ull));
+    const int largestSubnormal = ilogbl_nid_postfix(Extended(0x8000, 0x7fffffffffffffffull));
+    const int signaling = ilogbl_nid_postfix(Extended(0x7fff, 0x8000000000000001ull));
+    const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+    Require(zero == INT_MIN && smallest == -16445 && largestSubnormal == -16383 && signaling == INT_MAX && exceptions == 0);
+}
+
 static void CheckErrno() {
     errno = 0;
     Require(std::isnan(fmodl_nid_postfix(NAN, 1.0L)) && errno == EDOM);
@@ -166,10 +176,8 @@ static void CheckErrno() {
 
     Require(errno == 0);
     Require(remquol_nid_postfix(-7.0L, 2.0L, &quotient) == 1.0L && quotient == -4);
-    Require(remquol_nid_postfix(-7.0L, 2.0L, reinterpret_cast<int*>(0x10)) == 1.0L);
     long double whole = 0.0L;
     Require(modfl_nid_postfix(2.5L, &whole) == 0.5L && whole == 2.0L);
-    Require(modfl_nid_postfix(2.5L, reinterpret_cast<long double*>(0x10)) == 0.5L);
     errno = 0;
     Require(std::isnan(scalb_nid_postfix(1.0, 2.5)) && errno == 0);
     Require(scalb_nid_postfix(1.0, 3.0) == 8.0 && scalb_nid_postfix(4.0, -INFINITY) == 0.0);
@@ -899,6 +907,11 @@ static void CheckGuestPointers() {
     Require(RejectsKeepingErrno([&] { _LPoly_nid_postfix(2.0L, reinterpret_cast<const long double*>(std::uintptr_t{0x10}), 3); }));
     Require(RejectsKeepingErrno([&] { _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(2.0, reinterpret_cast<const double*>(std::uintptr_t{0x10}), 3); }));
 
+    int quotient = -4;
+    long double whole = 2.5L;
+    Require(RejectsKeepingErrno([&] { remquol_nid_postfix(-7.0L, 2.0L, reinterpret_cast<int*>(std::uintptr_t{0x10})); }) && quotient == -4);
+    Require(RejectsKeepingErrno([&] { modfl_nid_postfix(2.5L, reinterpret_cast<long double*>(std::uintptr_t{0x10})); }));
+
     long double longTable[41];
     double table[41];
     long double longExpected = 1.0L;
@@ -932,6 +945,10 @@ static void CheckGuestPointers() {
     *nan = std::numeric_limits<long double>::quiet_NaN();
     const std::uint64_t mantissa = 1;
     std::memcpy(words, &mantissa, sizeof(mantissa));
+    auto* quotientSlot = reinterpret_cast<int*>(page.End() - 7 * sizeof(long double));
+    auto* integralSlot = reinterpret_cast<long double*>(page.End() - 8 * sizeof(long double));
+    *quotientSlot = -4;
+    *integralSlot = 2.5L;
     page.ReadOnly();
     Require(_LDtest_nid_postfix(finite) == -1);
     Require(_LDint_nid_postfix(nan, 0) == 2 && _LDscale_nid_postfix(nan, 3) == 2);
@@ -941,7 +958,9 @@ static void CheckGuestPointers() {
     Require(RejectsKeepingErrno([&] { _LExp_nid_postfix(finite, 1.0L, 0); }));
     Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(&exponent, finite); }));
     Require(RejectsKeepingErrno([&] { _LDnorm_nid_postfix(words); }));
-    Require(*finite == 2.5L && std::memcmp(words, &mantissa, sizeof(mantissa)) == 0);
+    Require(RejectsKeepingErrno([&] { remquol_nid_postfix(-7.0L, 2.0L, quotientSlot); }) && *quotientSlot == -4);
+    Require(RejectsKeepingErrno([&] { modfl_nid_postfix(2.5L, integralSlot); }));
+    Require(*finite == 2.5L && *integralSlot == 2.5L && std::memcmp(words, &mantissa, sizeof(mantissa)) == 0);
 }
 
 int main(int argc, char** argv) {
@@ -955,6 +974,7 @@ int main(int argc, char** argv) {
     CheckSignalingNanPassThrough();
     CheckModflPartsAndFlags();
     CheckErrno();
+    CheckIlogblReadsTheBits();
     CheckFiniteClassification();
     CheckConsoleQuirks();
     CheckRoundingModes();
