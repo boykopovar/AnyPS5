@@ -9,7 +9,7 @@ import sys
 import tempfile
 import urllib.request
 from base64 import b64encode
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -54,8 +54,8 @@ def read_db(path):
 DOWNLOAD_TIMEOUT = 30
 
 
-def load_db(path):
-    if not path.exists():
+def load_db(path, *, offline=False):
+    if not offline and not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         print("downloading NID database to %s ..." % path, file=sys.stderr)
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
@@ -80,9 +80,11 @@ def load_db(path):
 
 
 def source_files(root):
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    root_flavored = flavor(str(root))
     return (path for path in sorted(root.rglob("*.cpp"))
             if not any(part.lower() in {"test", "tests"}
-                       for part in path.relative_to(root).parts[:-1]))
+                       for part in flavor(str(path)).relative_to(root_flavored).parts[:-1]))
 
 
 def source_aliases(text):
@@ -407,7 +409,7 @@ def main(argv=None):
     if args.offline and not (requested_nids and not args.nid) and not db_path.is_file():
         parser.error(f"offline database is not a file: {db_path}")
     try:
-        db = {} if requested_nids and not args.nid else (read_db(db_path) if args.offline else load_db(db_path))
+        db = {} if requested_nids and not args.nid else load_db(db_path, offline=args.offline)
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:
