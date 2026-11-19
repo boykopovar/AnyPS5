@@ -97,8 +97,6 @@ ConsoleTimeZone HostTimeZone() {
 std::mutex appSuspendBlockMutex;
 int appSuspendBlocks = 0;
 
-std::atomic<bool> lncUtilInitialized{false};
-
 int WriteStatus(bool* status, bool value, const char* function) {
     if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
     *status = value;
@@ -745,7 +743,7 @@ int APS5_VABI sceSystemServiceShowControllerSettings(void) {
 }
 
 int APS5_VABI sceLncUtilInitialize() {
- return lncUtilInitialized.exchange(true) ? LNC_UTIL_ERROR_ALREADY_INITIALIZED : SYSTEM_SERVICE_OK;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {

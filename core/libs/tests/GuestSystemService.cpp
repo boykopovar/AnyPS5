@@ -24,7 +24,6 @@
 namespace {
 
 constexpr int browserUnavailable = static_cast<int>(0x8002002Du);
-constexpr int lncUtilAlreadyInitialized = static_cast<int>(0x80940018u);
 constexpr int appMessagingNullPointer = static_cast<int>(0x80C50004u);
 constexpr int appMessagingNoMessage = static_cast<int>(0x80C50005u);
 constexpr std::size_t appMessageSize = 8216;
@@ -168,8 +167,8 @@ void TestShellCoreUtilLeafCalls() {
 
 void TestLncUtilInitialize() {
     Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
-    Require(sceLncUtilInitialize() == lncUtilAlreadyInitialized);
-    Require(sceLncUtilInitialize() == lncUtilAlreadyInitialized);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
 }
 
 void TestAppMessagingTryReceiveMsg() {
