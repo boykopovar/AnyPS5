@@ -58,12 +58,7 @@ void StoreXtime(Xtime* destination, const Xtime& value, const char* function) {
 }
 
 bool JoinCodeWritable(int* code) {
-    if (code == nullptr) return true;
-    int value = 0;
-    const int savedErrno = errno;
-    const bool writable = GuestCopyIn_nid_no_patch(&value, code, sizeof(value)) && GuestCopyOut_nid_no_patch(code, &value, sizeof(value));
-    errno = savedErrno;
-    return writable;
+    return code == nullptr || GuestWritable_nid_no_patch(code, sizeof(*code));
 }
 
 void StoreJoinCode(int* code, void* result) {
