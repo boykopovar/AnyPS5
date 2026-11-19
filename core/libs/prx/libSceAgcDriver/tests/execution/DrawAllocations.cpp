@@ -355,9 +355,18 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
     draws = submits * MeasuredDrawsPerSubmit;
     auto empty = shape.build(LeadingDrawsPerSubmit);
     auto repeated = shape.build(LeadingDrawsPerSubmit + MeasuredDrawsPerSubmit);
+    // The first submission links this shape's pipeline and queues its link-time-optimized relink on the pipeline
+    // library worker. With a cold driver cache that relink compiles for long enough to land in either window and
+    // move the subtraction by hundreds of allocations, so it finishes first, and the warm-up then runs the
+    // optimized pipeline the measured draws bind.
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    Submit(repeated);
+    (void)driver.SettledPipelineLibraryWork();
     for (int warm = 0; warm < 3; ++warm) Submit(repeated);
+    const auto libraryWork = driver.SettledPipelineLibraryWork();
     const auto base = Measure(empty, submits);
     const auto many = Measure(repeated, submits);
+    Require(driver.SettledPipelineLibraryWork() == libraryWork, std::string("draw allocations [") + shape.name + "]: pipeline library work ran inside the measured windows, so they do not measure warmed draws alone");
     Require(many.count > 0 && base.count > 0, std::string("draw allocations [") + shape.name + "]: the probe observed no allocations");
     const auto perDraw = PerDraw(many.count, base.count, draws);
     std::printf("draw allocations [%s]: %zu draws: %llu allocations %llu bytes, without them: %llu allocations %llu bytes, busiest thread %llu allocations\n", shape.name, draws, static_cast<unsigned long long>(many.count), static_cast<unsigned long long>(many.bytes), static_cast<unsigned long long>(base.count), static_cast<unsigned long long>(base.bytes), static_cast<unsigned long long>(many.busiestCount));
