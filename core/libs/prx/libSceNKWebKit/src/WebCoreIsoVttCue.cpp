@@ -24,12 +24,27 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/IsoWebVttCueExports.hpp"
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+
+#include <memory>
+#include <stdexcept>
 
 extern "C" {
 
 WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv() {
     return WebCore::FourCC("vttc");
+}
+
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueD2Ev(NKWebKit::IsoAbi::WebVTTCue* self) {
+    if (!self) throw std::invalid_argument("ISOWebVTTCue::~ISOWebVTTCue: null this");
+    std::destroy_at(self);
+}
+
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueD0Ev(NKWebKit::IsoAbi::WebVTTCue* self) {
+    _ZN7WebCore12ISOWebVTTCueD2Ev(self);
+    _ZN7WebCore6ISOBoxdlEPv(self);
 }
 
 }
