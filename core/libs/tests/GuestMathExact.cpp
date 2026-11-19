@@ -107,6 +107,19 @@ static void CheckLogblLroundl() {
     Require(lroundl_nid_postfix(0x1p62L) == (INT64_C(1) << 62));
 }
 
+static void CheckLroundlOverflowFlags() {
+    for (const bool overflowing : {false, true}) {
+        for (const bool useLlround : {false, true}) {
+            const long double value = overflowing ? -0x1.8p80L : 0x1.8p61L;
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            const std::int64_t result = useLlround ? llroundl_nid_postfix(value) : lroundl_nid_postfix(value);
+            const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+            Require(result == (overflowing ? INT64_MIN : INT64_C(3) << 60) && exceptions == (overflowing ? FE_INVALID | FE_INEXACT : 0));
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckSignalingNanPassThrough() {
     const long double signaling = Extended(0x7fff, 0x8000000000001234ull);
     Require(SameBits(fdiml_nid_postfix(signaling, 1.0L), signaling));
@@ -998,6 +1011,7 @@ int main(int argc, char** argv) {
     CheckRoundingAndScaling();
     CheckSqrtlNegativeFlags();
     CheckLogblLroundl();
+    CheckLroundlOverflowFlags();
     CheckSignalingNanPassThrough();
     CheckModflPartsAndFlags();
     CheckErrno();

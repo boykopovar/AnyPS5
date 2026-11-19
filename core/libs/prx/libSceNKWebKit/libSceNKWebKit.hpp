@@ -16,6 +16,7 @@
 #include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
+#include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/ProcessWarmingExports.hpp"
@@ -67,6 +68,7 @@
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
@@ -84,3 +86,5 @@
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
+#include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
+#include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
