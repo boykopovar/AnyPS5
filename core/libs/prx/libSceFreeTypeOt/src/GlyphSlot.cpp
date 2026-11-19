@@ -38,14 +38,16 @@ GuestMemoryRec* FaceMemory(const GuestGlyphSlotRec& slot, const char* function) 
     return static_cast<GuestMemoryRec*>(guestFace.memory);
 }
 
-void FreeOwned(GuestMemoryRec* memory, GuestGlyphSlotRec* slot, GuestGlyphSlotRec& guestSlot, const char* function) {
+bool FreeOwned(GuestMemoryRec* memory, GuestGlyphSlotRec* slot, GuestGlyphSlotRec& guestSlot, const char* function) {
     if (guestSlot.bitmap.buffer && !memory) NotImplemented_nid_no_patch(function);
-    OtMemFree(memory, guestSlot.bitmap.buffer);
-    guestSlot.bitmap.buffer = nullptr;
     std::uint8_t* cleared = nullptr;
     const int savedErrno = errno;
-    GuestCopyOut_nid_no_patch(&slot->bitmap.buffer, &cleared, sizeof(cleared));
+    const bool written = GuestCopyOut_nid_no_patch(&slot->bitmap.buffer, &cleared, sizeof(cleared));
     errno = savedErrno;
+    if (!written) return false;
+    OtMemFree(memory, guestSlot.bitmap.buffer);
+    guestSlot.bitmap.buffer = nullptr;
+    return true;
 }
 
 bool FreeBitmap(GuestGlyphSlotRec* slot, GuestGlyphSlotRec& guestSlot, const char* function) {
@@ -301,10 +303,18 @@ void APS5_VABI ft_glyphslot_set_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std:
     const bool copied = GuestCopyIn_nid_no_patch(&guestSlot, slot, sizeof(guestSlot));
     errno = readErrno;
     if (!copied) return;
-    if (!FreeBitmap(slot, guestSlot, __func__)) return;
+    GuestSlotInternalRec* internal = Internal(guestSlot);
+    const bool owned = internal && (internal->flags & GlyphOwnBitmap);
+    GuestMemoryRec* memory = owned ? FaceMemory(guestSlot, __func__) : nullptr;
+    if (owned && guestSlot.bitmap.buffer && !memory) NotImplemented_nid_no_patch(__func__);
     const int writeErrno = errno;
-    GuestCopyOut_nid_no_patch(&slot->bitmap.buffer, &buffer, sizeof(buffer));
+    const bool written = GuestCopyOut_nid_no_patch(&slot->bitmap.buffer, &buffer, sizeof(buffer));
     errno = writeErrno;
+    if (!written) return;
+    if (owned) {
+        OtMemFree(memory, guestSlot.bitmap.buffer);
+        internal->flags &= ~GlyphOwnBitmap;
+    }
 }
 
 int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std::uint64_t size) {
@@ -319,7 +329,7 @@ int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std
     GuestMemoryRec* memory = FaceMemory(guestSlot, function);
     GuestSlotInternalRec* internal = Internal(guestSlot);
     if (internal->flags & GlyphOwnBitmap) {
-        FreeOwned(memory, slot, guestSlot, function);
+        if (!FreeOwned(memory, slot, guestSlot, function)) return InvalidArgument;
     } else {
         internal->flags |= GlyphOwnBitmap;
     }

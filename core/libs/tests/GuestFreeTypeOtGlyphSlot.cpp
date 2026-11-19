@@ -437,6 +437,21 @@ void GuestPointers() {
         "alloc_bitmap refuses an unreadable slot without changing errno");
     Require(ft_glyphslot_alloc_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlySlot), 8) == 0x06 && errno == 71 && !readOnlySlot.bitmap.buffer && roRecorder.allocs == roRecorder.frees,
         "alloc_bitmap refuses a read-only slot without leaking or changing errno");
+
+    static unsigned char ownedDummy[4]{};
+    static GuestSlotInternalRec roOwnedInternal{.flags = FreeType::GlyphOwnBitmap};
+    static const GuestGlyphSlotRec readOnlyOwnedSlot{
+        .face = const_cast<GuestFaceRec*>(&readOnlyFace),
+        .bitmap = {.buffer = ownedDummy},
+        .internal = &roOwnedInternal};
+    roRecorder.allocs = 0;
+    roRecorder.frees = 0;
+    errno = 71;
+    ft_glyphslot_set_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlyOwnedSlot), buffer);
+    Require(errno == 71 && readOnlyOwnedSlot.bitmap.buffer == ownedDummy && roRecorder.frees == 0 && (roOwnedInternal.flags & FreeType::GlyphOwnBitmap) != 0,
+        "set_bitmap keeps owned bitmap intact when slot is read-only");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlyOwnedSlot), 8) == 0x06 && errno == 71 && readOnlyOwnedSlot.bitmap.buffer == ownedDummy && roRecorder.allocs == 0 && roRecorder.frees == 0,
+        "alloc_bitmap keeps owned bitmap intact when slot is read-only");
 }
 
 }
