@@ -1143,11 +1143,12 @@ double APS5_VABI exp2_nid_postfix(double x) {
     return r * std::bit_cast<double>(static_cast<std::uint64_t>(static_cast<std::uint32_t>(0x3ff00000 + k + (1000 << 20))) << 32) * twom1000;
 }
 double APS5_VABI ldexp_nid_postfix(double x, int exponent) {
-    if (!std::isfinite(x) || x == 0.0) return x;
-    const int saved_errno = errno;
-    const double result = std::scalbn(x, exponent);
-    errno = !std::isfinite(result) || result == 0.0 ? ERANGE : saved_errno;
-    return result;
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (exponent == 0 || magnitude == 0 || magnitude >= 0x7ff0000000000000ull) return x;
+    const short code = _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(&x, exponent);
+    if (code == 0) _Feraise_nid_postfix(0x10);
+    else if (code == 1) _Feraise_nid_postfix(0x08);
+    return x;
 }
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
     const int saved_errno = errno;
@@ -1206,7 +1207,7 @@ std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<doubl
 std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
 std::int64_t APS5_VABI llround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
 std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
-std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
+std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(roundl_nid_postfix(x)); }
 int APS5_VABI __isfinitef_nid_postfix(float x) {
     const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
     return exponent != 0x7f800000u ? 1 : 0;

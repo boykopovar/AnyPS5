@@ -462,16 +462,38 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(missing["io_errors"])
         self.assertTrue((self.root / "missing" / "process.json").is_file())
 
+    def test_log_limit_stops_running_child_after_partial_block(self):
+        limit = 1024 * 1024
+        for fd, name in ((1, "stdout.txt"), (2, "stderr.txt")):
+            with self.subTest(stream=name):
+                directory = self.root / name
+                child = f"import os,time;os.write({fd},b'x'*{limit + 1});time.sleep(20)"
+                result = runner.execute_replay_trial([sys.executable, "-c", child], directory,
+                                                     dict(os.environ), 5, limit)
+                self.assertTrue(result["log_limit"])
+                self.assertFalse(result["timed_out"])
+                self.assertFalse(result["io_errors"])
+                self.assertFalse(result["cleanup_failed"])
+                self.assertEqual((directory / name).read_bytes(), b"x" * limit)
+
     def test_real_log_quota_and_owned_descendant_cleanup(self):
         result = runner.execute_replay_trial([sys.executable, "-c", "import os;os.write(1,b'x'*262144);os.write(2,b'y'*262144)"],
                                             self.root / "quota", dict(os.environ), 5, 1024)
         self.assertTrue(result["log_limit"])
         for name in ("stdout.txt", "stderr.txt"):
             self.assertLessEqual((self.root / "quota" / name).stat().st_size, 1024)
+        ready = self.root / "descendant-spawned"
+        release = self.root / "descendant-release"
         marker = self.root / "descendant-survived"
-        child = "import pathlib,time;time.sleep(0.8);pathlib.Path(" + repr(str(marker)) + ").write_text('survived')"
-        parent = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);print('spawned',flush=True);time.sleep(10)"
-        result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 0.25, 1024)
+        child = ("import pathlib,time\nend=time.monotonic()+30\n"
+                 "while time.monotonic()<end and not pathlib.Path(" + repr(str(release)) + ").exists():\n    time.sleep(0.01)\n"
+                 "pathlib.Path(" + repr(str(marker)) + ").write_text('survived')")
+        parent = ("import pathlib,subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);"
+                  "print('spawned',flush=True);pathlib.Path(" + repr(str(ready)) + ").touch();time.sleep(30)")
+        monotonic = time.monotonic
+        with mock.patch.object(runner.time, "monotonic", side_effect=lambda: monotonic() + (30 if ready.exists() else 0)):
+            result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 20, 1024)
+        release.touch()
         self.assertTrue(result["timed_out"])
         self.assertIn("spawned", (self.root / "descendants" / "stdout.txt").read_text())
         time.sleep(0.9)

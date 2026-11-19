@@ -242,6 +242,16 @@ struct LibreSslX509 {
     std::int32_t references;
 };
 
+inline constexpr int LibreSslX509LookupFail = 0;
+inline constexpr int LibreSslX509LookupX509 = 1;
+inline constexpr int LibreSslX509LookupCrl = 2;
+
+struct LibreSslX509Object {
+    int type;
+    int padding;
+    void* data;
+};
+
 using LibreSslPemPasswordCallback = int(APS5_VABI*)(char*, int, int, void*);
 
 struct LibreSslX509StoreContext {
@@ -741,12 +751,12 @@ int APS5_VABI ENGINE_ctrl_cmd_nid_postfix(void* engine, const char* command, std
 int APS5_VABI ENGINE_finish_nid_postfix(void* engine);
 int APS5_VABI ENGINE_free_nid_postfix(void* engine);
 void* APS5_VABI ENGINE_get_first_nid_postfix(void);
-int APS5_VABI ENGINE_get_id_nid_postfix(void);
+const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine);
 void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine);
 int APS5_VABI ENGINE_init_nid_postfix(void* engine);
 void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 void* APS5_VABI ENGINE_load_private_key_nid_postfix(void* engine, const char* keyId, void* uiMethod, void* callbackData);
-int APS5_VABI ENGINE_set_default_nid_postfix(void);
+int APS5_VABI ENGINE_set_default_nid_postfix(void* engine, unsigned int flags);
 void APS5_VABI ERR_clear_error_nid_postfix();
 char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
 void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
@@ -957,7 +967,7 @@ std::uint64_t APS5_VABI SSLeay_nid_postfix(void);
 const LibreSslMethod* APS5_VABI SSLv23_client_method_nid_postfix(void);
 const LibreSslMethod* APS5_VABI SSLv23_server_method_nid_postfix(void);
 const LibreSslMethod* APS5_VABI TLS_client_method_nid_postfix(void);
-int APS5_VABI UI_OpenSSL_nid_postfix(void);
+LibreSslUiMethod* APS5_VABI UI_OpenSSL_nid_postfix(void);
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name);
 void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method);
 void* APS5_VABI UI_get0_user_data_nid_postfix(const LibreSslUi* ui);
@@ -991,7 +1001,7 @@ int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(LibreSslX509StoreContext* con
 int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContext* context);
 void* APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(LibreSslX509StoreContext* context, int index);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
-int APS5_VABI X509_STORE_add_cert_nid_postfix(void);
+int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate);
 int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store* store, void* crl);
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method);
 void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);

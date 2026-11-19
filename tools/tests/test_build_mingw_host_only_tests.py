@@ -61,5 +61,22 @@ class TargetDocumentTests(unittest.TestCase):
                 build_mingw_host_only_tests.target_document(value, "t.json")
 
 
+class ObjectShapeTests(unittest.TestCase):
+    def test_object_document_returns_a_dict_and_refuses_other_types(self):
+        document = {"a": 1}
+        self.assertIs(build_mingw_host_only_tests.object_document(document, "p.json", "thing"), document)
+        for value in ([], "text", None, 3):
+            with self.assertRaisesRegex(ValueError, r"p\.json: invalid thing \(expected an object\)"):
+                build_mingw_host_only_tests.object_document(value, "p.json", "thing")
+
+    def test_object_entries_requires_a_list_of_objects(self):
+        entries = [{"a": 1}, {}]
+        self.assertIs(build_mingw_host_only_tests.object_entries(entries, "p.json", "items"), entries)
+        self.assertEqual(build_mingw_host_only_tests.object_entries([], "p.json", "items"), [])
+        for value in ({}, "text", [1], [{}, None]):
+            with self.assertRaisesRegex(ValueError, r"p\.json: invalid items \(expected a list of objects\)"):
+                build_mingw_host_only_tests.object_entries(value, "p.json", "items")
+
+
 if __name__ == "__main__":
     unittest.main()
