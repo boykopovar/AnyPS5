@@ -24,7 +24,6 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace {
 
@@ -68,13 +67,17 @@ struct Status {
     }
 };
 std::mutex RegistryMutex;
-std::unordered_map<const UResourceBundle*, std::shared_ptr<Entry>> Handles;
-std::vector<std::unique_ptr<UEnumeration>> Tokens;
+struct Slot {
+    std::unique_ptr<UEnumeration> token;
+    std::shared_ptr<Entry> owner;
+};
+std::unordered_map<const UResourceBundle*, Slot> Handles;
 
-std::shared_ptr<Entry> Optional(const UResourceBundle* handle) {
+std::shared_ptr<Entry> Optional(const UResourceBundle* handle, bool* known = nullptr) {
     const std::lock_guard lock(RegistryMutex);
     const auto found = Handles.find(handle);
-    return found == Handles.end() ? nullptr : found->second;
+    if (known) *known = found != Handles.end();
+    return found == Handles.end() ? nullptr : found->second.owner;
 }
 std::shared_ptr<Entry> Find(const UResourceBundle* handle) {
     auto result = Optional(handle);
@@ -112,8 +115,7 @@ UResourceBundle* Publish(Native native, const Status& status, std::int32_t after
     auto* handle = reinterpret_cast<UResourceBundle*>(token.get());
     status.Write(after);
     const std::lock_guard lock(RegistryMutex);
-    Tokens.push_back(std::move(token));
-    Handles.emplace(handle, std::move(owner));
+    Handles.emplace(handle, Slot{std::move(token), std::move(owner)});
     return handle;
 }
 
@@ -245,9 +247,8 @@ void APS5_VABI ures_close(UResourceBundle* handle) {
     {
         const std::lock_guard lock(RegistryMutex);
         const auto found = Handles.find(handle);
-        if (found == Handles.end()) NotImplemented_nid_no_patch(__func__);
-        closing = std::move(found->second);
-        Handles.erase(found);
+        if (found == Handles.end() || !found->second.owner) NotImplemented_nid_no_patch(__func__);
+        closing = std::move(found->second.owner);
     }
 }
 UResourceBundle* APS5_VABI ures_getByKey(const UResourceBundle* handle, const char* key, UResourceBundle* fillIn, std::int32_t* status) {
@@ -305,6 +306,9 @@ const std::int32_t* APS5_VABI ures_getIntVector_nid_postfix(const UResourceBundl
 }
 
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB) {
+    bool known;
+    Optional(resB, &known);
+    if (known) NotImplemented_nid_no_patch(__func__);
     std::memset(resB, 0, Icu68ResourceBundleSize);
 }
 
@@ -320,6 +324,18 @@ std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, st
         currentStatus = IllegalArgument;
         CopyOut(status, &currentStatus, sizeof(currentStatus), savedErrno, __func__);
         return failure;
+    }
+
+    bool known;
+    const auto owner = Optional(resB, &known);
+    if (known) {
+        if (!owner) NotImplemented_nid_no_patch(__func__);
+        const std::lock_guard lock(owner->mutex);
+        auto after = currentStatus;
+        const auto value = IcuResourceBackend::UInt_nid_no_patch(owner->native.get(), &after);
+        errno = savedErrno;
+        if (after != currentStatus) CopyOut(status, &after, sizeof(after), savedErrno, __func__);
+        return value;
     }
 
     std::uint32_t resource;

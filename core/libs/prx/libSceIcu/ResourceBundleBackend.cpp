@@ -37,6 +37,12 @@ const char16_t* String_nid_no_patch(const void* handle, std::int32_t mode, const
     if (status) *status = error;
     return result;
 }
+std::uint32_t UInt_nid_no_patch(const void* handle, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    const auto result = ures_getUInt(static_cast<const UResourceBundle*>(handle), &error);
+    *status = error;
+    return result;
+}
 std::int32_t Int_nid_no_patch(const void* handle, std::int32_t* status) {
     auto error = status ? static_cast<UErrorCode>(*status) : U_ZERO_ERROR;
     const auto result = ures_getInt(static_cast<const UResourceBundle*>(handle), status ? &error : nullptr);

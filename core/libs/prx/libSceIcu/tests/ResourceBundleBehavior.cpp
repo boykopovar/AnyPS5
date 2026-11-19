@@ -132,6 +132,10 @@ void Literals() {
     Require(ures_getInt_nid_postfix(number.guest, &status) == 1234 && status <= 0, "fixed signed integer");
     Bundle negative(root, "negative");
     Require(ures_getInt_nid_postfix(negative.guest, &status) == -7 && status <= 0, "fixed negative resource integer sign extension");
+    Require(ures_getUInt_nid_postfix(number.guest, &status) == 1234 && status <= 0, "owned unsigned integer");
+    Require(ures_getUInt_nid_postfix(negative.guest, &status) == 0x0ffffff9 && status <= 0, "owned negative integer unsigned payload");
+    std::int32_t mismatch = 0;
+    Require(ures_getUInt_nid_postfix(root.guest, &mismatch) == UINT32_MAX && mismatch == 17, "owned table type mismatch");
     Bundle binary(root, "bytes");
     const auto* bytes = ures_getBinary_nid_postfix(binary.guest, &length, &status);
     Require(bytes && status <= 0 && length == 4 && bytes[0] == 0 && bytes[1] == 0x10 && bytes[2] == 0xff && bytes[3] == 0, "fixed binary bytes including embedded zero");
@@ -258,6 +262,9 @@ void Lifetime() {
         Refuses([&] { uenum_close_nid_postfix(enumeration); });
         if (phase == 0) ures_close(closed);
     }
+    Refuses([&] { ures_getUInt_nid_postfix(closed, &status); });
+    Refuses([&] { ures_initStackObject_nid_postfix(child.guest); });
+    Refuses([&] { ures_initStackObject_nid_postfix(closed); });
     for (int index = 0; index < 128; ++index) {
         auto* fresh = ures_openDirect_nid_postfix(nullptr, "aps5ResourceFixture", &status);
         Require(fresh && fresh != closed, "closed resource identities are not reused");

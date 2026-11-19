@@ -10,6 +10,7 @@ std::int32_t Size_nid_no_patch(const void*);
 std::int32_t Type_nid_no_patch(const void*);
 const char* Key_nid_no_patch(const void*);
 const char16_t* String_nid_no_patch(const void*, std::int32_t, const char*, std::int32_t, std::int32_t*, std::int32_t*);
+std::uint32_t UInt_nid_no_patch(const void*, std::int32_t*);
 std::int32_t Int_nid_no_patch(const void*, std::int32_t*);
 const std::uint8_t* Binary_nid_no_patch(const void*, std::int32_t*, std::int32_t*);
 const std::int32_t* Vector_nid_no_patch(const void*, std::int32_t*, std::int32_t*);
