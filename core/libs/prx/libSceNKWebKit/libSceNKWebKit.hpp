@@ -15,6 +15,7 @@
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 #include "prx/libSceNKWebKit/include/RefPtrCairoExports.hpp"
+#include "prx/libSceNKWebKit/include/NativeImageCairoExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"

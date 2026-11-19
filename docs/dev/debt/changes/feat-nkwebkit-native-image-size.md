@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Unknown function info
+
+- [WebCore::nativeImageSize for cairo surfaces](../../../core/libs/prx/libSceNKWebKit/src/NativeImageCairo.cpp) (libSceNKWebKit) - not compared with a console module. It follows [NativeImageCairo.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/graphics/cairo/NativeImageCairo.cpp#L38-L41) and `cairoSurfaceSize` in [CairoUtilities.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/graphics/cairo/CairoUtilities.cpp#L319-L339) of August 2020: a null `RefPtr` or a surface that is not an image surface gives an empty `IntSize`, and an image surface gives its width and height from this project's libcairo; a subsurface reports its target's type but has no image backend, so it gives 0 by 0 as upstream does. The `ENABLE(ACCELERATED_2D_CANVAS)` GL-surface case is assumed off in the console build. Closes when: compared with a console module.
