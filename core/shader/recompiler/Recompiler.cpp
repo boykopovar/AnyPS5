@@ -816,7 +816,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     constexpr BindingAllocator bindingAllocator;
     bool registration = request.target.registrationModules && request.shader.stage == ShaderStage::Fragment;
     program.Metadata().bindingLayoutComplete = false;
-    const auto stencilMode = SelectStencilExportMode(program, std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != request.target.supportedCapabilities.end(), inputInfo.pixel != nullptr && inputInfo.pixel->psStencilOperationValueExport, inputInfo.pixel != nullptr && inputInfo.pixel->psEarlyZ, inputInfo.pixel != nullptr && inputInfo.pixel->psOrderedPixelShader);
+    const auto stencilMode = SelectStencilExportMode(program, request.target.supportedCapabilities, inputInfo.pixel != nullptr && inputInfo.pixel->psStencilOperationValueExport, inputInfo.pixel != nullptr && inputInfo.pixel->psEarlyZ, inputInfo.pixel != nullptr && inputInfo.pixel->psOrderedPixelShader);
     const bool stencilReplay = stencilMode == StencilExportMode::Replay;
     auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
 
@@ -908,7 +908,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
     result.layerReplaySafe = LayerReplaySafe(program);
     result.stencilAttachmentExport = stencilMode == StencilExportMode::Attachment;
-    result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
+    result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program, stencilReplay && StencilReplayNeedsStore(program, request.target.supportedCapabilities));
     result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
         result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
@@ -2524,7 +2524,7 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     if (handle.artifact == nullptr || !MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     if (!request.target.registrationModules || !handle.artifact->artifact.registrationModule) return nullptr;
     const auto& info = handle.artifact->info.info;
-    if (std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.descriptorFormatted; }) || std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return FoldsTexelOffsets(sampler); })) return nullptr;
+    if (std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.descriptorFormatted; }) || std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return FoldsTexelOffsets(sampler) || (sampler.uses & SamplerUseGatherLod) != 0u; })) return nullptr;
     ResourceSnapshot snapshot;
     snapshot.buffers.assign(info.buffers.size(), {{}, 4u});
     snapshot.images.assign(info.images.size(), {{}, 8u});

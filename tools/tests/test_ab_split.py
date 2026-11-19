@@ -295,6 +295,12 @@ class AbSplitTests(unittest.TestCase):
             phase["reports"]["gputime"] = [short, report]
             self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
 
+    def test_weighted_mean_uses_row_weights_and_is_none_without_weight(self):
+        rows = [{"value": 2.0, "weight": 1.0}, {"value": 8.0, "weight": 3.0}]
+        self.assertAlmostEqual(ab_split.weighted(rows, "value", "weight"), 6.5)
+        self.assertIsNone(ab_split.weighted([{"value": 5.0, "weight": 0.0}], "value", "weight"))
+        self.assertIsNone(ab_split.weighted([], "value", "weight"))
+
     def test_a_log_without_phases_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no \\[ab\\] phase lines"):
             ab_split.split([present(1.0, 1.0) + "\n"])

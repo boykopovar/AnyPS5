@@ -1,6 +1,7 @@
 #include "StencilReplay.hpp"
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -1157,15 +1158,15 @@ std::optional<std::set<std::uint32_t>> Values(const IrProgram& program, const Ir
 
 }
 
-StencilExportMode SelectStencilExportMode(const IrProgram& program, bool nativeExport, bool operationValue, bool earlyTests, bool ordered) {
+StencilExportMode SelectStencilExportMode(const IrProgram& program, std::span<const std::uint32_t> capabilities, bool operationValue, bool earlyTests, bool ordered) {
     const bool exports = program.Resources().stage == IrShaderStage::Pixel && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; });
     if (!exports) return StencilExportMode::None;
-    if (nativeExport) return StencilExportMode::Native;
+    if (std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != capabilities.end()) return StencilExportMode::Native;
     const auto values = StencilReferenceValues(program, operationValue ? 8u : 0u);
     if (values.empty() && !operationValue) throw std::runtime_error("stencil reference export emulation found no stencil export");
     if (!StencilReferenceDefinedForKeptInvocations(program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
     if (earlyTests || ordered) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
-    if (!values.empty() && StencilReplaySafe(program)) return StencilExportMode::Replay;
+    if (!values.empty() && StencilReplaySafe(program, StencilReplayLanesFixed(capabilities))) return StencilExportMode::Replay;
     if (!operationValue) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
     if (std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::Mrt && output.location == StencilAttachmentLocation; })) throw std::runtime_error("stencil operation value attachment export requires unused color output location 7");
     return StencilExportMode::Attachment;
@@ -1324,7 +1325,16 @@ bool LayerReplaySafe(const IrProgram& program) {
     return true;
 }
 
-bool StencilReplaySafe(const IrProgram& program) {
+bool StencilReplayLanesFixed(std::span<const std::uint32_t> capabilities) {
+    const auto has = [&](spv::Capability capability) { return std::ranges::find(capabilities, static_cast<std::uint32_t>(capability)) != capabilities.end(); };
+    return has(spv::CapabilityPhysicalStorageBufferAddresses) && has(spv::CapabilityInt64);
+}
+
+bool StencilReplayNeedsStore(const IrProgram& program, std::span<const std::uint32_t> capabilities) {
+    return StencilReplayLanesFixed(capabilities) && !StencilReplaySafe(program, false);
+}
+
+bool StencilReplaySafe(const IrProgram& program, bool lanesFixed) {
     if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
@@ -1341,7 +1351,8 @@ bool StencilReplaySafe(const IrProgram& program) {
             const auto opcode = instruction->Opcode();
             if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
             if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
-            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || (opcode == IrOpcode::ReadFirstLane && (instruction->ArgumentCount() == 0u || !uniform.Uniform(instruction->Argument(0)))) || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock) return false;
+            if (!lanesFixed && ((opcode == IrOpcode::ReadFirstLane && (instruction->ArgumentCount() == 0u || !uniform.Uniform(instruction->Argument(0)))) || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32)) return false;
             masks = masks || opcode == IrOpcode::Ballot || opcode == IrOpcode::LaneId || opcode == IrOpcode::WqmU64;
             if (!instruction->MayHaveSideEffects()) continue;
             switch (opcode) {
@@ -1380,7 +1391,7 @@ bool StencilReplaySafe(const IrProgram& program) {
             }
         }
     }
-    return !masks || MaskReplaySafety(program).Check();
+    return lanesFixed || !masks || MaskReplaySafety(program).Check();
 }
 
 }

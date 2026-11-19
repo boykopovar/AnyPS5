@@ -59,7 +59,14 @@ int APS5_VABI sceAgcSetStaticQword(std::uint32_t index, std::uint64_t value) {
 
 int APS5_VABI sceAgcGetStaticQword(std::uint32_t index, std::uint64_t* value) {
     if (index >= StaticQwordCount) return GRAPHICS5_ERROR_INVALID_STATIC_BUFFER;
-    std::memcpy(value, StaticTable() + StaticQwordOffset + std::size_t{index} * sizeof(*value), sizeof(*value));
+    std::uint64_t word = 0;
+    std::memcpy(&word, StaticTable() + StaticQwordOffset + std::size_t{index} * sizeof(word), sizeof(word));
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(value, &word, sizeof(word))) {
+        errno = savedErrno;
+        return GRAPHICS5_ERROR_INVALID_STATIC_BUFFER;
+    }
+    errno = savedErrno;
     return 0;
 }
 

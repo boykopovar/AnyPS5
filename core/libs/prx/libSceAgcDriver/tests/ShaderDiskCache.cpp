@@ -554,7 +554,7 @@ void verifyEntryRoundTrip() {
     auto upstreamVersion = file;
     upstreamVersion[4] = std::byte{33};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
-    for (const auto version : {69u, 85u, 88u, 91u}) {
+    for (const auto version : {69u, 85u, 88u, 90u, 91u, 103u}) {
         auto previousStencilVersion = file;
         previousStencilVersion[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodeEntry(previousStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil attachment artifact with previous format " + std::to_string(version) + " loads");

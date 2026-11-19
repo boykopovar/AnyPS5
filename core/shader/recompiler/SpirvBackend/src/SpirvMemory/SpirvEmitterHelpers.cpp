@@ -166,9 +166,9 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
     }
 }
 
-void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool atomicLockTable) {
+void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool deviceAddressStore) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || atomicLockTable;
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || deviceAddressStore;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -456,13 +456,14 @@ void DefineOutputs(SpirvEmitterState& state) {
             break;
         case StageOutputKind::StencilRef: {
             const auto& pixel = PixelInfo(state);
-            const auto mode = SelectStencilExportMode(state.program, std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != state.supportedCapabilities.end(), pixel.psStencilOperationValueExport, pixel.psEarlyZ, pixel.psOrderedPixelShader);
+            const auto mode = SelectStencilExportMode(state.program, state.supportedCapabilities, pixel.psStencilOperationValueExport, pixel.psEarlyZ, pixel.psOrderedPixelShader);
             if (mode == StencilExportMode::Attachment) {
                 state.stencilAttachmentVariable = DefineInterfaceVariable(state, TypeU32(state), spv::StorageClassOutput, "out_stencilOperationValue");
                 state.module.AddAnnotation(spv::OpDecorate, state.stencilAttachmentVariable, spv::DecorationLocation, StencilAttachmentLocation);
                 binding.variableId = state.stencilAttachmentVariable;
             } else if (mode == StencilExportMode::Replay) {
                 state.stencilReplay = true;
+                state.stencilReplayLateStore = StencilReplayNeedsStore(state.program, state.supportedCapabilities);
                 state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
                 binding.variableId = state.stencilRefVariable;
