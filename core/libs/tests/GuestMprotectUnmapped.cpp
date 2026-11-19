@@ -110,7 +110,7 @@ int ProtectHostPagesAboveLoadedImages() {
         ++checked;
     }
     if (checked != 0) return 0;
-    std::puts("no host image ends inside a 16 KiB page with free memory above it");
+    std::puts("skipped, the host has no image that ends inside a 16 KiB page with free memory above it");
     return Skipped;
 }
 
@@ -140,7 +140,7 @@ int ProtectFromInsideHostImages() {
         ++checked;
     }
     if (checked != 0) return 0;
-    std::puts("no host image segment starts inside a 16 KiB page that holds no other loaded segment below it");
+    std::puts("skipped, the host has no image segment that starts inside a 16 KiB page holding no other loaded segment below it");
     return Skipped;
 }
 

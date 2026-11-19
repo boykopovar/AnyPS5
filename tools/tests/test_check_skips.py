@@ -35,6 +35,8 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, the host has no image that ends inside a 16 KiB page with free memory above it",
+    "skipped, the host has no image segment that starts inside a 16 KiB page holding no other loaded segment below it",
 ]
 
 HOST_LIMITATIONS = [
