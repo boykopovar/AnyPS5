@@ -307,8 +307,8 @@ void CheckPosixOutstandingBound() {
     const auto opener = directory / "blocking.sh";
     {
         std::ofstream script(opener);
-        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nwhile [ ! -e \"" << directory.string()
-               << "/release\" ]; do sleep 0.05; done\n";
+        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\ni=0\nwhile [ ! -e \"" << directory.string()
+               << "/release\" ] && kill -0 \"$PPID\" 2>/dev/null && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done\n";
     }
     std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
     HostBrowserLauncher launcher(opener.string());
