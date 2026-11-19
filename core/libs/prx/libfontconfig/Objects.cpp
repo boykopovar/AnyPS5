@@ -37,6 +37,7 @@
 #include <memory>
 #include <new>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -192,7 +193,7 @@ void ReadGuestValue(T& destination, const T* source, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 template <typename T>
@@ -200,7 +201,7 @@ void WriteGuestValue(T* destination, const T& value, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 template <typename T, typename TExtract>
@@ -210,7 +211,7 @@ FcResult GetPatternTyped(const FcPattern* pattern, const char* object, int id, T
     const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != expectedType) return FcResultTypeMismatch;
-    if (!destination) NotImplemented_nid_no_patch(caller);
+    if (!destination) throw std::runtime_error(caller);
     WriteGuestValue(destination, extract(found), caller);
     return FcResultMatch;
 }
@@ -258,7 +259,7 @@ struct FcPattern {
 namespace {
 
 FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     if (!ValidType(object, value.type)) return 0;
     const auto found = pattern->objects.find(object);
     if (found != pattern->objects.end()) {
@@ -284,7 +285,7 @@ void APS5_VABI FcLangSetDestroy(FcLangSet* set) {
 }
 
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
-    if (!set || !language) NotImplemented_nid_no_patch(__func__);
+    if (!set || !language) throw std::runtime_error(__func__);
     const std::string_view name(reinterpret_cast<const char*>(language));
     const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
         [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
@@ -309,7 +310,7 @@ FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
 }
 
 FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* language) {
-    if (!set || !language) NotImplemented_nid_no_patch(__func__);
+    if (!set || !language) throw std::runtime_error(__func__);
     const std::string_view name(reinterpret_cast<const char*>(language));
     const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
         [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
@@ -383,7 +384,7 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
 }
 
 FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     const auto entry = pattern->objects.find(object);
     if (entry == pattern->objects.end()) return 0;
     pattern->objects.erase(entry);
@@ -391,7 +392,7 @@ FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object
 }
 
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     const auto entry = pattern->objects.find(object);
     if (entry == pattern->objects.end() || id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return 0;
     entry->second.erase(std::next(entry->second.begin(), id));
@@ -400,12 +401,12 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
 }
 
 FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char* object, int id, FcValue* value) {
-    if (!object) NotImplemented_nid_no_patch(__func__);
+    if (!object) throw std::runtime_error(__func__);
     if (!pattern) return FcResultNoMatch;
     const auto entry = pattern->objects.find(object);
     if (entry == pattern->objects.end()) return FcResultNoMatch;
     if (id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return FcResultNoId;
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) throw std::runtime_error(__func__);
     WriteGuestValue(value, std::next(entry->second.begin(), id)->View(), __func__);
     return FcResultMatch;
 }
@@ -470,7 +471,7 @@ FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, doub
 }
 
 FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, const FcChar8* value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     if (!value) return 0;
     try {
         PatternValue entry;
@@ -481,7 +482,7 @@ FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, cons
 }
 
 FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, const FcCharSet* value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     if (!value) return 0;
     try {
         PatternValue entry;
@@ -492,7 +493,7 @@ FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, con
 }
 
 FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, const FcLangSet* value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     if (!value) return 0;
     try {
         PatternValue entry;
@@ -503,7 +504,7 @@ FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, con
 }
 
 FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, const FcMatrix* value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    if (!pattern || !object) throw std::runtime_error(__func__);
     if (!value) return 0;
     try {
         PatternValue entry;

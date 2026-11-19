@@ -1,4 +1,5 @@
 #include "prx/libfontconfig/libfontconfig.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cerrno>
 #include <climits>
@@ -434,6 +435,7 @@ static void GuestPointerChecks() {
     CHECK(FcPatternAddLangSet(pattern, "lang", langset));
     FcLangSetDestroy(langset);
 
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     EXPECT_REJECTED(FcPatternAddMatrix(pattern, "matrix", reinterpret_cast<const FcMatrix*>(std::uintptr_t{0x10})));
 
     void* roPage = nullptr;
@@ -463,6 +465,25 @@ static void GuestPointerChecks() {
     EXPECT_REJECTED(FcPatternGetMatrix(pattern, "matrix", 0, static_cast<FcMatrix**>(roPage)));
     EXPECT_REJECTED(FcPatternGetCharSet(pattern, "charset", 0, static_cast<FcCharSet**>(roPage)));
     EXPECT_REJECTED(FcPatternGetLangSet(pattern, "lang", 0, static_cast<FcLangSet**>(roPage)));
+    FcValue value{};
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, nullptr, 0, &value));
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, "weight", 0, nullptr));
+    EXPECT_REJECTED(FcPatternGetString_nid_postfix(pattern, "family", 0, nullptr));
+    EXPECT_REJECTED(FcPatternGetMatrix(pattern, "matrix", 0, nullptr));
+    EXPECT_REJECTED(FcPatternGetCharSet(pattern, "charset", 0, nullptr));
+    EXPECT_REJECTED(FcPatternGetLangSet(pattern, "lang", 0, nullptr));
+    EXPECT_REJECTED(FcLangSetAdd(nullptr, Text("en")));
+    EXPECT_REJECTED(FcLangSetHasLang(nullptr, Text("en")));
+    EXPECT_REJECTED(FcPatternDel_nid_postfix(nullptr, "family"));
+    EXPECT_REJECTED(FcPatternRemove(pattern, nullptr, 0));
+    EXPECT_REJECTED(FcPatternAddInteger_nid_postfix(nullptr, "weight", 80));
+    EXPECT_REJECTED(FcPatternAddBool_nid_postfix(pattern, nullptr, 1));
+    EXPECT_REJECTED(FcPatternAddDouble(nullptr, "size", 12.0));
+    EXPECT_REJECTED(FcPatternAddString(nullptr, "family", Text("Mono")));
+    EXPECT_REJECTED(FcPatternAddMatrix(pattern, nullptr, &matrix));
+    EXPECT_REJECTED(FcPatternAddCharSet(nullptr, "charset", nullptr));
+    EXPECT_REJECTED(FcPatternAddLangSet(nullptr, "lang", nullptr));
+    CHECK(NotImplementedCalls_nid_no_patch() == reportedBefore);
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);
 #else
