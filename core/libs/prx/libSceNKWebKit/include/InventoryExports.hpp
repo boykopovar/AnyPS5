@@ -718,7 +718,6 @@ int APS5_VABI _ZN3JSC15WeakHandleOwnerC1ERKS0_();
 int APS5_VABI _ZN3JSC15WeakHandleOwnerC1Ev();
 int APS5_VABI _ZN3JSC15WeakHandleOwnerC2ERKS0_();
 int APS5_VABI _ZN3JSC15WeakHandleOwnerC2Ev();
-int APS5_VABI _ZN3JSC15WeakHandleOwnerD0Ev();
 int APS5_VABI _ZN3JSC15constructNumberEPNS_14JSGlobalObjectENS_7JSValueE();
 int APS5_VABI _ZN3JSC15constructStringERNS_2VMEPNS_14JSGlobalObjectENS_7JSValueE();
 int APS5_VABI _ZN3JSC15createEvalErrorEPNS_14JSGlobalObjectERKN3WTF6StringE();
@@ -841,7 +840,6 @@ int APS5_VABI _ZN3JSC19iteratorForIterableEPNS_14JSGlobalObjectEPNS_8JSObjectENS
 int APS5_VABI _ZN3JSC19numberOfDFGCompilesENS_7JSValueE();
 int APS5_VABI _ZN3JSC19numberOfDFGCompilesEPK15OpaqueJSContextPK13OpaqueJSValue();
 int APS5_VABI _ZN3JSC19reifyStaticAccessorERNS_2VMERKNS_14HashTableValueERNS_8JSObjectENS_12PropertyNameE();
-int APS5_VABI _ZN3JSC20TypedArrayControllerD0Ev();
 int APS5_VABI _ZN3JSC20createReferenceErrorEPNS_14JSGlobalObjectERKN3WTF6StringE();
 int APS5_VABI _ZN3JSC20failNextNewCodeBlockEPK15OpaqueJSContext();
 int APS5_VABI _ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE();
