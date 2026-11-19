@@ -44,6 +44,7 @@
     X(CmdPushConstants) \
     X(CmdPushDescriptorSetKHR) \
     X(CmdResetQueryPool) \
+    X(CmdResolveImage) \
     X(CmdSetCheckpointNV) \
     X(CmdSetColorWriteMaskEXT) \
     X(CmdSetCullMode) \

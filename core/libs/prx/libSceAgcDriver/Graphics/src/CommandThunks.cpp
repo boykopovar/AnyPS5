@@ -372,6 +372,17 @@ struct Streamer<CommandId::CmdBlitImage> : Copies {
     }
 };
 
+template<>
+struct Streamer<CommandId::CmdResolveImage> : Copies {
+    static void Append(CommandStream& stream, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageResolve* regions) {
+        stream.Emplace([](const std::byte* payload, VkCommandBuffer target, const CommandFunctions& functions) {
+            const auto header = unpack<ImageToImageHeader>(payload);
+            const auto* at = afterHeader<ImageToImageHeader>(payload);
+            functions.CmdResolveImage(target, header.source, header.sourceLayout, header.destination, header.destinationLayout, header.count, arrayAt<VkImageResolve>(at, header.count));
+        }, ImageToImageHeader{source, sourceLayout, destination, destinationLayout, count, VK_FILTER_NEAREST}, std::span(regions, count));
+    }
+};
+
 struct ClearColorHeader {
     VkImage image;
     VkImageLayout layout;

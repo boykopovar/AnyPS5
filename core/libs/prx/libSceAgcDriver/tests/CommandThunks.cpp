@@ -882,6 +882,19 @@ struct Exact<CommandId::CmdCopyImage> {
 };
 
 template<>
+struct Exact<CommandId::CmdResolveImage> {
+    static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageResolve* regions) {
+        putTag("CmdResolveImage");
+        put(commands);
+        put(source);
+        put(sourceLayout);
+        put(destination);
+        put(destinationLayout);
+        putArray(regions, count);
+    }
+};
+
+template<>
 struct Exact<CommandId::CmdBlitImage> {
     static VKAPI_ATTR void VKAPI_CALL Run(VkCommandBuffer commands, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageBlit* regions, VkFilter filter) {
         putTag("CmdBlitImage");
@@ -1064,6 +1077,7 @@ CommandFunctions exactFunctions() {
     APS5_EXACT(CmdCopyBufferToImage)
     APS5_EXACT(CmdCopyImageToBuffer)
     APS5_EXACT(CmdCopyImage)
+    APS5_EXACT(CmdResolveImage)
     APS5_EXACT(CmdBlitImage)
     APS5_EXACT(CmdClearColorImage)
     APS5_EXACT(CmdClearDepthStencilImage)
@@ -1100,6 +1114,7 @@ struct Sources {
     std::array<std::uint8_t, 12> update;
     std::array<VkBufferImageCopy, 2> bufferImageCopies;
     std::array<VkImageCopy, 2> imageCopies;
+    std::array<VkImageResolve, 2> imageResolves;
     std::array<VkImageBlit, 2> blits;
     VkClearColorValue color;
     VkClearDepthStencilValue depthValue;
@@ -1154,6 +1169,7 @@ void prepare(Sources& sources) {
     fill(sources.update, next);
     for (auto& value : sources.bufferImageCopies) fill(value, next);
     for (auto& value : sources.imageCopies) fill(value, next);
+    for (auto& value : sources.imageResolves) fill(value, next);
     for (auto& value : sources.blits) fill(value, next);
     fill(sources.color, next);
     fill(sources.depthValue, next);
@@ -1224,6 +1240,7 @@ void recordEverySpecializedCommand(VkCommandBuffer commands, const Sources& sour
     exactThunk<CommandId::CmdCopyBufferToImage>()(commands, handle(54), fake<VkImage>(55), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, sources.bufferImageCopies.data());
     exactThunk<CommandId::CmdCopyImageToBuffer>()(commands, fake<VkImage>(56), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, handle(57), 2, sources.bufferImageCopies.data());
     exactThunk<CommandId::CmdCopyImage>()(commands, fake<VkImage>(58), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fake<VkImage>(59), VK_IMAGE_LAYOUT_GENERAL, 2, sources.imageCopies.data());
+    exactThunk<CommandId::CmdResolveImage>()(commands, fake<VkImage>(158), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fake<VkImage>(159), VK_IMAGE_LAYOUT_GENERAL, 2, sources.imageResolves.data());
     exactThunk<CommandId::CmdBlitImage>()(commands, fake<VkImage>(60), VK_IMAGE_LAYOUT_GENERAL, fake<VkImage>(61), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, sources.blits.data(), VK_FILTER_LINEAR);
     exactThunk<CommandId::CmdClearColorImage>()(commands, fake<VkImage>(62), VK_IMAGE_LAYOUT_GENERAL, &sources.color, 2, sources.ranges.data());
     exactThunk<CommandId::CmdClearDepthStencilImage>()(commands, fake<VkImage>(63), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &sources.depthValue, 2, sources.ranges.data());
@@ -1262,7 +1279,7 @@ void SpecializedStreamersKeepEveryArgument() {
     const auto commandsAt = capturedCommands;
     Require(expected.size() > 2000, "the direct recording captured only " + std::to_string(expected.size()) + " bytes");
     const auto commands = commandsAt.size();
-    Require(commands == 31, "the direct recording captured " + std::to_string(commands) + " commands");
+    Require(commands == 32, "the direct recording captured " + std::to_string(commands) + " commands");
     CommandStream stream(exact);
     captured.clear();
     recordEverySpecializedCommand(stream.Handle(), sources);
