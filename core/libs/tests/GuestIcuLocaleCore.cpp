@@ -11,6 +11,15 @@
 #include <initializer_list>
 #include <string_view>
 #include <string>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -93,9 +102,108 @@ void CheckKeyword(const char* locale, const char* keyword, const char* expected,
     }
 }
 
+struct GuardedPage {
+    char* page = nullptr;
+    std::size_t size = 0;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        page = static_cast<char*>(VirtualAlloc(nullptr, 3 * size, MEM_RESERVE, PAGE_NOACCESS));
+        assert(page != nullptr && VirtualAlloc(page, 2 * size, MEM_COMMIT, PAGE_READWRITE) != nullptr);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, 3 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        assert(mapping != MAP_FAILED);
+        page = static_cast<char*>(mapping);
+        assert(mprotect(page + 2 * size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD old = 0;
+        assert(VirtualProtect(page + size, size, PAGE_READONLY, &old) != 0);
+#else
+        assert(mprotect(page + size, size, PROT_READ) == 0);
+#endif
+    }
+
+    char* Writable() const { return page; }
+    char* ReadOnlyPage() const { return page + size; }
+    char* Unmapped() const { return page + 2 * size; }
+};
+
+template<typename TAction>
+void RequireRejected(TAction action) {
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    assert(rejected);
+}
+
+void CheckGuestPointers() {
+    GuardedPage guard;
+    const char* edge = guard.ReadOnlyPage() - 6;
+    std::memcpy(guard.ReadOnlyPage() - 6, "en_US", 6);
+    std::memcpy(guard.ReadOnlyPage() + guard.size - 16, "de_DE@x=y", 10);
+    auto* readOnlyStatus = reinterpret_cast<std::int32_t*>(guard.ReadOnlyPage());
+    *readOnlyStatus = 0;
+    const char* readOnlyLocale = guard.ReadOnlyPage() + guard.size - 16;
+    std::memcpy(guard.Unmapped() - 4, "en_U", 4);
+    guard.ReadOnly();
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(guard.Unmapped());
+    const char* unmapped = guard.Unmapped();
+    const char* straddling = guard.Unmapped() - 4;
+    std::array<char, 16> output{};
+    std::int32_t status = 0;
+
+    output.fill('Q');
+    assert(uloc_getParent(edge, output.data(), 16, &status) == 2 && status == 0);
+    assert(std::string_view(output.data()) == "en");
+    output.fill('Q');
+    assert(uloc_getParent(readOnlyLocale, output.data(), 16, readOnlyStatus) == 2 && *readOnlyStatus == 0);
+    assert(std::string_view(output.data()) == "de");
+    output.fill('Q');
+    assert(uloc_getKeywordValue(readOnlyLocale, "x", output.data(), 16, &status) == 1 && status == 0);
+    assert(std::string_view(output.data()) == "y");
+
+    RequireRejected([&] { uloc_getParent(unmapped, output.data(), 16, &status); });
+    RequireRejected([&] { uloc_getParent(straddling, output.data(), 16, &status); });
+    RequireRejected([&] { uloc_getParent("en_US", guard.Unmapped(), 16, &status); });
+    RequireRejected([&] { uloc_getParent("en_US", guard.ReadOnlyPage(), 16, &status); });
+    RequireRejected([&] { uloc_getParent("en_US", output.data(), 16, unmappedStatus); });
+    RequireRejected([&] { uloc_getParent("en_US", output.data(), 2, readOnlyStatus); });
+    RequireRejected([&] { uloc_getParent("en_US", output.data(), -1, readOnlyStatus); });
+    assert(status == 0 && *readOnlyStatus == 0);
+
+    RequireRejected([&] { uloc_getKeywordValue(unmapped, "x", output.data(), 16, &status); });
+    RequireRejected([&] { uloc_getKeywordValue(straddling, "x", output.data(), 16, &status); });
+    RequireRejected([&] { uloc_getKeywordValue("de@x=y", unmapped, output.data(), 16, &status); });
+    RequireRejected([&] { uloc_getKeywordValue("de@x=y", "x", guard.Unmapped(), 16, &status); });
+    RequireRejected([&] { uloc_getKeywordValue("de@x=y", "x", guard.ReadOnlyPage(), 16, &status); });
+    RequireRejected([&] { uloc_getKeywordValue("de@x=y", "x", output.data(), 16, unmappedStatus); });
+    RequireRejected([&] { uloc_getKeywordValue("de@x=y", "x", output.data(), 1, readOnlyStatus); });
+    assert(status == 0 && *readOnlyStatus == 0);
+
+    status = 15;
+    assert(uloc_getParent(unmapped, guard.Unmapped(), 16, &status) == 0 && status == 15);
+    assert(uloc_getKeywordValue(unmapped, unmapped, guard.Unmapped(), 16, &status) == 0 && status == 15);
+    status = 0;
+    assert(uloc_getKeywordValue("de@x=y", "x-y", guard.Unmapped(), 16, &status) == 0 && status == 1);
+    status = 0;
+    assert(uloc_getParent(unmapped, guard.Unmapped(), -1, &status) == 0 && status == 1);
+}
+
 }
 
 int main() {
+    CheckGuestPointers();
     Check(uloc_getLanguage, true, {
         {"en", "en"}, {"EN-us", "en"}, {"sr_Latn_RS@currency=EUR", "sr"},
         {"root", ""}, {"und", ""}, {"_US", ""}, {"i-klingon", "i-klingon"},
