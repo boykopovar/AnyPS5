@@ -2412,6 +2412,35 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertFalse(full.exists())
             self.assertEqual(list(root.glob(".release-notes-*")), [])
 
+    def test_cli_reports_rollback_failure_and_keeps_the_original_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            body.write_bytes(b"old body")
+            full.write_bytes(b"old full")
+            original_replace = os.replace
+
+            def replace(first, second):
+                if second == body and first.read_bytes() == b"new":
+                    raise OSError("body promotion refused")
+                if second == full and first.read_bytes() == b"old full":
+                    raise OSError("full restoration refused")
+                return original_replace(first, second)
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(prepare_release_notes.os, "replace", replace), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), \
+                    self.assertRaises(SystemExit) as caught:
+                prepare_release_notes.main(["--input", str(source), "--body", str(body), "--full", str(full)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("body promotion refused", stderr.getvalue())
+            self.assertIn("full restoration refused", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(body.read_bytes(), b"old body")
+            self.assertEqual([path.read_bytes() for path in root.glob(".release-notes-*")], [b"old full"])
+
 class NativeAuxiliaryRuntimesTests(unittest.TestCase):
     def runtimes(self, platform, sanitizer=False, tracy=()):
         with patch.object(package_release, "cmake_option", return_value=sanitizer), \

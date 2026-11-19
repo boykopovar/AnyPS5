@@ -131,7 +131,7 @@ def main(argv=None):
         if args.check and not matched:
             print("Release note outputs are missing or stale", file=sys.stderr)
             return 1
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         parser.error(str(error))
     return 0
 
