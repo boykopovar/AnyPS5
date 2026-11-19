@@ -82,6 +82,9 @@ def render_events(events, path, start, size, limit):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="show APS5_TRACE_MEMORY mapping operations overlapping a guest address range")
     parser.add_argument("trace", type=Path, help="file containing APS5_TRACE_MEMORY stderr output")
@@ -93,7 +96,7 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8", errors="replace") as source:
+        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
             events = parse_events(source)
         sys.stdout.write(render_events(events, args.trace, start, size, args.limit))
     except (OSError, ValueError) as error:

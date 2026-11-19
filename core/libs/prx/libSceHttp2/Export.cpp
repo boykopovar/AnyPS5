@@ -362,6 +362,14 @@ int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_a
     });
 }
 
+int APS5_VABI sceHttp2SetStripGZIPHeadersEnabled(int id, int enable) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(id, Http2Kind::Context)) return ERROR_INVALID_ID;
+    }
+    return Update(id, __func__, [&](auto& settings) { settings.stripGzipHeaders = enable != 0; });
+}
+
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
     return Update(id, __func__, [&](auto& settings) {
         if (!usec) NotImplemented_nid_no_patch("sceHttp2SetTimeOut");
@@ -370,6 +378,7 @@ int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
+    if (ssl_flags & 0xffffdf40u) return ERROR_INVALID_VALUE;
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
@@ -377,6 +386,7 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
+    if (ssl_flags & 0xffffde40u) return ERROR_INVALID_VALUE;
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;
@@ -407,7 +417,8 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         std::lock_guard lock(g_completionsMutex);
         const auto pending = g_completions.find(req_id);
         if (pending != g_completions.end() && !pending->second.empty()) {
-            *result = pending->second.front();
+            const Http2AsyncResult completed = pending->second.front();
+            if (!Http2Guest::Store(result, completed)) return ERROR_NULL_POINTER;
             pending->second.pop_front();
             return 0;
         }

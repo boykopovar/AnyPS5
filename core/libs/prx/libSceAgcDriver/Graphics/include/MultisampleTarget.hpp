@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
@@ -119,6 +120,10 @@ bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std:
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
+bool MultisampleDccUnwatchLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+void SaveMultisampleDccBeforeUnwatch(std::uint64_t address, std::size_t bytes);
+void SetMultisampleDccPublishHookForTest(void (*hook)());
+void SetMultisampleDccCopyHookForTest(void (*hook)());
 std::uint64_t MultisampleTargetRangeGeneration();
 std::uint64_t MultisampleClaimSerial();
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
@@ -130,7 +135,7 @@ bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes);
 void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 bool HoldsMultisampleTargetsLock();
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause = DepthReadCause::Access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
 void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes);

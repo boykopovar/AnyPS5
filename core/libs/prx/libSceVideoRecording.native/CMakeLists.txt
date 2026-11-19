@@ -1,0 +1,15 @@
+add_library(libSceVideoRecording.native SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoRecording.native PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoRecording.native)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_recording_native_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoRecordingNative.cpp)
+    target_include_directories(guest_video_recording_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_recording_native_tests PRIVATE libSceVideoRecording.native libc)
+    configure_windows_unwind(guest_video_recording_native_tests)
+    add_test(NAME guest_video_recording_native COMMAND guest_video_recording_native_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_recording_native PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoRecording.native>")
+    endif()
+endif()
