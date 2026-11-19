@@ -3987,7 +3987,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_11EventRegionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_12FilterEffectE();
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_14TimingFunctionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15FilterOperationE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FilterOperationsE();
