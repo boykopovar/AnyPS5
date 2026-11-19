@@ -195,8 +195,15 @@ void IndependentReference(bool invert) {
 
 void StencilAttachmentExport(std::string_view name) {
     const auto coverage = InitializeStencil();
-    alignas(256) constexpr std::array<std::uint32_t, 11> positionStencil{0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0x340e0e88u, 0xf8001882u, 0x700u, 0xbf810000u};
-    alignas(256) constexpr std::array<std::uint32_t, 12> depthPositionStencil{0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0x340e0e88u, 0x7e0002f0u, 0xf8001883u, 0x700u, 0xbf810000u};
+    constexpr std::uint32_t ThreadTraceData = 0xbf960000u;
+    alignas(256) constexpr std::array<std::uint32_t, 12> positionStencil{
+        0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu,
+        ThreadTraceData, 0x340e0e88u, 0xf8001882u, 0x700u, 0xbf810000u,
+    };
+    alignas(256) constexpr std::array<std::uint32_t, 13> depthPositionStencil{
+        0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu,
+        ThreadTraceData, 0x340e0e88u, 0x7e0002f0u, 0xf8001883u, 0x700u, 0xbf810000u,
+    };
     DrawOptions options{.depth = true, .operations = 0x40040u, .shaderControl = 0x44u, .pixelInputs = 0x100u};
     const bool depthFail = name == "attachment-depth-fail";
     const bool scissor = name == "attachment-scissor";
