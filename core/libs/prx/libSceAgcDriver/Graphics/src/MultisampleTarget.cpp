@@ -964,6 +964,8 @@ private:
     };
     mutable std::vector<DccCopy> dccCopies;
     mutable DccCopy fmaskCopy;
+    mutable std::vector<GuestMemory::GpuUseObservation> dccObservations;
+    mutable GuestMemory::GpuUseObservation fmaskObservation;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
 
@@ -1071,6 +1073,7 @@ private:
         dccRanges.push_back({use.dccAddress, dccBytes, 0});
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
         dccCopies.assign(dccRanges.size(), {});
+        dccObservations.resize(dccRanges.size());
         std::vector<GuestMemory::UnchangedQuery> watched;
         for (std::size_t index = 0; index < dccRanges.size(); ++index) {
             auto& range = dccRanges[index];
@@ -1145,7 +1148,7 @@ private:
             if (compared(index)) {
                 requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, dccObservations[index]);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
@@ -1157,7 +1160,7 @@ private:
             if (fmaskCopy.compared) {
                 requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, fmaskObservation);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
