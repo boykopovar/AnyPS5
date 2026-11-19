@@ -85,3 +85,4 @@
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/ModuleConstantBodyExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
+#include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
