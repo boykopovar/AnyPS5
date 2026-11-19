@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -181,8 +182,10 @@ static void TryJoin() {
     std::uint8_t optParam[128];
     std::memset(optParam, 0xff, sizeof(optParam));
     CHECK(_sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0);
-    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    std::uint8_t zeroOptParam[128] = {};
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, zeroOptParam) == Invalid);
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0x75);
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, optParam) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "parked", Parked, 0x3C, nullptr, 0, &runtime, nullptr) == Ok);
     while (!gStarted.load(std::memory_order_acquire)) std::this_thread::yield();
 
@@ -206,6 +209,12 @@ static void Destroy() {
     CHECK(sceUltUlthreadRuntimeDestroy(nullptr) == Null);
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
     CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    runtime.bytes[0] = 0x5A;
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "again", 2, 2, nullptr, nullptr) == State);
+    CHECK(runtime.bytes[0] == 0x5A);
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(&runtime, &runtimeInfo, nullptr, 0, nullptr, 0) == Ok);
+    CHECK(std::strcmp(runtimeInfo.name, "runtime") == 0 && runtimeInfo.maxUlthreads == 1 && runtimeInfo.workerThreads == 1);
     CHECK(_sceUltUlthreadRuntimeCreate(&other, "other", 1, 1, nullptr, nullptr) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "thread", Immediate, 0x11, nullptr, 0, &runtime, nullptr) == Ok);
     CHECK(sceUltUlthreadRuntimeDestroy(&other) == Ok);
@@ -234,6 +243,12 @@ static void UnderscoredCreate() {
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Invalid);
     commonOptions[31] = 0;
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Ok);
+    pool[0] = 0x5A;
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "again", 2, 2, workArea, nullptr) == State);
+    CHECK(pool[0] == 0x5A);
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(pool, &poolInfo) == Ok);
+    CHECK(std::strcmp(poolInfo.name, "pool") == 0 && poolInfo.maxThreads == 1 && poolInfo.maxSyncObjects == 1);
     CHECK(_sceUltSemaphoreCreate(nullptr, "semaphore", 1, pool, nullptr) == Null);
     CHECK(_sceUltSemaphoreCreate(semaphore, "semaphore", UINT32_MAX, pool, nullptr) == Ok);
     CHECK(sceUltSemaphoreTryAcquire(semaphore, 1) == Again);
@@ -343,6 +358,34 @@ static void UnderscoredCreate() {
     CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
 }
 
+static void UnwritableStatus() {
+    Runtime runtime;
+    Thread thread;
+    auto* unwritable = reinterpret_cast<std::int32_t*>(0x10);
+    std::int32_t status = 0;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltUlthreadJoin(&thread, unwritable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    int joined;
+    do {
+        errno = 71;
+        joined = sceUltUlthreadTryJoin(&thread, unwritable);
+        if (joined == Again) std::this_thread::yield();
+    } while (joined == Again);
+    CHECK(joined == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadTryJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     CHECK(sceUltInitialize() == Ok);
@@ -354,5 +397,6 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "cancel-blocked") == 0) CanceledJoin(false);
     else if (std::strcmp(argv[1], "cancel-pending") == 0) CanceledJoin(true);
     else if (std::strcmp(argv[1], "self-join") == 0) SelfJoin();
+    else if (std::strcmp(argv[1], "unwritable-status") == 0) UnwritableStatus();
     else CHECK(false);
 }

@@ -3,6 +3,7 @@
 #include <array>
 #include <bit>
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +39,15 @@ static void CheckInvalidDestination() {
         threw = true;
     }
     Require(threw, "null destination must throw invalid_argument");
+    threw = false;
+    errno = 71;
+    try {
+        sceAudio3dGetDefaultOpenParameters(reinterpret_cast<Audio3dOpenParameters*>(std::uintptr_t{0x10}));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "unwritable destination must throw invalid_argument");
+    Require(errno == 71, "default parameter copy failure preserves errno");
 }
 
 static void CheckShortBuffer() {
@@ -102,4 +112,15 @@ int main() {
     Require(sceAudio3dInitialize(1) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
     Require(sceAudio3dInitialize(42) == static_cast<int>(0x80EA0004), "positive reserved parameter rejected in sceAudio3dInitialize");
     Require(sceAudio3dInitialize(-1) == static_cast<int>(0x80EA0004), "non-zero reserved parameter rejected in sceAudio3dInitialize");
+    Require(sceAudio3dInitialize(0x1000) == static_cast<int>(0x80EA0004), "positive 0x1000 reserved parameter rejected");
+    Require(sceAudio3dInitialize(INT64_MAX) == static_cast<int>(0x80EA0004), "INT64_MAX reserved parameter rejected");
+    Require(sceAudio3dInitialize(INT64_MIN) == static_cast<int>(0x80EA0004), "INT64_MIN reserved parameter rejected");
+    Require(sceAudio3dInitialize(0) == 0, "first initialize succeeds");
+    Require(sceAudio3dInitialize(1) == static_cast<int>(0x80EA0004), "reserved parameter rejected while initialized");
+    Require(sceAudio3dInitialize(-1) == static_cast<int>(0x80EA0004), "negative reserved parameter rejected while initialized");
+    Require(sceAudio3dTerminate() == 0, "terminate while initialized succeeds");
+    Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "second terminate reports not ready");
+    Require(sceAudio3dInitialize(0) == 0, "re-initialize after terminate succeeds");
+    Require(sceAudio3dTerminate() == 0, "second terminate succeeds");
+    Require(sceAudio3dTerminate() == static_cast<int>(0x80EA0007), "terminate after second terminate reports not ready");
 }

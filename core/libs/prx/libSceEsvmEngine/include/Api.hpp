@@ -8,7 +8,7 @@ int APS5_VABI sceEsvmEngineAddDecoder2();
 int APS5_VABI sceEsvmEngineAppAudioSyncFlush();
 int APS5_VABI sceEsvmEngineGetMetrics();
 int APS5_VABI sceEsvmEngineGetVideoPlaybackQuality();
-int APS5_VABI sceEsvmEngineInitializeCdm();
+int APS5_VABI sceEsvmEngineInitializeCdm(void* argument1);
 int APS5_VABI sceEsvmEngineMediaKeySessionDecryptAudioData();
 int APS5_VABI sceEsvmEngineMediaKeysDecryptAudioData();
 int APS5_VABI sceEsvmEngineMediaKeysSetAppParameter();

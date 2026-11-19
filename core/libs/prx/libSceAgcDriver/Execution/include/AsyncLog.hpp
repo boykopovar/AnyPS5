@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libc/include/HostThread.hpp"
 
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
@@ -205,7 +206,7 @@ private:
         LogSink().store(&AsyncLog::Sink, std::memory_order_release);
         std::atexit(&AsyncLog::FlushAtEnd);
         InitializeWaits();
-        std::thread([this] { Run(); }).detach();
+        Libc::StartHostThread([this] { Run(); }).detach();
         LibcSetEndFlush_nid_no_patch(&AsyncLog::FlushAtEnd);
     }
 

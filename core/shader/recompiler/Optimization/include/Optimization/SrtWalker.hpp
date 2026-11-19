@@ -137,12 +137,13 @@ enum class RuntimeValueType {
     Integer
 };
 
-bool& SrtEvaluatingBranch();
+bool SrtEvaluatingBranch();
+void SetSrtEvaluatingBranch(bool evaluating);
 
 struct SrtBranchScope {
     bool saved;
-    SrtBranchScope() : saved(SrtEvaluatingBranch()) { SrtEvaluatingBranch() = true; }
-    ~SrtBranchScope() { SrtEvaluatingBranch() = saved; }
+    SrtBranchScope() : saved(SrtEvaluatingBranch()) { SetSrtEvaluatingBranch(true); }
+    ~SrtBranchScope() { SetSrtEvaluatingBranch(saved); }
     SrtBranchScope(const SrtBranchScope&) = delete;
     SrtBranchScope& operator=(const SrtBranchScope&) = delete;
 };

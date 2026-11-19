@@ -59,7 +59,7 @@ int APS5_VABI sceTextToSpeech2GetAudioInt() {
 }
 
 int APS5_VABI sceTextToSpeech2InitializeInt() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceTextToSpeech2OpenInt() {
