@@ -3,6 +3,7 @@
 #include "prx/libSceSystemService/libSceSystemService.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -38,6 +39,18 @@ void TestSuspend() {
     Case("sceLncUtilUnblockAppSuspend with no block left", [] {
         return sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY && sceLncUtilUnblockAppSuspend(nullptr) == SCE_KERNEL_ERROR_EBUSY &&
             sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
+            sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY;
+    });
+    Case("sceLncUtilUnblockAppSuspend with a null reason while a block is held", [] {
+        if (sceLncUtilBlockAppSuspend("saving") != SYSTEM_SERVICE_OK) return false;
+        const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+        bool threw = false;
+        try {
+            sceLncUtilUnblockAppSuspend(nullptr);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        return threw && NotImplementedCalls_nid_no_patch() == reportedBefore && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
             sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY;
     });
     Case("sceLncUtilEnableSuspendNotification", [] {

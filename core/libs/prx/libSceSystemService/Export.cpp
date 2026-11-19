@@ -470,7 +470,7 @@ int APS5_VABI sceLncUtilBlockAppSuspend(const char* reason) {
 int APS5_VABI sceLncUtilUnblockAppSuspend(const char* reason) {
     std::lock_guard lock(appSuspendBlockMutex);
     if (appSuspendBlocks == 0) return SCE_KERNEL_ERROR_EBUSY;
-    if (reason == nullptr) NotImplemented_nid_no_patch("sceLncUtilUnblockAppSuspend with a null reason while a block is held");
+    if (reason == nullptr) throw std::runtime_error("sceLncUtilUnblockAppSuspend: null reason while a block is held");
     --appSuspendBlocks;
     return SYSTEM_SERVICE_OK;
 }
