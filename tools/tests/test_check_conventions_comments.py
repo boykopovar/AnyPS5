@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output
+from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output, python_comments
 
 CONVENTIONS_TEST_SHARDS = 12
 
@@ -1072,6 +1072,18 @@ class IsDebtTests(unittest.TestCase):
         for path in ("docs/dev/debt/changes/x.md", "docs/dev/debt/x.txt", "docs/dev/debt/", "docs/dev/other.md", "debt/x.md"):
             with self.subTest(path=path):
                 self.assertFalse(is_debt(path))
+
+
+class PythonCommentsTests(unittest.TestCase):
+    def test_returns_the_lines_holding_comments(self):
+        text = "x = 1  # a\n# b\ny = '#no'\n"
+        self.assertEqual(python_comments(text), {1, 2})
+
+    def test_leading_byte_order_mark_is_ignored(self):
+        self.assertEqual(python_comments("\ufeff# a\n"), {1})
+
+    def test_untokenizable_text_gives_none(self):
+        self.assertIsNone(python_comments("x = (\n"))
 
 
 if __name__ == "__main__":
