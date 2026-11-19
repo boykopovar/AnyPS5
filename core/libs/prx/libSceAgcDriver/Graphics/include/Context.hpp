@@ -227,6 +227,7 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
+    std::size_t drawInputsInPlaceBelow = 0;
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool hostPointerImport = true;
