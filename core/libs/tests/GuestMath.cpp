@@ -14,6 +14,7 @@
 #include <limits>
 #include <initializer_list>
 #include <source_location>
+#include <span>
 #include <stdexcept>
 #include <xmmintrin.h>
 
@@ -1290,6 +1291,98 @@ static void CheckExpm1ConsoleBits() {
         errno = 1234;
         Require(std::bit_cast<std::uint64_t>(expm1_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
         Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+template<typename TFloat, typename TBits>
+static void CheckNexttowardCases(TFloat (APS5_VABI *next)(TFloat, long double), std::span<const std::array<std::uint64_t, 6>> cases) {
+    for (const auto& item : cases) {
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        errno = 97;
+        const auto result = std::bit_cast<TBits>(next(std::bit_cast<TFloat>(static_cast<TBits>(item[0])), MakeExtended(item[2], static_cast<std::uint16_t>(item[1]))));
+        const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+        const int error = errno;
+        Require(result == static_cast<TBits>(item[3]));
+        Require(exceptions == (((item[4] & 0x01u) ? FE_INVALID : 0) | ((item[4] & 0x08u) ? FE_OVERFLOW : 0) | ((item[4] & 0x10u) ? FE_UNDERFLOW : 0) | ((item[4] & 0x20u) ? FE_INEXACT : 0)));
+        Require(error == (item[5] != 0 ? static_cast<int>(item[5]) : 97));
+    }
+}
+
+static void CheckNexttowardAndNextafterlBits() {
+    const RestoreFloatingPointState saved;
+    static constexpr std::array<std::uint64_t, 6> doubles[] = {
+        {0x0000000000000001ull, 0x4000, 0xc000000000000000ull, 0x0000000000000000ull, 0x30, ERANGE},
+        {0x0000000000000001ull, 0xc000, 0xc000000000000000ull, 0x0000000000000002ull, 0x30, ERANGE},
+        {0x00000000ffffffffull, 0x4000, 0xc000000000000000ull, 0x00000000fffffffeull, 0x30, ERANGE},
+        {0x0000000100000000ull, 0x4000, 0xc000000000000000ull, 0x0000000100000001ull, 0x30, ERANGE},
+        {0x3ff0000000000000ull, 0x4000, 0x8000000000000000ull, 0x3ff0000000000001ull, 0, 0},
+        {0x3ff0000000000000ull, 0x0000, 0x0000000000000000ull, 0x3fefffffffffffffull, 0, 0},
+        {0x3ff0000000000000ull, 0x3fff, 0x8000000000000001ull, 0x3ff0000000000001ull, 0, 0},
+        {0x3ff0000000000000ull, 0x3fff, 0x8000000000000000ull, 0x3ff0000000000000ull, 0, 0},
+        {0x0000000000000000ull, 0xc000, 0xc000000000000000ull, 0x8000000000000001ull, 0x30, 0},
+        {0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0x0000000000000001ull, 0x30, 0},
+        {0x8000000000000000ull, 0x0000, 0x0000000000000000ull, 0x0000000000000000ull, 0, 0},
+        {0x0010000000000000ull, 0x0000, 0x0000000000000000ull, 0x000fffffffffffffull, 0x30, ERANGE},
+        {0x7fefffffffffffffull, 0x7fff, 0x8000000000000000ull, 0x7ff0000000000000ull, 0x28, ERANGE},
+        {0xffefffffffffffffull, 0xffff, 0x8000000000000000ull, 0xfff0000000000000ull, 0x28, ERANGE},
+        {0x7ff0000000000000ull, 0x0000, 0x0000000000000000ull, 0x7fefffffffffffffull, 0, 0},
+        {0x7ff0000000000001ull, 0x3fff, 0x8000000000000000ull, 0x7ff8000000000001ull, 0x01, 0},
+        {0x3ff0000000000000ull, 0x7fff, 0xc000000000000123ull, 0x7ff8000000000000ull, 0, 0},
+        {0x3ff0000000000000ull, 0x7fff, 0x8000000000000001ull, 0x7ff8000000000000ull, 0x01, 0},
+        {0xfff8000000000456ull, 0x7fff, 0xc000000000000123ull, 0xfff8000000000456ull, 0, 0},
+    };
+    static constexpr std::array<std::uint64_t, 6> floats[] = {
+        {0x00000001u, 0x4000, 0xc000000000000000ull, 0x00000002u, 0x30, ERANGE},
+        {0x00000001u, 0xc000, 0xc000000000000000ull, 0x00000000u, 0x30, ERANGE},
+        {0x3f800000u, 0x4000, 0x8000000000000000ull, 0x3f800001u, 0, 0},
+        {0x3f800000u, 0x3fff, 0x8000000000000001ull, 0x3f800001u, 0, 0},
+        {0x3f800000u, 0x3fff, 0x8000000000000000ull, 0x3f800000u, 0, 0},
+        {0x00000000u, 0xc000, 0xc000000000000000ull, 0x80000001u, 0x30, 0},
+        {0x80000000u, 0x0000, 0x0000000000000000ull, 0x00000000u, 0, 0},
+        {0x00800000u, 0x0000, 0x0000000000000000ull, 0x007fffffu, 0x30, ERANGE},
+        {0x7f7fffffu, 0x7fff, 0x8000000000000000ull, 0x7f800000u, 0x28, ERANGE},
+        {0x7f800000u, 0x0000, 0x0000000000000000ull, 0x7f7fffffu, 0, 0},
+        {0x7f800001u, 0x3fff, 0x8000000000000000ull, 0x7fc00001u, 0x01, 0},
+        {0x3f800000u, 0x7fff, 0xc000000000000123ull, 0x7fc00000u, 0, 0},
+        {0x3f800000u, 0x7fff, 0x8000000000000001ull, 0x7fc00000u, 0x01, 0},
+    };
+    CheckNexttowardCases<double, std::uint64_t>(nexttoward_nid_postfix, doubles);
+    CheckNexttowardCases<float, std::uint32_t>(nexttowardf_nid_postfix, floats);
+    static constexpr struct {
+        std::uint16_t xExponent;
+        std::uint64_t xMantissa;
+        std::uint16_t yExponent;
+        std::uint64_t yMantissa;
+        std::uint16_t exponent;
+        std::uint64_t mantissa;
+        unsigned flags;
+        int error;
+    } extended[] = {
+        {0x3fff, 0x8000000000000000ull, 0x4000, 0x8000000000000000ull, 0x3fff, 0x8000000000000001ull, 0, 0},
+        {0x3fff, 0x8000000000000000ull, 0x0000, 0x0000000000000000ull, 0x3ffe, 0xffffffffffffffffull, 0, 0},
+        {0x0000, 0x0000000000000000ull, 0xc000, 0xc000000000000000ull, 0x8000, 0x0000000000000001ull, 0x30, 0},
+        {0x8000, 0x0000000000000000ull, 0x0000, 0x0000000000000000ull, 0x0000, 0x0000000000000000ull, 0, 0},
+        {0x0000, 0x0000000000000001ull, 0x0000, 0x0000000000000000ull, 0x0000, 0x0000000000000000ull, 0, 0},
+        {0x0001, 0x8000000000000000ull, 0x0000, 0x0000000000000000ull, 0x0000, 0x7fffffffffffffffull, 0x30, ERANGE},
+        {0x0000, 0x7fffffffffffffffull, 0x3fff, 0x8000000000000000ull, 0x0001, 0x8000000000000000ull, 0, 0},
+        {0x7ffe, 0xffffffffffffffffull, 0x7fff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0x28, ERANGE},
+        {0x7fff, 0x8000000000000000ull, 0x0000, 0x0000000000000000ull, 0x7ffe, 0xffffffffffffffffull, 0, 0},
+        {0x7fff, 0x8000000000000001ull, 0x3fff, 0x8000000000000000ull, 0x7fff, 0xc000000000000001ull, 0x01, 0},
+        {0x3fff, 0x8000000000000000ull, 0x7fff, 0xc000000000000123ull, 0x7fff, 0xc000000000000123ull, 0, 0},
+        {0x3fff, 0xffffffffffffffffull, 0x4000, 0x8000000000000000ull, 0x4000, 0x8000000000000000ull, 0, 0},
+        {0x4000, 0x8000000000000000ull, 0x3fff, 0x8000000000000000ull, 0x3fff, 0xffffffffffffffffull, 0, 0},
+    };
+    for (const auto next : {nextafterl_nid_postfix, nexttowardl_nid_postfix}) {
+        for (const auto& item : extended) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            errno = 97;
+            const long double result = next(MakeExtended(item.xMantissa, item.xExponent), MakeExtended(item.yMantissa, item.yExponent));
+            const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+            const int error = errno;
+            Require(ExtendedBits(result, item.mantissa, item.exponent));
+            Require(exceptions == (((item.flags & 0x01u) ? FE_INVALID : 0) | ((item.flags & 0x08u) ? FE_OVERFLOW : 0) | ((item.flags & 0x10u) ? FE_UNDERFLOW : 0) | ((item.flags & 0x20u) ? FE_INEXACT : 0)));
+            Require(error == (item.error != 0 ? item.error : 97));
+        }
     }
 }
 
@@ -5012,6 +5105,7 @@ int main() {
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
+    CheckNexttowardAndNextafterlBits();
     CheckRemainderf();
     CheckTanhConsoleBits();
     CheckSinhMsunBits();
