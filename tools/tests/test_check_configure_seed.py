@@ -46,6 +46,30 @@ class Tests(unittest.TestCase):
         seed.write_bytes(b"")
         self.assertEqual(self.run_tool(cache, seed).returncode, 0)
 
+    def test_reports_messages_on_stdout(self):
+        cache, seed = self.root / "cache", self.root / "seed"
+        cache.write_text("//Have include a.h\nHAVE_A_H:INTERNAL=1\n//Have include b.h\nHAVE_B_H:INTERNAL=0\n", encoding="utf-8")
+        seed.write_bytes(b'set("HAVE_A_H" "1" CACHE INTERNAL "Have include a.h")\nset("HAVE_B_H" "0" CACHE INTERNAL "Have include b.h")\n')
+        result = self.run_tool(cache, seed)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "2 check results match"))
+        seed.write_bytes(b"x")
+        result = self.run_tool(cache, seed)
+        self.assertEqual((result.returncode, result.stdout.strip()), (1, f"stale seed: {seed}"))
+        seed.unlink()
+        result = self.run_tool(cache, seed)
+        self.assertEqual((result.returncode, result.stdout.strip()), (1, f"missing seed: {seed}"))
+
+    def test_seed_entries_must_be_sorted_by_name(self):
+        cache, seed = self.root / "cache", self.root / "seed"
+        cache.write_text("//Have include a.h\nHAVE_A_H:INTERNAL=1\n//Have include b.h\nHAVE_B_H:INTERNAL=0\n", encoding="utf-8")
+        seed.write_bytes(b'set("HAVE_B_H" "0" CACHE INTERNAL "Have include b.h")\nset("HAVE_A_H" "1" CACHE INTERNAL "Have include a.h")\n')
+        self.assertEqual(self.run_tool(cache, seed).returncode, 1)
+
+    def test_missing_cache_is_usage_error(self):
+        result = self.run_tool(self.root / "nocache", self.root / "seed")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+
 
 if __name__ == "__main__":
     unittest.main()

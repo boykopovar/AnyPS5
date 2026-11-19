@@ -759,6 +759,36 @@ class ChunkTests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout), batch)
 
 
+@unittest.skipUnless(shutil.which("ctest"), "needs ctest")
+class CTestIndexFileTests(unittest.TestCase):
+    def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            count = 8000
+            (root / "CTestTestfile.cmake").write_text(
+                "".join(f'add_test(test_{i} "{Path(sys.executable).as_posix()}" --version)\n'
+                        for i in range(1, count + 2)), encoding="utf-8")
+            (root / "select.tests").write_text(
+                "0,0,0," + ",".join(map(str, range(1, count + 1))), encoding="utf-8-sig")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"Total Tests: {count}", result.stdout)
+            self.assertNotIn(f"test_{count + 1}", result.stdout)
+
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            build.source = str(root)
+            graph = {"tests": {f"test_{i}": {} for i in range(1, count + 2)}}
+            picked = set(graph["tests"]) - {f"test_{count + 1}"}
+            with mock.patch.object(build, "leaves", return_value=[]), \
+                    mock.patch.object(build, "outputs", return_value=[]):
+                run, targets, total = select_tests.plan(build, graph, picked)
+            self.assertEqual(run, list(range(1, count + 1)))
+            self.assertEqual(targets, [])
+            self.assertEqual(total, count + 1)
+
+
 class PlanTests(unittest.TestCase):
     def test_unresolved_selected_command_keeps_unselected_build_targets(self):
         build = mock.Mock()

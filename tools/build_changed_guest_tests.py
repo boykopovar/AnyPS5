@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
+from check_test_registration import testfile_commands
 from select_tests import chunks
 
 BROAD_CHANGES = {
@@ -65,22 +66,12 @@ def script_test_indices(build_dir, patterns):
     return sorted(indices)
 
 
-TESTFILE_ADD_TEST = re.compile(r'^\s*add_test\(\s*(?:"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\])\s*(.*)\)\s*$')
-TESTFILE_ARGUMENT = re.compile(r'"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\]|(\S+)')
-
-
 def registered_test_commands(build_dir):
     commands = {}
-    for root, _, files in os.walk(build_dir):
-        if "CTestTestfile.cmake" not in files:
-            continue
-        for line in (Path(root) / "CTestTestfile.cmake").read_text(encoding="utf-8", errors="replace").splitlines():
-            match = TESTFILE_ADD_TEST.match(line)
-            if match:
-                name = match.group(1) if match.group(1) is not None else match.group(2)
-                commands[re.sub(r"\\(.)", r"\1", name)] = [
-                    re.sub(r"\\(.)", r"\1", next(part for part in argument.groups() if part is not None))
-                    for argument in TESTFILE_ARGUMENT.finditer(match.group(3))]
+    for entries in testfile_commands(build_dir):
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
+                commands[arguments[0]] = arguments[1:]
     return commands
 
 
@@ -116,10 +107,9 @@ def guest_test_targets(source_root, targets, changed_paths=None):
             continue
         if not host_only.links_guest_libc(target):
             continue
-        selected.append(target["name"])
-    selected = sorted(set(selected), key=str.casefold)
+        selected.append(target)
     if changed_paths is None:
-        return selected
+        return sorted({target["name"] for target in selected}, key=str.casefold)
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
         path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
@@ -128,26 +118,11 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     load_test = [LIBRARY_LOAD_TEST] if loads_libraries and any(
         target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
     if broad_change:
-        return sorted(set(selected + load_test), key=str.casefold)
-    changed_source = {
-        relative
-        for target in targets.values()
-        if target.get("name") in selected
-        for item in target.get("sources", []) if not item.get("isGenerated")
-        for relative in [host_only.source_relative_path(source_root, source_root / item["path"])]
-        if relative is not None
-    }
-    matched_sources = changed & changed_source
-    if matched_sources:
-        return [
-            target["name"] for target in targets.values()
-            if target.get("name") in selected
-            and any(
-                host_only.source_relative_path(source_root, source_root / item["path"]) in matched_sources
-                for item in target.get("sources", []) if not item.get("isGenerated")
-            )
-        ] + load_test
-    return load_test
+        return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
+    return [
+        target["name"] for target in selected
+        if changed & host_only.target_reached_sources(target, targets, source_root)
+    ] + load_test
 
 
 def core_lib_test_targets(source_root, targets, changed_paths=None):

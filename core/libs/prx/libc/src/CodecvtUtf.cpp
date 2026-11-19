@@ -16,6 +16,7 @@ namespace {
 constexpr int Ok = 0;
 constexpr int Partial = 1;
 constexpr int Error = 2;
+constexpr int NoConv = 3;
 constexpr std::uint32_t GenerateHeader = 2;
 constexpr std::uint32_t ConsumeHeader = 4;
 constexpr std::uintptr_t ModeOffset = 0x18;
@@ -62,6 +63,32 @@ void WriteNext(char** next, char* first) {
     errno = savedErrno;
     if (!copied)
         throw std::invalid_argument("UTF codecvt: unwritable next pointer");
+}
+
+template<typename TElement, typename TIn>
+int CodecvtUtfLength(const void* self, void* state, const char* first, const char* last, std::size_t count, TIn in) {
+    if (self == nullptr || state == nullptr || (first == nullptr) != (last == nullptr) || (first != nullptr && last < first))
+        throw std::invalid_argument("UTF codecvt: invalid length arguments");
+    if (first == nullptr) return 0;
+    const char* cursor = first;
+    while (count > 0 && cursor != last) {
+        const char* mid1 = nullptr;
+        TElement element{};
+        TElement* mid2 = nullptr;
+        const int result = in(self, state, cursor, last, &mid1, &element, &element + 1, &mid2);
+        if (result == NoConv) {
+            const std::size_t remaining = static_cast<std::size_t>(last - cursor);
+            cursor += remaining < count ? remaining : count;
+            break;
+        }
+        if (result != Ok) break;
+        if (mid2 == &element + 1) --count;
+        if (mid1 == cursor && mid2 == &element) break;
+        cursor = mid1;
+    }
+    const std::ptrdiff_t consumed = cursor - first;
+    constexpr auto maxResult = static_cast<std::ptrdiff_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(consumed > maxResult ? maxResult : consumed);
 }
 
 }
@@ -235,8 +262,8 @@ int APS5_VABI CodecvtUtf16Unshift_nid_no_patch(const void*, void* state, char* f
 }
 APS5_EXPORT("RYTHR81Y-Mc", CodecvtUtf16Unshift_nid_no_patch);
 
-int APS5_VABI CodecvtUtf16Length_nid_no_patch(const void*, void*, const char*, const char*, std::size_t) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CodecvtUtf16Length_nid_no_patch(const void* self, void* state, const char* first, const char* last, std::size_t count) {
+    return CodecvtUtfLength<char16_t>(self, state, first, last, count, CodecvtUtf16In_nid_no_patch);
 }
 APS5_EXPORT("lynApfiP6Lw", CodecvtUtf16Length_nid_no_patch);
 
@@ -369,8 +396,8 @@ int APS5_VABI CodecvtUtf32Unshift_nid_no_patch(const void*, void*, char* first, 
 }
 APS5_EXPORT("c6Lyc6xOp4o", CodecvtUtf32Unshift_nid_no_patch);
 
-int APS5_VABI CodecvtUtf32Length_nid_no_patch(const void*, void*, const char*, const char*, std::size_t) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CodecvtUtf32Length_nid_no_patch(const void* self, void* state, const char* first, const char* last, std::size_t count) {
+    return CodecvtUtfLength<char32_t>(self, state, first, last, count, CodecvtUtf32In_nid_no_patch);
 }
 
 void APS5_VABI _ZNSt7codecvtIDsc9_MbstatetED0Ev_nid_postfix(void* self) {

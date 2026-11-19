@@ -91,6 +91,7 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
+            if (atomic && SkipOnLlvmpipe(*device, "the waiting dispatch with coherent atomic loads never finishes (recorded batch still running on the GPU after 10 s)")) return VulkanTestSkipped;
             CheckLoads(*device, atomic);
         }
         if (!atomic) {
