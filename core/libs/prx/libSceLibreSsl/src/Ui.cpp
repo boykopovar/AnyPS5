@@ -147,46 +147,61 @@ int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string
     if (!ui) throw std::invalid_argument(std::string(__func__) + ": null UI");
     const std::string text = GuestText(result, __func__, "result");
     const auto length = static_cast<int>(text.size());
-    ui->flags &= ~Redoable;
+    std::int32_t uiFlags = 0;
+    if (!ReadField(&ui->flags, uiFlags)) throw std::invalid_argument(std::string(__func__) + ": unreadable UI");
+    uiFlags &= ~Redoable;
+    if (!WriteField(&ui->flags, uiFlags)) throw std::invalid_argument(std::string(__func__) + ": unwritable UI");
     if (!string) return -1;
-    switch (string->type) {
+    LibreSslUiString entry;
+    if (!ReadField(string, entry)) throw std::invalid_argument(std::string(__func__) + ": unreadable string");
+    switch (entry.type) {
     case PromptString:
     case VerifyString:
-        if (length < string->data.stringData.resultMinimum) {
-            ui->flags |= Redoable;
+        if (length < entry.data.stringData.resultMinimum) {
+            WriteField(&ui->flags, uiFlags | Redoable);
             PutError(ResultTooSmall);
             return -1;
         }
-        if (length > string->data.stringData.resultMaximum) {
-            ui->flags |= Redoable;
+        if (length > entry.data.stringData.resultMaximum) {
+            WriteField(&ui->flags, uiFlags | Redoable);
             PutError(ResultTooLarge);
             return -1;
         }
-        if (!string->resultBuffer) {
+        if (!entry.resultBuffer) {
             PutError(NoResultBuffer);
             return -1;
         }
-        WriteResult(string->resultBuffer, text.c_str(), text.size() + 1, __func__);
+        WriteResult(entry.resultBuffer, text.c_str(), text.size() + 1, __func__);
         break;
     case BooleanString: {
-        if (!string->resultBuffer) {
+        if (!entry.resultBuffer) {
             PutError(NoResultBuffer);
             return -1;
         }
         char answer = '\0';
+        std::string accepted;
+        std::string cancelled;
+        bool haveAccepted = false;
+        bool haveCancelled = false;
         for (const char character : text) {
-            const char* const accepted = Characters(string->data.booleanData.okCharacters, __func__);
-            if (std::strchr(accepted, character)) {
+            if (!haveAccepted) {
+                accepted = GuestText(Characters(entry.data.booleanData.okCharacters, __func__), __func__, "characters");
+                haveAccepted = true;
+            }
+            if (accepted.find(character) != std::string::npos) {
                 answer = accepted[0];
                 break;
             }
-            const char* const cancelled = Characters(string->data.booleanData.cancelCharacters, __func__);
-            if (std::strchr(cancelled, character)) {
+            if (!haveCancelled) {
+                cancelled = GuestText(Characters(entry.data.booleanData.cancelCharacters, __func__), __func__, "characters");
+                haveCancelled = true;
+            }
+            if (cancelled.find(character) != std::string::npos) {
                 answer = cancelled[0];
                 break;
             }
         }
-        WriteResult(string->resultBuffer, &answer, 1, __func__);
+        WriteResult(entry.resultBuffer, &answer, 1, __func__);
         break;
     }
     default:
