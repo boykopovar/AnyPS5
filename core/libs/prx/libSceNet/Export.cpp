@@ -262,6 +262,9 @@ int TransferSocketForKernel(KernelSocketPoll::NativeOwner* owner, bool send, voi
 struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     NativeSocket value;
     const bool stream;
+#ifdef _WIN32
+    GuestSockets::LingerValue udpLinger;
+#endif
     std::atomic<bool> nonblock{false};
     std::atomic<int> receiveTimeout{0};
     std::atomic<int> sendTimeout{0};
@@ -2071,12 +2074,19 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     }
     optname = timeout_option(optname);
     if (!optval || optlen < sizeof(int)) return fail(NET_EINVAL);
-    int value = 0;
-    std::memcpy(&value, optval, sizeof(value));
     if (optname == NET_SO_LINGER) {
+#ifdef _WIN32
+        if (socket.type == NET_SOCK_DGRAM) {
+            std::lock_guard lk(g_mutex);
+            const int error = GuestSocketSetUdpLinger_nid_no_patch(&socket.native->udpLinger, optval, optlen);
+            return error == 0 ? 0 : fail(error);
+        }
+#endif
         const int error = GuestSocketSetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
         return error == 0 ? 0 : fail(error);
     }
+    int value = 0;
+    std::memcpy(&value, optval, sizeof(value));
     if (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT) {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
@@ -2148,6 +2158,13 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     }
     if (optval == nullptr || optlen == nullptr) return fail(NET_EINVAL);
     if (level == NET_SOL_SOCKET && optname == NET_SO_LINGER) {
+#ifdef _WIN32
+        if (socket.type == NET_SOCK_DGRAM) {
+            std::lock_guard lk(g_mutex);
+            const int error = GuestSocketGetUdpLinger_nid_no_patch(&socket.native->udpLinger, optval, optlen);
+            return error == 0 ? 0 : fail(error);
+        }
+#endif
         const int error = GuestSocketGetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
         return error == 0 ? 0 : fail(error);
     }
