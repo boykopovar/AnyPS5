@@ -96,21 +96,22 @@ struct SamplerCase {
     const char* name;
     std::array<std::uint32_t, 4> words;
     bool linear;
-    bool border;
     bool atBaseLevel;
-    bool mirrorX = false;
-    bool mirrorY = false;
 };
 
-constexpr std::array<SamplerCase, 8> Samplers{{
-    {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff", {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, true, false, true},
-    {"point clamp-to-last-texel, point mips", {0x00008092u, 0x00fff000u, 0x04000000u, 0u}, false, false, true},
-    {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5", {0x00008092u, 0x00fff100u, 0x09500180u, 0u}, true, false, false},
-    {"bilinear clamp-to-border, transparent black", {0x000080b6u, 0x00fff000u, 0x05500000u, 0u}, true, true, true},
-    {"point clamp-to-border, no mips, transparent black", {0x000080b6u, 0u, 0u, 0u}, false, true, true},
-    {"bilinear mirror on X and Y, point mips", {0x00008089u, 0x00fff000u, 0x05500000u, 0u}, true, false, true, true, true},
-    {"point mirror-once on X, clamp-to-last-texel on Y", {0x00008093u, 0x00fff000u, 0x04000000u, 0u}, false, false, true, true, false},
-    {"bilinear clamp-to-last-texel on X, mirror-once on Y", {0x0000809au, 0x00fff000u, 0x05500000u, 0u}, true, false, true, false, true},
+constexpr std::array<SamplerCase, 12> Samplers{{
+    {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff", {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"point clamp-to-last-texel, point mips", {0x00008092u, 0x00fff000u, 0x04000000u, 0u}, false, true},
+    {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5", {0x00008092u, 0x00fff100u, 0x09500180u, 0u}, true, false},
+    {"bilinear clamp-to-border, transparent black", {0x000080b6u, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"point clamp-to-border, no mips, transparent black", {0x000080b6u, 0u, 0u, 0u}, false, true},
+    {"bilinear mirror on X and Y, point mips", {0x00008089u, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"point mirror-once on X, clamp-to-last-texel on Y", {0x00008093u, 0x00fff000u, 0x04000000u, 0u}, false, true},
+    {"bilinear clamp-to-last-texel on X, mirror-once on Y", {0x0000809au, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"bilinear mirror-once-border on X and Y, opaque white", {0x000080bfu, 0x00fff000u, 0x05500000u, 0x80000000u}, true, true},
+    {"point mirror-once-border on X, clamp-to-last-texel on Y, opaque black", {0x00008097u, 0x00fff000u, 0x04000000u, 0x40000000u}, false, true},
+    {"bilinear clamp-to-border on X, mirror-once-border on Y, transparent black", {0x000080beu, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"point mirror on X, mirror-once-border on Y, opaque white", {0x000080b9u, 0x00fff000u, 0x04000000u, 0x80000000u}, false, true},
 }};
 
 struct Coordinate {
@@ -251,13 +252,28 @@ Samples Run(AgcDriver::VulkanDevice& device, const Program& program, const std::
     return samples;
 }
 
+std::uint32_t ClampMode(const SamplerCase& sampler, std::uint32_t axis) {
+    return (sampler.words[0] >> (axis * 3u)) & 7u;
+}
+
+std::array<double, 4> BorderColor(const SamplerCase& sampler) {
+    switch (sampler.words[3] >> 30u) {
+        case 1u: return {0.0, 0.0, 0.0, 255.0};
+        case 2u: return {255.0, 255.0, 255.0, 255.0};
+        default: return {0.0, 0.0, 0.0, 0.0};
+    }
+}
+
 std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std::int32_t x, std::int32_t y) {
-    const auto width = LevelWidth(level);
-    const auto height = LevelHeight(level);
-    if (sampler.mirrorX && x < 0) x = -x - 1;
-    if (sampler.mirrorY && y < 0) y = -y - 1;
-    if (sampler.border && (x < 0 || x >= width || y < 0 || y >= height)) return {0.0, 0.0, 0.0, 0.0};
-    return TexelOf(level, std::clamp(x, 0, width - 1), std::clamp(y, 0, height - 1));
+    const std::array<std::int32_t, 2> sizes{LevelWidth(level), LevelHeight(level)};
+    std::array<std::int32_t, 2> texel{x, y};
+    for (std::uint32_t axis = 0; axis < 2u; ++axis) {
+        const auto clamp = ClampMode(sampler, axis);
+        if ((clamp == 1u || clamp == 3u || clamp == 7u) && texel[axis] < 0) texel[axis] = -texel[axis] - 1;
+        if ((clamp == 6u || clamp == 7u) && (texel[axis] < 0 || texel[axis] >= sizes[axis])) return BorderColor(sampler);
+        texel[axis] = std::clamp(texel[axis], 0, sizes[axis] - 1);
+    }
+    return TexelOf(level, texel[0], texel[1]);
 }
 
 std::array<double, 4> Reference(const SamplerCase& sampler, std::uint32_t level, const Coordinate& coordinate) {

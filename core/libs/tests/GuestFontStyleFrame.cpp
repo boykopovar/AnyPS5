@@ -40,6 +40,12 @@ int main() {
     std::uint32_t vDpi = 0;
     Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 72);
     Require(sceFontStyleFrameGetResolutionDpi(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, reinterpret_cast<std::uint32_t*>(0x10), &vDpi) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
 
@@ -77,6 +83,9 @@ int main() {
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameSetEffectSlant(&frame, 2.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectSlant(&frame, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetEffectSlant(&frame, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, 1.0f));
     Require(sceFontStyleFrameSetEffectSlant(&frame, -3.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, -1.0f));

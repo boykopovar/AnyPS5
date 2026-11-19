@@ -72,7 +72,7 @@ def previous_sequence(path):
     tokens = line.split(b"\0", 1)[0].split()
     if len(tokens) in (4, 8):
         touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
-        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
+        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 1079, 127, 1))):
             return 0
     if len(tokens) not in (3, 7):
         return 0
@@ -113,7 +113,7 @@ def main():
     parser.add_argument("--left-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
-                        help="touch contact: X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
+                        help="touch contact: X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
     args = parser.parse_args()
     try:
         mask = button_mask(args.button)
@@ -127,8 +127,8 @@ def main():
         parser.error("--hold-ms must be between 1 and 5000")
     touch = ""
     if args.touch is not None:
-        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 942, 127, 1))):
-            parser.error("--touch requires X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1")
+        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 1079, 127, 1))):
+            parser.error("--touch requires X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1")
         touch = " touch(" + ",".join(str(value) for value in args.touch) + ")"
     sticks = ""
     if args.left_stick is not None or args.right_stick is not None:

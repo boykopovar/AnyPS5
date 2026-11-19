@@ -29,6 +29,14 @@ bool CopyOutGuest(T* destination, const T& value) {
     return copied;
 }
 
+template <typename T>
+bool CopyInGuest(T& value, const T* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 constexpr std::uint8_t STYLE_FRAME_FLAG_SCALE = 0x01;
 constexpr std::uint8_t STYLE_FRAME_FLAG_SLANT = 0x02;
 constexpr std::uint8_t STYLE_FRAME_FLAG_WEIGHT = 0x04;
