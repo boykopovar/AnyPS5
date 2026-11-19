@@ -1012,26 +1012,37 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
     std::size_t* dstLength) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
     std::size_t count = 0;
     for (std::size_t i = 0; i < srcLength; ++i) {
-        const auto c = static_cast<unsigned char>(src[i]);
+        const auto c = static_cast<unsigned char>(source[i]);
         const bool escaped = c != ' ' && !IsUrlSafe(c);
         const std::size_t length = escaped ? 3 : 1;
-        if (dst != nullptr && count + length > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        if (dst != nullptr && count + length > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
         if (dst != nullptr) {
             if (escaped) {
-                dst[count] = '%';
-                dst[count + 1] = URL_HEX_DIGITS[c >> 4];
-                dst[count + 2] = URL_HEX_DIGITS[c & 0xF];
+                out.push_back('%');
+                out.push_back(URL_HEX_DIGITS[c >> 4]);
+                out.push_back(URL_HEX_DIGITS[c & 0xF]);
             } else {
-                dst[count] = c == ' ' ? '+' : static_cast<char>(c);
+                out.push_back(c == ' ' ? '+' : static_cast<char>(c));
             }
         }
         count += length;
     }
-    if (dst != nullptr && count + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (dst != nullptr) dst[count] = '\0';
-    if (dstLength != nullptr) *dstLength = count + 1;
+    if (dst != nullptr && count + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+    if (dst != nullptr) {
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    const std::size_t needed = count + 1;
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
