@@ -7,6 +7,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -28,6 +34,39 @@ void RequireUnchanged(const std::array<unsigned char, 64>& bytes, unsigned char 
     for (const auto byte : bytes) Require(byte == value);
 }
 
+template<typename Construct>
+bool Throws(Construct construct) {
+    try {
+        construct();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+unsigned char* ReadOnlyPage() {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memset(page, 0x5A, 4096);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memset(page, 0x5A, 4096);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+bool PageUnchanged(const unsigned char* page) {
+    for (std::size_t i = 0; i < 4096; ++i)
+        if (page[i] != 0x5A) return false;
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -38,6 +77,9 @@ int main() {
     Require(_ZN3JSC11RegisterSet12argumentGPRSEv() == 0x3C6);
     Require(_ZN3JSC11RegisterSet7allGPRsEv() == 0xFFFF);
     Require(_ZN3JSC11RegisterSet7allFPRsEv() == 0xFFFF0000u);
+
+    auto* readOnly = ReadOnlyPage();
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
 
     struct Constructor {
         void (APS5_VABI *construct)(void*);
@@ -52,6 +94,9 @@ int main() {
         auto object = Filled(0x5A);
         constructor.construct(object.data());
         RequireZeroedPrefix(object, constructor.zeroed);
+        Require(Throws([&] { constructor.construct(unmapped); }));
+        Require(Throws([&] { constructor.construct(readOnly); }));
+        Require(PageUnchanged(readOnly));
     }
 
     struct LockedConstructor {
@@ -69,5 +114,8 @@ int main() {
         constructor.construct(object.data(), lock.data());
         RequireZeroedPrefix(object, constructor.zeroed);
         RequireUnchanged(lock, 0xA5);
+        Require(Throws([&] { constructor.construct(unmapped, lock.data()); }));
+        Require(Throws([&] { constructor.construct(readOnly, lock.data()); }));
+        Require(PageUnchanged(readOnly));
     }
 }
