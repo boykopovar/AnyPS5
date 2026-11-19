@@ -144,6 +144,7 @@ void APS5_VABI udtitvfmt_formatToResult_nid_postfix(const UDateIntervalFormat* f
 UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, const char16_t* skeleton, std::int32_t skeletonLength, const char16_t* tzID, std::int32_t tzIDLength, std::int32_t* status);
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
 
+std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
 void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
 UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t*);
 
@@ -198,6 +199,7 @@ URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* l
 
 void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
+std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
 
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
 

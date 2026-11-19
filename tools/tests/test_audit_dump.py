@@ -961,5 +961,43 @@ class ElfTypeTests(unittest.TestCase):
                 self.assertIsNone(audit_dump.elf_type(path))
 
 
+class AuditDirectoriesTests(unittest.TestCase):
+    def test_other_directories_pass_through_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            self.assertEqual(audit_dump.audit_directories([other], source), [other])
+            self.assertEqual(list(source.iterdir()), [])
+
+    def test_source_directory_is_replaced_by_a_copy_without_the_eboot_or_subdirectories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            (source / "b.sprx").write_bytes(b"b")
+            (source / "eboot.elf").write_bytes(b"e")
+            (source / "nested").mkdir()
+            audited = audit_dump.audit_directories([other, source], source)
+            self.assertEqual(audited[0], other)
+            self.assertNotEqual(audited[1], source)
+            self.assertEqual(audited[1].parent, source)
+            self.assertTrue(audited[1].name.startswith("modules-"))
+            self.assertEqual(sorted(path.name for path in audited[1].iterdir()), ["a.prx", "b.sprx"])
+            self.assertEqual((audited[1] / "a.prx").read_bytes(), b"a")
+
+    def test_copies_when_hard_links_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            with mock.patch.object(audit_dump.os, "link", side_effect=OSError("no links")):
+                audited = audit_dump.audit_directories([source], source)
+            self.assertEqual((audited[0] / "a.prx").read_bytes(), b"a")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,7 +44,7 @@ git submodule update --init --recursive
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
 
 ```sh
-git diff --name-only origin/main...HEAD > changed.txt
+git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
 ninja -C build -f select.ninja selected
@@ -178,12 +178,23 @@ Build configuration parameters:
 | `-DANYPS5_NODE=<path>`                 | Node.js 26 or newer that runs the memory64 Emscripten tests `guest_long_double` and `emscripten_module_unwind`; `node` by default, Emscripten builds only. |
 | `-DANYPS5_VIDEO_OUT_TEST_DRIVER=<driver>` | SDL video driver for the VideoOut flip tests; `windows` on Windows and `offscreen` elsewhere. |
 | `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
+| `-DAPS5_AGC_PROFILE=<mode>`           | Profile-guided build of `libSceAgcDriver` and its shader recompiler (GCC): `generate` instruments them, `use` builds them with the recorded profile. Empty by default. See [profile-guided driver build](#profile-guided-driver-build). |
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg`, `vorbis`, `opus`, `libusb-cmake`, `mbedtls`, `vgmstream`, `zstd`, `ZArchive` and, on Windows, `mimalloc` always stay bundled and still need `git submodule update --init`.
 
 `tools/configure_seed.py` writes the configure check results of a configured tree's `CMakeCache.txt` as an initial cache file for `cmake -C`. `--include` and `--exclude` take glob patterns on the check names, and `--stdout` prints the seed instead of writing a file. `tools/check_configure_seed.py` checks an unfiltered seed against its cache without writing anything.
+
+## Profile-guided driver build
+
+The AGC driver's hot paths (the queue worker, the draw finisher and the draw committer) gain from a profile-guided build. Use a separate build directory:
+
+1. Configure with `-DAPS5_AGC_PROFILE=generate` and build `libs`. Only `libSceAgcDriver` and `shader_recompiler_agc_driver` are instrumented: the runtime libraries export all their symbols, so instrumenting every library fails at link time.
+2. Play the scenes to optimize for. The instrumented driver writes its `.gcda` files next to its objects every 20 seconds and resets its counters, so a session ended by closing the emulator keeps everything up to the last dump.
+3. Configure the same directory with `-DAPS5_AGC_PROFILE=use` and build `libs` again. Functions changed after the recording lose their profile (`-Wno-coverage-mismatch`), so record again after large changes.
+
+`-DCMAKE_CXX_FLAGS="-march=x86-64-v3"` adds a further small gain on CPUs that have AVX2; such a build does not run on older CPUs. libc keeps `-ffp-contract=off` either way.
 
 ## HTTP locale tests
 
