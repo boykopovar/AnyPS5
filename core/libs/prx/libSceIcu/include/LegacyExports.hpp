@@ -3,6 +3,10 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 
+namespace Icu {
+struct Converter;
+} // namespace Icu
+
 extern "C" {
 
 int APS5_VABI sceIcuLegacyUnknown__plus__plus_DD8eRY6mw_nid_no_patch();
@@ -2176,7 +2180,8 @@ int APS5_VABI sceIcuLegacyUnknown_xzLgzGOHQto_nid_no_patch();
 int APS5_VABI utrace_setLevel_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_y0dJq9TC59U_nid_no_patch();
 int APS5_VABI _ZN6icu_6810UnicodeSetC2EPKtiNS0_14ESerializationER10UErrorCode_nid_postfix();
-int APS5_VABI ucnv_openPackage_nid_postfix();
+Icu::Converter* APS5_VABI ucnv_openPackage_nid_postfix(const char* packageName, const char* converterName,
+                                                       std::int32_t* error);
 int APS5_VABI _ZN6icu_6810NormalizerC2ENS_14ConstChar16PtrEi18UNormalizationMode_nid_postfix();
 int APS5_VABI _ZN6icu_6811SymbolTableD2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_y7ep3yHJDpU_nid_no_patch();
