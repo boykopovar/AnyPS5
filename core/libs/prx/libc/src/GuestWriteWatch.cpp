@@ -97,6 +97,10 @@ public:
         if (!covers(first, first + bytes) || !covers(second, second + bytes)) return false;
         link(first, first + bytes, second);
         link(second, second + bytes, first);
+        for (const auto view : {first, second}) {
+            remove(_fresh, view, view + bytes);
+            insert(_fresh, view, view + bytes);
+        }
         return true;
     }
 

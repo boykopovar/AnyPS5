@@ -2650,6 +2650,46 @@ void CheckMarkPossiblyWrittenOrder() {
 #endif
 }
 
+#if defined(__linux__)
+std::vector<std::pair<std::uintptr_t, std::uintptr_t>> CollectViewRuns(std::uintptr_t view) {
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(view, Block, [](void* found, std::uintptr_t begin, std::uintptr_t end) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(found)->emplace_back(begin, end); }, &runs), "cannot collect a shared view");
+    return runs;
+}
+
+bool RunsReport(const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& runs, std::uintptr_t address) {
+    return std::any_of(runs.begin(), runs.end(), [&](const auto& run) { return run.first <= address && address < run.second; });
+}
+
+void CheckAliasAfterConsumedWrite(bool throughFirst) {
+    const int file = memfd_create("aps5-alias-after-consume", 0);
+    Require(file >= 0 && ftruncate(file, Block) == 0, "cannot create the shared views' backing");
+    void* raw = mmap(nullptr, 3 * Block, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the shared views");
+    const auto first = (reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    const std::array<std::uintptr_t, 2> views{first, first + Block};
+    for (const auto view : views) {
+        Require(mmap(reinterpret_cast<void*>(view), Block, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != MAP_FAILED, "cannot map a shared view");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<void*>(view), Block);
+        static_cast<void>(CollectViewRuns(view));
+    }
+    const auto writer = views[throughFirst ? 0 : 1];
+    const auto other = views[throughFirst ? 1 : 0];
+    reinterpret_cast<volatile std::uint8_t*>(writer)[0x80] = 0x6b;
+    const bool reportedAtWriter = RunsReport(CollectViewRuns(writer), writer + 0x80);
+    const bool aliased = GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(reinterpret_cast<void*>(views[0]), reinterpret_cast<void*>(views[1]), Block);
+    const bool reportedAtOther = aliased && RunsReport(CollectViewRuns(other), other + 0x80);
+    const bool quietAfter = aliased && CollectViewRuns(other).empty() && CollectViewRuns(writer).empty();
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(first), 2 * Block);
+    munmap(raw, 3 * Block);
+    close(file);
+    Require(reportedAtWriter, "a write through an unaliased view was not reported at that view");
+    Require(aliased, "the shared views could not be aliased");
+    Require(reportedAtOther, "a write consumed at one view before an alias was never reported at the other view");
+    Require(quietAfter, "the views of a new alias are reported again after their first collect");
+}
+#endif
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -2660,6 +2700,21 @@ int main(int argc, char** argv) {
         if (!WriteWatched()) {
             std::cout << "no write watching: skipped\n";
             return 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--alias-after-consume") {
+#if defined(__linux__)
+            if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+                std::cout << "no Linux write watch: alias test skipped\n";
+                return 77;
+            }
+            CheckAliasAfterConsumedWrite(true);
+            CheckAliasAfterConsumedWrite(false);
+            std::cout << "alias after consume tests passed\n";
+            return 0;
+#else
+            std::cout << "write watch aliases are Linux only: skipped\n";
+            return 77;
+#endif
         }
         if (argc == 2 && std::string_view(argv[1]) == "--generation-wrap") {
             CheckGenerationWrap();
