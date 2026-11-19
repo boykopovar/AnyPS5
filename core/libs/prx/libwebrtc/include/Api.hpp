@@ -71,6 +71,7 @@ struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/TaskQueueBase.hpp"
 #include "prx/libwebrtc/include/SequenceChecker.hpp"
 #include "prx/libwebrtc/include/VideoEncoderInfo.hpp"
+#include "prx/libwebrtc/include/PeerConnectionDependencies.hpp"
 
 extern "C" {
 
@@ -104,8 +105,8 @@ struct WebRtcFileWrapper;
 
 bool APS5_VABI _ZN6webrtc11FileWrapper5CloseEv_nid_postfix(WebRtcFileWrapper* wrapper);
 void APS5_VABI _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(WebRtcRtpExtension* extension);
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(void);
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(WebRtcPeerConnectionDependencies* dependencies, WebRtcPeerConnectionDependencies* other);
+void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesD1Ev_nid_postfix(WebRtcPeerConnectionDependencies* dependencies);
 int APS5_VABI _ZN7cricket18BasicPortAllocatorC1EPN3rtc14NetworkManagerEPNS1_19PacketSocketFactoryEPN6webrtc14TurnCustomizerEPNS_25RelayPortFactoryInterfaceEPKNS6_15FieldTrialsViewE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10CallConfigC1ERKNS_11EnvironmentEPNS_13TaskQueueBaseE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationC1Ev_nid_postfix(void);
@@ -154,7 +155,7 @@ int APS5_VABI libwebrtcUnknown10(void);
 int APS5_VABI libwebrtcUnknown11(void);
 void APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(WebRtcKeyParams* params, std::int32_t keyType);
 void APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(WebRtcIceServer* server);
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObserverE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObserverE_nid_postfix(WebRtcPeerConnectionDependencies* dependencies, void* observer);
 int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown12(void);
 int APS5_VABI libwebrtcUnknown13(void);
