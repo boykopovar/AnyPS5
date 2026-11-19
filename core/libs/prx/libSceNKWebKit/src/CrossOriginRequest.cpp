@@ -120,6 +120,8 @@
  */
 
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 
 #include <cstdint>
@@ -270,4 +272,30 @@ extern "C" bool APS5_VABI _ZN7WebCore32isSimpleCrossOriginAccessRequestERKN3WTF6
         throw std::invalid_argument("null HTTPHeaderMap uncommon storage");
     if (headers.uncommon.size) return false;
     return true;
+}
+
+extern "C" void APS5_VABI _ZN7WebCore39cleanHTTPRequestHeadersForAccessControlERNS_15ResourceRequestEN3WTF9OptionSetINS_29HTTPHeadersToKeepFromCleaningEEE(
+    NKWebKit::WebCoreAbi::ResourceRequestBase* request, std::uint8_t headersToKeep) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    auto keeps = [headersToKeep](std::uint8_t header) { return (headersToKeep & header) != 0; };
+    auto remove = [request](HTTPHeaderName name) {
+        if (!request->resourceRequestUpdated)
+            throw std::logic_error("WebCore::ResourceRequest::doUpdateResourceRequest is not implemented");
+        _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(
+            reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request->httpHeaderFields), name);
+        request->platformRequestUpdated = false;
+    };
+    if (!keeps(1 << 0)) {
+        String contentType = _ZNK7WebCore19ResourceRequestBase15httpContentTypeEv(request);
+        if (contentType.impl && !IsSafeHeader(HTTPHeaderName::ContentType, contentType))
+            remove(HTTPHeaderName::ContentType);
+    }
+    if (!keeps(1 << 1)) _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(request);
+    if (!keeps(1 << 2)) _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(request);
+    if (!keeps(1 << 3)) remove(HTTPHeaderName::UserAgent);
+    if (!keeps(1 << 4)) remove(HTTPHeaderName::AcceptEncoding);
+    if (!keeps(1 << 5)) remove(HTTPHeaderName::CacheControl);
+    remove(HTTPHeaderName::SecFetchDest);
+    remove(HTTPHeaderName::SecFetchMode);
+    remove(HTTPHeaderName::SecFetchSite);
 }
