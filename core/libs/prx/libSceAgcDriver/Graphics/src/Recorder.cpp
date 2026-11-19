@@ -596,7 +596,7 @@ thread_local Recorder::LateStatistics lateCounts{};
 bool LateTrustEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("APS5_LABEL_TRUST_LATE");
-        return value != nullptr && std::strcmp(value, "0") != 0;
+        return value == nullptr || std::strcmp(value, "0") != 0;
     }();
     return enabled;
 }
@@ -2083,6 +2083,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         const auto reason = !pass.open ? pass.closedBy : forced ? PassBreak::Forced : PassBreak::Segment;
         const auto commands = Commands();
         open->passHazards.Clear();
+        hasWriteOnlyHazards.store(false, std::memory_order_relaxed);
         open->passHazards.BeginPass();
         return {commands, false, true, reason};
     }
@@ -2096,7 +2097,10 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(reason, !merge);
     const auto commands = Commands();
-    if (!elide) open->passHazards.Clear();
+    if (!elide) {
+        open->passHazards.Clear();
+        hasWriteOnlyHazards.store(false, std::memory_order_relaxed);
+    }
     open->passHazards.BeginPass();
     return {commands, false, !elide, reason};
 }
@@ -2112,10 +2116,12 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+    if (!access.writeOnly.empty()) hasWriteOnlyHazards.store(true, std::memory_order_relaxed);
 }
 
 void Recorder::SealPassWriteOnly() {
     if (open != nullptr) open->passHazards.SealWriteOnly();
+    hasWriteOnlyHazards.store(false, std::memory_order_relaxed);
 }
 
 bool Recorder::RenderPassOpen() const {

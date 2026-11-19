@@ -98,6 +98,13 @@ void Driver::landPendingWaits(std::uint32_t queue) {
         const auto packet = std::span<const std::uint32_t>(wait.words).first(wait.count);
         ++stats.lands;
         if (Pm4::WaitSatisfiedUnchecked(packet)) continue;
+        const auto awaitedBytes = Pm4::WaitAwaitedBytes(packet);
+        const auto alignMask = awaitedBytes == 8 ? ~7ull : ~3ull;
+        const std::uint64_t awaited = (packet[2] & static_cast<std::uint32_t>(alignMask)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
+        if (const auto localDevice = device.Load()) {
+            std::unique_lock settleLock(GuestMemory::GpuMutex(), std::try_to_lock);
+            if (settleLock.owns_lock() && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) continue;
+        }
         const auto started = std::chrono::steady_clock::now();
         waitMemory(packet, queue, none, wait.received, false, true);
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
@@ -220,7 +227,17 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     if (unlocked) {
         if (labelTable) {
             Graphics::Recorder::LabelRefusal refusal{};
-            if (takeLabel(Graphics::Recorder::LookupLabel(awaited, awaitedBytes, received, &refusal), refusal, false, true)) return;
+            if (takeLabel(Graphics::Recorder::LookupLabel(awaited, awaitedBytes, received, &refusal), refusal, false, true)) {
+                if (Graphics::Recorder::SnapshotWriteOverlaps(awaited, awaitedBytes)) {
+                    std::unique_lock submitLock(GuestMemory::GpuMutex(), std::try_to_lock);
+                    if (submitLock.owns_lock()) {
+                        if (const auto localDevice = device.Load()) {
+                            if (localDevice->OpenWriteOverlaps(awaited, awaitedBytes)) localDevice->SubmitRecorded(false);
+                        }
+                    }
+                }
+                return;
+            }
         }
     }
     const bool lockedEntry = !unlocked || Graphics::Recorder::SnapshotWriteOverlaps(awaited, awaitedBytes);
@@ -240,6 +257,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             entryTryFailed = true;
         }
         if (const auto localDevice = gpuLock.owns_lock() ? device.Load() : std::shared_ptr<VulkanDevice>{}) {
+            if (requireMemory && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) return;
 
             if (labelTable) {
                 Graphics::Recorder::LabelRefusal refusal{};
@@ -263,7 +281,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         const auto generation = Graphics::Recorder::WriteGeneration();
         const bool changed = generation != seenGeneration || recheck;
         const bool labelDue = labelFlushDue();
-        const bool reap = sleeping && (behindCompletion || ownStoreUnlanded || ((reapAll || queue0Dormant.load(std::memory_order_relaxed)) && completionsPending()));
+        const bool reap = sleeping && (behindCompletion || ownStoreUnlanded || completionsPending());
         if (!changed && !labelDue && !reap) return false;
 
         if (!changed && !pollTryEach()) {
@@ -275,6 +293,14 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
 
             Graphics::Recorder::LabelRefusal refusal{};
             if (takeLabel(Graphics::Recorder::LookupLabel(awaited, awaitedBytes, received, &refusal), refusal, true, true)) {
+                if (Graphics::Recorder::SnapshotWriteOverlaps(awaited, awaitedBytes)) {
+                    std::unique_lock submitLock(GuestMemory::GpuMutex(), std::try_to_lock);
+                    if (submitLock.owns_lock()) {
+                        if (const auto localDevice = device.Load()) {
+                            if (localDevice->OpenWriteOverlaps(awaited, awaitedBytes)) localDevice->SubmitRecorded(false);
+                        }
+                    }
+                }
                 if (pollProfile) ++poll.tableHits;
                 return true;
             }
@@ -305,6 +331,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             recheck = false;
             return false;
         }
+        if (requireMemory && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) return true;
         bool submitted = false;
         if (changed) {
             seenGeneration = generation;

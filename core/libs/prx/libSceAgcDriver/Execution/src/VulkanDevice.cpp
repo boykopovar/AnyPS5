@@ -3080,6 +3080,10 @@ void VulkanDevice::SealPassWriteOnly() {
     if (state->recorder) state->recorder->SealPassWriteOnly();
 }
 
+bool VulkanDevice::HasWriteOnlyHazards() const {
+    return state->recorder && state->recorder->HasWriteOnlyHazards();
+}
+
 bool VulkanDevice::RecordedWritesSettled(std::uint64_t address, std::size_t bytes) const {
     if (!state->recorder) return true;
     const auto& recorder = *state->recorder;

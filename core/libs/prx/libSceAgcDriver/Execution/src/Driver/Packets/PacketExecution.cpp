@@ -580,9 +580,11 @@ void Driver::execute(Submission& submission) {
         } else if (submission.queue == 0 && sealsWriteOnly(packet, opcode)) {
             if (std::exchange(drawnSinceSeal(), false)) {
                 const auto seal = [this] {
-                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
-                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
-                    if (const auto localDevice = device.Load()) localDevice->SealPassWriteOnly();
+                    if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->HasWriteOnlyHazards()) {
+                        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+                        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                        localDevice->SealPassWriteOnly();
+                    }
                 };
                 if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, seal, {});
                 else seal();
