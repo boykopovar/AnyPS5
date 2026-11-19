@@ -149,6 +149,7 @@ void APS5_VABI udtitvfmt_formatCalendarToResult_nid_postfix(const UDateIntervalF
 void APS5_VABI udtitvfmt_formatToResult_nid_postfix(const UDateIntervalFormat* formatter, double fromDate, double toDate, UFormattedDateInterval* result, std::int32_t* status);
 UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, const char16_t* skeleton, std::int32_t skeletonLength, const char16_t* tzID, std::int32_t tzIDLength, std::int32_t* status);
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
+const UFormattedValue* APS5_VABI udtitvfmt_resultAsValue_nid_postfix(const UFormattedDateInterval* result, std::int32_t* status);
 
 std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
 void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
@@ -165,7 +166,11 @@ std::int32_t APS5_VABI uidna_nameToUnicode_nid_postfix(const UIDNA* idna, const 
 UIDNA* APS5_VABI uidna_openUTS46_nid_postfix(std::uint32_t options, std::int32_t* pErrorCode);
 
 void APS5_VABI uldn_close_nid_postfix(ULocaleDisplayNames* names);
+std::int32_t APS5_VABI uldn_keyValueDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* key, const char* value, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
+std::int32_t APS5_VABI uldn_localeDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* locale, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
 ULocaleDisplayNames* APS5_VABI uldn_openForContext_nid_postfix(const char* locale, std::int32_t* contexts, std::int32_t length, std::int32_t* status);
+std::int32_t APS5_VABI uldn_regionDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* region, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
+std::int32_t APS5_VABI uldn_scriptDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* script, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
 
 void APS5_VABI ulistfmt_close_nid_postfix(UListFormatter* listfmt);
 void APS5_VABI ulistfmt_closeResult_nid_postfix(UFormattedList* result);
@@ -178,6 +183,7 @@ void APS5_VABI ulistfmt_formatStringsToResult_nid_postfix(const UListFormatter* 
 UListFormatter* APS5_VABI ulistfmt_openForType_nid_postfix(const char* locale, UListFormatterType type,
                                                            UListFormatterWidth width, std::int32_t* status);
 UFormattedList* APS5_VABI ulistfmt_openResult_nid_postfix(std::int32_t* status);
+const UFormattedValue* APS5_VABI ulistfmt_resultAsValue_nid_postfix(const UFormattedList* result, std::int32_t* status);
 
 UNumberFormat* APS5_VABI unum_clone_nid_postfix(const UNumberFormat* fmt, std::int32_t* status);
 void APS5_VABI unum_close_nid_postfix(UNumberFormat*);
@@ -204,10 +210,13 @@ std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem*)
 UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t*);
 
 void APS5_VABI uplrules_close_nid_postfix(UPluralRules* uplrules);
+UEnumeration* APS5_VABI uplrules_getKeywords_nid_postfix(const UPluralRules* uplrules, std::int32_t* status);
 UPluralRules* APS5_VABI uplrules_openForType_nid_postfix(const char* locale, std::int32_t type, std::int32_t* status);
+std::int32_t APS5_VABI uplrules_selectWithFormat_nid_postfix(const UPluralRules* uplrules, double number, const UNumberFormat* fmt, char16_t* keyword, std::int32_t capacity, std::int32_t* status);
 
 void APS5_VABI ureldatefmt_close_nid_postfix(URelativeDateTimeFormatter* reldatefmt);
 std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status);
+std::int32_t APS5_VABI ureldatefmt_formatNumeric_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status);
 URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* locale, UNumberFormat* formatter, std::int32_t width, std::int32_t context, std::int32_t* status);
 
 void APS5_VABI ures_close(UResourceBundle* resB);

@@ -51,30 +51,6 @@ int APS5_VABI ucol_strcollUTF8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udtitvfmt_resultAsValue_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_keyValueDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_localeDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_regionDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_scriptDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ulistfmt_resultAsValue_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI unum_formatDoubleForFields_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -96,18 +72,6 @@ int APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix() {
 }
 
 int APS5_VABI unumf_resultToString_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uplrules_getKeywords_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uplrules_selectWithFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ureldatefmt_formatNumeric_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
