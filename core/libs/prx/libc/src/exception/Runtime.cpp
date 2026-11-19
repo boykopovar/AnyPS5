@@ -69,7 +69,32 @@ static void RawLog(const char* format, ...) {
     RawWrite(buffer, static_cast<std::size_t>(length));
 }
 
+#ifdef __APPLE__
+static_assert(offsetof(Header, unwind) + sizeof(_Unwind_Exception) == sizeof(Header));
+inline constexpr std::uint64_t HostClass = 0x434c4e47432b2b00;
+bool HostPrimary(const void* object) {
+    return object && (static_cast<const _Unwind_Exception*>(object) - 1)->exception_class == HostClass;
+}
+std::type_info* HostPrimaryType(void* object) {
+    try { abi::__cxa_rethrow_primary_exception(object); }
+    catch (...) { return abi::__cxa_current_exception_type(); }
+    return nullptr;
+}
+const char* HostCaughtWhat(const char** typeName) {
+    const std::type_info* type = abi::__cxa_current_exception_type();
+    if (!type) return nullptr;
+    if (typeName != nullptr) *typeName = type->name();
+    try { throw; }
+    catch (const std::exception& error) { return error.what(); }
+    catch (...) {}
+    return nullptr;
+}
+#endif
+
 const char* CaughtWhat(const char** typeName) {
+#ifdef __APPLE__
+    if (!globals.caught) return HostCaughtWhat(typeName);
+#endif
     if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
     Header* primary = Primary(globals.caught);
     if (typeName != nullptr) *typeName = primary->type ? primary->type->name() : nullptr;
@@ -88,9 +113,9 @@ const char* CaughtWhat(const char** typeName) {
 }
 
 [[noreturn]] static void DefaultTerminate() {
-    if (globals.caught && Native(globals.caught->unwind.exception_class)) {
-        const char* typeName = nullptr;
-        const char* what = CaughtWhat(&typeName);
+    const char* typeName = nullptr;
+    const char* what = CaughtWhat(&typeName);
+    if (typeName) {
         int status = 0;
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
         const char* displayName = (status == 0 && demangled) ? demangled : typeName;
@@ -116,6 +141,12 @@ inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
     std::abort();
 }
 [[noreturn]] void Terminate() { InvokeTerminate(terminateHandler.load(std::memory_order_acquire)); }
+#ifdef __APPLE__
+[[maybe_unused]] const bool hostTerminateRouted = [] {
+    std::set_terminate([] { Terminate(); });
+    return true;
+}();
+#endif
 
 _Unwind_Exception* UnwindOf(Header* header) {
     return Native(header->unwind.exception_class) ? &header->unwind : reinterpret_cast<_Unwind_Exception*>(header->landing);
@@ -432,6 +463,9 @@ void* APS5_VABI __cxa_get_exception_ptr_nid_postfix(void* exception) {
 }
 std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix() {
     using namespace LibcException;
+#ifdef __APPLE__
+    if (!globals.caught) return abi::__cxa_current_exception_type();
+#endif
     return globals.caught && Native(globals.caught->unwind.exception_class) ? Primary(globals.caught)->type : nullptr;
 }
 void* APS5_VABI __cxa_get_globals_nid_postfix() { return &LibcException::globals; }
@@ -443,19 +477,27 @@ int APS5_VABI _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>
 [[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
 
 LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
-#ifdef __APPLE__
-    std::set_terminate(handler ? handler : std::abort);
-#endif
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
 LibcTerminateHandler APS5_VABI _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }
 
 void APS5_VABI __cxa_increment_exception_refcount_nid_postfix(void* object) {
+#ifdef __APPLE__
+    if (LibcException::HostPrimary(object)) return abi::__cxa_increment_exception_refcount(object);
+#endif
     if (object) LibcException::AllocationOf(LibcException::FromObject(object))->references.fetch_add(1, std::memory_order_relaxed);
 }
-void APS5_VABI __cxa_decrement_exception_refcount_nid_postfix(void* object) { LibcException::Release(object); }
+void APS5_VABI __cxa_decrement_exception_refcount_nid_postfix(void* object) {
+#ifdef __APPLE__
+    if (LibcException::HostPrimary(object)) return abi::__cxa_decrement_exception_refcount(object);
+#endif
+    LibcException::Release(object);
+}
 void* APS5_VABI __cxa_current_primary_exception_nid_postfix() {
     using namespace LibcException;
+#ifdef __APPLE__
+    if (!globals.caught) return abi::__cxa_current_primary_exception();
+#endif
     if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
     void* object = Primary(globals.caught) + 1;
     __cxa_increment_exception_refcount_nid_postfix(object);
@@ -475,6 +517,9 @@ void APS5_VABI __cxa_free_dependent_exception_nid_postfix(void* storage) {
 void APS5_VABI __cxa_rethrow_primary_exception_nid_postfix(void* object) {
     using namespace LibcException;
     if (!object) return;
+#ifdef __APPLE__
+    if (HostPrimary(object)) return abi::__cxa_rethrow_primary_exception(object);
+#endif
     auto* header = static_cast<Header*>(__cxa_allocate_dependent_exception_nid_postfix());
     header->type = reinterpret_cast<std::type_info*>(object);
     header->adjusted = object;
