@@ -50,3 +50,4 @@
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
 #include "UtfConversions.hpp"
+#include "ConverterFileSeparator.hpp"

@@ -731,8 +731,9 @@ int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable) {
 }
 
 int APS5_VABI sceHttpSetEpollId(std::int32_t id, std::int32_t epollId, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)userArg;
+    return SetHttpEpollId(id, epollId) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** userArg) {
