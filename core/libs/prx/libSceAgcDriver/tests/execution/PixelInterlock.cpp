@@ -260,9 +260,16 @@ int main() {
             Draw(*device, waveSize);
             Check(waveSize, 3);
         }
-        Require(!device->GraphicsPipelineLibraries() || AgcDriver::Graphics::PipelineLibraryCountersOf(device->Device()).linked == 0, "pixel interlock: a primitive-ordered pixel shader's pipeline was linked from graphics pipeline libraries");
-        Require(MaskSets == 0u, "pixel interlock: a primitive-ordered pixel shader's pipeline took the dynamic color write mask");
-        std::printf("pixel interlock tests passed: 10 draws of %u overlapping triangles over %u pixels, 2 of them with a killed BDA fault in every %uth column\n", Layers, Width * Height, FaultColumns);
+        const auto& context = device->graphicsContext();
+        const auto linked = device->GraphicsPipelineLibraries() ? AgcDriver::Graphics::PipelineLibraryCountersOf(device->Device()).linked : 0u;
+        if (context.orderedInterlockEpilogs) {
+            Require(!device->GraphicsPipelineLibraries() || linked != 0u, "pixel interlock: the driver orders interlock epilogs, but no primitive-ordered pixel shader's pipeline was linked from graphics pipeline libraries");
+            Require(!context.dynamicColorWriteMask || MaskSets != 0u, "pixel interlock: the driver orders interlock epilogs, but no primitive-ordered pixel shader's pipeline took the dynamic color write mask");
+        } else {
+            Require(linked == 0u, "pixel interlock: a primitive-ordered pixel shader's pipeline was linked from graphics pipeline libraries");
+            Require(MaskSets == 0u, "pixel interlock: a primitive-ordered pixel shader's pipeline took the dynamic color write mask");
+        }
+        std::printf("pixel interlock tests passed: 10 draws of %u overlapping triangles over %u pixels, 2 of them with a killed BDA fault in every %uth column; %llu fast-linked pipelines, %llu dynamic write mask sets\n", Layers, Width * Height, FaultColumns, static_cast<unsigned long long>(linked), static_cast<unsigned long long>(MaskSets.load()));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

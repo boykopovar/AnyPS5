@@ -298,6 +298,7 @@ struct Context {
     bool individuallyFreeDescriptorSets = false;
     bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
+    bool orderedInterlockEpilogs = false;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
