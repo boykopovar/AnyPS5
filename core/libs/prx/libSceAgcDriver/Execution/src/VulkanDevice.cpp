@@ -4729,6 +4729,14 @@ std::uint64_t VulkanDevice::StorageBufferRangeLimit() const {
     return state->properties.limits.maxStorageBufferRange;
 }
 
+std::uint64_t VulkanDevice::DeviceLocalBytes() const {
+    std::uint64_t largest = 0;
+    for (std::uint32_t i = 0; i < state->memoryProperties.memoryHeapCount; ++i) {
+        if ((state->memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) largest = std::max<std::uint64_t>(largest, state->memoryProperties.memoryHeaps[i].size);
+    }
+    return largest;
+}
+
 std::uint32_t VulkanDevice::VendorId() const {
     return state->properties.vendorID;
 }
@@ -5901,13 +5909,11 @@ void VulkanDevice::SetSplitSlice(const std::optional<SplitSlice>& slice) {
     splitSlice = slice;
 }
 
-std::vector<std::uint32_t> VulkanDevice::SplitTargets() {
+std::span<const std::uint32_t> VulkanDevice::SplitTargets() {
     Graphics::Require(state->splitTargets != nullptr && state->splitTargetBytes != 0, "Vulkan dispatch: no split table call part copied its targets back");
     state->splitTargets->Invalidate();
     const auto bytes = state->splitTargets->Bytes().first(static_cast<std::size_t>(state->splitTargetBytes));
-    std::vector<std::uint32_t> words(bytes.size() / sizeof(std::uint32_t));
-    std::memcpy(words.data(), bytes.data(), words.size() * sizeof(std::uint32_t));
-    return words;
+    return {reinterpret_cast<const std::uint32_t*>(bytes.data()), bytes.size() / sizeof(std::uint32_t)};
 }
 
 void VulkanDevice::recordDispatch(RecordedDispatch& record) {
@@ -6165,7 +6171,15 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(faultToken)));
     if (faultToken != 0 && state->bufferMarker != nullptr) state->bufferMarker(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->markerBuffer, 0, faultToken);
     if (split) {
-        if (splitGroups != 0) context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, splitGroups, 1, 1);
+        if (splitSlice->runs.empty()) {
+            if (splitGroups != 0) context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, splitGroups, 1, 1);
+        } else {
+            const auto dispatchBase = context.Function<PFN_vkCmdDispatchBase>("vkCmdDispatchBase");
+            for (const auto& [first, count] : splitSlice->runs) {
+                if (first >= splitGroups) break;
+                dispatchBase(commands, first, 0, 0, std::min(count, splitGroups - first), 1, 1);
+            }
+        }
         if (splitSlice->readTargets) {
             constexpr std::uint64_t headerBytes = ShaderRecompiler::SplitStateAbi::HeaderDwords * sizeof(std::uint32_t);
             const std::uint64_t targetBytes = 2ull * splitSlice->capacity * sizeof(std::uint32_t);

@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -152,23 +153,35 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
     }
     static const std::uint32_t stateLanes = [] {
         const char* text = std::getenv("APS5_SPLIT_STATE_LANES");
-        return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 1u << 18u;
+        return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 1u << 21u;
+    }();
+    static const std::uint64_t stateBytes = [&] {
+        const char* text = std::getenv("APS5_SPLIT_STATE_BYTES");
+        return text != nullptr ? std::max<std::uint64_t>(std::strtoull(text, nullptr, 0), 1u) : std::max<std::uint64_t>(localDevice->DeviceLocalBytes() / 6u, 1ull << 28u);
     }();
     static const std::uint64_t indirectSlices = [] {
         const char* text = std::getenv("APS5_SPLIT_SLICES");
-        return text != nullptr ? std::max<std::uint64_t>(std::strtoull(text, nullptr, 0), 1u) : 8u;
+        return text != nullptr ? std::max<std::uint64_t>(std::strtoull(text, nullptr, 0), 1u) : 1u;
     }();
     const auto stateSlots = SplitTableCallStateSlots(split);
     const auto groupsInRange = (localDevice->StorageBufferRangeLimit() / sizeof(std::uint32_t) - ShaderRecompiler::SplitStateAbi::HeaderDwords) / (static_cast<std::uint64_t>(stateSlots) * lanesPerGroup);
-    const auto groupsPerSlice = std::max<std::uint64_t>(std::min<std::uint64_t>(groupsInRange, localDevice->WorkGroupCountLimit()[0]), 1u);
+    const auto groupsInBudget = stateBytes / (static_cast<std::uint64_t>(stateSlots) * lanesPerGroup * sizeof(std::uint32_t));
+    const auto groupsPerSlice = std::max<std::uint64_t>(std::min({groupsInRange, groupsInBudget, static_cast<std::uint64_t>(localDevice->WorkGroupCountLimit()[0])}), 1u);
     const std::uint64_t indirectGroups = indirectSlices * std::max(stateLanes / lanesPerGroup, 1u);
-    const auto sliceGroups = static_cast<std::uint32_t>(std::min<std::uint64_t>(indirectArguments != 0 ? indirectGroups : std::max(stateLanes / lanesPerGroup, 1u), groupsPerSlice));
     const auto totalGroups = static_cast<std::uint64_t>(groups[0]) * groups[1] * groups[2];
+    const auto sliceGroups = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::max<std::uint64_t>(indirectArguments != 0 ? indirectGroups : totalGroups, 1u), groupsPerSlice));
     const auto slices = ((indirectArguments != 0 ? indirectGroups : totalGroups) + sliceGroups - 1u) / sliceGroups;
     if (slices * sliceGroups > std::numeric_limits<std::uint32_t>::max()) throw fail("its slices start past 2^32 workgroups");
     const VulkanDevice::SplitSlice base{sliceGroups * lanesPerGroup, 0u, sliceGroups, stateSlots};
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : totalGroups * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
-    const auto run = [&](std::size_t part, std::uint64_t slice, bool readTargets) {
+    using GroupRuns = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+    std::map<std::uint64_t, GroupRuns> targetRuns;
+    GroupRuns callingRuns;
+    const auto addGroup = [](GroupRuns& runs, std::uint32_t group) {
+        if (!runs.empty() && runs.back().first + runs.back().second == group) runs.back().second++;
+        else if (runs.empty() || runs.back().first + runs.back().second < group) runs.emplace_back(group, 1u);
+    };
+    const auto run = [&](std::size_t part, std::uint64_t slice, bool readTargets, const GroupRuns* runs = nullptr) {
         const auto& compiled = *parts[part].result;
         const auto* views = &parts[part].capture->snapshot.registeredImages;
         try {
@@ -180,6 +193,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             current.groupBase = static_cast<std::uint32_t>(slice * sliceGroups);
             current.readTargets = readTargets;
             current.targetSlot = SplitTableCallTargetSlot(split);
+            if (runs != nullptr) current.runs = *runs;
             localDevice->SetSplitSlice(current);
             try {
                 if (indirectArguments != 0) {
@@ -202,12 +216,27 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             const std::uint64_t dispatched = static_cast<std::uint64_t>(words[counts]) * words[counts + 1u] * words[counts + 2u];
             const auto groupBase = slice * sliceGroups;
             const auto lanes = dispatched <= groupBase ? 0u : static_cast<std::uint32_t>(std::min<std::uint64_t>((dispatched - groupBase) * lanesPerGroup, capacity));
-            std::set<std::uint64_t> targets;
+            targetRuns.clear();
+            callingRuns.clear();
+            std::uint64_t last = 0;
+            GroupRuns* lastRuns = nullptr;
             for (std::uint32_t lane = 0; lane < lanes; ++lane) {
-                const auto target = static_cast<std::uint64_t>(words[header + lane]) | static_cast<std::uint64_t>(words[header + capacity + lane]) << 32u;
-                if (target != 0) targets.insert(target);
+                const auto low = words[header + lane];
+                const auto high = words[header + capacity + lane];
+                if ((low | high) == 0u) continue;
+                const auto target = static_cast<std::uint64_t>(low) | static_cast<std::uint64_t>(high) << 32u;
+                if (target != last || lastRuns == nullptr) {
+                    last = target;
+                    lastRuns = &targetRuns[target];
+                }
+                const auto group = lane / lanesPerGroup;
+                addGroup(*lastRuns, group);
+                addGroup(callingRuns, group);
             }
-            return std::vector<std::uint64_t>(targets.begin(), targets.end());
+            std::vector<std::uint64_t> targets;
+            targets.reserve(targetRuns.size());
+            for (const auto& entry : targetRuns) targets.push_back(entry.first);
+            return targets;
         } catch (const std::exception& error) {
             throw fail(error.what());
         }
@@ -232,9 +261,11 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
                 if (parts[part].result == nullptr) missing.push_back(part);
             }
             if (!missing.empty()) compile(missing);
-            for (const auto part : served) static_cast<void>(run(part, slice, false));
+            const auto servedRuns = targetRuns;
+            const auto resumeRuns = callingRuns;
+            for (std::size_t index = 0; index < targets.size(); ++index) static_cast<void>(run(served[index], slice, false, &servedRuns.at(targets[index])));
             if (!continues) break;
-            targets = run(partCount - 1u, slice, true);
+            targets = run(partCount - 1u, slice, true, &resumeRuns);
         }
         if (!continues) static_cast<void>(run(partCount - 1u, slice, false));
     }

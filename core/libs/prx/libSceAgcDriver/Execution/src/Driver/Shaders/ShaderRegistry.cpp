@@ -1012,12 +1012,31 @@ std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32
     constexpr std::uint64_t page = 4096u;
     constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
+    static std::mutex knownMutex;
+    static std::map<std::tuple<std::uint64_t, std::uint32_t, bool>, std::shared_ptr<const std::vector<std::uint32_t>>> known;
+    const auto key = std::make_tuple(address, linkRegister, allowGetpc);
+    std::shared_ptr<const std::vector<std::uint32_t>> cached;
+    {
+        std::lock_guard lock(knownMutex);
+        if (const auto found = known.find(key); found != known.end()) cached = found->second;
+    }
+    if (cached != nullptr && GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), cached->size() * 4u)) {
+        std::vector<std::uint32_t> current(cached->size());
+        GuestMemory::Read(address, std::as_writable_bytes(std::span(current)));
+        if (current == *cached) {
+            RecordLinkDependency(address, std::as_bytes(std::span(current)), dependencies);
+            return current;
+        }
+    }
     std::vector<std::uint32_t> words;
     const auto finish = [&] {
         const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister, allowGetpc);
         if (length) {
             words.resize(*length);
             RecordLinkDependency(address, std::as_bytes(std::span(words)), dependencies);
+            std::lock_guard lock(knownMutex);
+            if (known.size() >= 4096u) known.clear();
+            known.insert_or_assign(key, std::make_shared<const std::vector<std::uint32_t>>(words));
         }
         return length.has_value();
     };
@@ -1393,6 +1412,14 @@ std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompil
     {
         std::lock_guard lock(mutex);
         if (const auto found = known.find(key); found != known.end()) return found->second;
+        for (const auto& [built, builtParts] : known) {
+            if (built.size() < key.size() || !std::equal(key.begin(), key.begin() + 4, built.begin())) continue;
+            std::set<std::pair<std::uint64_t, std::uint64_t>> held;
+            for (std::size_t index = 4; index + 1 < built.size(); index += 2) held.emplace(built[index], built[index + 1]);
+            bool covered = true;
+            for (std::size_t index = 4; covered && index + 1 < key.size(); index += 2) covered = held.contains({key[index], key[index + 1]});
+            if (covered) return builtParts;
+        }
     }
     std::string refusal;
     const auto split = ShaderRecompiler::SplitTableCall(program, call, callees, request.context.waveSize, refusal);

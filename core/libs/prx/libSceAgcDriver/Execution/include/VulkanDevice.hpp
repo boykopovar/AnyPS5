@@ -96,6 +96,7 @@ public:
     std::uint32_t MaxFragmentInputComponents() const;
     const std::uint32_t* WorkGroupCountLimit() const;
     std::uint64_t StorageBufferRangeLimit() const;
+    std::uint64_t DeviceLocalBytes() const;
     std::uint32_t VendorId() const;
     ShaderRecompiler::SpirvTarget ComputeTarget(std::uint32_t waveSize) const;
     bool ComputeFullSubgroups() const;
@@ -405,9 +406,10 @@ public:
         std::uint32_t slots = 0;
         bool readTargets = false;
         std::uint32_t targetSlot = 0;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
     };
     void SetSplitSlice(const std::optional<SplitSlice>& slice);
-    std::vector<std::uint32_t> SplitTargets();
+    std::span<const std::uint32_t> SplitTargets();
 
 private:
     std::optional<SplitSlice> splitSlice;
