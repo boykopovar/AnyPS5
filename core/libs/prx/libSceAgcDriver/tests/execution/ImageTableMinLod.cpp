@@ -131,9 +131,9 @@ void SetEnvironment(const char* name, const char* value) {
 #endif
 }
 
-bool DeviceHasExtensionWithoutEnvironment() {
+bool DeviceHasExtensionWithoutEnvironment(const Context& deviceContext) {
     const char* forced = std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD");
-    if (forced == nullptr) return true;
+    if (forced == nullptr) return deviceContext.imageViewMinLod || deviceContext.imageViewMinLodExtension;
     const std::string saved = forced;
     SetEnvironment("APS5_NO_IMAGE_VIEW_MIN_LOD", nullptr);
     bool has = false;
@@ -236,7 +236,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
         auto context = device->graphicsContext();
-        const bool extensionExpected = DeviceHasExtensionWithoutEnvironment();
+        const bool extensionExpected = DeviceHasExtensionWithoutEnvironment(context);
         if (!extensionExpected && !context.imageViewMinLod && !context.imageViewMinLodExtension) {
             std::puts("skipped, the device has no VK_EXT_image_view_min_lod");
             return VulkanTestSkipped;
