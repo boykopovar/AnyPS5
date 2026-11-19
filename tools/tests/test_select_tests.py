@@ -942,5 +942,17 @@ class GraphClosureTests(unittest.TestCase):
             self.assertEqual(select_tests.load_graph(path), {"tests": {}, "closures": {}})
 
 
+class CtestJsonEncodingTests(unittest.TestCase):
+    def test_ctest_listing_is_decoded_as_utf8(self):
+        build = select_tests.Build.__new__(select_tests.Build)
+        build.path = "build"
+        listing = {"tests": [{"name": "alpha", "command": ["bin/alpha.exe"]}]}
+        with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps(listing))) as run:
+            self.assertEqual(build.tests(), (listing, listing["tests"]))
+        self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1"])
+        self.assertTrue(run.call_args.kwargs["text"])
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))

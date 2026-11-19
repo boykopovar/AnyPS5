@@ -700,6 +700,24 @@ class CtestResolutionsTests(unittest.TestCase):
         self.assertEqual(self.resolve([]), {})
 
 
+class CtestJsonEncodingTests(unittest.TestCase):
+    def test_every_ctest_listing_is_decoded_as_utf8(self):
+        listing = json.dumps({"tests": [{"name": "alpha", "command": ["bin/alpha.exe"]}]})
+        checks = (
+            lambda: build_changed_guest_tests.script_test_indices("build", [re.compile("^alpha$")]),
+            lambda: build_changed_guest_tests.script_test_owners(Path("build"), {"alpha": "Alpha"}, [re.compile("^alpha$")]),
+            lambda: build_changed_guest_tests.ctest_resolutions(Path("build"), {"alpha": "Alpha"}),
+        )
+        for check in checks:
+            with self.subTest(check=check), mock.patch.object(
+                    build_changed_guest_tests.subprocess, "run", return_value=run_result(listing)) as run, \
+                    mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value={}):
+                check()
+            self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1"])
+            self.assertTrue(run.call_args.kwargs["text"])
+            self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+
+
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
