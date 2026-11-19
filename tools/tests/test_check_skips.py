@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -655,6 +656,22 @@ class NotRunTests(unittest.TestCase):
 
 
 
+
+
+class DeviceLimitationsTests(unittest.TestCase):
+    PATTERNS = [re.compile("no display"), re.compile("no gpu")]
+
+    def test_all_skip_reasons_matching_a_pattern_is_a_limitation(self):
+        output = "a: skipped, no display\nb: Skipped, NO GPU found\nc: ok\n"
+        self.assertTrue(check_skips.device_limitations(output, [re.compile("no display", re.I), re.compile("no gpu", re.I)]))
+
+    def test_one_unmatched_reason_is_not_a_limitation(self):
+        output = "a: skipped, no display\nb: skipped, flaky\n"
+        self.assertFalse(check_skips.device_limitations(output, self.PATTERNS))
+
+    def test_no_skips_or_no_patterns_is_not_a_limitation(self):
+        self.assertFalse(check_skips.device_limitations("all passed\n", self.PATTERNS))
+        self.assertFalse(check_skips.device_limitations("a: skipped, no display\n", []))
 
 
 if __name__ == "__main__":
