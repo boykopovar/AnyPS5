@@ -7077,6 +7077,17 @@ std::shared_ptr<StorageTexture> StorageTexture::FindLive(std::uint64_t address, 
     return nullptr;
 }
 
+std::shared_ptr<StorageTexture> StorageTexture::FindLiveNewest(const StorageTexture& shape) {
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    StorageTexture* newest = nullptr;
+    for (auto* texture : live.textures) {
+        if (texture == &shape || texture->released || texture->descriptor.baseAddress != shape.descriptor.baseAddress || !texture->SameSurfaceShape(shape)) continue;
+        if (newest == nullptr || texture->version > newest->version) newest = texture;
+    }
+    return newest != nullptr ? newest->weak_from_this().lock() : nullptr;
+}
+
 bool StorageTexture::SameSurfaceShape(const StorageTexture& other) const {
     const auto& mine = descriptor;
     const auto& theirs = other.descriptor;

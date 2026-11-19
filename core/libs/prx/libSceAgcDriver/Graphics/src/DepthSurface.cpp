@@ -1944,6 +1944,21 @@ public:
         }
         unitGeneration.assign(unitGeneration.size(), generation);
         const auto mirror = mirrorPlane.storage;
+        static const bool fromAlias = std::getenv("APS5_NO_DEPTH_FROM_ALIAS") == nullptr;
+        if (fromAlias) {
+            if (const auto alias = StorageTexture::FindLiveNewest(*mirror); alias != nullptr && alias->Version() != aliasVersion) {
+                aliasVersion = alias->Version();
+                if (StoresUnits(*alias)) {
+                    const auto rects = alias->UnitRects(changed);
+                    copyPlane(mirrorPlane, alias, false, false, true, &rects);
+                } else {
+                    ClearStale();
+                    copyPlane(mirrorPlane, alias, false, false, true);
+                }
+                written = ++depthWrites;
+                return;
+            }
+        }
         if (StoresUnits(*mirror)) {
             const auto rects = mirror->UnitRects(changed);
             copyPlane(mirrorPlane, mirror, false, false, true, &rects);
@@ -2004,6 +2019,7 @@ public:
 
     std::vector<bool> staleUnits;
     std::size_t staleCount = 0;
+    std::uint64_t aliasVersion = 0;
     std::uint64_t depthMark = 0;
     std::uint64_t stencilMark = 0;
     std::vector<std::uint64_t> unitBacking;
