@@ -164,6 +164,28 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "API unavailable")
 
+    def test_unavailable_estimate_survives_missing_checkout_cleanup(self):
+        missing = self.root / "missing-checkout"
+        self.assertFalse(missing.exists())
+        with patch.object(progress_prs, "collect_open_prs", side_effect=OSError("checkout missing")):
+            result = progress_prs.estimate("boykopovar/AnyPS5", missing)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "checkout missing")
+
+    def test_unavailable_estimate_survives_ref_cleanup_failure(self):
+        calls = []
+        def fail_cleanup(root, *args, check=True):
+            calls.append(args)
+            if args[0] == "for-each-ref":
+                return subprocess.CompletedProcess([], 0, "refs/heads/aps5-open-pr/1\n", "")
+            raise OSError("checkout disappeared during cleanup")
+        with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")), \
+                patch.object(progress_prs, "git", side_effect=fail_cleanup):
+            result = progress_prs.estimate("boykopovar/AnyPS5", self.root)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "API unavailable")
+        self.assertEqual(len(calls), 2)
+
 class DependencyProbeFailureTests(unittest.TestCase):
     def test_fatal_closed_dependency_probe_is_not_an_unresolved_dependency(self):
         pulls = {1: {"depends": {99}, "sha": "head"}}
