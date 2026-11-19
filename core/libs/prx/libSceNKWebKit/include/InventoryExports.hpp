@@ -2790,7 +2790,6 @@ int APS5_VABI _ZN7WebCore19MediaResourceLoaderD1Ev();
 int APS5_VABI _ZN7WebCore19MediaResourceLoaderD2Ev();
 int APS5_VABI _ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3_();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv();
-int APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv();
 int APS5_VABI _ZN7WebCore19StorageQuotaManager20resetQuotaForTestingEv();
 int APS5_VABI _ZN7WebCore19StorageQuotaManager24requestSpaceOnMainThreadEmON3WTF17CompletionHandlerIFvNS0_8DecisionEEEE();
 int APS5_VABI _ZN7WebCore19StorageQuotaManager30requestSpaceOnBackgroundThreadEm();
