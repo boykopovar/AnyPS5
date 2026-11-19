@@ -44,7 +44,7 @@ void WriteRelaEntry(Bytes& image, const std::uint64_t info) {
 int main(const int argc, char** argv) {
     try {
         require(argc == 2, "usage: dynamic_table_bounds_tests <relinker>");
-        const std::string binary = argv[1];
+        const std::string binary = RelinkerArgument(argv);
         const TempDirectory directory;
         const auto input = directory.Path() / "input.elf";
         const auto output = directory.Path() / "output.elf";

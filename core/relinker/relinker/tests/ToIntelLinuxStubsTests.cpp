@@ -42,7 +42,7 @@ int main(const int argc, char** argv) {
         const auto input = directory.Path() / "input.elf";
         const auto output = directory.Path() / "output.elf";
         WriteFile(input, MakeExecutable(kCode));
-        const auto run = RunRelinker(argv[1], {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
+        const auto run = RunRelinker(RelinkerArgument(argv), {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
         require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
         require(run.Output.find("Intel conversion: 0 in place, 2 stubs") != std::string::npos, "Relinker did not report two stubs:\n" + run.Output);
 

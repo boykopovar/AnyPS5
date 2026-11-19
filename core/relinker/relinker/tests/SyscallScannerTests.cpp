@@ -284,7 +284,7 @@ void RequireUnknownSyscallsStillFail(const std::string& binary) {
 int main(const int argc, char** argv) {
     try {
         require(argc == 2, "usage: syscall_scanner_tests <relinker>");
-        const std::string binary = argv[1];
+        const std::string binary = RelinkerArgument(argv);
 
         RequireNumber(binary, kConstantStub, "syscall number 9", "64-bit constant stub");
         RequireNumber(binary, kUnsignedStub, "syscall number 57", "32-bit constant stub");
