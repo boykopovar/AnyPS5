@@ -35,7 +35,7 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-    foreach(nativeColorMode IN ITEMS readback snapshot snapshot_refusals)
+    foreach(nativeColorMode IN ITEMS readback snapshot snapshot_refusals packed_float_resolve)
         add_test(NAME agc_driver_native_color_${nativeColorMode} COMMAND agc_driver_sample_multisample_target_tests --${nativeColorMode})
         set_tests_properties(agc_driver_native_color_${nativeColorMode} PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)

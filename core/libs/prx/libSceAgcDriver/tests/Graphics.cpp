@@ -4702,11 +4702,16 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
-    for (const auto [packedInfo, name] : {std::pair{6u << 2u, "10_11_11 unorm"}, std::pair{(7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u, "11_11_10 float"}}) {
-        auto packed = rasterizedResolve;
-        for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
-        expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
-    }
+    auto packedUnorm = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packedUnorm.context[offset] = (packedUnorm.context[offset] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(packedUnorm); }, "CB resolves of 10_11_11 unorm color targets");
+    constexpr auto packedFloatInfo = (7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u;
+    auto packedFloat = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packedFloat.context[offset] = (packedFloat.context[offset] & ~0x41f7cu) | packedFloatInfo;
+    const auto packedFloatPass = DecodeColorMetadataPass(packedFloat);
+    Require(packedFloatPass.has_value() && packedFloatPass->mode == ColorMetadataPass::Mode::Resolve && packedFloatPass->source.has_value() && packedFloatPass->source->samples == 2u && packedFloatPass->source->packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && packedFloatPass->targets.size() == 1 && packedFloatPass->targets.front().packing == ShaderRecompiler::ColorExportPacking::Float11_11_10, "an 11_11_10 float CB resolve did not keep its sample count and packing");
+    packedFloat.context[0x32bu] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(packedFloat); }, "requires matching packing and component order");
     auto uintSource = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
     const auto uintPass = DecodeColorMetadataPass(uintSource);

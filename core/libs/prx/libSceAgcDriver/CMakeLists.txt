@@ -268,6 +268,7 @@ function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
 endfunction()
 set(agcDepthTransferShaderHeaders)
 agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
+agc_embedded_shader(PackedFloatResolve.frag PackedFloatResolve PACKED_FLOAT_RESOLVE_SPV agcPresentationShaderHeaders)
 set(agcStagingCopyBackBoundShaderHeaders)
 agc_embedded_shader(StagingCopyBackBound.comp StagingCopyBackBound STAGING_COPY_BACK_BOUND_SPV agcStagingCopyBackBoundShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
@@ -452,6 +453,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/FirstSampleCopy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PackedFloatResolve.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
