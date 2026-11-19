@@ -93,7 +93,7 @@ hb_unicode_general_category_t IcuCategory(hb_unicode_funcs_t*, hb_codepoint_t co
 hb_unicode_funcs_t* CreateIcuFunctions() {
     UErrorCode error = U_ZERO_ERROR;
     const auto* nfc = unorm2_getNFCInstance(&error);
-    if (U_FAILURE(error)) NotImplemented_nid_no_patch("HarfBuzz ICU NFC data");
+    if (U_FAILURE(error)) throw std::runtime_error("HarfBuzz ICU NFC data failed to load");
     auto* funcs = hb_unicode_funcs_create(nullptr);
     hb_unicode_funcs_set_general_category_func(funcs, IcuCategory, nullptr, nullptr);
     hb_unicode_funcs_set_combining_class_func(funcs, [](hb_unicode_funcs_t*, hb_codepoint_t code, void*) {

@@ -20,14 +20,14 @@ static_assert(std::is_same_v<hb_tag_t, std::uint32_t> && sizeof(unsigned) == 4);
 extern "C" {
 
 void APS5_VABI hb_shape_nid_postfix(hb_font_t* font, hb_buffer_t* buffer, const HarfBuzz::Feature* features, unsigned numFeatures) {
-    if (!buffer) NotImplemented_nid_no_patch(__func__);
+    if (!buffer) GuestFault_nid_no_patch(__func__);
     if (!hb_buffer_get_length(buffer)) return;
-    if (!font || (!features && numFeatures)) NotImplemented_nid_no_patch(__func__);
+    if (!font || (!features && numFeatures)) GuestFault_nid_no_patch(__func__);
     std::vector<hb_feature_t> nativeFeatures;
     std::array<HarfBuzz::Feature, 256> chunk;
     for (unsigned done = 0; done < numFeatures;) {
         const unsigned count = std::min<unsigned>(static_cast<unsigned>(chunk.size()), numFeatures - done);
-        if (!GuestCopyIn_nid_no_patch(chunk.data(), features + done, count * sizeof(HarfBuzz::Feature))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), features + done, count * sizeof(HarfBuzz::Feature))) GuestFault_nid_no_patch(__func__);
         for (unsigned index = 0; index < count; ++index) {
             const auto& feature = chunk[index];
             nativeFeatures.push_back({feature.tag, feature.value, feature.start, feature.end});
