@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::rtcp::Remb::Remb() and ~Remb()](../../../core/libs/prx/libwebrtc/src/RtcpRemb.cpp) (libwebrtc) - the vtable and allocator are unverified on the console. The constructor zeroes both SSRCs and the bitrate, leaves the SSRC vector empty and installs a local vtable of D1, D0, `BlockLength` and `Create`, with the callback as two pointers, as `rtcp::App` does. The destructor frees the vector through guest `delete`, as `Parse` allocates it. With release DCHECKs compiled out, `Create` writes the stored media SSRC and truncates an SSRC count above 255 to 8 bits. Null objects, or a full buffer without a callback, throw. Adapted from [remb.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/remb.cc), `psfb.cc` and [rtcp_packet.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet.cc), keeping their notices. Closes when: compared with the console.

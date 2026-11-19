@@ -3,8 +3,10 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
+#include <algorithm>
 #include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -13,6 +15,7 @@ namespace {
 
 int allocations = 0;
 int frees = 0;
+void* lastFreed = nullptr;
 bool failAllocation = false;
 void Require(bool condition) {
     if (!condition) throw std::runtime_error("Remb assertion failed");
@@ -22,7 +25,7 @@ void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     ++allocations;
     return std::malloc(size);
 }
-void APS5_VABI Free_nid_no_patch(void* pointer) { if (pointer) ++frees; std::free(pointer); }
+void APS5_VABI Free_nid_no_patch(void* pointer) { if (pointer) { ++frees; lastFreed = pointer; } std::free(pointer); }
 void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
 void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t size) { return Allocate_nid_no_patch(size); }
@@ -122,6 +125,126 @@ void TestReleaseAndNulls() {
     invalid(&remb, &header);
 }
 
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+using BlockLength = std::size_t (APS5_VABI*)(const WebRtcRtcpRemb*);
+using Create = bool (APS5_VABI*)(const WebRtcRtcpRemb*, std::uint8_t*, std::size_t*, std::size_t, void*, PacketReady);
+using Destroy = void (APS5_VABI*)(WebRtcRtcpRemb*);
+
+template<typename TFunction> TFunction Slot(const WebRtcRtcpRemb& remb, int slot) {
+    return reinterpret_cast<TFunction>(const_cast<void*>(static_cast<const void* const*>(remb.vtable)[slot]));
+}
+
+template<typename TFunction> void RequireInvalidArgument(TFunction function) {
+    bool threw = false;
+    try { function(); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+}
+
+struct Sent {
+    std::vector<std::uint8_t> bytes;
+    int calls = 0;
+};
+
+void APS5_VABI Send(void* function, const std::uint8_t* data, std::size_t size) {
+    auto* sent = static_cast<Sent*>(function);
+    sent->bytes.assign(data, data + size);
+    ++sent->calls;
+}
+
+WebRtcRtcpRemb Default() {
+    WebRtcRtcpRemb remb;
+    std::memset(&remb, 0xA5, sizeof(remb));
+    _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(&remb);
+    return remb;
+}
+
+std::vector<std::uint8_t> Serialize(const WebRtcRtcpRemb& remb) {
+    std::vector<std::uint8_t> buffer(Slot<BlockLength>(remb, 2)(&remb) + 4, 0xee);
+    std::size_t index = 0;
+    Require(Slot<Create>(remb, 3)(&remb, buffer.data(), &index, buffer.size(), nullptr, nullptr));
+    Require(index + 4 == buffer.size() && buffer[index] == 0xee);
+    buffer.resize(index);
+    return buffer;
+}
+
+void TestConstructor() {
+    WebRtcRtcpRemb remb = Default();
+    Require(remb.vtable != nullptr && remb.senderSsrc == 0 && remb.mediaSsrc == 0 && remb.bitrateBps == 0);
+    Require(remb.ssrcBegin == nullptr && remb.ssrcEnd == nullptr && remb.ssrcCapacityEnd == nullptr);
+    Require(Slot<BlockLength>(remb, 2)(&remb) == 20);
+    const std::vector<std::uint8_t> expected {0x8f, 206, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 'R', 'E', 'M', 'B', 0, 0, 0, 0};
+    Require(Serialize(remb) == expected);
+    const int before = frees;
+    _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(&remb);
+    Require(frees == before);
+}
+
+void TestCreateRoundTripsParsedPackets() {
+    for (const auto& packet : {Packet(0), Packet(3, 5, 0x3ffff), Packet(1, 0, 0x2345), Packet(255, 45, 0x3ffff)}) {
+        WebRtcRtcpRemb remb = Default();
+        Require(Parse(remb, packet));
+        Require(Slot<BlockLength>(remb, 2)(&remb) == packet.size());
+        Require(Serialize(remb) == packet);
+        _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(&remb);
+    }
+}
+
+void TestCreateNormalizesTheBitrate() {
+    WebRtcRtcpRemb remb = Default();
+    Require(Parse(remb, Packet(2, 2, 0x100)));
+    Require(remb.bitrateBps == 0x400);
+    Require(Serialize(remb) == Packet(2, 0, 0x400));
+    remb.bitrateBps = 0x40000;
+    Require(Serialize(remb) == Packet(2, 1, 0x20000));
+    remb.bitrateBps = 0x7fffffffffffffffLL;
+    Require(Serialize(remb) == Packet(2, 45, 0x3ffff));
+    _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(&remb);
+}
+
+void TestCreateSendsAFullBuffer() {
+    WebRtcRtcpRemb remb = Default();
+    remb.senderSsrc = 0x01020304;
+    std::vector<std::uint8_t> buffer(24, 0);
+    std::size_t index = 5;
+    Sent sent;
+    Require(Slot<Create>(remb, 3)(&remb, buffer.data(), &index, buffer.size(), &sent, &Send));
+    Require(sent.calls == 1 && sent.bytes.size() == 5 && index == 20);
+    Require(buffer[0] == 0x8f && buffer[1] == 206 && buffer[3] == 4 && buffer[4] == 1 && buffer[7] == 4);
+    index = 0;
+    Require(!Slot<Create>(remb, 3)(&remb, buffer.data(), &index, 19, &sent, &Send));
+    Require(index == 0 && sent.calls == 1);
+    index = 4;
+    RequireInvalidArgument([&] { Slot<Create>(remb, 3)(&remb, buffer.data(), &index, 20, nullptr, nullptr); });
+    Require(index == 4);
+}
+
+void TestDestructors() {
+    WebRtcRtcpRemb remb = Default();
+    Require(Parse(remb, Packet(3)));
+    auto* storage = remb.ssrcBegin;
+    int before = frees;
+    _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(&remb);
+    Require(frees == before + 1 && lastFreed == storage);
+    auto* heap = static_cast<WebRtcRtcpRemb*>(_Znwm_nid_postfix(sizeof(WebRtcRtcpRemb)));
+    _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(heap);
+    Require(Parse(*heap, Packet(2)));
+    before = frees;
+    Slot<Destroy>(*heap, 1)(heap);
+    Require(frees == before + 2 && lastFreed == heap);
+    auto* empty = static_cast<WebRtcRtcpRemb*>(_Znwm_nid_postfix(sizeof(WebRtcRtcpRemb)));
+    _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(empty);
+    before = frees;
+    Slot<Destroy>(*empty, 0)(empty);
+    Require(frees == before);
+    Slot<Destroy>(*empty, 1)(empty);
+    Require(frees == before + 1 && lastFreed == empty);
+}
+
+void TestNullObjectsThrow() {
+    RequireInvalidArgument([] { _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(nullptr); });
+    RequireInvalidArgument([] { _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(nullptr); });
+}
+
 }
 
 int main() {
@@ -135,6 +258,12 @@ int main() {
         TestValidAndReplacement();
         TestFailures();
         TestReleaseAndNulls();
+        TestConstructor();
+        TestCreateRoundTripsParsedPackets();
+        TestCreateNormalizesTheBitrate();
+        TestCreateSendsAFullBuffer();
+        TestDestructors();
+        TestNullObjectsThrow();
         Require(allocations == frees);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
