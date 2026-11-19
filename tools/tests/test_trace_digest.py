@@ -1530,6 +1530,19 @@ class IntervalSchemaTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
                         trace_digest.load_intervals(self.path)
 
+    def test_missing_interval_bound_is_rejected_by_both_cli_reports(self):
+        for field in ("interval_start_s", "interval_end_s"):
+            record = interval_line(0, 1, 20, 1)
+            del record[field]
+            self.write(record)
+            for script in (trace_digest.__file__, Path(trace_digest.__file__).with_name("trace_intervals_csv.py")):
+                with self.subTest(field=field, script=script):
+                    result = subprocess.run([sys.executable, str(script), str(self.path)],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"summary.jsonl:4: {field} must be", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_out_of_order_percentiles_are_rejected_by_both_cli_reports(self):
         for frames in (dict(p50=2, p90=1, p99=3, max=4), dict(p50=1, p90=3, p99=2, max=4),
                        dict(p50=1, p90=2, p99=4, max=3)):
