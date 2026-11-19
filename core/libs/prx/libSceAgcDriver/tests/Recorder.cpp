@@ -5056,7 +5056,13 @@ bool sparseRunImportTests(const Device& device, bool copied) {
         Require(std::memcmp(readback.Bytes().data(), guest, committed) == 0, "the GPU does not read a sparse run heap's bytes through its in-place view");
     });
     upload(true, 0, [&](GuestBufferMemory& memory) {
-        Require(!bound(memory, address, heap), "a written sparse run heap is bound in place");
+        if (const auto* import = run(); import != nullptr) {
+            std::uint32_t adjustment = 0;
+            const auto view = memory.Descriptor(address, heap, adjustment);
+            Require(view.buffer == import->buffer && view.range == committed && adjustment == 0, "a written sparse run heap with an import is not bound in place from its run's import");
+        } else {
+            Require(!bound(memory, address, heap), "a written sparse run heap without an import is bound in place");
+        }
     });
     upload(false, 5 * unit, [&](GuestBufferMemory& memory) {
         Require(!bound(memory, address, heap), "a sparse run heap with a view past its run is bound in place");
