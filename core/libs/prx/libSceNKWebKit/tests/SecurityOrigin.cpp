@@ -490,6 +490,62 @@ static void TestOriginData() {
     Require(Throws([] { _ZNK7WebCore14SecurityOrigin11toRawStringEv(nullptr); }));
 }
 
+static bool DataEqual(const Data& a, const Data& b) {
+    return _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_(&a.data, &b.data);
+}
+
+static void TestOriginDataEquality() {
+    Data https("https", "example.com", 443);
+    Require(DataEqual(https, https));
+    Require(DataEqual(https, Data("https", "example.com", 443)));
+    Require(!DataEqual(https, Data("http", "example.com", 443)));
+    Require(!DataEqual(https, Data("HTTPS", "example.com", 443)));
+    Require(!DataEqual(https, Data("https", "Example.com", 443)));
+    Require(!DataEqual(https, Data("https", "example.org", 443)));
+    Require(!DataEqual(https, Data("https", "example.com", 8443)));
+    Require(!DataEqual(https, Data("https", "example.com", std::nullopt)));
+    Require(!DataEqual(Data("https", "example.com", std::nullopt), https));
+    Require(DataEqual(Data("https", "example.com", std::nullopt), Data("https", "example.com", std::nullopt)));
+    Require(DataEqual(Data("", "", std::nullopt), Data("", "", std::nullopt)));
+
+    Data wide("https", "", 1);
+    wide.data.storage.tuple.host = Make("example.com", true);
+    Require(!Is8Bit(wide.data.storage.tuple.host));
+    Require(!DataEqual(https, wide));
+    wide.data.storage.tuple.port.value = 443;
+    Require(DataEqual(https, wide));
+
+    Data nullHost("https", "", 443);
+    nullHost.data.storage.tuple.host = String();
+    Require(!DataEqual(nullHost, https));
+    Require(!DataEqual(nullHost, Data("https", "", 443)));
+    Data otherNullHost("https", "", 443);
+    otherNullHost.data.storage.tuple.host = String();
+    Require(DataEqual(nullHost, otherNullHost));
+
+    Data opaque(OpaqueOriginIdentifier{42, 7});
+    Require(DataEqual(opaque, Data(OpaqueOriginIdentifier{42, 7})));
+    Require(!DataEqual(opaque, Data(OpaqueOriginIdentifier{42, 8})));
+    Require(!DataEqual(opaque, Data(OpaqueOriginIdentifier{43, 7})));
+    Require(!DataEqual(opaque, https));
+    Require(!DataEqual(https, opaque));
+
+    Data valueless(OpaqueOriginIdentifier{1, 1});
+    valueless.data.index = std::numeric_limits<std::uint32_t>::max();
+    bool threw = false;
+    try {
+        DataEqual(valueless, opaque);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(DataEqual(valueless, valueless));
+    valueless.data.index = NKWebKit::WebCoreAbi::kSecurityOriginOpaqueIndex;
+
+    Require(Throws([&] { _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_(&https.data, nullptr); }));
+    Require(Throws([&] { _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_(nullptr, &https.data); }));
+}
+
 int main() {
     TestLoopback();
     TestTupleOrigins();
@@ -500,5 +556,6 @@ int main() {
     TestCachePartition();
     TestRegistrableDomainSuffix();
     TestOriginData();
+    TestOriginDataEquality();
     return 0;
 }

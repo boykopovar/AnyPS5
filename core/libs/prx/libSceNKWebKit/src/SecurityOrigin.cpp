@@ -631,4 +631,8 @@ OriginRef APS5_VABI _ZNK7WebCore18SecurityOriginData14securityOriginEv(const Sec
     return CreateFromData(Checked(self), __func__);
 }
 
+bool APS5_VABI _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_(const SecurityOriginData* a, const SecurityOriginData* b) {
+    return EqualData(Checked(a), Checked(b));
+}
+
 }
