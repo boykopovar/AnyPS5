@@ -3,12 +3,14 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
@@ -30,6 +32,13 @@
 extern "C" const char* __progname_nid_postfix;
 
 namespace {
+
+template<typename T, typename Evaluate>
+T ErfcTail(T x, Evaluate evaluate, const char* caller) {
+    constexpr auto tailStart = static_cast<T>(1.523L);
+    if (!std::isfinite(x) || x < tailStart) NotImplemented_nid_no_patch(caller);
+    return evaluate(x);
+}
 
 template<typename Slot>
 Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, const char* function) {
@@ -626,11 +635,6 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Atqexit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -678,19 +682,12 @@ int APS5_VABI _Deletegloballocale_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Erfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+double APS5_VABI _Erfc_nid_postfix(double x) {
+    return ErfcTail(x, erfc_nid_postfix, __func__);
 }
 
-int APS5_VABI _FAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+float APS5_VABI _FErfc_nid_postfix(float x) {
+    return ErfcTail(x, erfcf_nid_postfix, __func__);
 }
 
 int APS5_VABI _FHypot_nid_postfix() {
@@ -719,11 +716,6 @@ int APS5_VABI _FRint_nid_postfix() {
 }
 
 int APS5_VABI _FSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1115,14 +1107,8 @@ int APS5_VABI _Isdst_nid_postfix() {
     return -1;
 }
 
-int APS5_VABI _LAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+long double APS5_VABI _LErfc_nid_postfix(long double x) {
+    return ErfcTail(x, erfcl_nid_postfix, __func__);
 }
 
 int APS5_VABI _LHypot_nid_postfix() {
@@ -1151,11 +1137,6 @@ int APS5_VABI _LRint_nid_postfix() {
 }
 
 int APS5_VABI _LSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

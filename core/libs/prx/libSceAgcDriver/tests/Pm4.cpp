@@ -1103,7 +1103,35 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1004, 0x2}), 0); }, "misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0, 0}), 0); }, "null or misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1000}), 0); }, "packet size");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x1000, 0x2}), 0); }, "event type 56");
+    const auto sampleControl = [](std::uint32_t blocks) { return (blocks << 11u) | (2u << 9u); };
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 0}), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffffu), 0}), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0u), 0}), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 0}), 0x20); }, "compute queue");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x038, sampleControl(0xffu), 0}), 0); }, "pixel pipe statistics control event index");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu)}), 0); }, "packet size");
+    for (const auto bits : {1u, 4u, 1u << 27u, 1u << 31u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu) | bits, 0}), 0); }, "PIXEL_PIPE_STAT_CONTROL reserved bits");
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 1}), 0); }, "PIXEL_PIPE_STAT_CONTROL reserved bits");
+    for (const auto counter : {1u, 3u, 4u, 7u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu) | (counter << 3u), 0}), 0); }, "occlusion count 0");
+    }
+    for (const auto stride : {0u, 1u, 3u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, (0xffu << 11u) | (stride << 9u), 0}), 0); }, "strides other than 128 bits");
+    }
+    AgcDriver::QueueState controlled;
+    check(controlled.sampleDumpBlocks == AgcDriver::AllSampleDumpBlocks, "a queue must dump every counter block before any PIXEL_PIPE_STAT_CONTROL");
+    execute(controlled, makePacket(0x46, {0x138, sampleControl(0xffu), 0}));
+    check(controlled.sampleDumpBlocks == 0xffu, "PIXEL_PIPE_STAT_CONTROL must select the counter blocks a dump writes");
+    execute(controlled, makePacket(0x46, {0x138, sampleControl(0x8001u), 0}));
+    check(controlled.sampleDumpBlocks == 0x8001u, "PIXEL_PIPE_STAT_CONTROL must replace the previous block selection");
+    execute(controlled, makePacket(0x12, {0}));
+    check(controlled.sampleDumpBlocks == 0x8001u, "CLEAR_STATE must keep the PIXEL_PIPE_STAT_CONTROL block selection");
+    execute(controlled, makePacket(0x10, {0, 0}, 0x68));
+    check(controlled.sampleDumpBlocks == 0x8001u, "a CONTEXT_STATE clear must keep the PIXEL_PIPE_STAT_CONTROL block selection");
+    execute(controlled, makePacket(0x10, {0}, 0x24));
+    check(controlled.sampleDumpBlocks == AgcDriver::AllSampleDumpBlocks, "a dispatch reset must restore every counter block");
     for (const auto bit : {0x40u, 0x80u, 0x800u, 0x80000000u}) {
         expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x410u | bit}), 0); }, "reserved bits");
     }
@@ -1227,6 +1255,27 @@ void testPredication() {
     check(AgcDriver::Pm4::PredicationPasses(state), "samples in the last block must run draw-visible packets");
     counters[3] &= ~ready;
     expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    std::fill(std::begin(counters), std::end(counters), 0u);
+    for (std::size_t db = 0; db < 8; ++db) counters[db * 2] = counters[db * 2 + 1] = ready | (40u + db);
+    execute(state, makePacket(0x46, {0x138, (0xffu << 11u) | (2u << 9u), 0}));
+    check(!AgcDriver::Pm4::PredicationPasses(state), "Z-pass predication must read only the counter blocks PIXEL_PIPE_STAT_CONTROL enables");
+    counters[15] += 5;
+    check(AgcDriver::Pm4::PredicationPasses(state), "samples in the last enabled block must run draw-visible packets");
+    counters[15] &= ~ready;
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    std::fill(std::begin(counters), std::end(counters), 0u);
+    counters[0] = counters[1] = counters[30] = counters[31] = ready | 60u;
+    execute(state, makePacket(0x46, {0x138, (0x8001u << 11u) | (2u << 9u), 0}));
+    check(!AgcDriver::Pm4::PredicationPasses(state), "Z-pass predication must skip the unwritten blocks between enabled ones");
+    counters[3] = ready | 9u;
+    check(!AgcDriver::Pm4::PredicationPasses(state), "samples in a disabled block must not count");
+    counters[31] += 7;
+    check(AgcDriver::Pm4::PredicationPasses(state), "samples in the highest enabled block must run draw-visible packets");
+    counters[30] &= ~ready;
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    execute(state, makePacket(0x46, {0x138, 2u << 9u, 0}));
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "no counter block enabled");
+    execute(state, makePacket(0x46, {0x138, (AgcDriver::AllSampleDumpBlocks << 11u) | (2u << 9u), 0}));
     execute(state, setPredication(0, false, nullptr));
     expectFailure([&] { AgcDriver::Pm4::Validate(setPredication(2, true, &flag[0]), 0); }, "primitive-count predication");
     expectFailure([&] { AgcDriver::Pm4::Validate(setPredication(5, true, &flag[0]), 0); }, "invalid predication operation");

@@ -205,6 +205,24 @@ std::int64_t RoundToInt64(TFloat value) {
     return static_cast<std::int64_t>(rounded);
 }
 
+template<typename TFloat, typename TBits, int FractionBits>
+std::int64_t NudgedToInt64(TFloat x, TFloat nudge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    const volatile TFloat sum = x < 0 ? x - nudge : x + nudge;
+    TBits bits = std::bit_cast<TBits>(static_cast<TFloat>(sum));
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits);
+    if (exponent < Bias) bits &= Sign;
+    else if (exponent < Bias + FractionBits) bits &= ~((TBits{1} << (Bias + FractionBits - exponent)) - 1);
+    const TFloat whole = std::bit_cast<TFloat>(bits);
+    if (!(whole >= static_cast<TFloat>(INT64_MIN) && whole < -static_cast<TFloat>(INT64_MIN))) {
+        std::feraiseexcept(FE_INVALID);
+        return INT64_MIN;
+    }
+    return static_cast<std::int64_t>(whole);
+}
+
 float SinhfExpm1(float x) {
     constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f, InverseLn2 = 1.4426950216e+00f;
     constexpr float Q1 = -3.3333212137e-2f, Q2 = 1.5807170421e-3f;
@@ -1125,11 +1143,12 @@ double APS5_VABI exp2_nid_postfix(double x) {
     return r * std::bit_cast<double>(static_cast<std::uint64_t>(static_cast<std::uint32_t>(0x3ff00000 + k + (1000 << 20))) << 32) * twom1000;
 }
 double APS5_VABI ldexp_nid_postfix(double x, int exponent) {
-    if (!std::isfinite(x) || x == 0.0) return x;
-    const int saved_errno = errno;
-    const double result = std::scalbn(x, exponent);
-    errno = !std::isfinite(result) || result == 0.0 ? ERANGE : saved_errno;
-    return result;
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (exponent == 0 || magnitude == 0 || magnitude >= 0x7ff0000000000000ull) return x;
+    const short code = _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(&x, exponent);
+    if (code == 0) _Feraise_nid_postfix(0x10);
+    else if (code == 1) _Feraise_nid_postfix(0x08);
+    return x;
 }
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
     const int saved_errno = errno;
@@ -1184,11 +1203,11 @@ float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
     return std::bit_cast<float>((bits & 0x807fffffu) | 0x3f000000u);
 }
 // Guest long is 64-bit, including on Windows where native long is 32-bit.
-std::int64_t APS5_VABI lround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
+std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
+std::int64_t APS5_VABI llround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
+std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(roundl_nid_postfix(x)); }
 int APS5_VABI __isfinitef_nid_postfix(float x) {
     const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
     return exponent != 0x7f800000u ? 1 : 0;
@@ -1360,10 +1379,31 @@ float APS5_VABI copysignf_nid_postfix(float x, float y) {
     return std::copysign(x, y);
 }
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
+extern "C++" {
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_floor.c, s_ceil.c, s_floorf.c and s_ceilf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_floor.c */
+template<typename TFloat, typename TBits, int FractionBits>
+static TFloat RoundToward(TFloat x, bool up, TFloat huge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    TBits bits = std::bit_cast<TBits>(x);
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits) - Bias;
+    if (exponent >= FractionBits) return x;
+    const bool away = ((bits & Sign) != 0) != up;
+    const TBits mask = exponent < 0 ? ~Sign : (TBits{1} << (FractionBits - exponent)) - 1;
+    if ((bits & mask) == 0) return x;
+    [[maybe_unused]] const volatile TFloat inexact = huge + x;
+    if (exponent < 0) return std::bit_cast<TFloat>((bits & Sign) | (away ? static_cast<TBits>(Bias) << FractionBits : TBits{0}));
+    if (away) bits += mask + 1;
+    return std::bit_cast<TFloat>(bits & ~mask);
+}
+}
 double APS5_VABI trunc_nid_postfix(double x) { return std::isnan(x) ? x + x : std::trunc(x); }
-double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : std::ceil(x); }
+double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, true, 1.0e300); }
 float APS5_VABI truncf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::trunc(x); }
-float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::ceil(x); }
+float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, true, 1.0e30f); }
+double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, false, 1.0e300); }
+float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, false, 1.0e30f); }
 double APS5_VABI fma_nid_postfix(double x, double y, double z) { return std::fma(x, y, z); }
 float APS5_VABI fmaf_nid_postfix(float x, float y, float z) { return std::fma(x, y, z); }
 double APS5_VABI fmin_nid_postfix(double x, double y) { return GuestFmin(x, y); }
@@ -5305,6 +5345,107 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nextafterl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nextafterl.c */
+long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) {
+    const ExtendedParts ux = SplitExtended(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if (((ux.signExponent & 0x7fff) == 0x7fff && (ux.mantissa << 1) != 0) || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return x + y;
+    }
+    if (x == y) {
+        return y;
+    }
+    if (x == 0.0L) {
+        const volatile long double smallest = JoinExtended(1, static_cast<std::uint16_t>(uy.signExponent & 0x8000));
+        volatile long double product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    auto high = static_cast<std::uint32_t>(ux.mantissa >> 32);
+    auto low = static_cast<std::uint32_t>(ux.mantissa);
+    std::uint16_t exponent = ux.signExponent & 0x7fff;
+    const std::uint32_t integer = high & 0x80000000u;
+    if ((x > 0.0L) != (x < y)) {
+        if (low == 0) {
+            if ((high & 0x7fffffffu) == 0) exponent = static_cast<std::uint16_t>((exponent - 1) & 0x7fff);
+            high = (high - 1) | integer;
+        }
+        --low;
+    } else {
+        ++low;
+        if (low == 0) {
+            high = (high + 1) | integer;
+            if ((high & 0x7fffffffu) == 0) exponent = static_cast<std::uint16_t>((exponent + 1) & 0x7fff);
+        }
+    }
+    if (exponent == 0x7fff) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) high &= 0x7fffffffu;
+    const long double next = JoinExtended(std::uint64_t{high} << 32 | low, static_cast<std::uint16_t>(exponent | (ux.signExponent & 0x8000)));
+    if (exponent == 0) {
+        volatile long double product = next * next;
+        if (product != next) _Feraise_nid_postfix(0x10);
+    }
+    return next;
+}
+long double APS5_VABI nexttowardl_nid_postfix(long double x, long double y) {
+    return nextafterl_nid_postfix(x, y);
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttoward.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttoward.c */
+double APS5_VABI nexttoward_nid_postfix(double x, long double y) {
+    const std::uint64_t ux = std::bit_cast<std::uint64_t>(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if ((ux & 0x7fffffffffffffffull) > 0x7ff0000000000000ull || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return static_cast<double>(x + y);
+    }
+    if (x == y) {
+        return static_cast<double>(y);
+    }
+    if (x == 0.0) {
+        const volatile double smallest = std::bit_cast<double>(static_cast<std::uint64_t>(uy.signExponent & 0x8000u) << 48 | 1u);
+        volatile double product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const std::uint64_t next = (static_cast<std::int32_t>(ux >> 32) > 0) != (x < y) ? ux - 1 : ux + 1;
+    const std::uint64_t exponent = next & 0x7ff0000000000000ull;
+    if (exponent == 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        volatile double product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<double>(next);
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttowardf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttowardf.c */
+float APS5_VABI nexttowardf_nid_postfix(float x, long double y) {
+    const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
+    const ExtendedParts uy = SplitExtended(y);
+    if ((ux & 0x7fffffffu) > 0x7f800000u || ((uy.signExponent & 0x7fff) == 0x7fff && (uy.mantissa << 1) != 0)) {
+        return static_cast<float>(x + y);
+    }
+    if (x == y) {
+        return static_cast<float>(y);
+    }
+    if ((ux & 0x7fffffffu) == 0) {
+        const volatile float smallest = std::bit_cast<float>(static_cast<std::uint32_t>(uy.signExponent & 0x8000u) << 16 | 1u);
+        volatile float product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const std::uint32_t next = (static_cast<std::int32_t>(ux) >= 0) != (x < y) ? ux - 1 : ux + 1;
+    const std::uint32_t exponent = next & 0x7f800000u;
+    if (exponent == 0x7f800000u) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        volatile float product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<float>(next);
+}
 int APS5_VABI __isfinite_nid_postfix(double x) {
     const auto exponent = std::bit_cast<std::uint64_t>(x) & 0x7ff0000000000000ull;
     return exponent != 0x7ff0000000000000ull ? 1 : 0;
@@ -5684,7 +5825,7 @@ long double APS5_VABI exp2l_nid_postfix(long double x) {
 }
 long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
-long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
+long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return scalbnl_nid_postfix(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
 long double APS5_VABI floorl_nid_postfix(long double x) { return std::floor(x); }
@@ -5702,16 +5843,20 @@ double APS5_VABI logb_nid_postfix(double x) {
     }
     return static_cast<double>(static_cast<int>(bits >> 52) - 1023);
 }
-int APS5_VABI ilogb_nid_postfix(double x) {
-    if (x == 0.0) {
-        return INT_MIN;
-    }
-    if (!std::isfinite(x)) {
-        return INT_MAX;
-    }
-    return std::ilogb(x);
+extern "C++" {
+template<typename TBits, int FractionBits>
+static int BinaryExponent(TBits bits) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    const TBits magnitude = bits & ~(TBits{1} << (sizeof(TBits) * 8 - 1));
+    const int field = static_cast<int>(magnitude >> FractionBits);
+    if (magnitude == 0) return INT_MIN;
+    if (field == (1 << ExponentBits) - 1) return INT_MAX;
+    return field != 0 ? field - Bias : static_cast<int>(std::bit_width(magnitude)) - FractionBits - Bias;
 }
-int APS5_VABI ilogbf_nid_postfix(float x) { return ilogb_nid_postfix(static_cast<double>(x)); }
+}
+int APS5_VABI ilogb_nid_postfix(double x) { return BinaryExponent<std::uint64_t, 52>(std::bit_cast<std::uint64_t>(x)); }
+int APS5_VABI ilogbf_nid_postfix(float x) { return BinaryExponent<std::uint32_t, 23>(std::bit_cast<std::uint32_t>(x)); }
 double APS5_VABI remainder_nid_postfix(double x, double y) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
