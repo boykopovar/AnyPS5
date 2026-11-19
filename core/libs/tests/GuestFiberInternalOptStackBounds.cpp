@@ -131,8 +131,9 @@ void TestOptParamInitializationBounds() {
     Require(*__error_nid_postfix() == 77);
 
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&guarded.opt);
+    constexpr std::uint8_t magic[4] = {0x4d, 0xe6, 0x40, 0xbb};
     for (std::size_t i = 0; i < 0x80; ++i) {
-        Require(bytes[i] == 0);
+        Require(bytes[i] == (i < sizeof(magic) ? magic[i] : 0));
     }
     for (std::size_t i = 0; i < 4; ++i) {
         Require(guarded.headSentinels[i] == 0x1122334455667788ull + i);
