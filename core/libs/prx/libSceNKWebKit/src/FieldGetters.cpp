@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 extern "C" {
 
@@ -558,5 +559,273 @@ std::uint64_t APS5_VABI WKViewGetPage(const void* self) {
 
 std::uint64_t APS5_VABI _ZThn64_NK7WebCore10ScrollView12contentsSizeEv(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0xa0);
+}
+
+std::uint64_t APS5_VABI _ZN7WebCore8Document13svgExtensionsEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x508, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZN9Inspector15RemoteInspector29waitingForAutomaticInspectionEj(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x82, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK3JSC18GCActivityCallback9isEnabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x23, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK3JSC22FullGCActivityCallback13didGCRecentlyEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x30, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLockerE(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x2b, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore10ScrollView14useFixedLayoutEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x120, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11FrameLoader10isCompleteEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xb0, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11FrameLoader8loadTypeEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x51, sizeof(value));
+    return value;
+}
+
+std::uint64_t APS5_VABI _ZNK7WebCore11JSDOMWindow4selfERN3JSC14JSGlobalObjectE(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x68, sizeof(value));
+    return value;
+}
+
+std::uint64_t APS5_VABI _ZNK7WebCore11JSDOMWindow6framesERN3JSC14JSGlobalObjectE(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x68, sizeof(value));
+    return value;
+}
+
+std::uint64_t APS5_VABI _ZNK7WebCore11JSDOMWindow6windowERN3JSC14JSGlobalObjectE(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x68, sizeof(value));
+    return value;
+}
+
+std::uint64_t APS5_VABI _ZNK7WebCore11JSDOMWindow7wrappedEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xeb8, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11MediaPlayer14preservesPitchEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xd3, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11MediaPlayer25preferredDynamicRangeModeEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xd8, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11MediaPlayer39contentMIMETypeWasInferredFromExtensionEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xd6, sizeof(value));
+    return value;
+}
+
+std::uint64_t APS5_VABI _ZNK7WebCore11MediaPlayer4sizeEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xb8, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11MediaPlayer5mutedEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xd2, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore11MediaPlayer7preloadEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xc0, sizeof(value));
+    return value;
+}
+
+std::uint16_t APS5_VABI _ZNK7WebCore11XPathResult10resultTypeEv(const void* self) {
+    std::uint16_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x40, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore14DocumentLoader16mouseEventPolicyEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xa6f, sizeof(value));
+    return value;
+}
+
+void* APS5_VABI _ZNK7WebCore15HTMLFormElement24unsafeAssociatedElementsEv(const void* self) {
+    return const_cast<char*>(static_cast<const char*>(self)) + 0xc0;
+}
+
+double APS5_VABI _ZNK7WebCore15ProgressTracker17estimatedProgressEv(const void* self) {
+    double value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x68, sizeof(value));
+    return value;
+}
+
+std::uint32_t APS5_VABI _ZNK7WebCore16HTMLInputElement4sizeEv(const void* self) {
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xe8, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore16HTMLMediaElement15bufferingPolicyEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x420, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore16HTMLMediaElement20webkitPreservesPitchEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x2e0, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore17FullscreenManager21isAnimatingFullscreenEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x99, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore17FullscreenManager27areFullscreenControlsHiddenEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x9a, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore21NetworkStorageSession29resourceLoadStatisticsEnabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x30, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore21NetworkStorageSession41resourceLoadStatisticsDebugLoggingEnabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x31, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore27DocumentTimelinesController22animationsAreSuspendedEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x28, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore4Page34inLowQualityImageInterpolationModeEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xe0, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore9FrameView13isTransparentEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x414, sizeof(value));
+    return value;
+}
+
+std::uint16_t APS5_VABI _ZNK7WebCore9FrameView13paintBehaviorEv(const void* self) {
+    std::uint16_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x390, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK7WebCore9FrameView17wasScrolledByUserEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x416, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector14ConsoleMessage4typeEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x1, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector14ConsoleMessage5levelEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x2, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector15InspectorTarget8isPausedEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x10, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector15RemoteInspector21hasActiveDebugSessionEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x79, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector15RemoteInspector7enabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x78, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector21InspectorConsoleAgent7enabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x60, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector22InspectorDebuggerAgent27pauseOnNextStatementEnabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xe3, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector22InspectorDebuggerAgent7enabledEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xe0, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector22RemoteAutomationTarget8isPairedEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0xc, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZNK9Inspector28InspectorScriptProfilerAgent18isAlreadyProfilingEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x3a, sizeof(value));
+    return value;
+}
+
+std::uint8_t APS5_VABI _ZThn24_NK9Inspector28InspectorScriptProfilerAgent18isAlreadyProfilingEv(const void* self) {
+    std::uint8_t value;
+    std::memcpy(&value, static_cast<const char*>(self) + 0x22, sizeof(value));
+    return value;
 }
 }
