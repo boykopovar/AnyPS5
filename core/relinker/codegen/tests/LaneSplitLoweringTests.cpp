@@ -47,6 +47,8 @@ const std::vector<Form>& forms() {
         {LaneSplitShape::Binary, 2, 1, 0x3F, 0},
         {LaneSplitShape::BinaryImmediate, 3, 1, 0x0E, 0},
         {LaneSplitShape::BinaryImmediate, 3, 1, 0x0F, 0},
+        {LaneSplitShape::BinaryImmediate, 3, 1, 0x42, 0},
+        {LaneSplitShape::BlendVariable, 3, 1, 0x4C, 0},
         {LaneSplitShape::ShiftCount, 1, 1, 0xF2, 0},
         {LaneSplitShape::ShiftCount, 1, 1, 0xD3, 0},
         {LaneSplitShape::ShiftImmediate, 1, 1, 0x72, 6},
@@ -61,7 +63,7 @@ const std::vector<Form>& forms() {
 }
 
 bool immediate(LaneSplitShape shape) {
-    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate;
+    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate || shape == LaneSplitShape::BlendVariable;
 }
 
 Bytes site(const Form& form, bool wide256, std::uint8_t dst, std::uint8_t first, std::uint8_t second, int imm) {
@@ -95,6 +97,11 @@ void decoding() {
     require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x64} && loaded->Destination == 8, "a memory VPADDD lost its prefix or operand");
     for (const Bytes bytes : {Bytes{0xC5, 0xFD, 0x6F, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x47, 0xC1}, Bytes{0xC5, 0xFC, 0x58, 0xC1}, Bytes{0xC5, 0xFD, 0xD7, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x30, 0xC1}, Bytes{0x90}})
         require(!Codegen::DecodeLaneSplit(bytes.data(), bytes.size()), "an instruction that is not lane-local integer AVX2 was split");
+    const Bytes blendWide{0xC4, 0xE3, 0xF5, 0x4C, 0xC2, 0x30};
+    require(!Codegen::DecodeLaneSplit(blendWide.data(), blendWide.size()), "a VPBLENDVB with VEX.W1, which is undefined, was split");
+    const Bytes blend{0xC4, 0x43, 0x35, 0x4C, 0x44, 0x24, 0x08, 0xA0};
+    const auto blended = Codegen::DecodeLaneSplit(blend.data(), blend.size());
+    require(blended && blended->Shape == LaneSplitShape::BlendVariable && blended->Mask == 10 && blended->First == 9 && blended->Destination == 8 && blended->Memory, "a memory VPBLENDVB lost its mask or operands");
     for (const Bytes bytes : {Bytes{0xC5, 0xF5, 0x72, 0x30, 0x01}, Bytes{0xC5, 0xF5, 0xFE, 0xC2, 0x90}, Bytes{0xC4, 0xE3, 0x75, 0x0E, 0xC2}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeLaneSplit(bytes.data(), bytes.size()); }
@@ -135,7 +142,13 @@ std::array<std::uint64_t, 4> perHalf(const Form& form, const Machine& start, std
         const bool count = form.Shape == LaneSplitShape::ShiftCount;
         machine.Ymm[1] = {a[half * 2], a[half * 2 + 1], 0, 0};
         machine.Ymm[2] = count ? std::array<std::uint64_t, 4>{b[0], b[1], 0, 0} : std::array<std::uint64_t, 4>{b[half * 2], b[half * 2 + 1], 0, 0};
-        const Runner runner(site(form, false, 0, 1, 2, imm));
+        const bool blend = form.Shape == LaneSplitShape::BlendVariable;
+        if (blend) {
+            const auto& m = start.Ymm[(imm >> 4) & 15];
+            machine.Ymm[3] = {m[half * 2], m[half * 2 + 1], 0, 0};
+        }
+        const bool laneImmediate = form.Map == 3 && form.Opcode == 0x42;
+        const Runner runner(site(form, false, 0, 1, 2, blend ? 0x30 : laneImmediate ? (half == 0 ? imm & 7 : (imm >> 3) & 7) : imm));
         runner.Run(machine);
         result[half * 2] = machine.Ymm[0][0];
         result[half * 2 + 1] = machine.Ymm[0][1];
@@ -157,12 +170,17 @@ void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t 
             throw std::runtime_error("lane split of opcode " + std::to_string(form.Opcode) + " map " + std::to_string(form.Map) + " dst " + std::to_string(dst) + " first " + std::to_string(first) + " second " + std::to_string(second) + ": ymm" + std::to_string(reg) + " is wrong");
     }
     for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split overwrote the red zone");
+    if (LoweringExecution::HostExecutes(Bytes{0xC5, 0xFD, 0xFE, 0xC0})) {
+        auto native = start;
+        Runner(instruction).Run(native);
+        require(native.Ymm == machine.Ymm, "lane split of opcode " + std::to_string(form.Opcode) + " map " + std::to_string(form.Map) + " differs from the host AVX2 instruction");
+    }
 }
 
 void execution() {
     for (const auto& form : forms()) {
         for (const auto& registers : std::array<std::array<std::uint8_t, 3>, 7>{{{0, 1, 2}, {3, 3, 4}, {5, 6, 5}, {7, 7, 7}, {15, 14, 13}, {8, 12, 9}, {13, 15, 14}}}) {
-            for (const int imm : {0x00, 0x1B, 0x05, 0x88}) {
+            for (const int imm : {0x00, 0x1B, 0x05, 0x88, 0x3D, 0xF0, 0xE7}) {
                 if (!immediate(form.Shape) && imm != 0x00) continue;
                 check(form, registers[0], registers[1], registers[2], imm);
             }
