@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -17,7 +18,6 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Words = 64;
 alignas(256) std::array<std::uint32_t, Words> Output{};
 
@@ -81,7 +81,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize = 32u, bool spanned = false) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(output.begin(), output.end(), userData.begin());
@@ -89,18 +89,19 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     userData[4] = static_cast<std::uint32_t>(address);
     userData[5] = static_cast<std::uint32_t>(address >> 32u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
         {0, 0, 0, 128}
     };
+    request.target.spannedWaves = spanned;
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, bool spanned) {
     Output.fill(0xdeadbeefu);
     Output[0x40 / 4] = 100u;
     Output[0x48 / 4] = 1000u;
@@ -110,7 +111,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     Output[0x68 / 4] = 50u;
     Output[0x70 / 4] = 5u;
     Output[0x74 / 4] = 0u;
-    const auto result = Compile(device, code);
+    const auto result = Compile(device, code, waveSize, spanned);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
@@ -119,7 +120,7 @@ bool Int64Row(std::uint32_t offset) {
     return (offset >= 0x58u && offset < 0x68u) || offset >= 0x70u;
 }
 
-void Check(bool int64Atomics) {
+void Check(bool int64Atomics, const std::string& layout) {
     const std::array<std::pair<std::uint32_t, std::uint32_t>, 30> expected{{
         {0x00, 0x11111111u}, {0x04, 0xdeadbeefu}, {0x08, 0x11111111u}, {0x0c, 0x22222222u},
         {0x10, 0x11111111u}, {0x14, 0x22222222u}, {0x18, 0x33333333u}, {0x1c, 0x44444444u},
@@ -133,7 +134,7 @@ void Check(bool int64Atomics) {
     for (const auto& [offset, value] : expected) {
         if (!int64Atomics && Int64Row(offset)) continue;
         const std::uint32_t actual = Output[offset / 4u];
-        Require(actual == value, "smem store/atomic: byte " + Hex(offset) + " is " + Hex(actual) + ", expected " + Hex(value));
+        Require(actual == value, "smem store/atomic " + layout + ": byte " + Hex(offset) + " is " + Hex(actual) + ", expected " + Hex(value));
     }
 }
 
@@ -153,8 +154,14 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool int64Atomics = TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics);
-        Run(*device, int64Atomics ? std::span<const std::uint32_t>(Code) : std::span<const std::uint32_t>(CodeWithoutInt64));
-        Check(int64Atomics);
+        const auto code = int64Atomics ? std::span<const std::uint32_t>(Code) : std::span<const std::uint32_t>(CodeWithoutInt64);
+        const bool spannable = device->Target().subgroupSize == 32u && device->ComputeFullSubgroups();
+        for (const auto& [waveSize, spanned, layout] : {std::tuple{32u, false, "wave32"}, std::tuple{64u, false, "wave64"}, std::tuple{64u, true, "wave64 spanned"}}) {
+            if (spanned && !spannable) continue;
+            Run(*device, code, waveSize, spanned);
+            Check(int64Atomics, layout);
+        }
+        if (!spannable) std::puts("skipped the spanned wave64 layout, the device has no full 32-lane compute subgroups");
         if (!int64Atomics) std::puts("skipped the 64-bit atomic rows, the device has no shaderBufferInt64Atomics");
         CheckScratchStoreRejected(*device);
         std::puts("smem store/atomic tests passed");

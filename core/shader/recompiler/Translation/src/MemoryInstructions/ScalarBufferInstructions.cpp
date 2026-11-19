@@ -111,8 +111,11 @@ bool TranslationContext::sAtomic(const RdnaInstruction& inst, IrOpcode opcode, b
     const IrU32 soffset = readU32(inst.source1);
     IrValue& zero = ir.Constant(0u);
     IrValue& always = ir.ConstantBool(true);
+    IrValue& candidate = program.Resources().stage == IrShaderStage::Pixel
+        ? ir.IEqual(ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::HelperInvocation)), &zero}), zero)
+        : always;
     IrValue& lane = ir.Emit(IrOpcode::LaneId, IrOpcodeType(IrOpcode::LaneId), {});
-    IrValue& elected = ir.IEqual(lane, ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&lane, &always}));
+    IrValue& elected = ir.IEqual(lane, ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&lane, &candidate}));
     const bool wide = IrOpcodeType(opcode) == IrType::U64;
     const bool compare = opcode == IrOpcode::AddressAtomicCmpSwap32 || opcode == IrOpcode::AddressAtomicCmpSwap64 || opcode == IrOpcode::BufferAtomicCmpSwap32 || opcode == IrOpcode::BufferAtomicCmpSwap64;
     const auto component = [&](std::uint32_t index) -> IrValue* {
@@ -130,12 +133,12 @@ bool TranslationContext::sAtomic(const RdnaInstruction& inst, IrOpcode opcode, b
                                      : ir.Emit(opcode, IrOpcodeType(opcode), {resource, &zero, &zero, &soffset.Value(), value, &elected}, flags));
     if (!inst.glc) return true;
     if (!wide) {
-        writeOperand(scalarDestinationOperand(inst.destination, 0u), &ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&result, &always}));
+        writeOperand(scalarDestinationOperand(inst.destination, 0u), &ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&result, &candidate}));
         return true;
     }
     const std::array<IrU32, 2> parts = extractU64(IrU64(result));
     for (std::uint32_t index = 0u; index < 2u; ++index) {
-        writeOperand(scalarDestinationOperand(inst.destination, index), &ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&parts[index].Value(), &always}));
+        writeOperand(scalarDestinationOperand(inst.destination, index), &ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&parts[index].Value(), &candidate}));
     }
     return true;
 }
