@@ -6,6 +6,7 @@
 #include "prx/libc/include/FileStream.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -1169,7 +1170,7 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
         if (!added) {
             FreeCertificate(certificate);
         } else {
-            --certificate->references;
+            std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
         }
         ++count;
     }
