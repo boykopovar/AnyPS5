@@ -80,3 +80,4 @@
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfParkingLotExports.hpp"
+#include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
