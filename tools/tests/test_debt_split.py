@@ -557,5 +557,69 @@ class DebtSplitTests(unittest.TestCase):
         self.assertNotEqual(before, "")
 
 
+    def test_parse_groups_headings_entries_and_text(self):
+        text = "# libX\n\n### change\n\n- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap\n  continued\n\nplain text\n"
+        items = debt_split.parse(text)
+        kinds = [kind for kind, _, _ in items]
+        self.assertEqual(kinds, ["heading", "heading", "entry", "text"])
+        self.assertEqual(items[2][1], "change")
+        self.assertIn("continued", items[2][2])
+        self.assertEqual(items[3][2], "plain text")
+
+
+    def test_key_is_set_for_entries_only(self):
+        entry = "- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap"
+        self.assertIsNone(debt_split.key("heading", "## change"))
+        self.assertIsNone(debt_split.key("text", "plain text"))
+        self.assertEqual(debt_split.key("entry", entry), debt_split.debt_name(entry))
+
+
+    def test_debt_file_is_under_debt_dir(self):
+        self.assertEqual(debt_split.debt_file("libc"), "docs/dev/debt/libc.md")
+
+
+    def test_separated_puts_a_blank_between_entries_and_text(self):
+        self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+
+
+    def test_render_index_separates_headings_and_text_and_ends_with_one_newline(self):
+        index = [("heading", "# T"), ("text", "note"), ("heading", "### S"), ("entry", "- a"), ("entry", "- b")]
+        self.assertEqual(debt_split.render_index(index), "# T\n\nnote\n\n### S\n\n- a\n- b\n")
+        self.assertEqual(debt_split.render_index([("entry", "- a"), ("entry", "- b")]), "- a\n- b\n")
+
+
+class SectionsOfTests(unittest.TestCase):
+    def test_lists_third_level_headings_in_order(self):
+        text = "# Title\n\n### Alpha\n- a\n\n### Beta\n- b\n"
+        self.assertEqual(debt_split.sections_of(text), ["Alpha", "Beta"])
+
+    def test_text_without_sections_has_none(self):
+        self.assertEqual(debt_split.sections_of("# Title\n- a\nbody\n"), [])
+        self.assertEqual(debt_split.sections_of(""), [])
+
+
+class ReadPreambleTests(unittest.TestCase):
+    def write(self, root, text):
+        path = root / debt_split.debt_file("lib")
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_returns_text_before_the_first_section_without_the_title(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n\nIntro text.\n\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["Intro text."])
+
+    def test_second_level_headings_are_kept(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n## Notes\nbody\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["## Notes", "body"])
+
+    def test_missing_file_has_no_preamble(self):
+        with tempfile.TemporaryDirectory() as name:
+            self.assertEqual(debt_split.read_preamble(Path(name), "lib"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

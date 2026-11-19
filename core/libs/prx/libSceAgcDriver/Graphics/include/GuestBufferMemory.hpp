@@ -125,6 +125,12 @@ void ReportHostImports();
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+struct HostImportCopy {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkDeviceSize bytes;
+};
+std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes);
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
@@ -184,6 +190,14 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address);
 // imported); see GuestBufferMemory.cpp.
 struct ImageMirror;
 class Recorder;
+class StorageTexture;
+
+struct MirrorPublishEntry {
+    std::shared_ptr<StorageTexture> image;
+    std::uint64_t base = 0;
+    std::uint64_t serial = 0;
+    std::uint64_t since = 0;
+};
 
 template<typename TRange>
 void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::vector<std::size_t>& indices) {
@@ -204,6 +218,9 @@ void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::sp
 // work using the import is recorded) the imports are left as they are.
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile);
 
+bool HostImportView(const Context& context, std::uint64_t address, std::size_t bytes, VkDescriptorBufferInfo& view, std::uint64_t& serial);
+
+
 // The import table's identity (the fast Revalidate): serials proved under one identity stand
 // while the table still has it, i.e. the same device, the same epoch (bumped by every retire)
 // and the registry generation it was reconciled with, which must still be the live one.
@@ -215,12 +232,15 @@ struct HostImportsProof {
 };
 // Whether the table still matches `proof` (one lock); false for an empty or stale proof.
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof);
+bool TouchHostImportsIfUnchanged(const Context& context, const HostImportsProof& proof, std::span<const HostImport* const> imports);
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
 std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
+std::uint64_t ChangedCopySnapshotBytes();
+std::uint64_t ChangedCopySnapshotsMade();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -532,6 +552,7 @@ private:
         VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
         std::shared_ptr<Buffer> shadowCopy;
+        std::weak_ptr<Buffer> releasedShadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
@@ -600,6 +621,8 @@ private:
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
+    void publishIntoMirrors();
+    std::vector<MirrorPublishEntry> mirrorPublishes;
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;

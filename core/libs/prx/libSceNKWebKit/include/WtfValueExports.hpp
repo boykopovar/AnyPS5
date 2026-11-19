@@ -138,6 +138,9 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv(const NKW
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL4userEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL8passwordEv(const NKWebKit::WtfAbi::URL* self);
 
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE(const NKWebKit::WtfAbi::String* path);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc(const char* path);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(NKWebKit::WtfAbi::StringView path, const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::StringView>* components);
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(const NKWebKit::WtfAbi::String* self, char16_t separator);
 NKWebKit::WtfAbi::Vector<char16_t> APS5_VABI _ZNK3WTF6String29charactersWithNullTerminationEv(const NKWebKit::WtfAbi::String* self);
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String5splitEDs(const NKWebKit::WtfAbi::String* self, char16_t separator);

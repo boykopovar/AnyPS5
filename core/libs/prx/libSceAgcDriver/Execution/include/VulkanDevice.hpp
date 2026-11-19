@@ -231,7 +231,7 @@ public:
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {
-        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served;
+        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served, inPlace;
     };
     static DispatchMoveCount DispatchMoveCounts();
     void ResolveMemory(std::uint64_t address, std::size_t bytes, bool writable);
@@ -365,7 +365,8 @@ public:
     static std::uint64_t DrawRecipeHits();
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
+    std::vector<std::uint32_t> DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const;
     bool DrawInputsInPlace() const;
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);

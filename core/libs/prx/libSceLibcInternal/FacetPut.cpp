@@ -80,7 +80,7 @@ GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePutDoPut_nid_no_pat
 APS5_EXPORT("Fr7j8dMsy4s", sceLibcInternalWideTimePutDoPut_nid_no_patch);
 
 std::size_t APS5_VABI sceLibcInternalWideTimePutGetcat_nid_no_patch(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
-    return _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(facet, locale);
+    return LibcWideTimePutGetcat_nid_no_patch(facet, locale);
 }
 APS5_EXPORT("bF2uVCqVhBY", sceLibcInternalWideTimePutGetcat_nid_no_patch);
 
