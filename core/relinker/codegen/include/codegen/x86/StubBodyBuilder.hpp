@@ -48,13 +48,14 @@ public:
     void ShiftImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void ShiftDwordImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void RipOperand(std::initializer_list<std::uint8_t> opcode, std::uint8_t reg, const StubConstant& constant);
-    void Load(std::uint8_t reg, const MemoryOperand& operand, std::uint8_t prefix = 0xF3, std::uint8_t opcode = 0x6F, std::int32_t bias = 0);
+    void Load(std::uint8_t reg, const MemoryOperand& operand, std::uint8_t prefix = 0xF3, std::uint8_t opcode = 0x6F, std::int32_t bias = 0, bool vex = false);
     void SharedOperand(std::initializer_list<std::uint8_t> opcode, std::uint8_t reg, std::size_t sharedOffset);
+    void SharedDisplacement(std::size_t sharedOffset);
     void SharedAddress(std::uint8_t reg, std::size_t sharedOffset);
     void Push(std::uint8_t reg);
     void Pop(std::uint8_t reg);
-    void Spill(std::uint8_t reg);
-    void Restore(std::uint8_t reg);
+    void Spill(std::uint8_t reg, bool wide = false);
+    void Restore(std::uint8_t reg, bool wide = false);
     void Raw(std::span<const std::uint8_t> bytes);
     void Move(std::span<const std::uint8_t> instruction, std::optional<std::size_t> ripDisplacementOffset);
     void RipRelative(std::span<const std::uint8_t> instruction, std::size_t displacementOffset, std::int64_t target);
@@ -73,6 +74,7 @@ private:
 
     void _rel32(std::initializer_list<std::uint8_t> opcode, std::int64_t siteTarget);
     void _pushReturnAddress(std::int64_t siteTarget);
+    void _stackMove(std::uint8_t reg, std::uint8_t opcode, bool wide);
 
     std::vector<std::uint8_t> _bytes;
     std::vector<Fixup> _fixups;

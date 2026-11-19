@@ -24,7 +24,74 @@ constexpr std::uint8_t kShiftRightLogical = 2;
 constexpr std::uint8_t kShiftLeft = 6;
 constexpr std::uint8_t kRax = 0;
 constexpr std::uint8_t kRdx = 2;
-constexpr std::uint8_t kHighHalfSlot = 16;
+constexpr std::uint8_t kMap0F = 0x01;
+constexpr std::uint8_t kMap0F3A = 0x03;
+constexpr std::uint8_t kPp66 = 0x01;
+constexpr std::uint8_t kPpF3 = 0x02;
+constexpr std::uint8_t kModRmRegister = 0xC0;
+constexpr std::uint8_t kModRmRip = 0x05;
+
+void _vex(StubBodyBuilder& body, const std::uint8_t map, const bool wide, const std::uint8_t pp, const std::uint8_t opcode, const std::uint8_t reg, const std::uint8_t vvvv, const std::uint8_t rm, const std::uint8_t modrm) {
+    body.Raw(std::array<std::uint8_t, 5>{
+        0xC4,
+        static_cast<std::uint8_t>(((reg & 8) != 0 ? 0x00 : 0x80) | 0x40 | ((rm & 8) != 0 ? 0x00 : 0x20) | map),
+        static_cast<std::uint8_t>(((~vvvv & 0x0F) << 3) | (wide ? 0x04 : 0x00) | pp),
+        opcode,
+        modrm
+    });
+}
+
+void _vexRegister(StubBodyBuilder& body, const std::uint8_t map, const bool wide, const std::uint8_t pp, const std::uint8_t opcode, const std::uint8_t reg, const std::uint8_t vvvv, const std::uint8_t rm) {
+    _vex(body, map, wide, pp, opcode, reg, vvvv, rm, static_cast<std::uint8_t>(kModRmRegister | ((reg & 7) << 3) | (rm & 7)));
+}
+
+class Encoder {
+public:
+    Encoder(StubBodyBuilder& body, const bool vex) : body(body), vex(vex) {}
+
+    void Op(const std::uint8_t opcode, const std::uint8_t dst, const std::uint8_t src) const {
+        if (vex)
+            _vexRegister(body, kMap0F, false, kPp66, opcode, dst, opcode == kMovdqa ? 0 : dst, src);
+        else
+            body.Sse(kPacked, {0x0F, opcode}, dst, src);
+    }
+
+    void Shift(const std::uint8_t extension, const std::uint8_t reg, const std::uint8_t imm) const {
+        if (vex) {
+            _vex(body, kMap0F, false, kPp66, 0x72, 0, reg, reg, static_cast<std::uint8_t>(kModRmRegister | (extension << 3) | (reg & 7)));
+            body.Raw(std::array<std::uint8_t, 1>{imm});
+        } else {
+            body.ShiftDwordImm(extension, reg, imm);
+        }
+    }
+
+    void Constant(const std::uint8_t opcode, const std::uint8_t reg, const SharedConstant constant) const {
+        const auto offset = SharedConstantOffset(constant);
+        if (vex) {
+            _vex(body, kMap0F, false, kPp66, opcode, reg, opcode == kMovdqa ? 0 : reg, 0, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRip));
+            body.SharedDisplacement(offset);
+        } else {
+            body.SharedOperand({0x0F, opcode}, reg, offset);
+        }
+    }
+
+    void Lane(const std::uint8_t opcode, const std::uint8_t reg, const std::uint8_t lane) const {
+        if (vex) {
+            _vexRegister(body, kMap0F3A, false, kPp66, opcode, reg, opcode == 0x22 ? reg : 0, kRax);
+            body.Raw(std::array<std::uint8_t, 1>{lane});
+        } else {
+            body.SseImm(kPacked, {0x0F, 0x3A, opcode}, reg, kRax, lane);
+        }
+    }
+
+    StubBodyBuilder& Body() const {
+        return body;
+    }
+
+private:
+    StubBodyBuilder& body;
+    bool vex;
+};
 
 struct Scratch {
     std::uint8_t Input;
@@ -44,158 +111,124 @@ std::vector<std::uint8_t> _allocate(const ReciprocalOperands& operands, const st
     return registers;
 }
 
-void _op(StubBodyBuilder& body, const std::uint8_t opcode, const std::uint8_t dst, const std::uint8_t src) {
-    body.Sse(kPacked, {0x0F, opcode}, dst, src);
+void _blend(const Encoder& e, const std::uint8_t result, const std::uint8_t value, const std::uint8_t mask) {
+    e.Op(kPxor, value, result);
+    e.Op(kPand, value, mask);
+    e.Op(kPxor, result, value);
 }
 
-void _constant(StubBodyBuilder& body, const std::uint8_t opcode, const std::uint8_t reg, const SharedConstant constant) {
-    body.SharedOperand({0x0F, opcode}, reg, SharedConstantOffset(constant));
-}
-
-void _blend(StubBodyBuilder& body, const std::uint8_t result, const std::uint8_t value, const std::uint8_t mask) {
-    _op(body, kPxor, value, result);
-    _op(body, kPand, value, mask);
-    _op(body, kPxor, result, value);
-}
-
-void _lookup(StubBodyBuilder& body, const std::uint8_t reg) {
+void _lookup(const Encoder& e, const std::uint8_t reg) {
     for (std::uint8_t lane = 0; lane < 4; ++lane) {
-        body.SseImm(kPacked, {0x0F, 0x3A, 0x16}, reg, kRax, lane);
-        body.Raw(std::array<std::uint8_t, 4>{0x0F, 0xB7, 0x04, 0x42});
-        body.SseImm(kPacked, {0x0F, 0x3A, 0x22}, reg, kRax, lane);
+        e.Lane(0x16, reg, lane);
+        e.Body().Raw(std::array<std::uint8_t, 4>{0x0F, 0xB7, 0x04, 0x42});
+        e.Lane(0x22, reg, lane);
     }
 }
 
-void _mantissaAndExponent(StubBodyBuilder& body, const ReciprocalOperation operation, const std::uint8_t input, const std::uint8_t result, const std::uint8_t temporary, const std::uint8_t mask) {
+void _mantissaAndExponent(const Encoder& e, const ReciprocalOperation operation, const std::uint8_t input, const std::uint8_t result, const std::uint8_t temporary, const std::uint8_t mask) {
     const bool squareRoot = operation == ReciprocalOperation::ReciprocalSquareRoot;
-    _op(body, kMovdqa, result, input);
-    body.ShiftDwordImm(kShiftRightLogical, result, 11);
-    _constant(body, kPand, result, squareRoot ? SharedConstant::Index13 : SharedConstant::Index12);
+    e.Op(kMovdqa, result, input);
+    e.Shift(kShiftRightLogical, result, 11);
+    e.Constant(kPand, result, squareRoot ? SharedConstant::Index13 : SharedConstant::Index12);
     if (squareRoot)
-        _constant(body, kPxor, result, SharedConstant::Bit12);
-    _lookup(body, result);
-    body.ShiftDwordImm(kShiftLeft, result, 11);
-    _op(body, kMovdqa, temporary, input);
-    body.ShiftDwordImm(kShiftRightLogical, temporary, 23);
-    _constant(body, kPand, temporary, SharedConstant::ExponentMask);
-    _constant(body, kMovdqa, mask, squareRoot ? SharedConstant::SquareRootBias : SharedConstant::ReciprocalBias);
-    _op(body, kPsubd, mask, temporary);
+        e.Constant(kPxor, result, SharedConstant::Bit12);
+    _lookup(e, result);
+    e.Shift(kShiftLeft, result, 11);
+    e.Op(kMovdqa, temporary, input);
+    e.Shift(kShiftRightLogical, temporary, 23);
+    e.Constant(kPand, temporary, SharedConstant::ExponentMask);
+    e.Constant(kMovdqa, mask, squareRoot ? SharedConstant::SquareRootBias : SharedConstant::ReciprocalBias);
+    e.Op(kPsubd, mask, temporary);
     if (squareRoot)
-        body.ShiftDwordImm(kShiftRightLogical, mask, 1);
-    body.ShiftDwordImm(kShiftLeft, mask, 23);
-    _op(body, kPor, result, mask);
+        e.Shift(kShiftRightLogical, mask, 1);
+    e.Shift(kShiftLeft, mask, 23);
+    e.Op(kPor, result, mask);
 }
 
-void _reciprocal(StubBodyBuilder& body, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
-    _mantissaAndExponent(body, ReciprocalOperation::Reciprocal, input, result, s.Temporary, s.Mask);
-    _op(body, kMovdqa, s.Mask, input);
-    _constant(body, kPand, s.Mask, SharedConstant::Sign);
-    _op(body, kPor, result, s.Mask);
-    _op(body, kMovdqa, s.Temporary, input);
-    _constant(body, kPand, s.Temporary, SharedConstant::Magnitude);
-    _op(body, kMovdqa, s.Mask, s.Temporary);
-    _constant(body, kPcmpgtd, s.Mask, SharedConstant::ReciprocalOverflow);
-    _op(body, kMovdqa, s.Value, input);
-    _constant(body, kPand, s.Value, SharedConstant::Sign);
-    _blend(body, result, s.Value, s.Mask);
-    _constant(body, kMovdqa, s.Mask, SharedConstant::SmallestNormal);
-    _op(body, kPcmpgtd, s.Mask, s.Temporary);
-    _op(body, kMovdqa, s.Value, input);
-    _constant(body, kPand, s.Value, SharedConstant::Sign);
-    _constant(body, kPor, s.Value, SharedConstant::Infinity);
-    _blend(body, result, s.Value, s.Mask);
-    _op(body, kMovdqa, s.Mask, s.Temporary);
-    _constant(body, kPcmpgtd, s.Mask, SharedConstant::Infinity);
-    _op(body, kMovdqa, s.Value, input);
-    _constant(body, kPor, s.Value, SharedConstant::QuietBit);
-    _blend(body, result, s.Value, s.Mask);
+void _reciprocal(const Encoder& e, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
+    _mantissaAndExponent(e, ReciprocalOperation::Reciprocal, input, result, s.Temporary, s.Mask);
+    e.Op(kMovdqa, s.Mask, input);
+    e.Constant(kPand, s.Mask, SharedConstant::Sign);
+    e.Op(kPor, result, s.Mask);
+    e.Op(kMovdqa, s.Temporary, input);
+    e.Constant(kPand, s.Temporary, SharedConstant::Magnitude);
+    e.Op(kMovdqa, s.Mask, s.Temporary);
+    e.Constant(kPcmpgtd, s.Mask, SharedConstant::ReciprocalOverflow);
+    e.Op(kMovdqa, s.Value, input);
+    e.Constant(kPand, s.Value, SharedConstant::Sign);
+    _blend(e, result, s.Value, s.Mask);
+    e.Constant(kMovdqa, s.Mask, SharedConstant::SmallestNormal);
+    e.Op(kPcmpgtd, s.Mask, s.Temporary);
+    e.Op(kMovdqa, s.Value, input);
+    e.Constant(kPand, s.Value, SharedConstant::Sign);
+    e.Constant(kPor, s.Value, SharedConstant::Infinity);
+    _blend(e, result, s.Value, s.Mask);
+    e.Op(kMovdqa, s.Mask, s.Temporary);
+    e.Constant(kPcmpgtd, s.Mask, SharedConstant::Infinity);
+    e.Op(kMovdqa, s.Value, input);
+    e.Constant(kPor, s.Value, SharedConstant::QuietBit);
+    _blend(e, result, s.Value, s.Mask);
 }
 
-void _reciprocalSquareRoot(StubBodyBuilder& body, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
-    _mantissaAndExponent(body, ReciprocalOperation::ReciprocalSquareRoot, input, result, s.Temporary, s.Mask);
-    _op(body, kMovdqa, s.Mask, input);
-    _constant(body, kPcmpeqd, s.Mask, SharedConstant::Infinity);
-    _op(body, kPandn, s.Mask, result);
-    _op(body, kMovdqa, result, s.Mask);
-    _constant(body, kMovdqa, s.Mask, SharedConstant::SmallestNormal);
-    _op(body, kPcmpgtd, s.Mask, input);
-    _constant(body, kMovdqa, s.Value, SharedConstant::Infinity);
-    _blend(body, result, s.Value, s.Mask);
-    _op(body, kPxor, s.Mask, s.Mask);
-    _op(body, kPcmpgtd, s.Mask, input);
-    _constant(body, kMovdqa, s.Value, SharedConstant::DefaultNan);
-    _blend(body, result, s.Value, s.Mask);
-    _constant(body, kMovdqa, s.Mask, SharedConstant::NegativeSmallestNormal);
-    _op(body, kPcmpgtd, s.Mask, input);
-    _constant(body, kMovdqa, s.Value, SharedConstant::NegativeInfinity);
-    _blend(body, result, s.Value, s.Mask);
-    _op(body, kMovdqa, s.Mask, input);
-    _constant(body, kPand, s.Mask, SharedConstant::Magnitude);
-    _constant(body, kPcmpgtd, s.Mask, SharedConstant::Infinity);
-    _op(body, kMovdqa, s.Value, input);
-    _constant(body, kPor, s.Value, SharedConstant::QuietBit);
-    _blend(body, result, s.Value, s.Mask);
+void _reciprocalSquareRoot(const Encoder& e, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
+    _mantissaAndExponent(e, ReciprocalOperation::ReciprocalSquareRoot, input, result, s.Temporary, s.Mask);
+    e.Op(kMovdqa, s.Mask, input);
+    e.Constant(kPcmpeqd, s.Mask, SharedConstant::Infinity);
+    e.Op(kPandn, s.Mask, result);
+    e.Op(kMovdqa, result, s.Mask);
+    e.Constant(kMovdqa, s.Mask, SharedConstant::SmallestNormal);
+    e.Op(kPcmpgtd, s.Mask, input);
+    e.Constant(kMovdqa, s.Value, SharedConstant::Infinity);
+    _blend(e, result, s.Value, s.Mask);
+    e.Op(kPxor, s.Mask, s.Mask);
+    e.Op(kPcmpgtd, s.Mask, input);
+    e.Constant(kMovdqa, s.Value, SharedConstant::DefaultNan);
+    _blend(e, result, s.Value, s.Mask);
+    e.Constant(kMovdqa, s.Mask, SharedConstant::NegativeSmallestNormal);
+    e.Op(kPcmpgtd, s.Mask, input);
+    e.Constant(kMovdqa, s.Value, SharedConstant::NegativeInfinity);
+    _blend(e, result, s.Value, s.Mask);
+    e.Op(kMovdqa, s.Mask, input);
+    e.Constant(kPand, s.Mask, SharedConstant::Magnitude);
+    e.Constant(kPcmpgtd, s.Mask, SharedConstant::Infinity);
+    e.Op(kMovdqa, s.Value, input);
+    e.Constant(kPor, s.Value, SharedConstant::QuietBit);
+    _blend(e, result, s.Value, s.Mask);
 }
 
-void _compute(StubBodyBuilder& body, const ReciprocalOperation operation, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
+void _compute(const Encoder& e, const ReciprocalOperation operation, const std::uint8_t input, const std::uint8_t result, const Scratch& s) {
     if (operation == ReciprocalOperation::ReciprocalSquareRoot)
-        _reciprocalSquareRoot(body, input, result, s);
+        _reciprocalSquareRoot(e, input, result, s);
     else
-        _reciprocal(body, input, result, s);
-}
-
-void _vex(StubBodyBuilder& body, const std::uint8_t map, const bool wide, const std::uint8_t pp, const std::uint8_t opcode, const std::uint8_t reg, const std::uint8_t vvvv, const std::uint8_t rm) {
-    body.Raw(std::array<std::uint8_t, 5>{
-        0xC4,
-        static_cast<std::uint8_t>(((reg & 8) != 0 ? 0x00 : 0x80) | 0x40 | ((rm & 8) != 0 ? 0x00 : 0x20) | map),
-        static_cast<std::uint8_t>(((~vvvv & 0x0F) << 3) | (wide ? 0x04 : 0x00) | pp),
-        opcode,
-        static_cast<std::uint8_t>(0xC0 | ((reg & 7) << 3) | (rm & 7))
-    });
-}
-
-void _extractHighHalf(StubBodyBuilder& body, const std::uint8_t source, const std::uint8_t high) {
-    body.Raw(std::array<std::uint8_t, 8>{
-        0xC4,
-        static_cast<std::uint8_t>(((source & 8) != 0 ? 0x60 : 0xE0) | 0x03),
-        0x7D,
-        0x19,
-        static_cast<std::uint8_t>(0x44 | ((source & 7) << 3)),
-        0x24,
-        kHighHalfSlot,
-        0x01
-    });
-    body.Raw(std::array<std::uint8_t, 1>{kScalar});
-    if ((high & 8) != 0)
-        body.Raw(std::array<std::uint8_t, 1>{0x44});
-    body.Raw(std::array<std::uint8_t, 5>{0x0F, kMovdqa, static_cast<std::uint8_t>(0x44 | ((high & 7) << 3)), 0x24, kHighHalfSlot});
+        _reciprocal(e, input, result, s);
 }
 
 void _loadInputs(StubBodyBuilder& body, const ReciprocalOperands& operands, const Scratch& s) {
     const auto& memory = *operands.Memory;
     if (operands.Scalar)
-        body.Load(s.Input, memory, kPacked, kMovd);
+        body.Load(s.Input, memory, kPacked, kMovd, 0, operands.Vex);
     else if (!operands.Vex)
         body.Load(s.Input, memory, kPacked, kMovdqa);
     else
-        body.Load(s.Input, memory);
+        body.Load(s.Input, memory, kScalar, kMovdqa, 0, true);
     if (operands.Wide)
-        body.Load(s.High, memory, kScalar, kMovdqa, 16);
+        body.Load(s.High, memory, kScalar, kMovdqa, 16, true);
 }
 
 void _store(StubBodyBuilder& body, const ReciprocalOperands& operands, const Scratch& s) {
     const auto dst = operands.Destination;
     if (operands.Wide) {
-        _vex(body, 0x03, true, 0x01, 0x18, dst, s.Result, s.HighResult);
+        _vexRegister(body, kMap0F3A, true, kPp66, 0x18, dst, s.Result, s.HighResult);
         body.Raw(std::array<std::uint8_t, 1>{0x01});
-    } else if (operands.Scalar && operands.Vex)
-        _vex(body, 0x01, false, 0x02, kMovss, dst, operands.Upper, s.Result);
-    else if (operands.Scalar)
+    } else if (operands.Scalar && operands.Vex) {
+        _vexRegister(body, kMap0F, false, kPpF3, kMovss, dst, operands.Upper, s.Result);
+    } else if (operands.Scalar) {
         body.Sse(kScalar, {0x0F, kMovss}, dst, s.Result);
-    else if (operands.Vex)
-        _vex(body, 0x01, false, 0x00, kMovaps, dst, 0, s.Result);
-    else
-        _op(body, kMovdqa, dst, s.Result);
+    } else if (operands.Vex) {
+        _vexRegister(body, kMap0F, false, 0x00, kMovaps, dst, 0, s.Result);
+    } else {
+        body.Sse(kPacked, {0x0F, kMovdqa}, dst, s.Result);
+    }
 }
 
 }
@@ -213,22 +246,25 @@ void ReciprocalLowering::EmitOutOfLine(StubBodyBuilder& body, const ReciprocalOp
     s.Mask = registers[next++];
     s.Value = registers[next++];
     for (const auto reg : registers)
-        body.Spill(reg);
+        body.Spill(reg, operands.Vex);
     if (loaded)
         _loadInputs(body, operands, s);
-    else if (operands.Wide)
-        _extractHighHalf(body, operands.Source, s.High);
+    else if (operands.Wide) {
+        _vexRegister(body, kMap0F3A, true, kPp66, 0x19, operands.Source, 0, s.High);
+        body.Raw(std::array<std::uint8_t, 1>{0x01});
+    }
     body.Push(kRax);
     body.Push(kRdx);
     body.SharedAddress(kRdx, operands.Operation == ReciprocalOperation::ReciprocalSquareRoot ? kReciprocalSquareRootTableOffset : kReciprocalTableOffset);
-    _compute(body, operands.Operation, s.Input, s.Result, s);
+    const Encoder e(body, operands.Vex);
+    _compute(e, operands.Operation, s.Input, s.Result, s);
     if (operands.Wide)
-        _compute(body, operands.Operation, s.High, s.HighResult, s);
+        _compute(e, operands.Operation, s.High, s.HighResult, s);
     body.Pop(kRdx);
     body.Pop(kRax);
     _store(body, operands, s);
     for (auto reg = registers.rbegin(); reg != registers.rend(); ++reg)
-        body.Restore(*reg);
+        body.Restore(*reg, operands.Vex);
 }
 
 LoweredBody ReciprocalLowering::LowerOutOfLine(const ReciprocalOperands& operands) const {

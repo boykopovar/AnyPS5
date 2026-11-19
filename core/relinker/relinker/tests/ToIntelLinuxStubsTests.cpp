@@ -87,7 +87,7 @@ int main(const int argc, char** argv) {
         require(reciprocalSite[0] == 0xE9, "RCPPS site was not replaced by a jump");
         const auto reciprocal = image.At<ReciprocalStub>(kReciprocalOffset);
         for (const auto& measured : kReciprocals)
-            require(reciprocal(measured.Input) == measured.Result, "Relinked RCPPS and RSQRTPS stubs do not match the measured console results");
+            require(reciprocal(measured.Input) == measured.Result, "Relinked RCPPS and RSQRTPS stubs do not match the results measured on a desktop Zen 2");
         std::cout << "--to-intel Linux stub tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

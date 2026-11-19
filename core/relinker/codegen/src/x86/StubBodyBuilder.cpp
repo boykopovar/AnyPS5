@@ -24,7 +24,9 @@ constexpr std::uint8_t kModRmRspBase = 0x04;
 constexpr std::uint8_t kSibRsp = 0x24;
 constexpr std::uint8_t kShiftDwords = 0x72;
 constexpr std::uint8_t kShiftQwords = 0x73;
-constexpr std::uint8_t kMovdqu = 0x6F;
+constexpr std::uint8_t kVex2 = 0xC5;
+constexpr std::size_t kWideSpillExtra = 16;
+constexpr std::uint8_t kVex3 = 0xC4;
 
 bool _addressSize32(const std::span<const std::uint8_t> instruction) {
     const DecodedInstruction decoded{instruction.data(), instruction.size()};
@@ -141,7 +143,7 @@ void StubBodyBuilder::RipOperand(const std::initializer_list<std::uint8_t> opcod
     _constants.push_back(constant);
 }
 
-void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand, const std::uint8_t prefix, const std::uint8_t opcode, const std::int32_t bias) {
+void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand, const std::uint8_t prefix, const std::uint8_t opcode, const std::int32_t bias, const bool vex) {
     using namespace X64OpcodeConstants;
     const auto displacement = static_cast<std::int64_t>(operand.Displacement) + static_cast<std::int64_t>(operand.StackBase ? _stackDepth : 0) + bias;
     if (displacement > std::numeric_limits<std::int32_t>::max() || displacement < std::numeric_limits<std::int32_t>::min())
@@ -150,11 +152,18 @@ void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand,
     const bool widen = !operand.RipRelative && !absolute && (bias != 0 || (operand.StackBase && _stackDepth != 0));
     const auto mod = widen ? ModRmModDisp32 : operand.Mod;
     _bytes.insert(_bytes.end(), operand.Prefixes.begin(), operand.Prefixes.end());
-    _bytes.push_back(prefix);
-    const auto rex = static_cast<std::uint8_t>(kRexBase | ((reg & 8) != 0 ? kRexR : 0) | operand.RexIndexBase);
-    if (rex != kRexBase)
-        _bytes.push_back(rex);
-    _bytes.insert(_bytes.end(), {TwoByteOpcodeEscape, opcode, static_cast<std::uint8_t>((mod << ModRmModShift) | ((reg & 7) << ModRmRegShift) | operand.Rm)});
+    if (vex) {
+        const auto pp = static_cast<std::uint8_t>(prefix == kPrefixScalar ? 0x02 : prefix == kPrefixPacked ? 0x01 : 0x00);
+        _bytes.insert(_bytes.end(), {kVex3, static_cast<std::uint8_t>(((reg & 8) != 0 ? 0x00 : 0x80) | ((operand.RexIndexBase & kRexX) != 0 ? 0x00 : 0x40) | ((operand.RexIndexBase & kRexB) != 0 ? 0x00 : 0x20) | 0x01),
+            static_cast<std::uint8_t>(0x78 | pp), opcode});
+    } else {
+        _bytes.push_back(prefix);
+        const auto rex = static_cast<std::uint8_t>(kRexBase | ((reg & 8) != 0 ? kRexR : 0) | operand.RexIndexBase);
+        if (rex != kRexBase)
+            _bytes.push_back(rex);
+        _bytes.insert(_bytes.end(), {TwoByteOpcodeEscape, opcode});
+    }
+    _bytes.push_back(static_cast<std::uint8_t>((mod << ModRmModShift) | ((reg & 7) << ModRmRegShift) | operand.Rm));
     if (operand.Rm == ModRmRmSibPresent)
         _bytes.push_back(operand.Sib);
     if (operand.RipRelative) {
@@ -170,14 +179,17 @@ void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand,
 
 void StubBodyBuilder::SharedOperand(const std::initializer_list<std::uint8_t> opcode, const std::uint8_t reg, const std::size_t sharedOffset) {
     _emit(_bytes, kPrefixPacked, reg, 0, opcode, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRip));
+    SharedDisplacement(sharedOffset);
+}
+
+void StubBodyBuilder::SharedDisplacement(const std::size_t sharedOffset) {
     _relocations.push_back({_bytes.size(), _bytes.size() + X64OpcodeConstants::Disp32Size, static_cast<std::int64_t>(sharedOffset), false, true});
     _bytes.insert(_bytes.end(), X64OpcodeConstants::Disp32Size, 0);
 }
 
 void StubBodyBuilder::SharedAddress(const std::uint8_t reg, const std::size_t sharedOffset) {
     _bytes.insert(_bytes.end(), {static_cast<std::uint8_t>(kRexBase | 0x08 | ((reg & 8) != 0 ? kRexR : 0)), 0x8D, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRip)});
-    _relocations.push_back({_bytes.size(), _bytes.size() + X64OpcodeConstants::Disp32Size, static_cast<std::int64_t>(sharedOffset), false, true});
-    _bytes.insert(_bytes.end(), X64OpcodeConstants::Disp32Size, 0);
+    SharedDisplacement(sharedOffset);
 }
 
 void StubBodyBuilder::Push(const std::uint8_t reg) {
@@ -194,18 +206,33 @@ void StubBodyBuilder::Pop(const std::uint8_t reg) {
     _stackDepth -= 8;
 }
 
-void StubBodyBuilder::Spill(const std::uint8_t reg) {
+void StubBodyBuilder::Spill(const std::uint8_t reg, const bool wide) {
     _stackDepth += kRedZoneSpillFrame;
     _bytes.insert(_bytes.end(), kLeaRspBelowRedZone.Bytes, kLeaRspBelowRedZone.Bytes + kLeaRspBelowRedZone.Size);
-    _emit(_bytes, kPrefixScalar, reg, 0, {0x0F, 0x7F}, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRspBase));
-    _bytes.push_back(kSibRsp);
+    if (wide) {
+        _stackDepth += kWideSpillExtra;
+        _bytes.insert(_bytes.end(), {0x48, 0x8D, 0x64, 0x24, static_cast<std::uint8_t>(-static_cast<int>(kWideSpillExtra))});
+    }
+    _stackMove(reg, 0x7F, wide);
 }
 
-void StubBodyBuilder::Restore(const std::uint8_t reg) {
-    _emit(_bytes, kPrefixScalar, reg, 0, {0x0F, 0x6F}, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRspBase));
-    _bytes.push_back(kSibRsp);
+void StubBodyBuilder::Restore(const std::uint8_t reg, const bool wide) {
+    _stackMove(reg, 0x6F, wide);
+    if (wide) {
+        _bytes.insert(_bytes.end(), {0x48, 0x8D, 0x64, 0x24, static_cast<std::uint8_t>(kWideSpillExtra)});
+        _stackDepth -= kWideSpillExtra;
+    }
     _bytes.insert(_bytes.end(), kLeaRspRestore.Bytes, kLeaRspRestore.Bytes + kLeaRspRestore.Size);
     _stackDepth -= kRedZoneSpillFrame;
+}
+
+void StubBodyBuilder::_stackMove(const std::uint8_t reg, const std::uint8_t opcode, const bool wide) {
+    const auto modrm = static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRspBase);
+    if (wide)
+        _bytes.insert(_bytes.end(), {kVex2, static_cast<std::uint8_t>((reg & 8) != 0 ? 0x7E : 0xFE), opcode, modrm});
+    else
+        _emit(_bytes, kPrefixScalar, reg, 0, {0x0F, opcode}, modrm);
+    _bytes.push_back(kSibRsp);
 }
 
 void StubBodyBuilder::Raw(std::span<const std::uint8_t> bytes) {

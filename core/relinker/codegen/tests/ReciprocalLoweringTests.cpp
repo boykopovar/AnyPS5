@@ -75,7 +75,7 @@ constexpr std::array<std::uint64_t, 2> kHashes{0xAD1BACB877CC420Dull, 0x8A964BDD
 
 std::uint32_t expected(const bool squareRoot, const std::uint32_t input) {
     const auto golden = std::find_if(kGolden.begin(), kGolden.end(), [&](const Golden& entry) { return entry.Input == input; });
-    if (golden == kGolden.end()) throw std::runtime_error("Input has no measured console result");
+    if (golden == kGolden.end()) throw std::runtime_error("Input has no result measured on a desktop Zen 2");
     return squareRoot ? golden->SquareRoot : golden->Reciprocal;
 }
 
@@ -238,7 +238,7 @@ void packedForms() {
                     const auto old = lanes(before.Machine.Ymm[form.Destination]);
                     for (std::size_t lane = 0; lane < 8; ++lane) {
                         if (lane < 4 || form.Wide)
-                            require(out[lane] == expected(squareRoot, inputs[lane]), "Packed reciprocal stub does not match the console result");
+                            require(out[lane] == expected(squareRoot, inputs[lane]), "Packed reciprocal stub does not match the desktop Zen 2 result");
                         else
                             require(out[lane] == (form.Vex ? 0 : old[lane]), "Packed reciprocal stub changed the wrong upper bits");
                     }
@@ -270,7 +270,7 @@ void scalarForms() {
                 const auto out = lanes(stub.Run(before).Machine.Ymm[form.Destination]);
                 const auto upper = lanes(before.Machine.Ymm[form.Upper]);
                 const auto old = lanes(before.Machine.Ymm[form.Destination]);
-                require(out[0] == expected(squareRoot, golden.Input), "Scalar reciprocal stub does not match the console result");
+                require(out[0] == expected(squareRoot, golden.Input), "Scalar reciprocal stub does not match the desktop Zen 2 result");
                 for (std::size_t lane = 1; lane < 8; ++lane)
                     require(out[lane] == (lane < 4 ? (form.Vex ? upper[lane] : old[lane]) : (form.Vex ? 0 : old[lane])), "Scalar reciprocal stub changed the wrong lanes");
             }
@@ -304,7 +304,7 @@ void memoryForms() {
                 const auto old = lanes(before.Machine.Ymm[2]);
                 for (std::size_t lane = 0; lane < 8; ++lane) {
                     if (lane < form.Lanes)
-                        require(out[lane] == expected(squareRoot, source[form.First + lane]), "Memory reciprocal stub does not match the console result");
+                        require(out[lane] == expected(squareRoot, source[form.First + lane]), "Memory reciprocal stub does not match the desktop Zen 2 result");
                     else
                         require(out[lane] == (lane >= 4 && form.Vex ? 0 : old[lane]), "Memory reciprocal stub changed the wrong lanes");
                 }
@@ -336,9 +336,9 @@ void measuredHashes() {
     for (const bool squareRoot : {false, true}) {
         const std::uint8_t op = squareRoot ? 0x52 : 0x53;
         const auto expectedHash = kHashes[squareRoot ? 1 : 0];
-        require(hash({0x0F, op, 0xD5}, 4, false) == expectedHash, "Legacy packed reciprocal stub differs from the console on the sampled inputs");
-        require(hash({0xC5, 0xFC, op, 0xD5}, 8, false) == expectedHash, "256-bit reciprocal stub differs from the console on the sampled inputs");
-        require(hash({0xC5, 0xFC, op, 0x10}, 8, true) == expectedHash, "256-bit memory reciprocal stub differs from the console on the sampled inputs");
+        require(hash({0x0F, op, 0xD5}, 4, false) == expectedHash, "Legacy packed reciprocal stub differs from the desktop Zen 2 on the sampled inputs");
+        require(hash({0xC5, 0xFC, op, 0xD5}, 8, false) == expectedHash, "256-bit reciprocal stub differs from the desktop Zen 2 on the sampled inputs");
+        require(hash({0xC5, 0xFC, op, 0x10}, 8, true) == expectedHash, "256-bit memory reciprocal stub differs from the desktop Zen 2 on the sampled inputs");
     }
 }
 
