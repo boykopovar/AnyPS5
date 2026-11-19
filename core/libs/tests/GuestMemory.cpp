@@ -4867,6 +4867,17 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 0) == -1 && *__error_nid_postfix() == 22);
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x7fffffffc000), 0x4000, 4) == 0);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(nullptr, 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), page, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x3fff), page, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), page, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), 0, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4001), page, 0) == 0);
     *__error_nid_postfix() = 77;
     for (int advice = 0; advice <= 10; ++advice) Require(posix_madvise_nid_postfix(memory, page * 3, advice) == 0);
     Require(posix_madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 10) == 0);

@@ -78,7 +78,7 @@ int main() {
     const WebCore::OptionalAffineTransform inverse = _ZNK7WebCore15AffineTransform7inverseEv(readOnly);
     Require(inverse.m_engaged && inverse.m_value.m_transform == WebCore::AffineTransform{}.m_transform);
 
-    WebCore::AffineTransform target;
+    WebCore::AffineTransform target{};
     _ZN7WebCore15AffineTransformC1Edddddd(&target, 2, 0, 0, 2, 10, 20);
     const WebCore::AffineTransform before = target;
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore15AffineTransform5blendERKS0_d(&target, *unreadable, 0.5); return 0; },

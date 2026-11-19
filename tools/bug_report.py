@@ -15,7 +15,12 @@ IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 def redact(text, *, home, user, host):
     if home and len(home) >= 3:
-        text = text.replace(home, "~")
+        if re.match(r"^(?:[a-zA-Z]:[\\/]|\\\\)", home):
+            parts = re.split(r"[\\/]", home.rstrip("\\/"))
+            pattern = r"[\\/]".join(re.escape(part) for part in parts)
+            text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
+        else:
+            text = text.replace(home, "~")
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
@@ -29,7 +34,7 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {key: redact_report(item, identity) for key, item in value.items()}
+        return {redact_report(key, identity): redact_report(item, identity) for key, item in value.items()}
     return value
 
 
@@ -52,7 +57,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8"))
+    data = json.loads(report.read_text(encoding="utf-8-sig"))
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
     if log is not None and Path(log).is_file():
@@ -61,7 +66,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     members["host.txt"] = f"os: {platform.system()}\nmachine: {platform.machine()}\npython: {platform.python_version()}\n"
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
             bundle.writestr(name, content.encode("utf-8"))
     return sorted(members)
