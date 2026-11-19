@@ -15958,10 +15958,6 @@ int APS5_VABI _ZN7WebCore16NetworkSendQueueD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem29ensureDatabaseDirectoryExistsERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore16ScriptController11createWorldERKN3WTF6StringENS0_9WorldTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
