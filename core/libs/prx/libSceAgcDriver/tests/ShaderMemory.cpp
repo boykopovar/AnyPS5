@@ -12342,8 +12342,8 @@ public:
             if (op == spv::OpImageWrite) writes.push_back({words[cursor + 1], words[cursor + 2]});
             if (op == spv::OpImageQuerySizeLod) querySize = words[cursor + 2];
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
-            if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
-            if (op == spv::OpSelect) selected[words[cursor + 2]] = words[cursor + 4];
+            if (op == spv::OpCompositeExtract && length == 5u) extracted[words[cursor + 2]] = {words[cursor + 3], words[cursor + 4]};
+            if (op == spv::OpSelect) selected[words[cursor + 2]] = {words[cursor + 4], words[cursor + 5]};
             if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
             for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
@@ -12389,9 +12389,21 @@ public:
     bool QueryReportsDepth() const {
         return std::ranges::any_of(composites, [&](const auto& composite) {
             if (composite.second.size() != 4u) return false;
-            const auto chosen = selected.find(composite.second[2]);
-            const auto extract = extracted.find(chosen != selected.end() ? chosen->second : composite.second[2]);
-            return extract != extracted.end() && extract->second == querySize;
+            std::vector<std::uint32_t> pending{composite.second[2]};
+            std::set<std::uint32_t> visited;
+            while (!pending.empty()) {
+                const auto id = pending.back();
+                pending.pop_back();
+                if (!visited.insert(id).second) continue;
+                const auto extract = extracted.find(id);
+                if (extract != extracted.end() && extract->second.first == querySize && extract->second.second == 2u) return true;
+                const auto chosen = selected.find(id);
+                if (chosen != selected.end()) {
+                    pending.push_back(chosen->second.first);
+                    pending.push_back(chosen->second.second);
+                }
+            }
+            return false;
         });
     }
 
@@ -12404,8 +12416,8 @@ private:
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::map<std::uint32_t, std::uint32_t> constants;
     std::map<std::uint32_t, std::uint32_t> sources;
-    std::map<std::uint32_t, std::uint32_t> extracted;
-    std::map<std::uint32_t, std::uint32_t> selected;
+    std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> extracted;
+    std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> selected;
     std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> comparisons;
     std::uint32_t querySize = 0u;
