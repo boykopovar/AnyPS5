@@ -1152,7 +1152,6 @@ int APS5_VABI _ZN3WTF10initializeEv();
 int APS5_VABI _ZN3WTF11OSAllocator18releaseDecommittedEPvm();
 int APS5_VABI _ZN3WTF11OSAllocator6commitEPvmbb();
 int APS5_VABI _ZN3WTF11OSAllocator8decommitEPvm();
-int APS5_VABI _ZN3WTF11PrintStream20printfVariableFormatEPKcz();
 int APS5_VABI _ZN3WTF11PrintStream6printfEPKcz();
 int APS5_VABI _ZN3WTF11ThreadGroup3addERKNS_14AbstractLockerERNS_6ThreadE();
 int APS5_VABI _ZN3WTF11ThreadGroup3addERNS_6ThreadE();
