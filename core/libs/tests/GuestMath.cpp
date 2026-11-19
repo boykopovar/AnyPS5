@@ -4158,6 +4158,26 @@ static void CheckDoubleClassification() {
     }
 }
 
+static void CheckFloorAndCeilWithDenormalsAreZero() {
+    const auto saved = _mm_getcsr();
+    for (const bool denormalsAreZero : {false, true}) {
+        _mm_setcsr(0x1f80u | (denormalsAreZero ? 0x40u : 0u));
+        const std::uint64_t up = std::bit_cast<std::uint64_t>(ceil_nid_postfix(std::bit_cast<double>(std::uint64_t{1})));
+        const std::uint64_t upNegative = std::bit_cast<std::uint64_t>(ceil_nid_postfix(std::bit_cast<double>(0x8000000000000001ull)));
+        const std::uint64_t down = std::bit_cast<std::uint64_t>(floor_nid_postfix(std::bit_cast<double>(0x800fffffffffffffull)));
+        const std::uint64_t downPositive = std::bit_cast<std::uint64_t>(floor_nid_postfix(std::bit_cast<double>(0x000fffffffffffffull)));
+        const std::uint32_t upSingle = std::bit_cast<std::uint32_t>(ceilf_nid_postfix(std::bit_cast<float>(0x007fffffu)));
+        const std::uint32_t upSingleNegative = std::bit_cast<std::uint32_t>(ceilf_nid_postfix(std::bit_cast<float>(0x80000001u)));
+        const std::uint32_t downSingle = std::bit_cast<std::uint32_t>(floorf_nid_postfix(std::bit_cast<float>(0x80000001u)));
+        const std::uint32_t downSinglePositive = std::bit_cast<std::uint32_t>(floorf_nid_postfix(std::bit_cast<float>(0x00000001u)));
+        const bool inexact = (_mm_getcsr() & 0x20u) != 0;
+        _mm_setcsr(saved);
+        Require(up == 0x3ff0000000000000ull && upNegative == 0x8000000000000000ull && down == 0xbff0000000000000ull && downPositive == 0);
+        Require(upSingle == 0x3f800000u && upSingleNegative == 0x80000000u && downSingle == 0xbf800000u && downSinglePositive == 0);
+        Require(inexact == !denormalsAreZero);
+    }
+}
+
 static void CheckDoubleRounding(double value, std::int64_t expected, bool invalid) {
     for (const bool useLlround : {false, true}) {
         std::feclearexcept(FE_ALL_EXCEPT);
@@ -4169,6 +4189,24 @@ static void CheckDoubleRounding(double value, std::int64_t expected, bool invali
     }
 }
 
+static void CheckIlogbReadsTheBits() {
+    const auto saved = _mm_getcsr();
+    for (const bool denormalsAreZero : {false, true}) {
+        _mm_setcsr(0x1f80u | (denormalsAreZero ? 0x40u : 0u));
+        const int smallest = ilogb_nid_postfix(std::bit_cast<double>(std::uint64_t{1}));
+        const int largestSubnormal = ilogb_nid_postfix(std::bit_cast<double>(0x800fffffffffffffull));
+        const int smallestSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x80000001u));
+        const int largestSubnormalSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x007fffffu));
+        const int signaling = ilogb_nid_postfix(std::bit_cast<double>(0x7ff0000000000001ull));
+        const int signalingSingle = ilogbf_nid_postfix(std::bit_cast<float>(0x7f800001u));
+        const int zero = ilogb_nid_postfix(-0.0);
+        const unsigned flags = _mm_getcsr() & 0x3fu;
+        _mm_setcsr(saved);
+        Require(smallest == -1074 && largestSubnormal == -1023 && smallestSingle == -149 && largestSubnormalSingle == -127);
+        Require(signaling == INT_MAX && signalingSingle == INT_MAX && zero == INT_MIN && flags == 0);
+    }
+}
+
 static void CheckFloatRounding(float value, std::int64_t expected, bool invalid) {
     for (const bool useLlround : {false, true}) {
         std::feclearexcept(FE_ALL_EXCEPT);
@@ -4177,6 +4215,59 @@ static void CheckFloatRounding(float value, std::int64_t expected, bool invalid)
         Require(result == expected);
         Require((std::fetestexcept(FE_INVALID) != 0) == invalid);
         Require(errno == 12345);
+    }
+}
+
+static void CheckLroundRoundingModes() {
+    const RestoreFloatingPointState saved;
+    static constexpr int modes[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    static constexpr struct {
+        std::uint64_t bits;
+        std::int64_t expected[4];
+        bool inexact;
+    } doubles[] = {
+        {0x3fdfffffffffffffull, {0, 0, 0, 0}, false},
+        {0x3fe0000000000000ull, {1, 0, 1, 0}, true},
+        {0x4004000000000000ull, {3, 2, 3, 2}, true},
+        {0xc004000000000000ull, {-3, -3, -2, -2}, true},
+        {0xc084c80000000000ull, {-665, -665, -665, -665}, true},
+        {0xc084cc0000000000ull, {-666, -666, -665, -665}, true},
+        {0x4330000000000001ull, {4503599627370497, 4503599627370497, 4503599627370498, 4503599627370497}, true},
+        {0x4340000000000000ull, {9007199254740992, 9007199254740992, 9007199254740994, 9007199254740992}, true},
+        {0x0000000000000000ull, {0, 0, 0, 0}, false},
+    };
+    static constexpr struct {
+        std::uint32_t bits;
+        std::int64_t expected[4];
+        bool inexact;
+    } floats[] = {
+        {0x3effffffu, {0, 0, 0, 0}, false},
+        {0x3f000000u, {1, 0, 1, 0}, true},
+        {0x40200000u, {3, 2, 3, 2}, true},
+        {0xc0200000u, {-3, -3, -2, -2}, true},
+        {0xc4264000u, {-665, -665, -665, -665}, true},
+        {0x59f24f21u, {8525493439561728, 8525493439561728, 8525493976432640, 8525493439561728}, true},
+        {0x00000000u, {0, 0, 0, 0}, false},
+    };
+    for (int mode = 0; mode != 4; ++mode) {
+        for (const bool useLlround : {false, true}) {
+            for (const auto& item : doubles) {
+                const double value = std::bit_cast<double>(item.bits);
+                Require(std::fesetround(modes[mode]) == 0 && std::feclearexcept(FE_ALL_EXCEPT) == 0);
+                const std::int64_t result = useLlround ? llround_nid_postfix(value) : lround_nid_postfix(value);
+                const int exceptions = std::fetestexcept(FE_INVALID | FE_INEXACT);
+                Require(std::fesetround(FE_TONEAREST) == 0);
+                Require(result == item.expected[mode] && exceptions == (item.inexact ? FE_INEXACT : 0));
+            }
+            for (const auto& item : floats) {
+                const float value = std::bit_cast<float>(item.bits);
+                Require(std::fesetround(modes[mode]) == 0 && std::feclearexcept(FE_ALL_EXCEPT) == 0);
+                const std::int64_t result = useLlround ? llroundf_nid_postfix(value) : lroundf_nid_postfix(value);
+                const int exceptions = std::fetestexcept(FE_INVALID | FE_INEXACT);
+                Require(std::fesetround(FE_TONEAREST) == 0);
+                Require(result == item.expected[mode] && exceptions == (item.inexact ? FE_INEXACT : 0));
+            }
+        }
     }
 }
 
@@ -5082,7 +5173,9 @@ int main() {
     CheckLdexpSpecialValues();
     CheckSquareRoot();
     CheckExp2Errno();
+    CheckFloorAndCeilWithDenormalsAreZero();
     CheckExactOperations();
+    CheckIlogbReadsTheBits();
     CheckNearbyint();
     CheckNearbyintEnvironment();
     CheckFegetenv();
@@ -5107,6 +5200,7 @@ int main() {
     CheckNextafterConsoleBits();
     CheckNexttowardAndNextafterlBits();
     CheckRemainderf();
+    CheckLroundRoundingModes();
     CheckTanhConsoleBits();
     CheckSinhMsunBits();
     CheckSinhLargeArguments();
