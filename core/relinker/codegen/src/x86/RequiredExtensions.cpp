@@ -158,11 +158,11 @@ bool _avx1(const Encoding& encoding) {
     if (map == kMap0F38 && prefix == kOperandSizePrefix) {
         if (opcode == 0x0C || opcode == 0x0D || opcode == 0x0E || opcode == 0x0F || opcode == 0x17) return true;
         if (opcode == 0x18 || opcode == 0x19 || opcode == 0x1A) return true;
-        if (opcode == 0x2C || opcode == 0x2E) return true;
+        if (opcode == 0x2C || opcode == 0x2D || opcode == 0x2E || opcode == 0x2F) return true;
         return false;
     }
     if (map == kMap0F3A && prefix == kOperandSizePrefix) {
-        if (opcode == 0x06) return true;
+        if (opcode == 0x04 || opcode == 0x05 || opcode == 0x06) return true;
         if (opcode >= 0x08 && opcode <= 0x0D) return true;
         if (opcode == 0x18 || opcode == 0x19 || opcode == 0x40) return true;
         if (opcode == 0x4A || opcode == 0x4B) return true;
