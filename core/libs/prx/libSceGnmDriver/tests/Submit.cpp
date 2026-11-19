@@ -1,6 +1,10 @@
 #include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/Shutdown.hpp"
+#include "prx/libSceVideoOut/include/Buffer.hpp"
+#include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "SceTypes.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -9,6 +13,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +23,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -34,8 +40,14 @@ std::string ExpectFailure(TAction action) {
 }
 
 constexpr std::uint32_t OpNop = 0x10;
+constexpr std::uint32_t OpWriteData = 0x37;
+constexpr std::uint32_t OpReleaseMem = 0x49;
 constexpr std::uint32_t Type2Filler = 0x80000000u;
 constexpr std::uint32_t Type1Header = 0x40000000u;
+constexpr std::uint32_t WriteDataToMemory = 0x500u;
+constexpr int GnmInvalidArgument = static_cast<int>(0x80d11000u);
+constexpr int GnmNotEnoughResources = static_cast<int>(0x80d11001u);
+constexpr int GnmQueueFull = static_cast<int>(0x80d11081u);
 
 constexpr std::uint32_t Type3(std::uint32_t opcode, std::uint32_t bodyWords) {
     return 0xc0000000u | ((bodyWords - 1u) << 16u) | (opcode << 8u);
@@ -91,6 +103,8 @@ public:
 
     Labels& Data() { return *reinterpret_cast<Labels*>(block); }
 
+    std::uint32_t* Words() { return reinterpret_cast<std::uint32_t*>(block); }
+
 private:
     std::uint8_t* block = nullptr;
 };
@@ -138,6 +152,61 @@ void TestFrameBoundaryWait() {
     Require(labels.second == 1, "the second submission did not run");
 }
 
+void CheckRequestFlipCommands(const std::uint32_t* words, std::uintptr_t label, std::uint32_t token) {
+    Require(words[0] == Type3(OpWriteData, 4), "the surface lock packet has the wrong header");
+    Require(words[1] == WriteDataToMemory, "the surface lock packet has the wrong control word");
+    Require(words[2] == static_cast<std::uint32_t>(label), "the surface lock packet has the wrong low address");
+    Require(words[3] == static_cast<std::uint32_t>(label >> 32u), "the surface lock packet has the wrong high address");
+    Require(words[4] == 1, "the surface lock packet has the wrong value");
+    Require(words[5] == Type3(OpReleaseMem, 7), "the EOP release packet has the wrong header");
+    Require(words[6] == 0x06200504u, "the EOP release packet has the wrong event control");
+    Require(words[7] == 0x42010000u, "the EOP release packet has the wrong data control");
+    Require(words[8] == static_cast<std::uint32_t>(label), "the EOP release packet has the wrong low address");
+    Require(words[9] == static_cast<std::uint32_t>(label >> 32u), "the EOP release packet has the wrong high address");
+    Require(words[10] == 1 && words[11] == 0, "the EOP release packet has the wrong data");
+    Require(words[12] == token && token != 0 && token <= 0x0fffffffu, "the EOP release packet has the wrong token");
+    Require(words[13] == Type3(OpNop, 50), "the command buffer has the wrong padding header");
+    for (std::size_t i = 14; i < 64; ++i) Require(words[i] == 0, "the command buffer has a nonzero padding dword");
+}
+
+void TestRequestFlipAndSubmitDone() {
+    GuestBlock commandsBlock;
+    auto* commands = commandsBlock.Words();
+    Require(sceGnmRequestFlipAndSubmitDone(nullptr, 0x100, 1, 0, 1, 0) == GnmInvalidArgument, "a null command buffer was accepted");
+    Require(sceGnmRequestFlipAndSubmitDone(commands, 0xff, 1, 0, 1, 0) == GnmNotEnoughResources, "an undersized command buffer was accepted");
+    Require(sceGnmRequestFlipAndSubmitDone(commands, 0x100, 0, 0, 1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid flip handle was accepted");
+
+    const int handle = sceVideoOutOpen(255, VIDEO_OUT_BUS_TYPE_MAIN, 0, nullptr);
+    Require(handle > 0, "video out open failed");
+    GuestBlock frameBlock;
+    VideoOutBuffers buffer{frameBlock.Words(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
+    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    std::uintptr_t label = 0;
+    Require(sceVideoOutGetBufferLabelAddress(handle, &label) == VIDEO_OUT_BUFFER_NUM_MAX, "buffer label query failed");
+    constexpr std::int64_t argument = -0x1234567890abcdefLL;
+    Require(sceGnmRequestFlipAndSubmitDone(commands, 0x100, static_cast<std::uint32_t>(handle), 0, 1, argument) == 0, "request flip and submit done failed");
+    CheckRequestFlipCommands(commands, label, commands[12]);
+
+    VideoOutFlipStatus status{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    do {
+        Require(sceVideoOutGetFlipStatus(handle, &status) == 0, "flip status query failed");
+        if (status.count == 1 && status.flipPendingNum == 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require(status.count == 1 && status.flipPendingNum == 0 && status.currentBuffer == 0 && status.flipArg == argument, "the EOP flip did not complete with its argument");
+    AgcDriverWaitIdle_nid_postfix();
+
+    std::array<std::uint32_t, VIDEO_OUT_FLIP_QUEUE_CAPACITY> pending{};
+    for (auto& token : pending) Require(sceVideoOutSubmitEopFlip(handle, 0, 1, 0, &token) == 0, "an EOP flip reservation failed");
+    Require(sceGnmRequestFlipAndSubmitDone(commands, 0x100, static_cast<std::uint32_t>(handle), 0, 1, 0) == GnmQueueFull, "a full flip queue was not mapped to a GNM error");
+    Require(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
+    Require(sceVideoOutClose(handle) == 0, "video out close failed");
+    LibcRunShutdown_nid_postfix();
+}
+
 void EnableSubmitWaitIdle() {
 #ifdef _WIN32
     _putenv_s("APS5_GNM_SUBMIT_WAIT_IDLE", "1");
@@ -160,6 +229,7 @@ int main(int argc, char** argv) {
         device.reset();
         EnableSubmitWaitIdle();
         TestFrameBoundaryWait();
+        TestRequestFlipAndSubmitDone();
         std::puts("GnmDriver submission wait tests passed");
         return 0;
     } catch (const std::exception& error) {

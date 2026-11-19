@@ -85,6 +85,9 @@ constexpr std::uint32_t MaxCommandBufferBytes = 0x3ffffc;
 constexpr std::int16_t EvfiltGraphicsCore = -14;
 
 constexpr int GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT = static_cast<int>(0x80d11000u);
+constexpr int GNM_ERROR_SUBMISSION_NOT_ENOUGH_RESOURCES = static_cast<int>(0x80d11001u);
+constexpr int GNM_ERROR_SUBMISSION_AND_FLIP_FAILED_INVALID_QUEUE_FULL = static_cast<int>(0x80d11081u);
+constexpr int VIDEO_OUT_FLIP_QUEUE_FULL = static_cast<int>(0x80290012u);
 constexpr int GNM_ERROR_VALIDATION_NOT_ENABLED = static_cast<int>(0x80d13fffu);
 constexpr int GNM_ERROR_CAPTURE_RAZOR_NOT_LOADED = static_cast<int>(0x80d15001u);
 constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
@@ -808,8 +811,24 @@ int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, voi
     return static_cast<int>(slot) + 1;
 }
 
-int APS5_VABI sceGnmRequestFlipAndSubmitDone() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmRequestFlipAndSubmitDone(std::uint32_t* gpuAddr, std::uint32_t gpuAddrSizeInBytes, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
+    if (!gpuAddr) return GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT;
+    if (gpuAddrSizeInBytes < FlipReserveWords * sizeof(std::uint32_t)) return GNM_ERROR_SUBMISSION_NOT_ENOUGH_RESOURCES;
+    if (!GuestWritable_nid_no_patch(gpuAddr, FlipReserveWords * sizeof(std::uint32_t))) return GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT;
+    std::uint32_t token = 0;
+    const int flipResult = sceVideoOutSubmitEopFlip(static_cast<int>(videoOutHandle), static_cast<int>(displayBufferIndex), static_cast<int>(flipMode), flipArg, &token);
+    if (flipResult != 0) return flipResult == VIDEO_OUT_FLIP_QUEUE_FULL ? GNM_ERROR_SUBMISSION_AND_FLIP_FAILED_INVALID_QUEUE_FULL : flipResult;
+    const auto label = BufferLabel(videoOutHandle, displayBufferIndex);
+    std::array<std::uint32_t, FlipReserveWords> commands{};
+    auto* at = Emit(commands.data(), OpWriteData, {WriteDataToMemory, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32), 1});
+    at = Emit(at, OpReleaseMem, {0x06200504u, 0x42010000u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32), 1u, 0u, token});
+    Nop(at, static_cast<std::uint32_t>(commands.size() - static_cast<std::size_t>(at - commands.data())) - 1);
+    if (!GuestCopyOut_nid_no_patch(gpuAddr, commands.data(), sizeof(commands))) return GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT;
+    std::lock_guard lock(g_submitMutex);
+    std::uint32_t* dcbs[1] = {gpuAddr};
+    const std::uint32_t dcbBytes[1] = {static_cast<std::uint32_t>(sizeof(commands))};
+    SubmitLocked(1, dcbs, dcbBytes, nullptr, nullptr);
+    g_frameStarted = false;
     return 0;
 }
 
