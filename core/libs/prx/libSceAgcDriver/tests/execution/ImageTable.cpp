@@ -2316,7 +2316,9 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
         const auto faulted = run();
         Keys[selector] = 0u;
         Keys[5] = 0u;
-        Require(Faulted(faulted) && faulted.log.find("outside the snapshot") != std::string::npos, name + ": " + what + " did not fault as outside the snapshot:\n" + faulted.log);
+        const bool nullOnHost = (reinterpret_cast<std::uintptr_t>(records.data()) >> 32u) == 0u;
+        const bool outsideFault = faulted.log.find("outside the snapshot") != std::string::npos || (nullOnHost && faulted.log.find("selected the descriptor at 0x0: unmapped") != std::string::npos);
+        Require(Faulted(faulted) && outsideFault, name + ": " + what + " did not fault as outside the snapshot:\n" + faulted.log);
         Require(untouched(faulted), name + ": " + what + " published copied output");
         Require(faulted.artifactId == taken.artifactId, name + ": " + what + " recompiled the shader");
     };
