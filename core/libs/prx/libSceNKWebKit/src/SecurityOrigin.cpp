@@ -551,6 +551,12 @@ OriginRef APS5_VABI _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE(const URL* u
     return CreateFromURL(Checked(url), __func__);
 }
 
+OriginRef APS5_VABI _ZN7WebCore14SecurityOrigin12createUniqueEv() {
+    PendingOrigin origin;
+    InitializeOpaque(*origin);
+    return origin.Release();
+}
+
 String APS5_VABI _ZNK7WebCore14SecurityOrigin8toStringEv(const SecurityOrigin* self) {
     const auto& origin = Checked(self);
     if (IsOpaque(origin.data)) return Concatenate({Literal("null")});

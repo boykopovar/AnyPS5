@@ -6,4 +6,4 @@
 
 ## change 2390 3.20 callable NIDs
 
-- [Older callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 2384 3.20 callable NIDs are declared as throwing placeholders. Their prototypes and behavior are unverified; parameterless `int` declarations are not verified ABI contracts. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or functional behavior is claimed. Exports shared with other older modules require separate provider analysis.
+- [Older callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 2383 3.20 callable NIDs are declared as throwing placeholders. Their prototypes and behavior are unverified; parameterless `int` declarations are not verified ABI contracts. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or functional behavior is claimed. Exports shared with other older modules require separate provider analysis.

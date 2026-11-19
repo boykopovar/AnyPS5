@@ -276,6 +276,43 @@ static void TestOpaqueOrigins() {
     Require(Equal(copy, data));
 }
 
+static void TestCreateUnique() {
+    auto first = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    auto second = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    for (const auto* origin : {&first, &second}) {
+        Require((*origin)->refCount.load() == 1);
+        Require(IsOpaque(*origin));
+        Require((*origin)->data.storage.opaque.object != 0);
+        Require((*origin)->data.storage.opaque.processIdentifier == _ZN7WebCore7Process10identifierEv());
+        Require(Is((*origin)->domain, ""));
+        Require(!(*origin)->filePath.impl);
+        Require(!(*origin)->universalAccess);
+        Require(!(*origin)->domainWasSetInDOM);
+        Require(!(*origin)->canLoadLocalResources);
+        Require(!(*origin)->enforcesFilePathSeparation);
+        Require(!(*origin)->needsStorageAccessFromFileURLsQuirk);
+        Require((*origin)->isPotentiallyTrustworthy.hasValue && !(*origin)->isPotentiallyTrustworthy.value);
+        Require(!(*origin)->isLocal);
+        Require(Is(ToString(*origin), "null"));
+        Require(!ToRawString(*origin).impl);
+        Require(SameOrigin(*origin, *origin));
+        Require(Equal(*origin, *origin));
+        Require(Is(_ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(origin->get()), ""));
+    }
+    Require(first.get() != second.get());
+    Require(first->data.storage.opaque.object != second->data.storage.opaque.object);
+    Require(!SameOrigin(first, second));
+    Require(!Equal(first, second));
+    auto http = Create("http", "example.com");
+    Require(!SameOrigin(first, http));
+    Require(!SameOrigin(http, first));
+    auto copy = _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(first.get());
+    Require(copy.get() != first.get());
+    Require(IsOpaque(copy));
+    Require(SameOrigin(first, copy));
+    Require(!SameOrigin(second, copy));
+}
+
 static void TestFileOrigins() {
     auto file = Create("file", "", "", "/tmp/a%20b");
     Require(!IsOpaque(file));
@@ -494,6 +531,7 @@ int main() {
     TestLoopback();
     TestTupleOrigins();
     TestOpaqueOrigins();
+    TestCreateUnique();
     TestFileOrigins();
     TestComparisons();
     TestIsolatedCopy();
