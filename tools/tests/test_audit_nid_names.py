@@ -78,6 +78,16 @@ class Tests(unittest.TestCase):
         self.assertEqual([x["nid"] for x in data["entries"]],["6OkOa1SOKuY","BBBBBBBBBBB"])
         self.assertEqual(data["entries"][1]["computed_nid"],audit_nid_names.compute_nid("beta"))
 
+    def test_comments_and_blank_lines_are_ignored(self):
+        path = self.root / "comments.csv"
+        path.write_text("# header comment\n\n6OkOa1SOKuY sceAmprUnknown00 # inline comment\n", encoding="utf-8")
+        result = self.run_main(path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual((data["matching"], data["mismatching"]), (1, 0))
+        self.assertEqual(data["entries"], [{"nid": "6OkOa1SOKuY", "name": "sceAmprUnknown00",
+                                            "computed_nid": "6OkOa1SOKuY", "matches": True}])
+
 
 if __name__ == "__main__":
     unittest.main()
