@@ -1208,6 +1208,14 @@ void testAcquireMem() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0, 0, 0, 0, 0, 0, 0}), 0); }, "packet size");
 }
 
+thread_local std::uint64_t enabledCounterReadBegin = 0;
+thread_local std::uint64_t enabledCounterReadEnd = 0;
+
+void guardEnabledCounterReads(std::uint64_t address, std::size_t bytes) {
+    if (enabledCounterReadBegin == enabledCounterReadEnd) return;
+    check(address >= enabledCounterReadBegin && address <= enabledCounterReadEnd && bytes <= enabledCounterReadEnd - address, "predication read a disabled counter block");
+}
+
 void testPredication() {
     alignas(16) std::uint64_t flag[4] = {0, 0, 0, 0};
     auto* flag32 = reinterpret_cast<std::uint32_t*>(&flag[2]);
@@ -1273,6 +1281,26 @@ void testPredication() {
     check(AgcDriver::Pm4::PredicationPasses(state), "samples in the highest enabled block must run draw-visible packets");
     counters[30] &= ~ready;
     expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    {
+        constexpr auto lastBlock = AgcDriver::Pm4::SampleDumpBlocks - 1;
+        auto* lastPair = &counters[lastBlock * 2];
+        lastPair[0] = lastPair[1] = ready | 70u;
+        execute(state, makePacket(0x46, {0x138, ((1u << lastBlock) << 11u) | (2u << 9u), 0}));
+        struct ResetReadGuard {
+            ~ResetReadGuard() {
+                AgcDriver::GuestMemory::SetReadGuard(nullptr);
+                enabledCounterReadBegin = enabledCounterReadEnd = 0;
+            }
+        } resetReadGuard;
+        enabledCounterReadBegin = reinterpret_cast<std::uintptr_t>(lastPair);
+        enabledCounterReadEnd = enabledCounterReadBegin + 2 * sizeof(std::uint64_t);
+        AgcDriver::GuestMemory::SetReadGuard(&guardEnabledCounterReads);
+        check(!AgcDriver::Pm4::PredicationPasses(state), "equal enabled counters must skip without reading disabled memory");
+        ++lastPair[1];
+        check(AgcDriver::Pm4::PredicationPasses(state), "enabled samples must count without reading disabled memory");
+        lastPair[0] &= ~ready;
+        expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    }
     execute(state, makePacket(0x46, {0x138, 2u << 9u, 0}));
     expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "no counter block enabled");
     execute(state, makePacket(0x46, {0x138, (AgcDriver::AllSampleDumpBlocks << 11u) | (2u << 9u), 0}));
