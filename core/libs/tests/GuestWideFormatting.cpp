@@ -628,6 +628,17 @@ static void CheckNanSign() {
     Require(buffer == std::u16string(u"[nan   ][  -nan][-NAN][-inf][+NAN]"), "NaN flags");
 }
 
+static void CheckUnwritableBuffer() {
+    auto* unmapped = reinterpret_cast<char16_t*>(std::uintptr_t{0x10});
+    errno = 0;
+    Require(swprintf_nid_postfix(unmapped, 8, u"%d", 42) == -1 && errno == 22, "swprintf rejects an unmapped buffer");
+    errno = 0;
+    Require(swprintf_nid_postfix(unmapped, 2, u"%d", 42) == -1 && errno == 22, "swprintf rejects an unmapped buffer it would truncate into");
+    errno = 0;
+    Require(swprintf_nid_postfix(unmapped, 8, u"[%s]", "\xf0\x9f\x98\x80") == -1 && errno == 22,
+        "swprintf rejects an unmapped buffer before reporting an encoding error");
+}
+
 int main() {
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
     CheckAlternateOctalZero();
@@ -637,6 +648,7 @@ int main() {
     CheckPointer();
     CheckCount();
     CheckSwprintf();
+    CheckUnwritableBuffer();
     CheckFloat();
     CheckSecureWideBoundary();
     CheckSecureWideConstraints();

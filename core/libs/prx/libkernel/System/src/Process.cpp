@@ -1014,9 +1014,32 @@ int APS5_VABI sched_get_priority_min_nid_postfix(int policy) {
     return 256;
 }
 
+static int SysarchFailure(int error) {
+    *__error_nid_postfix() = error;
+    return -1;
+}
+
+static int IoPermission(int operation, void* parameters) {
+    constexpr int setIoperm = 4;
+    constexpr int guestPermission = 1;
+    constexpr std::uint32_t ioPorts = 65536;
+    std::uint32_t arguments[3];
+    if (!GuestCopyIn_nid_no_patch(arguments, parameters, sizeof(arguments))) return SysarchFailure(guestFault);
+    if (operation == setIoperm) return SysarchFailure(guestPermission);
+    if (arguments[0] >= ioPorts) return SysarchFailure(guestInvalid);
+    arguments[1] = 0;
+    if (!GuestCopyOut_nid_no_patch(parameters, arguments, sizeof(arguments))) return SysarchFailure(guestFault);
+    return 0;
+}
+
 int APS5_VABI sysarch(int operation, void* parameters) {
+    constexpr int i386GetLdt = 0;
+    constexpr int i386SetLdt = 1;
+    constexpr int i386GetIoperm = 3;
+    constexpr int i386SetIoperm = 4;
     constexpr int i386GetFsBase = 7;
     constexpr int i386GetGsBase = 9;
+    constexpr int i386SetGsBase = 10;
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
@@ -1031,8 +1054,10 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    if (operation == i386GetLdt || operation == i386SetLdt) return SysarchFailure(guestInvalid);
+    if (operation == i386GetIoperm || operation == i386SetIoperm) return IoPermission(operation, parameters);
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
-    if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase)
+    if (!i386 && operation != getFsBase && operation != getGsBase && operation != setGsBase && operation != i386SetGsBase)
         NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
 #if (defined(__linux__) || defined(_WIN32) || defined(__APPLE__)) && defined(__x86_64__)
     if (parameters == nullptr) {
@@ -1040,11 +1065,14 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         return -1;
     }
     std::uint64_t base = 0;
-    if (operation == setGsBase) {
-        if (!GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
+    if (operation == setGsBase || operation == i386SetGsBase) {
+        std::uint32_t low = 0;
+        if (operation == i386SetGsBase ? !GuestCopyIn_nid_no_patch(&low, parameters, sizeof(low))
+                                       : !GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
             *__error_nid_postfix() = guestFault;
             return -1;
         }
+        if (operation == i386SetGsBase) base = low;
         if (base >= userAddressEnd) {
             *__error_nid_postfix() = guestInvalid;
             return -1;

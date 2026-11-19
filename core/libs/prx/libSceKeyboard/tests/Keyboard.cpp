@@ -209,6 +209,9 @@ int main() {
     KeyboardCharData charData{};
     bool connected = false;
     std::int32_t deviceId = 0;
+    Require(sceKeyboardReadState(42, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardRead(42, nullptr, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
@@ -279,6 +282,11 @@ int main() {
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
     Require(sceKeyboardRead(42, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardRead(42, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardRead(42, data, 0) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardRead(42, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardReadState(42, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardReadState(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
@@ -382,6 +390,9 @@ int main() {
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, reinterpret_cast<KeyboardCharData*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, reinterpret_cast<bool*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, reinterpret_cast<std::int32_t*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
