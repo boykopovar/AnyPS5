@@ -381,9 +381,10 @@ int APS5_VABI sceAvControlSetHdrMetadata(std::uint64_t type) {
     return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlSetVideoOutSource() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceAvControlSetVideoOutSource(std::int32_t* out, std::int32_t source) {
+    if (out != nullptr) {
+        CopyOutPreservingErrno(out, &source, sizeof(source));
+    }
 }
 
 int APS5_VABI sceAvControlSimulateProcessOutputModeArbitration() {
@@ -770,8 +771,10 @@ int APS5_VABI libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch(const void* argume
 }
 APS5_EXPORT("7kywfNahIbw", libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch);
 
-int APS5_VABI libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch(void* object) {
+    if (object == nullptr) return;
+    const std::uint64_t zero = 0;
+    CopyOutPreservingErrno(object, &zero, sizeof(zero));
 }
 APS5_EXPORT("A143jTEYkNw", libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch);
 
@@ -838,8 +841,10 @@ int APS5_VABI libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch() {
 }
 APS5_EXPORT("cANt7oF1VsA", libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch);
 
-int APS5_VABI libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch(void* object) {
+    if (object == nullptr) return;
+    const std::array<std::uint64_t, 2> zero{};
+    CopyOutPreservingErrno(object, zero.data(), sizeof(zero));
 }
 APS5_EXPORT("cK+dKi9GYYA", libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch);
 
@@ -865,8 +870,10 @@ int APS5_VABI libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch(std::uint32_t, std
 }
 APS5_EXPORT("m1Wi0Yp38v0", libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch);
 
-int APS5_VABI libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch(void* object) {
+    if (object == nullptr) return;
+    const std::uint64_t zero = 0;
+    CopyOutPreservingErrno(object, &zero, sizeof(zero));
 }
 APS5_EXPORT("mp2s52Yr4pc", libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch);
 
