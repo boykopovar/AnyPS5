@@ -147,10 +147,6 @@ int APS5_VABI ubrk_setUText() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_cbFromUWriteBytes() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_close() {
     NotImplemented_nid_no_patch(__func__);
 }

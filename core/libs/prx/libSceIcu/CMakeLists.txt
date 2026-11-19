@@ -181,7 +181,7 @@ endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_converter_callbacks_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConverterCallbacks.cpp)
-    target_include_directories(guest_icu_converter_callbacks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(guest_icu_converter_callbacks_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ICU_SOURCE_DIR}/common)
     target_link_libraries(guest_icu_converter_callbacks_tests PRIVATE libSceIcu libc)
     configure_windows_unwind(guest_icu_converter_callbacks_tests)
     add_test(NAME guest_icu_converter_callbacks COMMAND guest_icu_converter_callbacks_tests)

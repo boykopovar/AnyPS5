@@ -19,7 +19,6 @@ int APS5_VABI ubrk_preceding();
 int APS5_VABI ubrk_previous();
 int APS5_VABI ubrk_setText();
 int APS5_VABI ubrk_setUText();
-int APS5_VABI ucnv_cbFromUWriteBytes();
 int APS5_VABI ucnv_close();
 int APS5_VABI ucnv_convertEx();
 int APS5_VABI ucnv_fromUnicode();

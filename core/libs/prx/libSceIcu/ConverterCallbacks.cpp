@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv_cb.h"
 #include "unicode/ucnv_err.h"
 #include <array>
 #include <cstdint>
@@ -38,9 +39,19 @@ bool ContextSkips(const void* context, std::int32_t reason) {
     return !context || (*static_cast<const char*>(context) == 'i' && reason == 0);
 }
 
+void WriteBytes(UConverterFromUnicodeArgs* arguments, const char* source, std::int32_t length, std::int32_t offsetIndex, UErrorCode* error) {
+    ucnv_cbFromUWriteBytes(arguments, source, length, offsetIndex, error);
 }
 
+}
+
+#undef ucnv_cbFromUWriteBytes
+
 extern "C" {
+
+void APS5_VABI ucnv_cbFromUWriteBytes(Icu::ConverterFromUnicodeArgs* arguments, const char* source, std::int32_t length, std::int32_t offsetIndex, std::int32_t* error) {
+    WriteBytes(reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), source, length, offsetIndex, reinterpret_cast<UErrorCode*>(error));
+}
 
 void APS5_VABI UCNV_FROM_U_CALLBACK_STOP_nid_postfix(const void*, Icu::ConverterFromUnicodeArgs*, const char16_t*, std::int32_t, std::int32_t codePoint, std::int32_t reason, std::int32_t* error) {
     ValidateReason(reason);
