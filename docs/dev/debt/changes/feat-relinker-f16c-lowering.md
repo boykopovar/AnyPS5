@@ -1,0 +1,9 @@
+# relinker
+
+## change [matcher](../../../core/relinker/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp)) applies the BMI1
+
+- `--to-avx` ([matcher](../../../core/relinker/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp)) applies the BMI1, BMI2, CLWB and RDPID lowerings of `--to-rosetta` and adds TZCNT, LZCNT, MOVBE and F16C, for hosts with AVX but without AVX2, such as the Sandy Bridge and Ivy Bridge CPUs of 2011 and 2012 Macs. AVX2, FMA, PDEP, PEXT, RDRAND and RDSEED are not lowered, so a title that reaches one of them still raises an illegal instruction; Sandy Bridge has neither RDRAND nor RDSEED, so the `--to-rosetta` RDSEED-to-RDRAND rewrite would not help there. It requires `--macos`: the Linux and Windows runtimes stop at start-up when the host lacks BMI1, BMI2, LZCNT, MOVBE or AVX2 and do not yet read which of them a conversion lowered.
+
+## add Functional
+
+- [F16C lowering](../../../core/relinker/codegen/src/x86/F16cLowering.cpp) under `--to-avx` lowers 128- and 256-bit VCVTPH2PS and VCVTPS2PH (register and memory operands, immediate and MXCSR rounding modes) in an integer loop below the red zone, saving RFLAGS, seven GPRs and one scratch YMM register when a memory operand is used. Unlike hardware F16C, the stubs do not update MXCSR exception status flags or raise #XM on unmasked exceptions; MXCSR.DAZ is honored for VCVTPS2PH single-precision inputs and ignored for VCVTPH2PS, and MXCSR.FTZ is ignored, matching the SDM and hardware measurements. Precise fault delivery inside a spill sequence has not been verified. The execution test compares all 65,536 half-precision values for VCVTPH2PS and normal, subnormal, overflow, underflow, NaN, DAZ/FTZ and rounding-mode cases for VCVTPS2PH against the SDM model and against the hardware instruction when the host supports F16C.
