@@ -33,6 +33,11 @@ class RedactTests(unittest.TestCase):
             home=r"C:\Profiles\Example", user="", host="")
         self.assertEqual(out, r"opened ~/games/title.elf and C:\Profiles\Example-backup\title.elf")
 
+    def test_posix_home_preserves_sibling_paths(self):
+        text = "/home/ana. /home/ana/log /home/anabel /home/ana.old /home/ana-backup /home/ANA"
+        out = bug_report.redact(text, home="/home/ana", user="", host="")
+        self.assertEqual(out, "~. ~/log /home/anabel /home/ana.old /home/ana-backup /home/ANA")
+
     def test_windows_home_before_a_period_is_redacted(self):
         out = bug_report.redact(
             r"Home is C:\Profiles\Example. Sibling is C:\Profiles\Example.old.",
