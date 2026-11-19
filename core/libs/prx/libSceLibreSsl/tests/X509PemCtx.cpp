@@ -1331,11 +1331,11 @@ void StoreLocations() {
         context.internal = &internal;
         context.certStore = store;
         Require(SSL_CTX_load_verify_locations_nid_postfix(&context, single.c_str(), nullptr) == 1, "the file is loaded once");
-        RequireThrows([&] { SSL_CTX_load_verify_locations_nid_postfix(&context, single.c_str(), nullptr); },
-            "a second load of the same subject reaches the store guard");
-        ERR_clear_error_nid_postfix();
-        Require(StackCount(store->objects) == 1, "the refused second load keeps one certificate in the store");
-        Require(StackCount(store->lookupMethods) == 1, "the refused second load keeps one lookup");
+        Require(SSL_CTX_load_verify_locations_nid_postfix(&context, single.c_str(), nullptr) == 1,
+            "a second load of the same certificate succeeds");
+        RequireCodes({Code(X509Library, 101)}, "a duplicate load queues X509_R_CERT_ALREADY_IN_HASH_TABLE");
+        Require(StackCount(store->objects) == 1, "the second load keeps one certificate in the store");
+        Require(StackCount(store->lookupMethods) == 1, "the second load keeps one lookup");
         X509_STORE_free_nid_postfix(store);
     }
 
@@ -1405,23 +1405,23 @@ void StoreLocations() {
     }
 
     {
-        StoreFixture store("a store for the duplicate subject in one file");
-        RequireThrows([&] { store.Load(files.Path("same-subject-twice.pem")); },
-            "two certificates of the same subject in one file reach the store guard");
-        ERR_clear_error_nid_postfix();
-        Require(StackCount(store.Objects()) == 1, "the certificate stored before the guard stays in the store");
-        Require(store.Load(files.Path("single.pem")) == 1, "loading works again after the guard threw");
-        RequireNoCodes("the load that follows the guard queues nothing");
+        StoreFixture store("a store for two certificates with the same subject");
+        Require(store.Load(files.Path("same-subject-twice.pem")) == 1,
+            "two distinct certificates of the same subject both load");
+        RequireNoCodes("loading distinct certificates with the same subject queues nothing");
         Require(StackCount(store.Objects()) == 2, "both certificates stay in the store");
+        Require(store.Load(files.Path("single.pem")) == 1, "loading another certificate works afterwards");
+        RequireNoCodes("loading another certificate queues nothing");
+        Require(StackCount(store.Objects()) == 3, "all three certificates stay in the store");
     }
 
     {
-        StoreFixture store("a store for the duplicate after an insertion");
-        Require(store.Load(files.Path("single.pem")) == 1, "the store already holds one subject");
-        RequireThrows([&] { store.Load(files.Path("other-then-single.pem")); },
-            "the second record of a file duplicates a subject the store already holds");
-        ERR_clear_error_nid_postfix();
-        Require(StackCount(store.Objects()) == 2, "the record read before the guard stays in the store");
+        StoreFixture store("a store for a duplicate after an insertion");
+        Require(store.Load(files.Path("single.pem")) == 1, "the store already holds one certificate");
+        Require(store.Load(files.Path("other-then-single.pem")) == 1,
+            "a file containing a new certificate and an already stored certificate returns success");
+        RequireCodes({Code(X509Library, 101)}, "reloading an already stored certificate queues X509_R_CERT_ALREADY_IN_HASH_TABLE");
+        Require(StackCount(store.Objects()) == 2, "the new record stays in the store without duplicating the existing one");
         auto* added = StoredCertificate(store.Objects(), 1);
         Require(added && Holds(added->certificateInfo->key->algorithm->algorithm, RsaEncryption), "the stored record is the RSA one");
         Require(added->references == 1, "only the store holds the certificate once the read list is released");
@@ -1820,13 +1820,13 @@ void Allocator() {
     WriteFile(files.Host("sweep-three-then-encrypted.pem"), sweepOne + sweepTwo + sweepThree +
         RecordWithHeader("CERTIFICATE", "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF", Bytes{0x30, 0x00}));
     SweepStoreLoad(files.Path("sweep-single.pem"), false, "the store built from one file releases the certificate and the file");
-    SweepStoreLoad(files.Path("sweep-same-subject.pem"), true, "the store guard of a duplicate subject releases the list and the read certificate");
-    SweepStoreLoad(files.Path("sweep-trusted.pem"), false, "the store guard frees the auxiliary data of the trusted certificate");
+    SweepStoreLoad(files.Path("sweep-same-subject.pem"), false, "two certificates with the same subject and distinct encodings release their list and stored certificates");
+    SweepStoreLoad(files.Path("sweep-trusted.pem"), false, "the store load frees the auxiliary data of the trusted certificate");
     SweepStoreLoad(files.Path("sweep-crl.pem"), true, "a revocation list in the file releases the list built before it");
     SweepStoreLoad(files.Path("sweep-key-after.pem"), true, "a private key after a certificate releases the certificate read before it");
     SweepStoreLoad(files.Path("sweep-broken-after-good.pem"), false, "a record that cannot be decoded releases the record read before it");
     SweepStoreLoad(files.Path("sweep-bundle4.pem"), false, "a four-certificate bundle grows and releases its info stack cleanly");
-    SweepStoreLoad(files.Path("sweep-three-with-duplicate.pem"), true, "a duplicate third record frees every item in the info stack");
+    SweepStoreLoad(files.Path("sweep-three-with-duplicate.pem"), false, "a third certificate sharing a subject frees every item in the info stack cleanly");
     SweepStoreLoad(files.Path("sweep-three-then-encrypted.pem"), true, "an encrypted fourth record frees the preceding info stack cleanly");
 }
 
@@ -1961,16 +1961,16 @@ void StoreInfoReconciliation() {
 
     {
         const std::uint64_t baseline = CurrentGeneration();
-        StoreFixture store("a store for a duplicate third certificate");
-        RequireThrows([&] { store.Load(files.Path("three-with-dup.pem")); }, "a duplicate third subject reaches the store guard");
-        ERR_clear_error_nid_postfix();
-        Require(StackCount(store.Objects()) == 2, "the two distinct certificates inserted before the duplicate stay in the store");
-        for (int index = 0; index < 2; ++index) {
+        StoreFixture store("a store for a repeated subject certificate");
+        Require(store.Load(files.Path("three-with-dup.pem")) == 1, "a distinct third certificate sharing a subject loads cleanly");
+        RequireNoCodes("loading distinct certificates with a repeated subject queues nothing");
+        Require(StackCount(store.Objects()) == 3, "all three distinct certificates stay in the store");
+        for (int index = 0; index < 3; ++index) {
             auto* stored = StoredCertificate(store.Objects(), index);
             Require(stored && stored->references == 1, "each kept certificate keeps a single store reference");
         }
         store.Close();
-        Require(OutstandingSince(baseline) == 0, "the duplicate-subject unwind releases the uninserted cert, info items and stack");
+        Require(OutstandingSince(baseline) == 0, "loading a repeated-subject bundle releases every temporary allocation");
     }
 }
 

@@ -157,23 +157,17 @@ static_assert(offsetof(LibreSslX509Lookup, storeContext) == 24);
 namespace {
 
 constexpr int MinimumNodes = 4;
-constexpr std::uint64_t PolicyCheck = 0x80;
-constexpr std::uint64_t PolicyMask = 0x80 | 0x100 | 0x200 | 0x400;
 constexpr int X509Library = 11;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
-constexpr int CertificateObject = 1;
-constexpr int CrlObject = 2;
+constexpr int CertAlreadyInHashTable = 101;
+constexpr std::uint64_t PolicyCheck = 0x80;
+constexpr std::uint64_t PolicyMask = 0x80 | 0x100 | 0x200 | 0x400;
 
 using Compare = int (APS5_VABI*)(const void*, const void*);
 
-struct Object {
-    std::int32_t type;
-    LibreSslX509* certificate;
-};
-
-static_assert(sizeof(Object) == 16);
-static_assert(offsetof(Object, certificate) == 8);
+static_assert(sizeof(LibreSslX509Object) == 16);
+static_assert(offsetof(LibreSslX509Object, data) == 8);
 
 struct Stack {
     std::int32_t num;
@@ -188,28 +182,107 @@ static_assert(offsetof(Stack, data) == 8);
 static_assert(offsetof(Stack, numAlloc) == 20);
 static_assert(offsetof(Stack, comp) == 24);
 
-const LibreSslX509Name* Subject(const Object* object) {
-    const auto* certificate = object->certificate;
-    if (!certificate || !certificate->certificateInfo || !certificate->certificateInfo->subject) NotImplemented_nid_no_patch("X509_STORE object comparison");
-    return certificate->certificateInfo->subject;
+char** Elements(const Stack* stack, const char* function);
+void Sort(Stack* stack, const char* function);
+
+const LibreSslX509* ObjectCertificate(const LibreSslX509Object* object, const char* function) {
+    if (!object) throw std::invalid_argument(std::string(function) + ": null store object");
+    const auto* certificate = static_cast<const LibreSslX509*>(object->data);
+    if (!certificate) throw std::invalid_argument(std::string(function) + ": null object certificate");
+    return certificate;
 }
 
-int CompareNames(const LibreSslX509Name* left, const LibreSslX509Name* right) {
-    if (left->modified || right->modified) NotImplemented_nid_no_patch("X509_NAME_cmp: re-encoding a modified name");
-    const int difference = left->canonEnclen - right->canonEnclen;
-    if (difference) return difference;
-    if (left->canonEnclen <= 0) return 0;
-    return std::memcmp(left->canonEnc, right->canonEnc, static_cast<std::size_t>(left->canonEnclen));
+const LibreSslX509CertInfo& ObjectCertificateInfo(const LibreSslX509Object* object, const char* function) {
+    const auto* info = static_cast<const LibreSslX509CertInfo*>(ObjectCertificate(object, function)->certificateInfo);
+    if (!info) throw std::invalid_argument(std::string(function) + ": null object certificate info");
+    return *info;
 }
 
-int APS5_VABI CompareObjects(const void* leftPointer, const void* rightPointer) {
-    const auto* left = *static_cast<const Object* const*>(leftPointer);
-    const auto* right = *static_cast<const Object* const*>(rightPointer);
-    const int difference = left->type - right->type;
-    if (difference) return difference;
-    if (left->type == CrlObject) NotImplemented_nid_no_patch("X509_STORE CRL comparison");
-    if (left->type != CertificateObject) return 0;
-    return CompareNames(Subject(left), Subject(right));
+const LibreSslX509Name& ObjectSubject(const LibreSslX509Object* object, const char* function) {
+    const auto* name = static_cast<const LibreSslX509Name*>(ObjectCertificateInfo(object, function).subject);
+    if (!name) throw std::invalid_argument(std::string(function) + ": null object subject name");
+    if (name->canonEnclen < 0)
+        throw std::invalid_argument(std::string(function) + ": negative canonical encoding length");
+    if (!name->canonEnc && name->canonEnclen != 0)
+        throw std::invalid_argument(std::string(function) + ": subject name without a canonical encoding");
+    return *name;
+}
+
+int CompareObjectsImpl(const LibreSslX509Object* first, const LibreSslX509Object* second, const char* function) {
+    if (first->type != second->type) return first->type < second->type ? -1 : 1;
+    if (first->type != LibreSslX509LookupX509)
+        throw std::invalid_argument(std::string(function) + ": unsupported object type");
+    const auto& firstSubject = ObjectSubject(first, function);
+    const auto& secondSubject = ObjectSubject(second, function);
+    if (firstSubject.canonEnclen != secondSubject.canonEnclen)
+        return firstSubject.canonEnclen < secondSubject.canonEnclen ? -1 : 1;
+    if (firstSubject.canonEnclen == 0) return 0;
+    return std::memcmp(firstSubject.canonEnc, secondSubject.canonEnc, static_cast<std::size_t>(firstSubject.canonEnclen));
+}
+
+bool SameCertificate(const LibreSslX509Object* first, const LibreSslX509Object* second, const char* function) {
+    const auto& firstEncoding = ObjectCertificateInfo(first, function).encoding;
+    const auto& secondEncoding = ObjectCertificateInfo(second, function).encoding;
+    if (firstEncoding.modified != 0 || secondEncoding.modified != 0)
+        throw std::invalid_argument(std::string(function) + ": modified certificate info");
+    if (firstEncoding.len < 0) throw std::invalid_argument(std::string(function) + ": negative certificate info length");
+    if (firstEncoding.len != secondEncoding.len) return false;
+    if (firstEncoding.len == 0) return true;
+    if (!firstEncoding.enc || !secondEncoding.enc)
+        throw std::invalid_argument(std::string(function) + ": certificate info without an encoding");
+    return std::memcmp(firstEncoding.enc, secondEncoding.enc, static_cast<std::size_t>(firstEncoding.len)) == 0;
+}
+
+int APS5_VABI CompareObjects(const void* first, const void* second) {
+    return CompareObjectsImpl(*static_cast<const LibreSslX509Object* const*>(first),
+        *static_cast<const LibreSslX509Object* const*>(second), "X509_STORE object comparison");
+}
+
+void Sort(Stack* stack, const char* function) {
+    if (stack->sorted) return;
+    if (stack->num > 0) {
+        char** const elements = Elements(stack, function);
+        const Compare compare = stack->comp;
+        std::stable_sort(elements, elements + stack->num,
+            [compare](char* const& left, char* const& right) { return compare(&left, &right) < 0; });
+    }
+    stack->sorted = 1;
+}
+
+bool FindObject(Stack* stack, const LibreSslX509Object* object) {
+    if (!stack || stack->num <= 0) return false;
+    if (stack->comp) {
+        Sort(stack, __func__);
+        char** const elements = Elements(stack, __func__);
+        int low = 0;
+        int high = stack->num;
+        int index = 0;
+        int result = 0;
+        while (low < high) {
+            index = (low + high) / 2;
+            const auto* element = reinterpret_cast<const LibreSslX509Object*>(elements[index]);
+            result = CompareObjectsImpl(element, object, __func__);
+            if (result > 0) high = index;
+            else if (result < 0) low = index + 1;
+            else break;
+        }
+        if (result != 0) return false;
+        while (index > 0 && CompareObjectsImpl(reinterpret_cast<const LibreSslX509Object*>(elements[index - 1]), object, __func__) == 0)
+            --index;
+        for (; index < stack->num; ++index) {
+            const auto* element = reinterpret_cast<const LibreSslX509Object*>(elements[index]);
+            if (CompareObjectsImpl(element, object, __func__) != 0) break;
+            if (SameCertificate(element, object, __func__)) return true;
+        }
+        return false;
+    }
+    char** const elements = Elements(stack, __func__);
+    for (int index = 0; index < stack->num; ++index) {
+        const auto* element = reinterpret_cast<const LibreSslX509Object*>(elements[index]);
+        if (CompareObjectsImpl(element, object, __func__) != 0) continue;
+        if (SameCertificate(element, object, __func__)) return true;
+    }
+    return false;
 }
 
 int APS5_VABI LoadFile(LibreSslX509Lookup* lookup, int command, const char* argument, std::int64_t type, char** result) {
@@ -261,45 +334,9 @@ bool Push(Stack* stack, void* element, const char* function) {
     return true;
 }
 
-void Sort(Stack* stack, const char* function) {
-    if (stack->sorted) return;
-    if (stack->num > 0) {
-        char** const elements = Elements(stack, function);
-        const Compare compare = stack->comp;
-        std::sort(elements, elements + stack->num, [compare](char* const& left, char* const& right) { return compare(&left, &right) < 0; });
-    }
-    stack->sorted = 1;
-}
-
-int Find(Stack* stack, void* element, const char* function) {
-    if (!stack) return -1;
-    if (!stack->comp) {
-        for (int index = 0; index < stack->num; ++index)
-            if (Elements(stack, function)[index] == element) return index;
-        return -1;
-    }
-    Sort(stack, function);
-    if (!element || stack->num == 0) return -1;
-    char** const elements = Elements(stack, function);
-    int low = 0;
-    int high = stack->num;
-    int index = 0;
-    int result = 0;
-    while (low < high) {
-        index = (low + high) / 2;
-        result = stack->comp(&element, &elements[index]);
-        if (result < 0) high = index;
-        else if (result > 0) low = index + 1;
-        else break;
-    }
-    if (result != 0) return -1;
-    while (index > 0 && stack->comp(&element, &elements[index - 1]) == 0) --index;
-    return index;
-}
-
-void FreeObject(Object* object) {
-    if (object->type == CertificateObject) X509_free_nid_postfix(object->certificate);
-    else if (object->type == CrlObject) NotImplemented_nid_no_patch("X509_STORE_free: stored CRLs");
+void FreeObject(LibreSslX509Object* object) {
+    if (object->type == LibreSslX509LookupX509) X509_free_nid_postfix(static_cast<LibreSslX509*>(object->data));
+    else if (object->type == LibreSslX509LookupCrl) NotImplemented_nid_no_patch("X509_STORE_free: stored CRLs");
     free_nid_postfix(object);
 }
 
@@ -424,7 +461,7 @@ void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store) {
     if (objects && objects->num > 0) {
         char** const elements = Elements(objects, __func__);
         for (int index = 0; index < objects->num; ++index)
-            if (elements[index]) FreeObject(reinterpret_cast<Object*>(elements[index]));
+            if (elements[index]) FreeObject(reinterpret_cast<LibreSslX509Object*>(elements[index]));
     }
     FreeStack(objects);
     FreeStack(static_cast<Stack*>(store->exData));
@@ -437,36 +474,6 @@ int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::ui
     store->param->flags |= flags;
     if (flags & PolicyMask) store->param->flags |= PolicyCheck;
     return 1;
-}
-
-int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate) {
-    if (!certificate) return 0;
-    if (!store) NotImplemented_nid_no_patch(__func__);
-    auto* object = static_cast<Object*>(malloc_nid_postfix(sizeof(Object)));
-    if (!object) {
-        LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
-        return 0;
-    }
-    object->type = CertificateObject;
-    object->certificate = certificate;
-    std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1);
-    const auto release = [&] {
-        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1);
-        free_nid_postfix(object);
-    };
-    auto* objects = static_cast<Stack*>(store->objects);
-    bool pushed = false;
-    try {
-        if (Find(objects, object, __func__) != -1) NotImplemented_nid_no_patch("X509_STORE_add_cert: X509_cmp of certificates with the same subject");
-        pushed = Push(objects, object, __func__);
-    } catch (...) {
-        release();
-        throw;
-    }
-    if (pushed) return 1;
-    LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
-    release();
-    return 0;
 }
 
 LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void) {
@@ -530,6 +537,42 @@ int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* p
             FreeStack(hosts);
             id->hosts = nullptr;
         }
+        return 0;
+    }
+    return 1;
+}
+
+int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate) {
+    if (!certificate) return 0;
+    if (!store) throw std::invalid_argument("X509_STORE_add_cert: null store");
+    auto* objects = static_cast<Stack*>(store->objects);
+    if (!objects) throw std::invalid_argument("X509_STORE_add_cert: null store objects");
+    auto* object = static_cast<LibreSslX509Object*>(malloc_nid_postfix(sizeof(LibreSslX509Object)));
+    if (!object) {
+        LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+        return 0;
+    }
+    object->type = LibreSslX509LookupX509;
+    object->padding = 0;
+    object->data = certificate;
+    std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1, std::memory_order_relaxed);
+    bool stored = false;
+    try {
+        if (FindObject(objects, object)) {
+            LibreSslPutError_nid_no_patch(X509Library, AnyFunction, CertAlreadyInHashTable);
+        } else if (Push(objects, object, __func__)) {
+            stored = true;
+        } else {
+            LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+        }
+    } catch (...) {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
+        free_nid_postfix(object);
+        throw;
+    }
+    if (!stored) {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
+        free_nid_postfix(object);
         return 0;
     }
     return 1;

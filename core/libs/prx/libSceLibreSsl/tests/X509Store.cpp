@@ -19,11 +19,7 @@ namespace {
 using Bytes = std::vector<unsigned char>;
 
 constexpr std::uint64_t MallocFailureCode = (11ull << 24) | (0xfffull << 12) | 65;
-
-struct Object {
-    std::int32_t type;
-    LibreSslX509* certificate;
-};
+constexpr std::uint64_t CertAlreadyInHashTableCode = (11ull << 24) | (0xfffull << 12) | 101;
 
 struct Stack {
     std::int32_t num;
@@ -268,8 +264,8 @@ LibreSslX509* Certificate(const std::string& subject, unsigned char serial = 1) 
     return certificate;
 }
 
-const Object* StoredAt(const LibreSslX509Store* store, int index) {
-    return reinterpret_cast<const Object*>(static_cast<const Stack*>(store->objects)->data[index]);
+const LibreSslX509Object* StoredAt(const LibreSslX509Store* store, int index) {
+    return reinterpret_cast<const LibreSslX509Object*>(static_cast<const Stack*>(store->objects)->data[index]);
 }
 
 void AddCertificates() {
@@ -283,19 +279,23 @@ void AddCertificates() {
     ERR_clear_error_nid_postfix();
     Require(X509_STORE_add_cert_nid_postfix(store, nullptr) == 0 && objects->num == 0 && ERR_peek_error_nid_postfix() == 0, "a null certificate is refused without an error");
     Require(X509_STORE_add_cert_nid_postfix(store, b) == 1 && b->references == 2, "an added certificate gains a reference");
-    Require(objects->num == 1 && objects->sorted == 0 && StoredAt(store, 0)->type == 1 && StoredAt(store, 0)->certificate == b,
+    Require(objects->num == 1 && objects->sorted == 0 && StoredAt(store, 0)->type == LibreSslX509LookupX509 && StoredAt(store, 0)->data == b,
         "the store holds a certificate object for it");
     Require(X509_STORE_add_cert_nid_postfix(store, longer) == 1 && X509_STORE_add_cert_nid_postfix(store, a) == 1, "certificates with other subjects are added");
     Require(objects->num == 3 && objects->sorted == 0, "each push leaves the stack unsorted");
-    Require(StoredAt(store, 0)->certificate == b && StoredAt(store, 1)->certificate == longer && StoredAt(store, 2)->certificate == a,
+    Require(StoredAt(store, 0)->data == b && StoredAt(store, 1)->data == longer && StoredAt(store, 2)->data == a,
         "a shorter canonical encoding sorts first, and the new certificate goes last");
     Require(X509_STORE_add_cert_nid_postfix(store, c) == 1 && objects->num == 4 && objects->numAlloc == 8, "a fourth certificate grows the stack");
-    Require(StoredAt(store, 0)->certificate == a && StoredAt(store, 1)->certificate == b && StoredAt(store, 2)->certificate == longer
-        && StoredAt(store, 3)->certificate == c, "the lookup sorts the stored certificates before the push");
+    Require(StoredAt(store, 0)->data == a && StoredAt(store, 1)->data == b && StoredAt(store, 2)->data == longer
+        && StoredAt(store, 3)->data == c, "the lookup sorts the stored certificates before the push");
+    Require(X509_STORE_add_cert_nid_postfix(store, b) == 0 && b->references == 2 && objects->sorted == 1,
+        "a duplicate certificate is not re-added and keeps the stack sorted");
+    Require(ERR_get_error_nid_postfix() == CertAlreadyInHashTableCode && ERR_get_error_nid_postfix() == 0,
+        "a duplicate certificate queues X509_R_CERT_ALREADY_IN_HASH_TABLE");
     LibreSslX509* last = Certificate("z");
     Require(X509_STORE_add_cert_nid_postfix(store, empty) == 1 && X509_STORE_add_cert_nid_postfix(store, last) == 1 && objects->num == 6, "two more certificates");
-    Require(StoredAt(store, 0)->certificate == empty && StoredAt(store, 1)->certificate == a && StoredAt(store, 2)->certificate == b
-        && StoredAt(store, 3)->certificate == c && StoredAt(store, 4)->certificate == longer && StoredAt(store, 5)->certificate == last,
+    Require(StoredAt(store, 0)->data == empty && StoredAt(store, 1)->data == a && StoredAt(store, 2)->data == b
+        && StoredAt(store, 3)->data == c && StoredAt(store, 4)->data == longer && StoredAt(store, 5)->data == last,
         "an empty subject sorts first");
     Require(ERR_peek_error_nid_postfix() == 0, "adding raises no error");
 
@@ -324,24 +324,20 @@ void NullStore() {
 void Comparator() {
     auto* store = X509_STORE_new_nid_postfix();
     const auto compare = static_cast<Stack*>(store->objects)->comp;
-    Object certificate{1, nullptr};
-    Object crl{2, nullptr};
-    Object other{3, nullptr};
-    Object unknown{3, nullptr};
-    const Object* left = &certificate;
-    const Object* right = &crl;
+    LibreSslX509Object certificate{LibreSslX509LookupX509, 0, nullptr};
+    LibreSslX509Object crl{LibreSslX509LookupCrl, 0, nullptr};
+    LibreSslX509Object other{3, 0, nullptr};
+    LibreSslX509Object unknown{3, 0, nullptr};
+    const LibreSslX509Object* left = &certificate;
+    const LibreSslX509Object* right = &crl;
     Require(compare(&left, &right) == -1 && compare(&right, &left) == 1, "objects of different types compare by type");
     left = &other;
     right = &unknown;
-    Require(compare(&left, &right) == 0, "objects of an unknown type compare equal");
+    RequireThrows([&] { compare(&left, &right); }, "objects of an unsupported type throw");
     left = &certificate;
     right = &certificate;
     RequireThrows([&] { compare(&left, &right); }, "a certificate object without a certificate");
     X509_STORE_free_nid_postfix(store);
-}
-
-int APS5_VABI ThrowingCompare(const void*, const void*) {
-    throw std::runtime_error("comparator");
 }
 
 int allocations = 0;
@@ -428,16 +424,6 @@ void Allocator() {
         "a failed push keeps the stack and is a malloc failure");
     failReallocationAt = 0;
     Require(X509_STORE_add_cert_nid_postfix(store, certificates[3]) == 1, "the push succeeds once memory is back");
-    auto* objects = static_cast<Stack*>(store->objects);
-    const auto compare = objects->comp;
-    objects->comp = ThrowingCompare;
-    objects->sorted = 0;
-    LibreSslX509* extra = Certificate("e");
-    allocations = frees = 0;
-    RequireThrows([&] { X509_STORE_add_cert_nid_postfix(store, extra); }, "a throwing comparator propagates");
-    Require(allocations == 1 && frees == 1 && extra->references == 1 && objects->num == 4, "a throwing add frees its object and drops its reference");
-    objects->comp = compare;
-    X509_free_nid_postfix(extra);
     X509_STORE_free_nid_postfix(store);
     for (auto* certificate : certificates) {
         Require(certificate->references == 1, "the store gave back every reference");

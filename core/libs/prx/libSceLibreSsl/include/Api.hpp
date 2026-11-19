@@ -299,6 +299,16 @@ struct LibreSslX509Info {
     std::int32_t references;
 };
 
+inline constexpr int LibreSslX509LookupFail = 0;
+inline constexpr int LibreSslX509LookupX509 = 1;
+inline constexpr int LibreSslX509LookupCrl = 2;
+
+struct LibreSslX509Object {
+    int type;
+    int padding;
+    void* data;
+};
+
 using LibreSslPemPasswordCallback = int(APS5_VABI*)(char*, int, int, void*);
 
 struct LibreSslX509StoreContext {
@@ -798,12 +808,12 @@ int APS5_VABI ENGINE_ctrl_cmd_nid_postfix(void* engine, const char* command, std
 int APS5_VABI ENGINE_finish_nid_postfix(void* engine);
 int APS5_VABI ENGINE_free_nid_postfix(void* engine);
 void* APS5_VABI ENGINE_get_first_nid_postfix(void);
-int APS5_VABI ENGINE_get_id_nid_postfix(void);
+const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine);
 void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine);
 int APS5_VABI ENGINE_init_nid_postfix(void* engine);
 void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 void* APS5_VABI ENGINE_load_private_key_nid_postfix(void* engine, const char* keyId, void* uiMethod, void* callbackData);
-int APS5_VABI ENGINE_set_default_nid_postfix(void);
+int APS5_VABI ENGINE_set_default_nid_postfix(void* engine, unsigned int flags);
 void APS5_VABI ERR_clear_error_nid_postfix();
 char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
 void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
@@ -912,6 +922,7 @@ void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12);
 int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char* pass, void** pkey, void** cert, void** ca);
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa);
 void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa);
+void LibreSslRsaFree_nid_no_patch(LibreSslRsa* rsa);
 int APS5_VABI RSA_generate_key_ex_nid_postfix(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback);
 LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void);
 int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength);

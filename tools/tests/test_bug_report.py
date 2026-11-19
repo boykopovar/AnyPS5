@@ -129,6 +129,12 @@ class BundleTests(unittest.TestCase):
         for secret in ("/home/ana", "ana", "serverfestivo", "10.0.0.7"):
             self.assertNotIn(secret, raw)
 
+    def test_utf8_bom_report_is_redacted(self):
+        self.report.write_text('{"path": "/home/ana/title.elf"}', encoding="utf-8-sig")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"path": "~/title.elf"})
+
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
@@ -207,6 +213,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         with zipfile.ZipFile(target) as bundle:
             self.assertIn("anyps5.log", bundle.namelist())
+
+class RedactReportTests(unittest.TestCase):
+    IDENTITY = {"home": "/home/alice", "user": "alice", "host": "box"}
+
+    def test_redacts_strings_in_lists_dict_keys_and_values(self):
+        report = {"/home/alice/a": ["/home/alice/b", {"k": "alice"}], "n": 3, "flag": True, "none": None}
+        expected = {
+            bug_report.redact("/home/alice/a", **self.IDENTITY): [
+                bug_report.redact("/home/alice/b", **self.IDENTITY),
+                {"k": bug_report.redact("alice", **self.IDENTITY)},
+            ],
+            "n": 3,
+            "flag": True,
+            "none": None,
+        }
+        self.assertEqual(bug_report.redact_report(report, self.IDENTITY), expected)
+
+    def test_leaves_non_string_scalars_and_does_not_mutate_input(self):
+        report = [1, 2.5, None, ["/home/alice"]]
+        self.assertEqual(bug_report.redact_report(report, self.IDENTITY)[:3], [1, 2.5, None])
+        self.assertEqual(report[3], ["/home/alice"])
 
 
 if __name__ == "__main__":

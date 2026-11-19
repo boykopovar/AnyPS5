@@ -22,6 +22,12 @@ static void APS5_VABI Unlock(CURL* easy, curl_lock_data data, void* argument) {
     ++callbackCount;
 }
 
+static int APS5_VABI DenyPush(CURL*, CURL*, size_t, struct curl_pushheaders*, void*) {
+    return CURL_PUSH_DENY;
+}
+
+extern "C" int Push_nid_no_patch(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
@@ -77,8 +83,13 @@ int main() {
     Require(curl_multi_remove_handle_nid_postfix(multi, easy) == CURLM_OK);
     Require(curl_multi_socket_all_nid_postfix(multi, &running) == CURLM_OK && running == 0);
     Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(nullptr, CURLMOPT_PUSHFUNCTION, DenyPush) == CURLM_BAD_HANDLE);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHFUNCTION, DenyPush) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHDATA, &callbackCount) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(multi, CURLMOPT_PUSHFUNCTION, nullptr) == CURLM_OK);
     Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
     curl_easy_cleanup_nid_postfix(easy);
+    Require(Push_nid_no_patch(easy, nullptr, 0, nullptr, nullptr) == CURL_PUSH_DENY);
     curl_easy_cleanup_nid_postfix(nullptr);
     curl_global_cleanup_nid_postfix();
 }
