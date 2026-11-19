@@ -9,6 +9,11 @@
 
 namespace {
 
+void CopyGuestBytes(void* destination, const void* source, std::size_t length, const char* caller) {
+    if (length == 0) return;
+    if (!GuestCopyIn_nid_no_patch(destination, source, length)) NotImplemented_nid_no_patch(caller);
+}
+
 constexpr std::int32_t ObjectDynamic = 0x01;
 constexpr std::int32_t DynamicStrings = 0x04;
 constexpr std::int32_t DynamicData = 0x08;
@@ -43,7 +48,8 @@ Asn1String* DuplicateString(const Asn1String* source) {
             free_nid_postfix(copy);
             return nullptr;
         }
-        std::memcpy(data, source->data, static_cast<std::size_t>(source->length));
+        CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
+            "X509_NAME_dup: unreadable string data");
         copy->data = data;
         copy->length = source->length;
     }
@@ -193,7 +199,8 @@ Buffer* DuplicateBuffer(const Buffer* source) {
         free_nid_postfix(copy);
         return nullptr;
     }
-    std::memcpy(data, source->data, source->length);
+    CopyGuestBytes(data, source->data, static_cast<std::size_t>(source->length),
+        "X509_NAME_dup: unreadable encoded name buffer");
     copy->data = data;
     copy->length = source->length;
     copy->capacity = source->capacity;
@@ -215,7 +222,8 @@ LibreSslX509Name* DuplicateName(const LibreSslX509Name* source) {
                 X509_NAME_free_nid_no_patch(copy);
                 return nullptr;
             }
-            std::memcpy(canonical, source->canonEnc, static_cast<std::size_t>(source->canonEnclen));
+            CopyGuestBytes(canonical, source->canonEnc, static_cast<std::size_t>(source->canonEnclen),
+                "X509_NAME_dup: unreadable canonical encoding");
             copy->canonEnc = canonical;
             copy->canonEnclen = source->canonEnclen;
         }
