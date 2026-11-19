@@ -590,6 +590,7 @@ endif()
 
 target_sources(libSceIcu PRIVATE ConverterHelpers.cpp)
 target_sources(libSceIcu PRIVATE ConverterCanonicalName.cpp)
+target_sources(libSceIcu PRIVATE ConverterAvailableNames.cpp)
 target_sources(libSceIcu PRIVATE LocaleSyntax.cpp)
 
 if(BUILD_TESTING)
@@ -654,6 +655,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_copy_guest_memory PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_icu_copy_guest_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_converter_available_names_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConverterAvailableNames.cpp)
+    target_include_directories(guest_icu_converter_available_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_converter_available_names_tests PRIVATE libSceIcu libc icu_common)
+    configure_windows_unwind(guest_icu_converter_available_names_tests)
+    add_test(NAME guest_icu_converter_available_names COMMAND guest_icu_converter_available_names_tests)
+    set_tests_properties(guest_icu_converter_available_names PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_converter_available_names PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
