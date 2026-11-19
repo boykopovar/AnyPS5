@@ -58,8 +58,10 @@
  */
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -1285,12 +1287,44 @@ const LibreSslRsaMethod DefaultMethod {
     nullptr,
 };
 
-int ByteCount(const LibreSslBignum* number, const char* function) {
-    if (!number) throw std::invalid_argument(std::string(function) + ": null modulus");
-    if (number->top == 0) return 0;
-    if (number->top < 0) throw std::invalid_argument(std::string(function) + ": negative modulus word count");
-    if (!number->d) throw std::invalid_argument(std::string(function) + ": null modulus words");
-    const std::int64_t bits = static_cast<std::int64_t>(number->top - 1) * 64 + std::bit_width(number->d[number->top - 1]);
+template <typename T>
+T CopyGuestRecord(const T* source, const char* function, const char* what) {
+    T value {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
+    return value;
+}
+
+LibreSslRsaMethod CopyGuestMethod(const LibreSslRsa* rsa, const char* function, const char* nullMessage) {
+    if (!rsa) throw std::invalid_argument(std::string(function) + nullMessage);
+    const auto* method = CopyGuestRecord(rsa, function, "RSA").meth;
+    if (!method) throw std::invalid_argument(std::string(function) + nullMessage);
+    return CopyGuestRecord(method, function, "RSA method");
+}
+
+void AppendGuestBytes(std::vector<unsigned char>& destination, const unsigned char* source, std::size_t length, const char* function, const char* what) {
+    unsigned char chunk[4096];
+    for (std::size_t offset = 0; offset < length;) {
+        const std::size_t count = std::min(sizeof(chunk), length - offset);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, source + offset, count);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
+        destination.insert(destination.end(), chunk, chunk + count);
+        offset += count;
+    }
+}
+
+int ByteCount(const LibreSslBignum* guestNumber, const char* function) {
+    if (!guestNumber) throw std::invalid_argument(std::string(function) + ": null modulus");
+    const LibreSslBignum number = CopyGuestRecord(guestNumber, function, "modulus");
+    if (number.top == 0) return 0;
+    if (number.top < 0) throw std::invalid_argument(std::string(function) + ": negative modulus word count");
+    if (!number.d) throw std::invalid_argument(std::string(function) + ": null modulus words");
+    const std::uint64_t topWord = CopyGuestRecord(number.d + (number.top - 1), function, "modulus words");
+    const std::int64_t bits = static_cast<std::int64_t>(number.top - 1) * 64 + std::bit_width(topWord);
     if (bits > INT_MAX - 7) throw std::invalid_argument(std::string(function) + ": modulus bit count overflows int");
     return static_cast<int>((bits + 7) / 8);
 }
@@ -1301,8 +1335,7 @@ extern "C" {
 
 int LibreSslRsaFlags_nid_no_patch(const LibreSslRsa* rsa) {
     if (!rsa) return 0;
-    if (!rsa->meth) throw std::invalid_argument("RSA_flags_nid_postfix: null method");
-    return rsa->meth->flags;
+    return CopyGuestMethod(rsa, "RSA_flags_nid_postfix", ": null method").flags;
 }
 
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
@@ -1311,7 +1344,7 @@ int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
 
 int LibreSslRsaSize_nid_no_patch(const LibreSslRsa* rsa) {
     if (!rsa) throw std::invalid_argument("RSA_size_nid_postfix: null key");
-    return ByteCount(static_cast<const LibreSslBignum*>(rsa->n), "RSA_size_nid_postfix");
+    return ByteCount(static_cast<const LibreSslBignum*>(CopyGuestRecord(rsa, "RSA_size_nid_postfix", "RSA").n), "RSA_size_nid_postfix");
 }
 
 int APS5_VABI RSA_size_nid_postfix(const LibreSslRsa* rsa) {
@@ -1379,8 +1412,7 @@ int APS5_VABI RSA_public_decrypt_nid_postfix(int length, const unsigned char* fr
 }
 
 int LibreSslRsaPrivateEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: null key or method");
-    const auto encrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateEncrypt);
+    const auto encrypt = Operation<RsaCrypt>(CopyGuestMethod(rsa, "RSA_private_encrypt_nid_postfix", ": null key or method"), OperationPrivateEncrypt);
     if (!encrypt) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: method without rsa_priv_enc");
     return encrypt(length, from, to, rsa, padding);
 }
@@ -1390,8 +1422,7 @@ int APS5_VABI RSA_private_encrypt_nid_postfix(int length, const unsigned char* f
 }
 
 int LibreSslRsaPrivateDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: null key or method");
-    const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateDecrypt);
+    const auto decrypt = Operation<RsaCrypt>(CopyGuestMethod(rsa, "RSA_private_decrypt_nid_postfix", ": null key or method"), OperationPrivateDecrypt);
     if (!decrypt) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: method without rsa_priv_dec");
     return decrypt(length, from, to, rsa, padding);
 }
@@ -1402,9 +1433,9 @@ int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* f
 
 int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
     if (!rsa) throw std::invalid_argument("RSA_sign_nid_postfix: null key");
-    if (rsa->flags & RsaFlagSignVerify) {
-        if (!rsa->meth) throw std::invalid_argument("RSA_sign_nid_postfix: null method");
-        if (rsa->meth->sign) return reinterpret_cast<RsaSign>(rsa->meth->sign)(type, digest, digestLength, signature, signatureLength, rsa);
+    if (CopyGuestRecord(rsa, "RSA_sign_nid_postfix", "RSA").flags & RsaFlagSignVerify) {
+        if (const auto sign = CopyGuestMethod(rsa, "RSA_sign_nid_postfix", ": null method").sign)
+            return reinterpret_cast<RsaSign>(sign)(type, digest, digestLength, signature, signatureLength, rsa);
     }
     const DigestObject* object = nullptr;
     std::uint64_t algorithmLength = 0;
@@ -1435,7 +1466,6 @@ int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned
     std::vector<unsigned char> encoded;
     const unsigned char* data = digest;
     if (object) {
-        encoded.reserve(static_cast<std::size_t>(length));
         AppendDerHeader(encoded, 0x30, contentLength);
         AppendDerHeader(encoded, 0x30, algorithmLength);
         AppendDerHeader(encoded, 0x06, static_cast<std::uint64_t>(object->length));
@@ -1444,13 +1474,17 @@ int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned
         encoded.push_back(0x00);
         AppendDerHeader(encoded, 0x04, digestLength);
         RequireBuffer(digest, digestLength, "RSA_sign_nid_postfix", "digest");
-        if (digestLength) encoded.insert(encoded.end(), digest, digest + digestLength);
+        AppendGuestBytes(encoded, digest, digestLength, "RSA_sign_nid_postfix", "digest");
         data = encoded.data();
     }
     const int result = RSA_private_encrypt_nid_postfix(static_cast<int>(length), data, signature, rsa, PaddingPkcs1);
     if (result <= 0) return 0;
     if (!signatureLength) throw std::invalid_argument("RSA_sign_nid_postfix: null signature length");
-    *signatureLength = static_cast<unsigned int>(result);
+    const auto written = static_cast<unsigned int>(result);
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(signatureLength, &written, sizeof(written));
+    errno = savedErrno;
+    if (!stored) throw std::invalid_argument("RSA_sign_nid_postfix: unwritable signature length");
     return 1;
 }
 

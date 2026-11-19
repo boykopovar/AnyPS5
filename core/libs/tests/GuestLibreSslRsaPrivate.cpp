@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -352,6 +353,53 @@ static void TestDispatch() {
     key.numbers[0].number.top = 8;
 }
 
+template<typename TAction> static void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && errno == 71, location);
+}
+
+static void TestGuestPointers() {
+    auto* unmappedRsa = reinterpret_cast<LibreSslRsa*>(std::uintptr_t {0x10});
+    const auto digest = Pattern(32, 30);
+    Bytes out(KeyBytes + 8, 0xEE);
+    unsigned length = UntouchedLength;
+    RequireRejected([&] { RSA_flags_nid_postfix(unmappedRsa); });
+    RequireRejected([&] { RSA_size_nid_postfix(unmappedRsa); });
+    RequireRejected([&] { RSA_private_encrypt_nid_postfix(20, digest.data(), out.data(), unmappedRsa, PaddingPkcs1); });
+    RequireRejected([&] { RSA_private_decrypt_nid_postfix(64, out.data(), out.data(), unmappedRsa, PaddingPkcs1); });
+    RequireRejected([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, unmappedRsa); });
+
+    TestKey key(AllFields);
+    const auto* defaultMethod = key.rsa->meth;
+    key.rsa->meth = reinterpret_cast<const LibreSslRsaMethod*>(std::uintptr_t {0x10});
+    RequireRejected([&] { RSA_flags_nid_postfix(key.rsa); });
+    RequireRejected([&] { RSA_private_encrypt_nid_postfix(20, digest.data(), out.data(), key.rsa, PaddingPkcs1); });
+    RequireRejected([&] { RSA_private_decrypt_nid_postfix(64, out.data(), out.data(), key.rsa, PaddingPkcs1); });
+    key.rsa->flags |= RsaFlagSignVerify;
+    RequireRejected([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, key.rsa); });
+    key.rsa->flags = RsaFlagsDefault;
+    key.rsa->meth = defaultMethod;
+
+    void* const modulus = key.rsa->n;
+    key.rsa->n = reinterpret_cast<void*>(std::uintptr_t {0x10});
+    RequireRejected([&] { RSA_size_nid_postfix(key.rsa); });
+    key.rsa->n = modulus;
+    auto* const words = key.numbers[0].number.d;
+    key.numbers[0].number.d = reinterpret_cast<std::uint64_t*>(std::uintptr_t {0x10});
+    RequireRejected([&] { RSA_size_nid_postfix(key.rsa); });
+    key.numbers[0].number.d = words;
+    Require(RSA_size_nid_postfix(key.rsa) == static_cast<int>(KeyBytes));
+
+    const auto* unmappedBytes = reinterpret_cast<const unsigned char*>(std::uintptr_t {0x10});
+    RequireRejected([&] { RSA_sign_nid_postfix(DigestSha256, unmappedBytes, 32, out.data(), &length, key.rsa); });
+    Require(length == UntouchedLength && Written(out, {}));
+    auto* unmappedLength = reinterpret_cast<unsigned*>(std::uintptr_t {0x10});
+    RequireRejected([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), unmappedLength, key.rsa); });
+    Require(Sign(key, DigestSha256, Pattern(32, 18), out, length) == 1 && length == 64 && Written(out, Hex(Sha256Signature)));
+}
+
 int main() {
     InitializeHeap();
     TestPrivateEncrypt();
@@ -360,5 +408,6 @@ int main() {
     TestSign();
     TestSignAddedObject();
     TestDispatch();
+    TestGuestPointers();
     std::puts("libSceLibreSsl RSA private tests passed");
 }
