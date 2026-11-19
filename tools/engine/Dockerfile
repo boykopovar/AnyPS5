@@ -9,7 +9,7 @@ COPY tools/engine/sources.py tools/engine/compatibility.py tools/engine/bootstra
 RUN python3 /opt/buildscripts/bootstrap.py
 FROM tooling AS supplied
 ARG ANYPS5_UPSTREAM_REF=3c07e1d05e545cb5988041da0fa63ea8dd36673e
-ADD --keep-git-dir=true https://github.com/boykopovar/AnyPS5.git#${ANYPS5_UPSTREAM_REF} /upstream
+ADD --keep-git-dir=true "https://github.com/boykopovar/AnyPS5.git?ref=${ANYPS5_UPSTREAM_REF}&submodules=false" /upstream
 COPY . /supplied
 FROM supplied AS compile
 ARG ANYPS5_BUILD_JOBS=4
