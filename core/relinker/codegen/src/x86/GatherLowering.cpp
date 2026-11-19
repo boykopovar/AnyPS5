@@ -99,6 +99,7 @@ std::optional<GatherOperands> DecodeGather(const std::uint8_t* data, const std::
     std::size_t vex = 0;
     std::vector<std::uint8_t> prefixes;
     while (vex < length && LegacyPrefix(data[vex])) prefixes.push_back(data[vex++]);
+    if (std::find(prefixes.begin(), prefixes.end(), std::uint8_t{0x67}) != prefixes.end()) return std::nullopt;
     if (vex + 5 > length || data[vex] != 0xC4 || (data[vex + 1] & 0x1F) != Map0F38 || (data[vex + 2] & 3) != Prefix66) return std::nullopt;
     const bool wide = (data[vex + 2] & 0x80) != 0;
     const auto* name = _name(data[vex + 3], wide);

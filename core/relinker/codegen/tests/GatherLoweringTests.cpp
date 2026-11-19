@@ -69,6 +69,16 @@ void decoding() {
     }
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0x6D, 0x90, 0xC3}, Bytes{0xC4, 0xE2, 0x6D, 0x90, 0x03}, Bytes{0xC4, 0xE2, 0x6D, 0x94, 0x0C, 0x83}, Bytes{0xC4, 0xE2, 0x6C, 0x90, 0x0C, 0x83}, Bytes{0xC4, 0xE3, 0x6D, 0x90, 0x0C, 0x83}, Bytes{0x90}})
         require(!Codegen::DecodeGather(bytes.data(), bytes.size()), "an instruction that is not a gather was taken as one");
+    for (std::uint8_t opcode = 0x90; opcode <= 0x93; ++opcode) {
+        const auto narrow = encode({opcode, opcode == 0x91, true, 1, 2, 3, 3, 2, 8, false, {0x67}});
+        require(!Codegen::DecodeGather(narrow.data(), narrow.size()), "a gather with 32-bit addressing was lowered");
+        const auto segmented = encode({opcode, opcode == 0x91, true, 1, 2, 3, 3, 2, 8, false, {0x3E, 0x67}});
+        require(!Codegen::DecodeGather(segmented.data(), segmented.size()), "a gather with 32-bit addressing behind a segment prefix was lowered");
+    }
+    const Bytes noBase{0xC4, 0xE2, 0x6D, 0x90, 0x0C, 0x1D, 0x40, 0x00, 0x00, 0x00};
+    const auto absolute = Codegen::DecodeGather(noBase.data(), noBase.size());
+    require(absolute && !absolute->Memory.RipRelative && absolute->Memory.Mod == 0 && (absolute->Memory.Sib & 7) == 5 && absolute->Memory.Displacement == 0x40,
+        "a VSIB operand without a base was not decoded as an absolute displacement");
     auto trailing = dd;
     trailing.push_back(0x90);
     bool rejected = false;
@@ -85,6 +95,8 @@ void matching() {
         require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a gather");
         const auto match = avx->Match(bytes.data(), bytes.size());
         require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower a gather through a movable stub");
+        const auto narrow = encode({opcode, opcode == 0x93, true, 0, 1, 2, 3, 1, 16, false, {0x67}});
+        require(!avx->Match(narrow.data(), narrow.size()), "AVX mode lowered a gather with 32-bit addressing");
     }
 }
 
