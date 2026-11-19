@@ -133,6 +133,7 @@ int main() {
         Parse();
         std::uint32_t context = 0;
         Require(sceAjmInitialize(0, &context) == 0, "initialize AJM");
+        Require(sceAjmModuleRegister(context, 1, 0) == 0, "register ATRAC9");
         Require(sceAjmInstanceCreate(context, 1, 0, nullptr) == static_cast<int>(0x80930005), "null instance pointer accepted");
         Require(sceAjmInstanceDestroy(context, 0x99999) == static_cast<int>(0x80930003), "destroy invalid instance succeeded");
         AjmBatchInfo batchInfo{};
