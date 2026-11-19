@@ -773,11 +773,11 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         ErrnoGuard guard;
         result = std::remquo(x, y, &bits);
     }
-    if (domain) errno = EDOM;
     if (!std::isnan(result)) {
         const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
-        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low))) throw std::invalid_argument("remquol: unwritable quotient");
     }
+    if (domain) errno = EDOM;
     return result;
 }
 
@@ -844,7 +844,7 @@ long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
         whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
         fraction = x - whole;
     }
-    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modfl: unwritable integral");
     return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
