@@ -62,16 +62,21 @@ namespace {
 using NKWebKit::WebCoreAbi::ResourceError;
 using NKWebKit::WebCoreAbi::ResourceErrorType;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::URL;
 
-String IsolatedCopyString(const String& value) {
-    return _ZNKR3WTF6String12isolatedCopyEv(&value);
+// The ResourceError members are raw StringImpl pointers; the copy owns one reference to each.
+StringImpl* IsolatedCopyString(StringImpl* value) {
+    String source;
+    source.impl = value;
+    String isolated = _ZNKR3WTF6String12isolatedCopyEv(&source);
+    std::exchange(source.impl, nullptr);
+    return std::exchange(isolated.impl, nullptr);
 }
 
 URL IsolatedCopyURL(const URL& value) {
     URL result = value;
-    String isolated = _ZNKR3WTF6String12isolatedCopyEv(reinterpret_cast<const String*>(&result.impl));
-    result.impl = std::exchange(isolated.impl, nullptr);
+    result.impl = IsolatedCopyString(value.impl);
     return result;
 }
 
@@ -87,7 +92,7 @@ void APS5_VABI _ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE(ResourceError* 
 ResourceError APS5_VABI _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(const ResourceError* self) {
     if (!self) throw std::invalid_argument("ResourceErrorBase::isolatedCopy: null this");
     _ZNK7WebCore17ResourceErrorBase8lazyInitEv(self);
-    ResourceError copy;
+    ResourceError copy{};
     copy.domain = IsolatedCopyString(self->domain);
     copy.errorCode = self->errorCode;
     copy.failingURL = IsolatedCopyURL(self->failingURL);

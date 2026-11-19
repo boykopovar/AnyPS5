@@ -58,6 +58,20 @@ URL MakeURL(const String& text) {
     return url;
 }
 
+// The ResourceError members are raw pointers; the isolated copy owns one reference to each.
+struct OwnedError {
+    ResourceError value;
+    explicit OwnedError(const ResourceError& error) : value(error) {}
+    OwnedError(const OwnedError&) = delete;
+    OwnedError& operator=(const OwnedError&) = delete;
+    ~OwnedError() {
+        WtfAbi::Release(value.domain);
+        WtfAbi::Release(value.failingURL.impl);
+        WtfAbi::Release(value.localizedDescription);
+        WtfAbi::Release(value.tlsVerificationErrorDescription);
+    }
+};
+
 template<typename Operation>
 bool Throws(Operation&& operation) {
     try {
@@ -69,7 +83,7 @@ bool Throws(Operation&& operation) {
 }
 
 void CheckSetType() {
-    ResourceError error;
+    ResourceError error{};
     error.errorCode = -7;
     error.isSanitized = 1;
     error.tlsVerificationError = 35;
@@ -90,15 +104,15 @@ void CheckSetType() {
     Require(error.errorCode == -7);
     Require(error.isSanitized == 1);
     Require(error.tlsVerificationError == 35);
-    Require(error.domain.impl == nullptr);
+    Require(error.domain == nullptr);
     Require(error.failingURL.impl == nullptr);
-    Require(error.localizedDescription.impl == nullptr);
-    Require(error.tlsVerificationErrorDescription.impl == nullptr);
+    Require(error.localizedDescription == nullptr);
+    Require(error.tlsVerificationErrorDescription == nullptr);
     Require(Throws([] { _ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE(nullptr, ResourceErrorType::General); }));
 }
 
 void CheckLazyInit() {
-    ResourceError error;
+    ResourceError error{};
     error.type = ResourceErrorType::Cancellation;
     error.isSanitized = 1;
     error.errorCode = -3;
@@ -120,48 +134,48 @@ void CheckCopyOfPopulatedError() {
     String urlText = Narrow("https://example.com/pa?q=1");
 
     {
-        ResourceError error;
-        error.domain = domain;
+        ResourceError error{};
+        error.domain = domain.impl;
         error.failingURL = MakeURL(urlText);
-        error.localizedDescription = description;
+        error.localizedDescription = description.impl;
         error.errorCode = 60;
         error.type = ResourceErrorType::Cancellation;
         error.isSanitized = 1;
         error.tlsVerificationError = 60;
-        error.tlsVerificationErrorDescription = tlsDescription;
+        error.tlsVerificationErrorDescription = tlsDescription.impl;
         unsigned domainRefs = domain.impl->refCount;
         unsigned descriptionRefs = description.impl->refCount;
         unsigned tlsRefs = tlsDescription.impl->refCount;
         unsigned urlRefs = urlText.impl->refCount;
 
         {
-            ResourceError copy = _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error);
-            Require(copy.errorCode == 60);
-            Require(copy.type == ResourceErrorType::Cancellation);
-            Require(copy.isSanitized == 0);
-            Require(copy.tlsVerificationError == 60);
-            Require(copy.domain.impl && copy.domain.impl != domain.impl);
-            Require(copy.domain.impl->refCount == 2);
-            Require(!!(copy.domain.impl->hashAndFlags & 4));
-            Require(copy.localizedDescription.impl && copy.localizedDescription.impl != description.impl);
-            Require(copy.localizedDescription.impl->refCount == 2);
-            Require(!(copy.localizedDescription.impl->hashAndFlags & 4));
-            Require(copy.tlsVerificationErrorDescription.impl && copy.tlsVerificationErrorDescription.impl != tlsDescription.impl);
-            Require(copy.tlsVerificationErrorDescription.impl->refCount == 2);
-            Require(copy.failingURL.impl && copy.failingURL.impl != urlText.impl);
-            Require(copy.failingURL.impl->refCount == 2);
-            Require(copy.failingURL.bits == error.failingURL.bits);
-            Require(copy.failingURL.userStart == 8);
-            Require(copy.failingURL.userEnd == 8);
-            Require(copy.failingURL.passwordEnd == 8);
-            Require(copy.failingURL.hostEnd == 19);
-            Require(copy.failingURL.pathAfterLastSlash == 20);
-            Require(copy.failingURL.pathEnd == 22);
-            Require(copy.failingURL.queryEnd == 26);
-            Text(copy.domain.impl, u"CurlErrorDomain");
-            Text(copy.localizedDescription.impl, u"SSL peer failed verification");
-            Text(copy.tlsVerificationErrorDescription.impl, u"certificate verify failed");
-            Text(copy.failingURL.impl, u"https://example.com/pa?q=1");
+            OwnedError copy{_ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error)};
+            Require(copy.value.errorCode == 60);
+            Require(copy.value.type == ResourceErrorType::Cancellation);
+            Require(copy.value.isSanitized == 0);
+            Require(copy.value.tlsVerificationError == 60);
+            Require(copy.value.domain && copy.value.domain != domain.impl);
+            Require(copy.value.domain->refCount == 2);
+            Require(!!(copy.value.domain->hashAndFlags & 4));
+            Require(copy.value.localizedDescription && copy.value.localizedDescription != description.impl);
+            Require(copy.value.localizedDescription->refCount == 2);
+            Require(!(copy.value.localizedDescription->hashAndFlags & 4));
+            Require(copy.value.tlsVerificationErrorDescription && copy.value.tlsVerificationErrorDescription != tlsDescription.impl);
+            Require(copy.value.tlsVerificationErrorDescription->refCount == 2);
+            Require(copy.value.failingURL.impl && copy.value.failingURL.impl != urlText.impl);
+            Require(copy.value.failingURL.impl->refCount == 2);
+            Require(copy.value.failingURL.bits == error.failingURL.bits);
+            Require(copy.value.failingURL.userStart == 8);
+            Require(copy.value.failingURL.userEnd == 8);
+            Require(copy.value.failingURL.passwordEnd == 8);
+            Require(copy.value.failingURL.hostEnd == 19);
+            Require(copy.value.failingURL.pathAfterLastSlash == 20);
+            Require(copy.value.failingURL.pathEnd == 22);
+            Require(copy.value.failingURL.queryEnd == 26);
+            Text(copy.value.domain, u"CurlErrorDomain");
+            Text(copy.value.localizedDescription, u"SSL peer failed verification");
+            Text(copy.value.tlsVerificationErrorDescription, u"certificate verify failed");
+            Text(copy.value.failingURL.impl, u"https://example.com/pa?q=1");
             Require(domain.impl->refCount == domainRefs);
             Require(description.impl->refCount == descriptionRefs);
             Require(tlsDescription.impl->refCount == tlsRefs);
@@ -183,35 +197,35 @@ void CheckCopyOfPopulatedError() {
 }
 
 void CheckCopyOfNullError() {
-    ResourceError error;
-    ResourceError copy = _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error);
-    Require(copy.domain.impl == nullptr);
-    Require(copy.failingURL.impl == nullptr);
-    Require(copy.localizedDescription.impl == nullptr);
-    Require(copy.errorCode == 0);
-    Require(copy.type == ResourceErrorType::Null);
-    Require(copy.isSanitized == 0);
-    Require(copy.tlsVerificationError == 0);
-    Require(copy.tlsVerificationErrorDescription.impl == nullptr);
+    ResourceError error{};
+    OwnedError copy{_ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error)};
+    Require(copy.value.domain == nullptr);
+    Require(copy.value.failingURL.impl == nullptr);
+    Require(copy.value.localizedDescription == nullptr);
+    Require(copy.value.errorCode == 0);
+    Require(copy.value.type == ResourceErrorType::Null);
+    Require(copy.value.isSanitized == 0);
+    Require(copy.value.tlsVerificationError == 0);
+    Require(copy.value.tlsVerificationErrorDescription == nullptr);
     Require(Throws([] { _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(nullptr); }));
 }
 
 void CheckCopyOfEmptyStrings() {
     String empty = Wide(u"");
-    ResourceError error;
-    error.domain = empty;
+    ResourceError error{};
+    error.domain = empty.impl;
     error.failingURL = MakeURL(empty);
-    error.localizedDescription = empty;
-    error.tlsVerificationErrorDescription = empty;
-    ResourceError copy = _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error);
-    Require(copy.domain.impl == empty.impl);
-    Require(copy.domain.impl->length == 0);
-    Require(copy.failingURL.impl == empty.impl);
-    Require(copy.failingURL.impl->length == 0);
-    Require(copy.localizedDescription.impl == empty.impl);
-    Require(copy.tlsVerificationErrorDescription.impl == empty.impl);
-    Text(copy.domain.impl, u"");
-    Text(copy.failingURL.impl, u"");
+    error.localizedDescription = empty.impl;
+    error.tlsVerificationErrorDescription = empty.impl;
+    OwnedError copy{_ZNK7WebCore17ResourceErrorBase12isolatedCopyEv(&error)};
+    Require(copy.value.domain == empty.impl);
+    Require(copy.value.domain->length == 0);
+    Require(copy.value.failingURL.impl == empty.impl);
+    Require(copy.value.failingURL.impl->length == 0);
+    Require(copy.value.localizedDescription == empty.impl);
+    Require(copy.value.tlsVerificationErrorDescription == empty.impl);
+    Text(copy.value.domain, u"");
+    Text(copy.value.failingURL.impl, u"");
 }
 
 void Run() {

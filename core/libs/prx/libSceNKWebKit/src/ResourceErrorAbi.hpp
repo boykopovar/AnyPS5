@@ -8,23 +8,17 @@
 
 namespace NKWebKit::WebCoreAbi {
 
-enum class ResourceErrorType : std::uint8_t {
-    Null,
-    General,
-    AccessControl,
-    Cancellation,
-    Timeout
-};
+enum class ResourceErrorType : std::uint8_t { Null, General, AccessControl, Cancellation, Timeout };
 
 struct ResourceError {
-    WtfAbi::String domain;
-    WtfAbi::URL failingURL{};
-    WtfAbi::String localizedDescription;
-    int errorCode{0};
-    ResourceErrorType type{ResourceErrorType::Null};
-    std::uint8_t isSanitized{0};
-    int tlsVerificationError{0};
-    WtfAbi::String tlsVerificationErrorDescription;
+    WtfAbi::StringImpl* domain;
+    WtfAbi::URL failingURL;
+    WtfAbi::StringImpl* localizedDescription;
+    int errorCode;
+    ResourceErrorType type;
+    bool isSanitized;
+    int tlsVerificationError;
+    WtfAbi::StringImpl* tlsVerificationErrorDescription;
 };
 
 static_assert(sizeof(ResourceError) == 80);
@@ -37,12 +31,12 @@ static_assert(offsetof(ResourceError, type) == 60);
 static_assert(offsetof(ResourceError, isSanitized) == 61);
 static_assert(offsetof(ResourceError, tlsVerificationError) == 64);
 static_assert(offsetof(ResourceError, tlsVerificationErrorDescription) == 72);
-static_assert(static_cast<std::uint8_t>(ResourceErrorType::Null) == 0);
-static_assert(static_cast<std::uint8_t>(ResourceErrorType::General) == 1);
-static_assert(static_cast<std::uint8_t>(ResourceErrorType::AccessControl) == 2);
-static_assert(static_cast<std::uint8_t>(ResourceErrorType::Cancellation) == 3);
-static_assert(static_cast<std::uint8_t>(ResourceErrorType::Timeout) == 4);
-static_assert(std::is_trivially_destructible_v<ResourceErrorType>);
-static_assert(!std::is_trivially_copyable_v<ResourceError>);
+static_assert(std::is_trivially_copyable_v<ResourceError>);
 
-}  // namespace NKWebKit::WebCoreAbi
+inline ResourceError EmptyResourceError(ResourceErrorType type) {
+    ResourceError error {};
+    error.type = type;
+    return error;
+}
+
+}
