@@ -11,6 +11,19 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -61,6 +74,24 @@ static void CheckRoundingAndScaling() {
 
     Require(__isinfl_nid_postfix(static_cast<long double>(INFINITY)) == 1 && __isinfl_nid_postfix(-static_cast<long double>(INFINITY)) == 1);
     Require(__isinfl_nid_postfix(1.0L) == 0 && __isinfl_nid_postfix(static_cast<long double>(NAN)) == 0 && __isinfl_nid_postfix(0.0L) == 0);
+}
+
+static void CheckSqrtlNegativeFlags() {
+    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L, -std::numeric_limits<long double>::infinity()}) {
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        Require(std::feraiseexcept(FE_INEXACT) == 0);
+        errno = 0;
+        const long double result = sqrtl_nid_postfix(input);
+        Require(std::isnan(result) && errno == EDOM);
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+        if (flags != (FE_INEXACT | FE_INVALID)) std::fprintf(stderr, "sqrtl flags: input=%Lg flags=0x%x expected=0x%x\n", input, flags, FE_INEXACT | FE_INVALID);
+        Require(flags == (FE_INEXACT | FE_INVALID));
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        errno = 0;
+        Require(std::isnan(sqrtl_nid_postfix(input)) && errno == EDOM);
+        Require(std::fetestexcept(FE_ALL_EXCEPT) == FE_INVALID);
+    }
+    Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
 }
 
 static void CheckLogblLroundl() {
@@ -688,8 +719,204 @@ static void CheckExpSpecialValues() {
     Require(expf_nid_postfix(-110.0f) == 0.0f);
 }
 
-int main() {
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        allocation = static_cast<unsigned char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(allocation != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        size = static_cast<std::size_t>(page);
+        void* mapping = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        allocation = static_cast<unsigned char*>(mapping);
+        Require(mprotect(allocation + size, size, PROT_NONE) == 0);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(allocation, 0, MEM_RELEASE);
+#else
+        munmap(allocation, size * 2);
+#endif
+    }
+    unsigned char* End() const { return allocation + size; }
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(allocation, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    unsigned char* allocation = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename Call>
+static bool RejectsKeepingErrno(Call call) {
+    errno = 71;
+    bool caught = false;
+    try { call(); }
+    catch (const std::invalid_argument&) { caught = true; }
+    return caught && errno == 71;
+}
+
+static void CheckExpOffsetsBeyond16Bits() {
+    const auto raises = [](int flag, int error) {
+        const bool matched = (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == flag && errno == error;
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return matched;
+    };
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    long double extended = -23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == -1 && SameBits(extended, Extended(0x5aa1, 0x8140e579a04783f7ull)) && raises(0, 0));
+    extended = 23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == -1 && SameBits(extended, Extended(0x255c, 0xfd846e6c1f803df8ull)) && raises(0, 0));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    double binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, 40000) == 1 && binary == std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    binary = -700.0;
+    Require(_Exp_nid_postfix(&binary, -1.0, 40000) == 1 && binary == -std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 0.0;
+    Require(_Exp_nid_postfix(&binary, 1.5, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    float single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, 40000) == 1 && single == std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, -40000) == 0 && single == 0.0f && !std::signbit(single) && raises(FE_UNDERFLOW, ERANGE));
+    single = 0.0f;
+    Require(_FExp_nid_postfix(&single, -1.5f, 40000) == 1 && single == -std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+}
+
+static void CheckPowlBitsFlagsAndErrno() {
+    struct Case {
+        std::uint16_t baseExponent;
+        std::uint64_t baseMantissa;
+        std::uint16_t powerExponent;
+        std::uint64_t powerMantissa;
+        std::uint16_t resultExponent;
+        std::uint64_t resultMantissa;
+        int flags;
+        int error;
+    };
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    for (const Case& entry : {
+             Case{0x4000, 0x8000000000000000ull, 0x4002, 0xa000000000000000ull, 0x4009, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x4000, 0x8000000000000000ull, 0x3ffe, 0x8000000000000000ull, 0x3fff, 0xb504f333f9de6484ull, FE_INEXACT, 0},
+             Case{0x3fff, 0xc000000000000000ull, 0x4000, 0xa000000000000000ull, 0x4000, 0xb05cfeb4522aa265ull, FE_INEXACT, 0},
+             Case{0x4013, 0xd94b85970a38121dull, 0xc004, 0xe806a6636bc840deull, 0x3b4a, 0xbf8a7d7776971378ull, FE_INEXACT, 0},
+             Case{0x3ffe, 0xc5b5921c65706fc7ull, 0xc009, 0xe540000000000000ull, 0x42aa, 0xc893741921582f7cull, FE_INEXACT, 0},
+             Case{0x3fff, 0xb504f333f9de6484ull, 0x400f, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+             Case{0x4002, 0xa000000000000000ull, 0xc00b, 0x9c40000000000000ull, 0x0000, 0x0000000000000000ull, FE_UNDERFLOW | FE_INEXACT, ERANGE},
+             Case{0xc002, 0x8000000000000000ull, 0x3ffd, 0xaaaaaaaaaaaaaaabull, 0x7fff, 0xc000000000000000ull, FE_INVALID, EDOM},
+             Case{0x0000, 0x0000000000000000ull, 0xbfff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0x8000, 0x0000000000000000ull, 0xc000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0xc000, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xc002, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x3fff, 0x8000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0x7fff, 0xc000000000000000ull, 0x0000, 0x0000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0xffff, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, 0, 0},
+             Case{0x3ffe, 0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0, 0},
+         }) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const long double result = powl_nid_postfix(Extended(entry.baseExponent, entry.baseMantissa), Extended(entry.powerExponent, entry.powerMantissa));
+        Require(SameBits(result, Extended(entry.resultExponent, entry.resultMantissa)));
+        Require((std::fetestexcept(FE_ALL_EXCEPT) & Flags) == entry.flags && errno == entry.error);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    errno = 0;
+}
+
+static void CheckGuestPointers() {
+    auto* unmappedValue = reinterpret_cast<long double*>(std::uintptr_t{0x10});
+    auto* unmappedExponent = reinterpret_cast<short*>(std::uintptr_t{0x10});
+    auto* unmappedWords = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    Require(RejectsKeepingErrno([&] { _LDtest_nid_postfix(unmappedValue); }));
+    Require(RejectsKeepingErrno([&] { _LExp_nid_postfix(unmappedValue, 1.0L, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDint_nid_postfix(unmappedValue, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDscale_nid_postfix(unmappedValue, 1); }));
+    short exponent = 7;
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(&exponent, unmappedValue); }) && exponent == 7);
+    long double value = 8.0L;
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(unmappedExponent, &value); }));
+    Require(RejectsKeepingErrno([&] { _LDnorm_nid_postfix(unmappedWords); }));
+    Require(RejectsKeepingErrno([&] { _LPoly_nid_postfix(2.0L, reinterpret_cast<const long double*>(std::uintptr_t{0x10}), 3); }));
+    Require(RejectsKeepingErrno([&] { _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(2.0, reinterpret_cast<const double*>(std::uintptr_t{0x10}), 3); }));
+
+    long double longTable[41];
+    double table[41];
+    long double longExpected = 1.0L;
+    double expected = 1.0;
+    for (int index = 0; index < 41; ++index) {
+        longTable[index] = static_cast<long double>(index + 1);
+        table[index] = static_cast<double>(index + 1);
+        if (index > 0) {
+            longExpected = longExpected * 0.5L + longTable[index];
+            expected = expected * 0.5 + table[index];
+        }
+    }
+    Require(_LPoly_nid_postfix(0.5L, longTable, 40) == longExpected);
+    Require(_ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(0.5, table, 40) == expected);
+    Require(_LPoly_nid_postfix(0.5L, longTable, -3) == 1.0L && _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(0.5, table, -3) == 1.0);
+
+    GuardedPage page;
+    auto* tail = reinterpret_cast<long double*>(page.End() - 3 * sizeof(long double));
+    auto* doubleTail = reinterpret_cast<double*>(page.End() - 3 * sizeof(double));
+    for (int index = 0; index < 3; ++index) tail[index] = 1.0L;
+    Require(_LPoly_nid_postfix(1.0L, tail, 2) == 3.0L);
+    Require(RejectsKeepingErrno([&] { _LPoly_nid_postfix(1.0L, tail, 3); }));
+    for (int index = 0; index < 3; ++index) doubleTail[index] = 1.0;
+    Require(_ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(1.0, doubleTail, 2) == 3.0);
+    Require(RejectsKeepingErrno([&] { _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(1.0, doubleTail, 3); }));
+
+    auto* finite = reinterpret_cast<long double*>(page.End() - 4 * sizeof(long double));
+    auto* nan = reinterpret_cast<long double*>(page.End() - 5 * sizeof(long double));
+    auto* words = reinterpret_cast<std::uint16_t*>(page.End() - 6 * sizeof(long double));
+    *finite = 2.5L;
+    *nan = std::numeric_limits<long double>::quiet_NaN();
+    const std::uint64_t mantissa = 1;
+    std::memcpy(words, &mantissa, sizeof(mantissa));
+    page.ReadOnly();
+    Require(_LDtest_nid_postfix(finite) == -1);
+    Require(_LDint_nid_postfix(nan, 0) == 2 && _LDscale_nid_postfix(nan, 3) == 2);
+    Require(_LExp_nid_postfix(nan, 1.0L, 0) == 2);
+    Require(RejectsKeepingErrno([&] { _LDint_nid_postfix(finite, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDscale_nid_postfix(finite, 1); }));
+    Require(RejectsKeepingErrno([&] { _LExp_nid_postfix(finite, 1.0L, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(&exponent, finite); }));
+    Require(RejectsKeepingErrno([&] { _LDnorm_nid_postfix(words); }));
+    Require(*finite == 2.5L && std::memcmp(words, &mantissa, sizeof(mantissa)) == 0);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "sqrtl-negative-flags") == 0) {
+        CheckSqrtlNegativeFlags();
+        return 0;
+    }
     CheckRoundingAndScaling();
+    CheckSqrtlNegativeFlags();
     CheckLogblLroundl();
     CheckSignalingNanPassThrough();
     CheckErrno();
@@ -709,6 +936,9 @@ int main() {
     CheckFmalDirectedZero();
     CheckFmalFarApartDirected();
     CheckExpSpecialValues();
+    CheckExpOffsetsBeyond16Bits();
+    CheckPowlBitsFlagsAndErrno();
     CheckLogSpecialValues();
+    CheckGuestPointers();
     return 0;
 }

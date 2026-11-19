@@ -12,6 +12,7 @@ struct HttpOptions {
     bool nonblock = false;
     bool acceptEncodingGzip = false;
     bool delayBuildRequest = false;
+    int epollId = -1;
     HttpEpollHandle epoll = nullptr;
     void* epollArgument = nullptr;
 };

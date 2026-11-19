@@ -50,6 +50,7 @@ void testSystemSoftwareVersion() {
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(nullptr, packet.data()); });
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, nullptr); });
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), packet.data()); });
+    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10})); });
     for (const auto header : {0x80000000u, 0x3fff1000u, 0x40001000u, 0x00027600u}) {
         std::array<std::uint32_t, 3> invalidHeader{header, 0xbeefcafeu, 0};
         expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, invalidHeader.data()); });
@@ -78,6 +79,7 @@ void testDataPacketPayloadAddress() {
     expectFailure([&] { sceAgcGetDataPacketPayloadAddress(&addr, nullptr, 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadAddress(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10}), packet.data(), 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadAddress_0090(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10}), packet.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress_0090(&addr, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 0); });
 }
 
 void testDataPacketPayloadRange() {
@@ -98,6 +100,8 @@ void testDataPacketPayloadRange() {
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(nullptr, packet.data(), 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(&range, nullptr, 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(reinterpret_cast<SceAgcMemoryRange*>(std::uintptr_t{0x10}), packet.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadRange(&range, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 0); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadRange(&range, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 1); });
 }
 
 void testRejections() {
@@ -106,6 +110,7 @@ void testRejections() {
         expectFailure([&] { sceAgcGetPacketSize(&word); });
     }
     expectFailure([] { sceAgcGetPacketSize(nullptr); });
+    expectFailure([] { sceAgcGetPacketSize(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})); });
     std::array<std::uint32_t, 2> words{0x00100000u, 0x000000c0u};
     auto* misaligned = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(words.data()) + 1);
     expectFailure([&] { sceAgcGetPacketSize(misaligned); });

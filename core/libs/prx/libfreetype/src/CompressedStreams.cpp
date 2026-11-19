@@ -8,6 +8,7 @@
 #include FT_LZW_H
 #include FT_SYSTEM_H
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -78,10 +79,25 @@ void* Reallocate(FT_Memory memory, long current, long size, void* block) {
     return guest->realloc(guest, current, size, block);
 }
 
+void WriteSourcePos(GuestStreamRec* source, unsigned long pos) {
+    const std::uint64_t value = pos;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(&source->pos, &value, sizeof(source->pos));
+    errno = savedErrno;
+}
+
 unsigned long SourceRead(FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count) {
     auto* state = static_cast<State*>(stream->descriptor.pointer);
-    state->source->pos = stream->pos;
-    const auto read = state->source->read(state->source, offset, buffer, count);
+    WriteSourcePos(state->source, stream->pos);
+    GuestStreamRec sourceRec{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&sourceRec, state->source, sizeof(sourceRec));
+    errno = savedErrno;
+    if (!copied || !sourceRec.read) {
+        state->fault = true;
+        return 0;
+    }
+    const auto read = sourceRec.read(state->source, offset, buffer, count);
     if (!count) return read != 0;
     if (read > count) {
         state->fault = true;
@@ -105,7 +121,7 @@ std::uint64_t APS5_VABI OutputRead(GuestStreamRec* stream, std::uint64_t offset,
         !state->output.descriptor.pointer)
         NotImplemented_nid_no_patch(__func__);
     const auto result = state->output.read(&state->output, static_cast<unsigned long>(offset), buffer, static_cast<unsigned long>(count));
-    state->source->pos = state->input.pos;
+    WriteSourcePos(state->source, state->input.pos);
     if (state->fault) NotImplemented_nid_no_patch(__func__);
     return result;
 }
@@ -124,10 +140,16 @@ void APS5_VABI OutputClose(GuestStreamRec* stream) {
     state->closed = true;
     if (state->output.close) state->output.close(&state->output);
     if (state->fault) NotImplemented_nid_no_patch(__func__);
-    stream->read = nullptr;
-    stream->close = nullptr;
-    stream->base = nullptr;
-    stream->descriptor.pointer = nullptr;
+    GuestStreamRec cleared{};
+    const int savedErrno = errno;
+    if (GuestCopyIn_nid_no_patch(&cleared, stream, sizeof(cleared))) {
+        cleared.read = nullptr;
+        cleared.close = nullptr;
+        cleared.base = nullptr;
+        cleared.descriptor.pointer = nullptr;
+        GuestCopyOut_nid_no_patch(stream, &cleared, sizeof(cleared));
+    }
+    errno = savedErrno;
 }
 
 bool Overlaps(const GuestStreamRec* stream, const GuestStreamRec* source) {
@@ -137,31 +159,45 @@ bool Overlaps(const GuestStreamRec* stream, const GuestStreamRec* source) {
 }
 
 void Publish(GuestStreamRec* stream, const State& state) {
-    *stream = {};
-    stream->base = state.output.base;
-    stream->size = state.output.size;
-    stream->pos = state.output.pos;
-    stream->descriptor.pointer = state.output.descriptor.pointer;
-    stream->memory = state.guestMemory;
-    stream->read = state.output.read ? OutputRead : nullptr;
-    stream->close = state.output.close ? OutputClose : nullptr;
+    GuestStreamRec localStream{};
+    localStream.base = state.output.base;
+    localStream.size = state.output.size;
+    localStream.pos = state.output.pos;
+    localStream.descriptor.pointer = state.output.descriptor.pointer;
+    localStream.memory = state.guestMemory;
+    localStream.read = state.output.read ? OutputRead : nullptr;
+    localStream.close = state.output.close ? OutputClose : nullptr;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(stream, &localStream, sizeof(localStream));
+    errno = savedErrno;
 }
 
 template <typename TOpen>
 int Open(GuestStreamRec* stream, GuestStreamRec* source, TOpen open, const char* function) {
     if (!stream || !source) return FT_Err_Invalid_Stream_Handle;
-    if (source->size > std::numeric_limits<unsigned long>::max() || source->pos > std::numeric_limits<unsigned long>::max())
+    const int savedErrno = errno;
+    const bool streamOk = GuestWritable_nid_no_patch(stream, sizeof(*stream));
+    const bool sourceOk = GuestWritable_nid_no_patch(source, sizeof(*source));
+    errno = savedErrno;
+    if (!streamOk || !sourceOk) return FT_Err_Invalid_Stream_Handle;
+    GuestStreamRec sourceRec{};
+    if (!GuestCopyIn_nid_no_patch(&sourceRec, source, sizeof(sourceRec))) {
+        errno = savedErrno;
+        return FT_Err_Invalid_Stream_Handle;
+    }
+    errno = savedErrno;
+    if (sourceRec.size > std::numeric_limits<unsigned long>::max() || sourceRec.pos > std::numeric_limits<unsigned long>::max())
         NotImplemented_nid_no_patch(function);
     auto state = std::make_shared<State>();
     state->source = source;
-    state->guestMemory = source->memory;
+    state->guestMemory = sourceRec.memory;
     state->memory = {state.get(), Allocate, Release, Reallocate};
-    state->input.base = source->base;
-    state->input.size = static_cast<unsigned long>(source->size);
-    state->input.pos = static_cast<unsigned long>(source->pos);
+    state->input.base = sourceRec.base;
+    state->input.size = static_cast<unsigned long>(sourceRec.size);
+    state->input.pos = static_cast<unsigned long>(sourceRec.pos);
     state->input.descriptor.pointer = state.get();
-    state->input.pathname.pointer = source->pathname.pointer;
-    state->input.read = source->read ? SourceRead : nullptr;
+    state->input.pathname.pointer = sourceRec.pathname.pointer;
+    state->input.read = sourceRec.read ? SourceRead : nullptr;
     state->input.memory = &state->memory;
     const bool aliased = stream == source;
     FT_StreamRec& output = aliased ? state->input : state->output;
@@ -171,14 +207,14 @@ int Open(GuestStreamRec* stream, GuestStreamRec* source, TOpen open, const char*
     state->opening = false;
     if (state->fault) NotImplemented_nid_no_patch(function);
     if (output.descriptor.pointer == state.get()) {
-        source->pos = state->input.pos;
+        WriteSourcePos(source, state->input.pos);
         return error;
     }
     if (aliased ? error == FT_Err_Ok : Overlaps(stream, source)) NotImplemented_nid_no_patch(function);
     if (aliased) {
         state->output = state->input;
     } else {
-        source->pos = state->input.pos;
+        WriteSourcePos(source, state->input.pos);
     }
     Publish(stream, *state);
     const std::lock_guard lock(tableMutex);
