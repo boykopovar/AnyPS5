@@ -917,7 +917,9 @@ float APS5_VABI exp2f_nid_postfix(float x) {
         }
         if (x >= 0x1.0p7f) {
             errno = ERANGE;
-            return huge * huge;
+            volatile float overflow = huge * huge;
+            (void)overflow;
+            return std::numeric_limits<float>::infinity();
         }
         if (x <= -0x1.2cp7f) {
             errno = ERANGE;
@@ -1115,7 +1117,9 @@ double APS5_VABI exp2_nid_postfix(double x) {
         }
         if (x >= 0x1.0p10) {
             errno = ERANGE;
-            return huge * huge;
+            volatile double overflow = huge * huge;
+            (void)overflow;
+            return std::numeric_limits<double>::infinity();
         }
         if (x <= -0x1.0ccp10) {
             errno = ERANGE;
