@@ -5196,10 +5196,6 @@ int APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnly6createEPN3JSC9StructureEPNS_17JSD
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore37BasicComponentTransferFilterOperation14transformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11MediaSample6isSyncEv() {
     NotImplemented_nid_no_patch(__func__);
 }
