@@ -149,6 +149,21 @@ void NameMappedRange(const void* addr, uint64_t len, const char* name) {
  if (std::string copy; name && CopyMappedName(name, copy)) NameVirtualRange(addr, len, std::move(copy));
 }
 
+static int ReadMapSlot(void** addr, void*& hint) {
+ if (!addr) return 0;
+ const int savedErrno = errno;
+ const bool usable = GuestCopyIn_nid_no_patch(&hint, addr, sizeof(hint)) && GuestWritable_nid_no_patch(addr, sizeof(hint));
+ errno = savedErrno;
+ return usable ? 0 : SCE_KERNEL_ERROR_EFAULT;
+}
+
+static int WriteMapSlot(void** addr, void* mapped) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(addr, &mapped, sizeof(mapped));
+ errno = savedErrno;
+ return copied ? 0 : SCE_KERNEL_ERROR_EFAULT;
+}
+
 void ApplyRangeName(uintptr_t address, VirtualQueryInfo* info) {
  std::lock_guard lock(g_rangeNameLock);
  auto next = g_rangeNames.upper_bound(address);
@@ -363,24 +378,33 @@ int APS5_VABI sceKernelEnableDmemAliasing(void) {
 int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  (void)alignment;
- const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
- if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- return result;
+ void* hint = nullptr;
+ if (const int error = ReadMapSlot(addr, hint)) return error;
+ const int result = DoMapDirect(addr ? &hint : nullptr, len, prot, flags, direct_memory_start, alignment);
+ if (result != 0) return result;
+ _releaseFlexible(reinterpret_cast<uintptr_t>(hint), len);
+ return WriteMapSlot(addr, hint);
 }
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  if (static_cast<unsigned>(flags) >= 0x1000000u || (alignment & ((alignment - 1) | 0x3fff)) != 0 || std::bit_width(std::max<size_t>(alignment, 0x4000)) - 1 > 30) return SCE_KERNEL_ERROR_EINVAL;
  (void)type;
- const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
- if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- return result;
+ void* hint = nullptr;
+ if (const int error = ReadMapSlot(addr, hint)) return error;
+ const int result = DoMapDirect(addr ? &hint : nullptr, len, prot, flags, direct_memory_start, alignment);
+ if (result != 0) return result;
+ _releaseFlexible(reinterpret_cast<uintptr_t>(hint), len);
+ return WriteMapSlot(addr, hint);
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
  if (UndefinedProtection(prot) || RefusedFlexibleFlag(flags)) return SCE_KERNEL_ERROR_EINVAL;
  constexpr int IgnoredHeapFlag = 0x8000;
- return _mapFlexible(addr_in_out, len, prot, flags & ~IgnoredHeapFlag);
+ void* hint = nullptr;
+ if (const int error = ReadMapSlot(addr_in_out, hint)) return error;
+ const int result = _mapFlexible(addr_in_out ? &hint : nullptr, len, prot, flags & ~IgnoredHeapFlag);
+ return result != 0 ? result : WriteMapSlot(addr_in_out, hint);
 }
 
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
@@ -393,9 +417,12 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
  if (UndefinedProtection(prot) || flags == 0x8000) return SCE_KERNEL_ERROR_EINVAL;
- const int result = _mapFlexible(addr_in_out, len, prot, flags);
- if (result == 0) NameMappedRange(*addr_in_out, len, name);
- return result;
+ void* hint = nullptr;
+ if (const int error = ReadMapSlot(addr_in_out, hint)) return error;
+ const int result = _mapFlexible(addr_in_out ? &hint : nullptr, len, prot, flags);
+ if (result != 0) return result;
+ NameMappedRange(hint, len, name);
+ return WriteMapSlot(addr_in_out, hint);
 }
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemoryInternal(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
@@ -449,9 +476,12 @@ int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
 }
 
 int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
- const int result = DoReserveVirtual(addr, len, flags, alignment);
- if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- return result;
+ void* hint = nullptr;
+ if (const int error = ReadMapSlot(addr, hint)) return error;
+ const int result = DoReserveVirtual(addr ? &hint : nullptr, len, flags, alignment);
+ if (result != 0) return result;
+ _releaseFlexible(reinterpret_cast<uintptr_t>(hint), len);
+ return WriteMapSlot(addr, hint);
 }
 
 static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info) {
