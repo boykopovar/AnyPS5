@@ -19,4 +19,15 @@ struct Parsed {
 };
 
 Parsed Parse(const char* text);
+
+class Table {
+public:
+    explicit Table(const Parsed& parsed);
+    bool Find(const char* hostname, Address& address) const;
+
+private:
+    std::vector<Entry> entries;
+};
+
+bool LookupOverride(const char* hostname, Address& address);
 }

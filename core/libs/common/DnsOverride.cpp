@@ -1,6 +1,8 @@
 #include "common/DnsOverride.hpp"
 #include <cctype>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 
 namespace DnsOverride {
 namespace {
@@ -27,6 +29,12 @@ bool ParseAddress(const std::string& text, Address& address) {
     return index == text.size();
 }
 
+std::string ToLower(const std::string& text) {
+    std::string lower;
+    for (const char value : text) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(value))));
+    return lower;
+}
+
 bool ParseEntry(const std::string& text, Entry& entry) {
     const std::size_t equals = text.find('=');
     if (equals == std::string::npos || equals == 0) return false;
@@ -34,9 +42,7 @@ bool ParseEntry(const std::string& text, Entry& entry) {
     for (const char value : hostname)
         if (std::isspace(static_cast<unsigned char>(value))) return false;
     if (!ParseAddress(text.substr(equals + 1), entry.address)) return false;
-    entry.hostname.clear();
-    for (const char value : hostname)
-        entry.hostname.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(value))));
+    entry.hostname = ToLower(hostname);
     return true;
 }
 }
@@ -56,5 +62,34 @@ Parsed Parse(const char* text) {
         start = comma + 1;
     }
     return parsed;
+}
+
+Table::Table(const Parsed& parsed) : entries(parsed.entries) {}
+
+bool Table::Find(const char* hostname, Address& address) const {
+    if (!hostname) return false;
+    const std::string key = ToLower(hostname);
+    for (const auto& entry : entries) {
+        if (entry.hostname != key) continue;
+        address = entry.address;
+        return true;
+    }
+    return false;
+}
+
+namespace {
+const Table& ProcessTable() {
+    static const Table table = [] {
+        const Parsed parsed = Parse(std::getenv("ANYPS5_DNS_OVERRIDE"));
+        for (const auto& item : parsed.malformed)
+            std::fprintf(stderr, "[DNS-OVERRIDE] ignored malformed ANYPS5_DNS_OVERRIDE entry: %s\n", item.c_str());
+        return Table(parsed);
+    }();
+    return table;
+}
+}
+
+bool LookupOverride(const char* hostname, Address& address) {
+    return ProcessTable().Find(hostname, address);
 }
 }
