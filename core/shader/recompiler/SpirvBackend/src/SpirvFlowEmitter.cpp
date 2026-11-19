@@ -112,6 +112,13 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
         const auto expected = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
+        if (state.stencilReplayLateStore) {
+            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffu)), [&] {
+                const auto address = state.module.AllocateId();
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), ConstantU32(state, 0u)));
+                state.module.AddFunction(spv::OpStore, address, ConstantU32(state, 0u), spv::MemoryAccessAlignedMask, 4u);
+            });
+        }
         EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
     }
     EmitReturnReleasingScratch(state);
@@ -757,6 +764,41 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
     EmitDirectInstruction(ctx, inst);
 }
 
+bool WritesGuestState(IrOpcode opcode) {
+    if (opcode == IrOpcode::SetAttribute || opcode == IrOpcode::SetTessellationAttribute || opcode == IrOpcode::EmitVertex) return true;
+    const auto shared = SharedAccessOf(opcode);
+    const auto buffer = BufferAccessOf(opcode);
+    const auto address = AddressOpcodeInfoOf(opcode).access;
+    const auto image = ImageOpcodeInfoOf(opcode).access;
+    return (shared != SharedAccess::None && shared != SharedAccess::Read) || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
+}
+
+void EmitUnlessInvocationFaulted(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrValue& inst) {
+    auto& state = ctx.state;
+    const bool returnsValue = inst.Type() != IrType::Void;
+    const auto result = returnsValue ? ctx.Result(inst) : 0u;
+    ctx.definitions.Erase(&inst);
+    const auto faulted = BdaInvocationFaulted(state);
+    const auto body = state.module.AllocateId();
+    const auto skip = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, faulted, skip, body);
+    EmitLabel(state, body);
+    EmitStructuredInstruction(ctx, functionState, inst);
+    const auto value = returnsValue ? ctx.Def(&inst) : 0u;
+    const auto exit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, skip);
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    if (!returnsValue) return;
+    ctx.definitions.Erase(&inst);
+    const auto type = TypeId(state, inst.Type());
+    state.module.AddFunction(spv::OpPhi, type, result, value, exit, state.module.Constant(spv::OpConstantNull, type), skip);
+    ctx.definitions.Emplace(&inst, result);
+}
+
 const IrValue* RegionNanCondition(const IrValue* test) {
     std::vector<const IrValue*> pending{test};
     std::unordered_set<const IrValue*> visited;
@@ -886,6 +928,24 @@ private:
             const int exponent = bits == 0u ? -149 : bits < 0x00800000u ? static_cast<int>(std::bit_width(bits)) - 150 + (std::has_single_bit(bits) ? 0 : 1) : static_cast<int>(bits >> 23u) - 127 + ((bits & 0x007fffffu) != 0u ? 1 : 0);
             return exponent <= 126 ? std::optional(exponent) : std::nullopt;
         }
+        if (value->Flags<std::uint64_t>() == 0u) {
+            switch (value->Opcode()) {
+                case IrOpcode::BitCastU32F32:
+                case IrOpcode::BitCastF32U32: return Bound(value->Argument(0));
+                case IrOpcode::FPSaturate32: return 0;
+                case IrOpcode::BitwiseAnd32:
+                case IrOpcode::BitwiseXor32:
+                    for (unsigned part = 0u; part < 2u; ++part) {
+                        const auto* mask = value->Argument(part)->Resolve();
+                        if (!mask->HasImmediate()) continue;
+                        if (value->Opcode() == IrOpcode::BitwiseAnd32 && mask->ImmediateU32() == 0x80000000u) return -149;
+                        const auto accepted = value->Opcode() == IrOpcode::BitwiseAnd32 ? 0x7fffffffu : 0x80000000u;
+                        if (mask->ImmediateU32() == accepted) return Bound(value->Argument(1u-part));
+                    }
+                    break;
+                default: break;
+            }
+        }
         if (!members.contains(value)) {
             if (value->Type() != IrType::U32 && value->Type() != IrType::F32) return std::nullopt;
             if (uniqueInputs.insert(value).second) inputs.push_back(value);
@@ -893,20 +953,8 @@ private:
         }
         if (value->Flags<std::uint64_t>() != 0u) return std::nullopt;
         switch (value->Opcode()) {
-            case IrOpcode::BitCastU32F32:
-            case IrOpcode::BitCastF32U32:
             case IrOpcode::FPAbs32:
             case IrOpcode::FPNeg32: return Bound(value->Argument(0));
-            case IrOpcode::BitwiseAnd32:
-            case IrOpcode::BitwiseXor32:
-                for (unsigned part = 0u; part < 2u; ++part) {
-                    const auto* mask = value->Argument(part)->Resolve();
-                    if (!mask->HasImmediate()) continue;
-                    if (value->Opcode() == IrOpcode::BitwiseAnd32 && mask->ImmediateU32() == 0x80000000u) return -149;
-                    const auto accepted = value->Opcode() == IrOpcode::BitwiseAnd32 ? 0x7fffffffu : 0x80000000u;
-                    if (mask->ImmediateU32() == accepted) return Bound(value->Argument(1u-part));
-                }
-                return std::nullopt;
             case IrOpcode::FPMul32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), true, false);
             case IrOpcode::FPAdd32:
             case IrOpcode::FPSub32: return Join(Bound(value->Argument(0)), Bound(value->Argument(1)), false, true);
@@ -916,7 +964,6 @@ private:
             case IrOpcode::SelectF32:
                 if (RegionNanSource(value) != nullptr || False(value->Argument(0), [&](const IrValue* source) { return Bound(source).has_value(); })) return Bound(value->Argument(2));
                 return Join(Bound(value->Argument(1)), Bound(value->Argument(2)), false, false);
-            case IrOpcode::FPSaturate32: return 0;
             case IrOpcode::FPSin:
             case IrOpcode::FPCos:
             case IrOpcode::FPFract32:
@@ -1098,11 +1145,14 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
             SpirvValueEmitContext& lane = half == 0 ? ctx : *ctx.otherHalf;
             state.laneHalf = half;
+            state.laneValueShared = shared;
             if (half == 0 || (inst->Opcode() != IrOpcode::Barrier && inst->Opcode() != IrOpcode::MeshAllocate)) {
-                EmitStructuredInstruction(lane, functionState, *inst);
+                if (state.bdaFaultMasksWrites && WritesGuestState(inst->Opcode())) EmitUnlessInvocationFaulted(lane, functionState, *inst);
+                else EmitStructuredInstruction(lane, functionState, *inst);
             }
         }
         state.laneHalf = 0;
+        state.laneValueShared = false;
     }
 }
 

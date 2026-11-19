@@ -34,6 +34,13 @@ class BuildMingwHostOnlyTestsTests(unittest.TestCase):
         self.assertEqual(build_mingw_host_only_tests.source_relative_path(root, root / "core" / "a.cpp"), "core/a.cpp")
         self.assertIsNone(build_mingw_host_only_tests.source_relative_path(root, Path("/other/a.cpp")))
 
+    def test_link_command_mentions_target_by_artifact_name_or_link_flag(self):
+        target = {"name": "foo", "artifacts": [{"path": "out/libfoo.a"}]}
+        self.assertTrue(build_mingw_host_only_tests.link_command_mentions_target("a.o out/libfoo.a", target))
+        self.assertTrue(build_mingw_host_only_tests.link_command_mentions_target("a.o -lfoo", target))
+        self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lfoobar", target))
+        self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lbar", target))
+
 
 if __name__ == "__main__":
     unittest.main()
