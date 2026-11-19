@@ -763,7 +763,13 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 
 `python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
 
-- By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+Run the tool from the AnyPS5 checkout and pass the path to the [run report](#run-report) beside the converted executable or in the data folder. If you saved a [log file](#saving-the-log-to-a-file), pass its path too. For example, from PowerShell:
+
+```powershell
+python tools/bug_report.py --report "C:/Games/My Game/anyps5-report.json" --log "C:/Games/My Game/run.log"
+```
+
+- By default, the tool reads `anyps5-report.json` from the current directory and writes `bug-report.zip` there. It reads the log from `ANYPS5_LOG_FILE` and the input mapping from `ANYPS5_INPUT_CONFIG` if those variables are set in the shell running the tool. If `ANYPS5_INPUT_CONFIG` is unset, it looks for `anyps5-input.ini` in the current directory. Use `--input-config` and `--out` to set the input mapping and output paths explicitly.
 - Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
 - A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
 
