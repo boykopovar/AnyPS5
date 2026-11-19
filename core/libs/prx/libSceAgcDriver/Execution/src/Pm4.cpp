@@ -401,7 +401,6 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             graphics();
             size(6);
             require(packet[3] <= 0xffffu, "unsupported index address bits");
-            require(packet[4] <= packet[1], "index count exceeds maximum index size");
             require((packet[5] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
         case 0x2a: graphics(); size(2); require(packet[1] <= 3, "unsupported index-type modifiers"); break;
@@ -420,7 +419,6 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x35:
             graphics();
             size(5);
-            require(packet[3] <= packet[1], "index count exceeds maximum index size");
             require((packet[4] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
         case 0x24: case 0x25:
@@ -1048,7 +1046,7 @@ DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueSta
     require(queue.indexType <= 2, "unsupported index type");
     const std::uint32_t indexSize = queue.indexType == 0 ? 2 : queue.indexType == 1 ? 4 : 1;
     const auto base = explicitAddress ? address(packet[2], packet[3]) : queue.indexBase;
-    const auto count = explicitAddress ? packet[4] : packet[3];
+    const auto count = std::min(explicitAddress ? packet[4] : packet[3], packet[1]);
     require(base != 0 && base % indexSize == 0, "null or misaligned index base");
     const auto offset = explicitAddress ? 0 : static_cast<std::uint64_t>(packet[2]) * indexSize;
     require(offset <= std::numeric_limits<std::uint64_t>::max() - base, "index address overflow");
