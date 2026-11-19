@@ -26120,10 +26120,6 @@ int APS5_VABI _ZNK3JSC9CallFrame11callerFrameERPNS_10EntryFrameE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC9CodeBlock4dumpERN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }

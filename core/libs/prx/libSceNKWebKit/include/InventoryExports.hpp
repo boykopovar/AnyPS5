@@ -4748,7 +4748,6 @@ int APS5_VABI _ZNK3JSC8JSString13equalSlowCaseEPNS_14JSGlobalObjectEPS0_();
 int APS5_VABI _ZNK3JSC8Profiler8Database4saveEPKc();
 int APS5_VABI _ZNK3JSC9CallFrame10codeOriginEv();
 int APS5_VABI _ZNK3JSC9CallFrame11callerFrameERPNS_10EntryFrameE();
-int APS5_VABI _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC9CodeBlock26reoptimizationRetryCounterEv();
 int APS5_VABI _ZNK3JSC9CodeBlock4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC9JSPromise6resultERNS_2VME();
