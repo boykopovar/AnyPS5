@@ -189,7 +189,7 @@ class SourceTests(unittest.TestCase):
     def test_default_upstream_ref_is_the_locked_base_revision(self):
         root = Path(__file__).resolve().parents[2]
         base = json.loads(Path(__file__).with_name('upstream.lock').read_text())['base_revision']
-        compose = (root / 'compose.yaml').read_text()
+        compose = (root / 'compose.build.yml').read_text()
         dockerfile = Path(__file__).with_name('Dockerfile').read_text()
         self.assertIn('${ANYPS5_UPSTREAM_REF:-' + base + '}', compose)
         defaults = [line for line in dockerfile.splitlines() if line.startswith('ARG ANYPS5_UPSTREAM_REF')]

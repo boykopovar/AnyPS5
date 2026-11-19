@@ -2,6 +2,7 @@ param(
     [switch]$Uninstall,
     [switch]$NoBrowser,
     [switch]$NoStartup,
+    [switch]$Build,
     [string]$CollectionDirectory,
     [string]$StateDirectory,
     [string]$InstallDirectory,
@@ -27,8 +28,16 @@ if ($StateDirectory) { $env:ANYPS5_WEB_STATE_DIR = [IO.Path]::GetFullPath($State
 if (-not (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile")) {
     & "$PSScriptRoot\Setup-WebHelper.ps1" -Port $Port -CollectionDirectory $CollectionDirectory -StateDirectory $StateDirectory -InstallDirectory $InstallDirectory -NoStartup:$NoStartup -LibraryFolder ''
 }
-& docker compose -p $ProjectName up -d --build --wait
-if ($LASTEXITCODE -ne 0) { throw 'App startup failed. Check Docker Desktop and the Compose output above, then retry.' }
+$files = @('-f', 'compose.yaml')
+if ($Build) { $files += @('-f', 'compose.build.yml') }
+if ($Build -or -not (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile")) {
+    & docker compose @files -p $ProjectName up -d --build --wait
+} else {
+    & docker compose @files -p $ProjectName pull
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not download the latest images. Starting with the images already on this PC.' }
+    & docker compose @files -p $ProjectName up -d --wait
+}
+if ($LASTEXITCODE -ne 0) { throw 'App startup failed. Check Docker Desktop and your internet connection, then retry. To build from source instead, run Start-AnyPS5.cmd -Build.' }
 $url = "http://127.0.0.1:$Port"
 $ready = $false
 $reported = ''

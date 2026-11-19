@@ -69,14 +69,14 @@ jobs:
           configuration = json.loads(path.read_text())
           configuration['base_revision'] = os.environ['UPSTREAM_SHA']
           path.write_text(json.dumps(configuration, indent=2) + '\n')
-          for name, pattern, replacement in (('compose.yaml', r'\$\{ANYPS5_UPSTREAM_REF:-[0-9a-f]{40}\}', '${ANYPS5_UPSTREAM_REF:-' + os.environ['UPSTREAM_SHA'] + '}'),
+          for name, pattern, replacement in (('compose.build.yml', r'\$\{ANYPS5_UPSTREAM_REF:-[0-9a-f]{40}\}', '${ANYPS5_UPSTREAM_REF:-' + os.environ['UPSTREAM_SHA'] + '}'),
                                              ('tools/engine/Dockerfile', r'(?m)^ARG ANYPS5_UPSTREAM_REF=[0-9a-f]{40}$', 'ARG ANYPS5_UPSTREAM_REF=' + os.environ['UPSTREAM_SHA'])):
               text, count = re.subn(pattern, replacement, Path(name).read_text())
               if not count:
                   raise SystemExit('Default upstream ref not found in ' + name)
               Path(name).write_text(text)
           PY
-          git add tools/engine/dependencies.lock tools/engine/upstream.lock compose.yaml tools/engine/Dockerfile
+          git add tools/engine/dependencies.lock tools/engine/upstream.lock compose.build.yml tools/engine/Dockerfile
           git commit -m "chore(engine): align metadata with upstream ${upstream_sha:0:12}"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
           echo "upstream=$upstream_sha" >> "$GITHUB_OUTPUT"

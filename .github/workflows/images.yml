@@ -7,6 +7,7 @@ on:
       - .gitmodules
       - CMakeLists.txt
       - cmake/**
+      - compose.build.yml
       - compose.yaml
       - core/**
       - tools/engine/**
@@ -41,6 +42,10 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           docker buildx build --load -f tools/launcher/web/Dockerfile -t "ghcr.io/$owner/anyps5-web:$GITHUB_SHA" .
           echo "IMAGE=ghcr.io/$owner/anyps5-web" >> "$GITHUB_ENV"
+      - name: Check both Compose configurations
+        run: |
+          docker compose config -q
+          docker compose -f compose.yaml -f compose.build.yml config -q
       - name: Start and answer health checks
         run: |
           set -euo pipefail
