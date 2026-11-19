@@ -531,6 +531,42 @@ std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
     return mxcsr & ~0x3fu;
 }
 
+#ifndef _WIN32
+void CheckLinkPreflightPermissions(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto sourceDirectory = root / "link-source-no-search";
+    Require(std::filesystem::create_directory(sourceDirectory));
+    const auto source = sourceDirectory / "source.txt";
+    std::ofstream(source).put('x');
+    const auto originalPermissions = std::filesystem::status(sourceDirectory).permissions();
+    std::filesystem::permissions(sourceDirectory, std::filesystem::perms::none);
+    if (::access(sourceDirectory.c_str(), X_OK) == 0) {
+        std::filesystem::permissions(sourceDirectory, originalPermissions);
+        Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+        return;
+    }
+    const auto nativeSourceDestination = root / "link-source-native.txt";
+    const auto guestSourceDestination = root / "link-source-guest.txt";
+    Require(::link(source.c_str(), nativeSourceDestination.c_str()) == -1 && errno == EACCES);
+    Require(link_nid_postfix(source.string().c_str(), guestSourceDestination.string().c_str()) == -1 && Error() == 13);
+    std::filesystem::permissions(sourceDirectory, originalPermissions);
+    Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+
+    const auto destinationDirectory = root / "link-destination-no-search";
+    Require(std::filesystem::create_directory(destinationDirectory));
+    const auto accessible = root / "link-accessible.txt";
+    std::ofstream(accessible).put('x');
+    const auto destinationPermissions = std::filesystem::status(destinationDirectory).permissions();
+    std::filesystem::permissions(destinationDirectory, std::filesystem::perms::none);
+    const auto nativeDestination = destinationDirectory / "native.txt";
+    const auto guestDestination = destinationDirectory / "guest.txt";
+    Require(::link(accessible.c_str(), nativeDestination.c_str()) == -1 && errno == EACCES);
+    Require(linkat_nid_postfix(-100, accessible.string().c_str(), -100, guestDestination.string().c_str(), 0) == -1 && Error() == 13);
+    std::filesystem::permissions(destinationDirectory, destinationPermissions);
+    Require(std::filesystem::remove(accessible) && std::filesystem::remove(destinationDirectory));
+}
+#endif
+
 void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
     std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
 }
@@ -1475,6 +1511,9 @@ int main() {
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     CheckLinkSymbolicLinkLimit(root);
+#ifndef _WIN32
+    CheckLinkPreflightPermissions(root);
+#endif
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);
