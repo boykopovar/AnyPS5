@@ -5595,7 +5595,6 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             VkResult reached = VK_SUCCESS;
             if (batch->serial > reachedSerial && batch->serial > readTimeline()) {
                 reached = WaitTimeline(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), batch->serial, latch, stopped);
-                // The latch stopped the wait (device lost): finish the batch as the fence path does, then rethrow.
                 if (stopped != nullptr) return VK_ERROR_DEVICE_LOST;
             }
             if (reached == VK_SUCCESS) reachedSerial = std::max(reachedSerial, batch->serial);

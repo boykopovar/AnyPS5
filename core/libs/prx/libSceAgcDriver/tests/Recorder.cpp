@@ -2019,6 +2019,8 @@ std::atomic<bool> refusedSubmits{false};
 std::atomic<unsigned> lostSubmits{0};
 std::atomic<unsigned> failingBarriers{0};
 std::atomic<unsigned> failingFences{0};
+std::atomic<unsigned> lostIdles{0};
+std::atomic<bool> stalledTimeline{false};
 PFN_vkWaitForFences passedWaitForFences = nullptr;
 VkDevice commandsDevice = VK_NULL_HANDLE;
 std::atomic<std::int64_t> liveCommandBuffers{0};
@@ -2076,6 +2078,27 @@ VKAPI_ATTR VkResult VKAPI_CALL failingWaitForFences(VkDevice device, std::uint32
     return passedWaitForFences(device, count, fences, all, timeout);
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL losingDeviceWaitIdle(VkDevice device) {
+    if (lostIdles.load() != 0) {
+        lostIdles.fetch_sub(1);
+        return VK_ERROR_DEVICE_LOST;
+    }
+    return reinterpret_cast<PFN_vkDeviceWaitIdle>(passedDeviceProc(device, "vkDeviceWaitIdle"))(device);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL stallingCounterValue(VkDevice device, VkSemaphore semaphore, std::uint64_t* value) {
+    if (stalledTimeline.load()) {
+        *value = 0;
+        return VK_SUCCESS;
+    }
+    return reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(passedDeviceProc(device, "vkGetSemaphoreCounterValueKHR"))(device, semaphore, value);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL stallingWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* info, std::uint64_t timeout) {
+    if (stalledTimeline.load()) return VK_TIMEOUT;
+    return reinterpret_cast<PFN_vkWaitSemaphoresKHR>(passedDeviceProc(device, "vkWaitSemaphoresKHR"))(device, info, timeout);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL countingAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
     const auto result = reinterpret_cast<PFN_vkAllocateCommandBuffers>(passedDeviceProc(device, "vkAllocateCommandBuffers"))(device, info, buffers);
     if (result == VK_SUCCESS) liveCommandBuffers.fetch_add(info->commandBufferCount);
@@ -2114,6 +2137,9 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL replayFailingDeviceProc(VkDevice device
     }
     if (std::strcmp(name, "vkEndCommandBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(failingEndCommandBuffer);
     if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(countingQueueSubmit);
+    if (std::strcmp(name, "vkDeviceWaitIdle") == 0) return reinterpret_cast<PFN_vkVoidFunction>(losingDeviceWaitIdle);
+    if (std::strcmp(name, "vkGetSemaphoreCounterValueKHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(stallingCounterValue);
+    if (std::strcmp(name, "vkWaitSemaphoresKHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(stallingWaitSemaphores);
     if (std::strcmp(name, "vkWaitForFences") == 0) {
         passedWaitForFences = reinterpret_cast<PFN_vkWaitForFences>(passedDeviceProc(device, name));
         return reinterpret_cast<PFN_vkVoidFunction>(failingWaitForFences);
@@ -2128,6 +2154,64 @@ bool failedWith(const std::function<void()>& body, std::string_view reason) {
         return std::string_view(error.what()).find(reason) != std::string_view::npos;
     }
     return false;
+}
+
+void finishAfterDeviceLossTests(const Device& device) {
+    if (!device.TimelineSemaphores()) {
+        std::cout << "skipped, no timeline semaphores: finishing a batch in flight after device loss not tested\n";
+        return;
+    }
+    const auto& context = device.GetContext();
+    passedDeviceProc = context.deviceProc;
+    passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
+    passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
+    Context failing = context;
+    failing.deviceProc = replayFailingDeviceProc;
+    const char* recordInline = std::getenv("APS5_RECORD_INLINE");
+    const bool deferring = recordInline == nullptr || std::strcmp(recordInline, "0") == 0;
+    if (!deferring) std::cout << "APS5_RECORD_INLINE: finishing a deferred batch after device loss not tested\n";
+    for (const bool deferred : {false, true}) {
+        if (deferred && !deferring) continue;
+        const auto buffersBefore = liveCommandBuffers.load();
+        bool lost = false;
+        bool finishedLost = false;
+        bool finished = false;
+        std::string next;
+        {
+            Recorder recorder(failing, true, deferred, context.queueFamily, WorkBudget::Limits{4, 1, 64u << 20});
+            recordBarrierThrough(failing, recorder.Commands());
+            stalledTimeline.store(true);
+            recorder.Submit();
+            recordBarrierThrough(failing, recorder.Commands());
+            lostSubmits.store(1);
+            lostIdles.store(1);
+            lost = failedWith([&] { recorder.Submit(); }, "Vulkan result -4");
+            lostSubmits.store(0);
+            lostIdles.store(0);
+            Check(context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device), "vkDeviceWaitIdle before finishing the stalled batch");
+            finishedLost = failedWith([&] { recorder.Sync(); }, "Vulkan result -4");
+            stalledTimeline.store(false);
+            finished = recorder.InFlightBatches() == 0;
+            if (deferred) {
+                try {
+                    const auto before = recorder.StreamCounts();
+                    recorder.Commands();
+                    const auto after = recorder.StreamCounts();
+                    next = after.deferred > before.deferred ? "deferred" : after.direct > before.direct ? "direct" : "none";
+                } catch (const std::exception& error) {
+                    next = error.what();
+                }
+            }
+        }
+        stalledTimeline.store(false);
+        const std::string mode = deferred ? "deferred" : "direct";
+        Require(lost, "the injected device loss on a " + mode + " submit did not surface");
+        Require(finishedLost, "finishing a " + mode + " batch whose timeline wait the device loss stopped did not surface the loss");
+        Require(finished, "a " + mode + " batch was still in flight after its finish saw the device loss");
+        Require(liveCommandBuffers.load() == buffersBefore, "finishing a " + mode + " batch after device loss leaked " + std::to_string(liveCommandBuffers.load() - buffersBefore) + " command buffers");
+        Require(!deferred || next == "deferred", "with room for one deferred batch, the batch after one finished on device loss was " + next + ", so the finished batch was never released by the GPU");
+    }
+    std::cout << "a batch finished on device loss is released and frees its command buffer\n";
 }
 
 void sealedBatchTests(const Device& device) {
@@ -19131,6 +19215,7 @@ int main(int argc, char** argv) {
         gpu.lock();
         deferredBatchTests(device);
         sealedBatchTests(device);
+        finishAfterDeviceLossTests(device);
         recorder.Activate();
         const bool drew = vertexTargetRangeTests(device, recorder, false);
         const char* recordInline = std::getenv("APS5_RECORD_INLINE");
