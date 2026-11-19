@@ -265,6 +265,18 @@ class ImportRelocationTests(unittest.TestCase):
                 else:
                     self.assertEqual(annotate_module.Module(bytes(data)).imports(), {SLOT: symbol_name(IMPORT_NAME)})
 
+    def test_defined_symbols_bound_to_this_module_are_not_imports(self):
+        for binding, visibility, section, kind, expected in (
+                (1, 3, 1, 16, False), (1, 3, 1, 17, False), (1, 2, 1, 6, False),
+                (1, 1, 1, 1, False), (0, 0, 1, 1, False), (1, 0, 1, 6, True),
+                (2, 0, 0, 6, True), (1, 3, 1, 5, True)):
+            with self.subTest(binding=binding, visibility=visibility, section=section, kind=kind):
+                symbol_type = 6 if kind in (16, 17) else 1
+                image = bytearray(build_module(symbols=[(IMPORT_NAME, section, binding << 4 | symbol_type, 0)]))
+                image[0x2040 + 24 + 5] = visibility
+                image = with_relocation(image, 0x2280, 0, SLOT, 1, kind)
+                self.assertEqual(annotate_module.Module(image).imports(), {SLOT: symbol_name(IMPORT_NAME)} if expected else {})
+
     def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
         for table in (0x2200, 0x2280):
             for symbol_index in (0, 1, 0xFFFFFFFF):
@@ -500,6 +512,17 @@ class AnnotateModuleTests(unittest.TestCase):
             self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
             summary = self.annotate(build_module())
         self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
+    def test_listing_marks_the_elf_entry_instruction(self):
+        image = bytearray(build_module(code=b"\xe8\x90\x90\x90\x90\xc3"))
+        entry = CODE_ADDRESS + 1
+        struct.pack_into("<Q", image, 24, entry)
+        self.annotate(image)
+        lines = self.read(".asm").splitlines()
+        self.assertEqual(lines.count("; ===== ELF entry point"), 1)
+        line = lines[lines.index("; ===== ELF entry point") + 1]
+        self.assertEqual(int(line.split(":")[0], 16), entry)
+        self.assertIn("nop", line)
 
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
@@ -1109,6 +1132,16 @@ class LineNoteTests(unittest.TestCase):
             def resolve(self, value):
                 raise AssertionError("not expected for a plain instruction")
         self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
 class FakeNamer:
     def resolve(self, name):
         return name.upper()
