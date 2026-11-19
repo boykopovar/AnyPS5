@@ -13,6 +13,8 @@ int APS5_VABI sceGnmSetHsShader(std::uint32_t* cmd, std::uint32_t size, const st
 int APS5_VABI sceGnmSetLsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier);
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd, std::uint32_t size);
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size);
 int APS5_VABI sceGnmSetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t primGroupSizeMinusOne, std::uint32_t partialVsWaveMode, std::uint32_t switchOnlyOnEop);
 int APS5_VABI sceGnmResetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size);
@@ -36,6 +38,9 @@ int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void);
 bool APS5_VABI sceGnmDriverTraceInProgress_nid_disambig1(void);
 bool APS5_VABI sceGnmIsUserPaEnabled();
 bool APS5_VABI sceGnmDriverCaptureInProgress();
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream);
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload);
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload);
 int APS5_VABI sceGnmDriverTriggerCapture();
 int APS5_VABI sceGnmValidateCommandBuffers();
 bool APS5_VABI sceRazorIsLoaded();

@@ -8,11 +8,27 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
 #include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+namespace {
+
+[[maybe_unused]] const bool hostRefstringPrepared = [] {
+    const int saved = errno;
+    {
+        const std::runtime_error prepared("");
+    }
+    errno = saved;
+    return true;
+}();
+
+}
 #endif
 
 namespace LibcException {

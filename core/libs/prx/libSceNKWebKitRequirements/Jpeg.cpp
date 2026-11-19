@@ -1,6 +1,8 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestJpeg.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 #include <cstddef>
 #include <cstdint>
@@ -386,19 +388,25 @@ NKWebKit::GuestJpegErrorMgr* APS5_VABI jpeg_std_error_nid_postfix(NKWebKit::Gues
         s_std_inited = true;
     }
 
-    err->error_exit = DefaultGuestErrorExit_nid_no_patch;
-    err->emit_message = DefaultGuestEmitMessage_nid_no_patch;
-    err->output_message = DefaultGuestOutputMessage_nid_no_patch;
-    err->format_message = DefaultGuestFormatMessage_nid_no_patch;
-    err->reset_error_mgr = DefaultGuestResetErrorMgr_nid_no_patch;
-    err->msg_code = 0;
-    err->trace_level = 0;
-    err->num_warnings = 0;
-    err->jpeg_message_table = s_std_err.jpeg_message_table;
-    err->last_jpeg_message = s_std_err.last_jpeg_message;
-    err->addon_message_table = nullptr;
-    err->first_addon_message = 0;
-    err->last_addon_message = 0;
+    NKWebKit::GuestJpegErrorMgr localErr{};
+    localErr.error_exit = DefaultGuestErrorExit_nid_no_patch;
+    localErr.emit_message = DefaultGuestEmitMessage_nid_no_patch;
+    localErr.output_message = DefaultGuestOutputMessage_nid_no_patch;
+    localErr.format_message = DefaultGuestFormatMessage_nid_no_patch;
+    localErr.reset_error_mgr = DefaultGuestResetErrorMgr_nid_no_patch;
+    localErr.msg_code = 0;
+    localErr.trace_level = 0;
+    localErr.num_warnings = 0;
+    localErr.jpeg_message_table = s_std_err.jpeg_message_table;
+    localErr.last_jpeg_message = s_std_err.last_jpeg_message;
+    localErr.addon_message_table = nullptr;
+    localErr.first_addon_message = 0;
+    localErr.last_addon_message = 0;
+
+    const int savedErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(err, &localErr, sizeof(localErr));
+    errno = savedErrno;
+    if (!copiedOut) throw std::invalid_argument("libjpeg: unwritable error manager");
     return err;
 }
 
@@ -586,7 +594,15 @@ int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* 
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
     int ret = 0;
     SyncGuestToHost(b);
-    b->host_cinfo.unread_marker = cinfo->unread_marker;
+    int32_t unreadMarker = 0;
+    const int savedErrno = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(
+        &unreadMarker,
+        reinterpret_cast<const std::byte*>(cinfo) + offsetof(NKWebKit::GuestJpegDecompress, unread_marker),
+        sizeof(unreadMarker));
+    errno = savedErrno;
+    if (!copiedIn) throw std::invalid_argument("libjpeg: unreadable decompression object");
+    b->host_cinfo.unread_marker = unreadMarker;
     if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
         HandleException(b);
         return 0;

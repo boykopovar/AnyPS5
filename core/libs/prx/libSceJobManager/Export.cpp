@@ -756,6 +756,7 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
         sequence.Abandon();
         return SequenceNullArgument;
     }
+    errno = savedErrno;
     free &= ~(std::uint32_t{1} << index);
     return 0;
 }
@@ -1037,6 +1038,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
             errno = savedErrno;
             return ManagerInvalidArgument;
         }
+        errno = savedErrno;
         if (localConfig.version > 1) return ManagerInvalidArgument;
     }
     const ConfigParams& settings = config != nullptr ? localConfig : DefaultConfig;
@@ -1143,6 +1145,7 @@ std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKN
         errno = savedErrno;
         return 0;
     }
+    errno = savedErrno;
     if (localParams.version > 1 || localParams.workers == 0 || localParams.workers > MaxWorkers || localParams.sequences > MaxSequences) return 0;
     const bool unified = localParams.version == 1;
     const std::uint32_t computeSequences = unified ? localParams.computeSequences : 0;

@@ -209,6 +209,8 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     Require(sem_setname_nid_postfix(&sem, nullptr) == -1 && *__error_nid_postfix() == 22, "null name must report EINVAL");
     *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, reinterpret_cast<const char*>(0x10)) == -1 && *__error_nid_postfix() == 22, "unreadable name must report EINVAL");
+    *__error_nid_postfix() = 0;
     Require(sem_setname_nid_postfix(&sem, "01234567890123456789012345678901") == -1 && *__error_nid_postfix() == 63, "name of 32 characters must report ENAMETOOLONG");
     Require(sem_setname_nid_postfix(&sem, "0123456789012345678901234567890") == 0, "name of 31 characters must be accepted");
     Require(sem_destroy_nid_postfix(&sem) == 0, "named semaphore destroy must succeed");

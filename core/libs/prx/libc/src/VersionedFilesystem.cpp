@@ -69,7 +69,8 @@ int StatType(const char* path, int* perms, int* error) {
         if (!AppArchiveLookup_nid_no_patch(native, &node))
             throw std::logic_error("sce v2 filesystem: " + native.string() + " left app0.zar while reading its status");
         errno = 0;
-        if (perms) *perms = node.Directory ? 0555 : 0444;
+        const int permissions = node.Directory ? 0555 : 0444;
+        if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
         type = node.Directory ? GuestFilesystem::TypeDirectory : GuestFilesystem::TypeRegular;
     } else {
         std::error_code failure;
@@ -80,7 +81,8 @@ int StatType(const char* path, int* perms, int* error) {
 #endif
         if (!failure && status.type() != std::filesystem::file_type::not_found) {
             errno = 0;
-            if (perms) *perms = static_cast<int>(status.permissions()) & GuestFilesystem::PermissionBits;
+            const int permissions = static_cast<int>(status.permissions()) & GuestFilesystem::PermissionBits;
+            if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
             type = FromNativeType(status.type());
         } else {
             code = failure ? FilesystemError(failure) : GuestFilesystem::NoSuchFile;
@@ -89,7 +91,8 @@ int StatType(const char* path, int* perms, int* error) {
             type = IsNotFound(code) ? GuestFilesystem::TypeNotFound : GuestFilesystem::TypeNone;
         }
     }
-    if (error) *error = errno;
+    const int failure = errno;
+    if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
 }
 

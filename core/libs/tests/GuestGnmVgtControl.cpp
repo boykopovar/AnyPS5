@@ -202,6 +202,10 @@ int main(int argc, char** argv) {
         const auto set = reinterpret_cast<SetControl>(Symbol(module, normal ? "sceGnmSetVgtControl_nid_disambig1" : "sceGnmSetVgtControl"));
         const auto reset = reinterpret_cast<ResetControl>(Symbol(module, normal ? "sceGnmResetVgtControl_nid_disambig1" : "sceGnmResetVgtControl"));
         CheckRejected(set, reset);
+        if (normal && mode != "json" && mode != "none") {
+            Require(set(reinterpret_cast<std::uint32_t*>(0x10), 3, 0, 0, 0) == -1, "an unwritable VGT control packet was accepted");
+            Require(reset(reinterpret_cast<std::uint32_t*>(0x10), 3) == -1, "an unwritable VGT reset packet was accepted");
+        }
         if (normal && (mode == "json" || mode == "none")) CheckUnknown(set, reset, mode);
         else CheckWrites(set, reset, !normal || mode == "neo");
         std::printf("GNM VGT %s/%s: packets, refusals and guards passed\n", provider.c_str(), mode.c_str());

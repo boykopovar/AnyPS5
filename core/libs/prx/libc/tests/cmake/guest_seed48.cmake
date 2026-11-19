@@ -1,0 +1,10 @@
+add_test_executable(guest_seed48_tests ${LIBS_INCLUDE_DIR}/tests/GuestSeed48.cpp)
+target_include_directories(guest_seed48_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_seed48_tests PRIVATE libc)
+configure_windows_unwind(guest_seed48_tests)
+add_test(NAME guest_seed48 COMMAND guest_seed48_tests)
+set_tests_properties(guest_seed48 PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_seed48 PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

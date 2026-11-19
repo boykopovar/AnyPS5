@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,18 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) {
     if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
@@ -132,7 +145,55 @@ static void CheckMovedBlockKeepsUsableBytes() {
     Require(realigned != nullptr && realigned != other && kept(realigned, otherUsable));
     Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
 }
+static void CheckUnwritableResult() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memset(page, 0, pageSize);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* readOnlyResult = static_cast<void**>(page);
+    auto* unmappedResult = reinterpret_cast<void**>(std::uintptr_t{0x10});
+    auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    alignas(16) static std::array<unsigned char, 16384> storage{};
+    void* arena = sceLibcMspaceCreate_nid_postfix("result", storage.data(), storage.size(), 0);
+    Require(arena != nullptr);
+    const int owner = 0;
+    Require(rejectsKeepingErrno([&] { sceLibcMspacePosixMemalign_nid_postfix(arena, unmappedResult, 64, 4096); }));
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1);
+    Require(rejectsKeepingErrno([&] { sceLibcMspacePosixMemalign_nid_postfix(arena, readOnlyResult, 64, 4096); }));
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1 && *readOnlyResult == nullptr);
+    Require(rejectsKeepingErrno([&] { sceLibcPafMspacePosixMemalign_nid_postfix(arena, readOnlyResult, 64, 4096, &owner); }));
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1 && *readOnlyResult == nullptr);
+    void* whole = sceLibcMspaceMalloc_nid_postfix(arena, storage.size() - 256);
+    Require(whole != nullptr);
+    sceLibcMspaceFree_nid_postfix(arena, whole);
+    Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
+    CheckUnwritableResult();
     CheckPaf();
     CheckAlignment();
     CheckAdjacentBlocks();
