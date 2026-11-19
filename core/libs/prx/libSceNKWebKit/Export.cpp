@@ -10887,10 +10887,6 @@ int APS5_VABI _ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOrig
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC11FuzzerAgentD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC11IsoSubspaceD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
