@@ -1976,9 +1976,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (hasExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLodFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
-        state->imageViewMinLod = minLodFeatures.minLod == VK_TRUE && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
-        state->imageViewMinLodExtension = state->imageViewMinLod;
-        if (state->imageViewMinLod) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
+        state->imageViewMinLodExtension = minLodFeatures.minLod == VK_TRUE;
+        state->imageViewMinLod = state->imageViewMinLodExtension && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
+        if (state->imageViewMinLodExtension) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     }
     minLodFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
     minLodFeatures.minLod = VK_TRUE;
@@ -2300,7 +2300,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         provokingFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &provokingFeatures;
     }
-    if (state->imageViewMinLod) {
+    if (state->imageViewMinLodExtension) {
         minLodFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &minLodFeatures;
     }

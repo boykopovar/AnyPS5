@@ -122,13 +122,46 @@ float LargestMinLod(const std::vector<float>& minLods) {
     return minLods.empty() ? -1.0f : *std::max_element(minLods.begin(), minLods.end());
 }
 
-void Run(const Context& deviceContext) {
+void SetEnvironment(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value != nullptr ? value : "");
+#else
+    if (value != nullptr) setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
+bool DeviceHasExtensionWithoutEnvironment() {
+    const char* forced = std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD");
+    if (forced == nullptr) return true;
+    const std::string saved = forced;
+    SetEnvironment("APS5_NO_IMAGE_VIEW_MIN_LOD", nullptr);
+    bool has = false;
+    try {
+        const auto reference = OpenVulkanTestDevice();
+        if (reference) {
+            const auto context = reference->graphicsContext();
+            has = context.imageViewMinLod || context.imageViewMinLodExtension;
+        }
+    } catch (...) {
+        SetEnvironment("APS5_NO_IMAGE_VIEW_MIN_LOD", saved.c_str());
+        throw;
+    }
+    SetEnvironment("APS5_NO_IMAGE_VIEW_MIN_LOD", saved.c_str());
+    return has;
+}
+
+void Run(const Context& deviceContext, bool extensionExpected) {
     GuestBlock guest;
     Require(DescribeSurface(Resource(guest.Address())).guestBytes <= GuestStride, "image table min LOD: the mip chain does not fit the guest block");
     const auto unclamped = EncodeTextureResource(Resource(guest.Address()));
     auto clamped = unclamped;
     clamped[1] |= MinLodOfOne << 8u;
     Require(EffectiveMinLod(DecodeTextureResource(clamped)) == 1.0f, "image table min LOD: the clamped descriptor does not carry a clamp of 1");
+
+    if (extensionExpected && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") != nullptr) {
+        Require(!deviceContext.imageViewMinLod && deviceContext.imageViewMinLodExtension, "image table min LOD: APS5_NO_IMAGE_VIEW_MIN_LOD took away the extension capability, not only the view lane");
+    }
 
     auto lane = deviceContext;
     ViewProbe probe(lane);
@@ -149,6 +182,14 @@ void Run(const Context& deviceContext) {
         ClearCachedTextures(lane.device);
         recorder.Sync();
     };
+
+    if (extensionExpected && !deviceContext.imageViewMinLod) {
+        setLane(deviceContext.imageViewMinLod, deviceContext.imageViewMinLodExtension, deviceContext.shaderImageMinLod);
+        auto table = CachedSampledTableTexture(lane, clamped);
+        Require(table != nullptr && LargestMinLod(probe.minLods) == 1.0f, "image table min LOD: a table entry with a MIN_LOD of 1 did not keep the view clamp on the device's own shader lane, " + std::to_string(LargestMinLod(probe.minLods)));
+        table.reset();
+        release();
+    }
 
     setLane(false, true, true);
     {
@@ -195,14 +236,15 @@ int main() {
         if (!device) return VulkanTestSkipped;
         std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
         auto context = device->graphicsContext();
-        if (!context.imageViewMinLod && !context.imageViewMinLodExtension) {
+        const bool extensionExpected = DeviceHasExtensionWithoutEnvironment();
+        if (!extensionExpected && !context.imageViewMinLod && !context.imageViewMinLodExtension) {
             std::puts("skipped, the device has no VK_EXT_image_view_min_lod");
             return VulkanTestSkipped;
         }
         context.bufferPool = std::make_shared<BufferPool>(context);
         TextureDetiler detiler(context);
         context.detiler = &detiler;
-        Run(context);
+        Run(context, extensionExpected);
         std::cout << "image table minimum LOD tests passed\n";
         return 0;
     } catch (const std::exception& error) {
