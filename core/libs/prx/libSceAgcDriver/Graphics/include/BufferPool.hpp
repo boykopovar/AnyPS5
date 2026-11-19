@@ -162,6 +162,7 @@ private:
     // caller destroys those after releasing the mutex, so builds taking buffers on other threads
     // do not wait behind the Vulkan destroy calls. Nothing changes when the vector cannot grow.
     void evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted);
+    void evictImageSlot(std::list<Slot*>::iterator order, std::vector<BufferAllocation>& evicted);
     bool evictOldestImage(std::vector<BufferAllocation>& evicted);
     bool imagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const;
     bool heapOverBudget(std::uint32_t memoryType);

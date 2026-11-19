@@ -208,8 +208,13 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
     std::vector<BufferAllocation> evicted;
     try {
         std::lock_guard lock(mutex);
-        if (heapOverBudget(memoryType) || bytes > imageBudget - std::min(imageBudget, retainedImageSlabBytes.load(std::memory_order_relaxed))) {
-            while (imageSlots != 0 && evictOldestImage(evicted)) {
+        const bool exceedsPool = bytes > imageBudget - std::min(imageBudget, retainedImageSlabBytes.load(std::memory_order_relaxed));
+        if (heapOverBudget(memoryType) || exceedsPool) {
+            const auto heap = memoryProperties.memoryTypes[memoryType].heapIndex;
+            for (auto next = imageOrder.begin(); next != imageOrder.end();) {
+                const auto order = next++;
+                const auto type = (*order)->allocation.memoryType;
+                if (exceedsPool || memoryProperties.memoryTypes[type].heapIndex == heap) evictImageSlot(order, evicted);
             }
             evicted.push_back(allocation);
         } else {
@@ -474,13 +479,12 @@ void BufferPool::evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted)
     ++tier.evictions;
 }
 
-bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
-    if (imageOrder.empty()) return false;
-    const Slot* oldest = imageOrder.front();
+void BufferPool::evictImageSlot(std::list<Slot*>::iterator order, std::vector<BufferAllocation>& evicted) {
+    const Slot* oldest = *order;
     const SlotKey key{oldest->allocation.bytes, 0, oldest->allocation.properties, oldest->allocation.memoryType};
     const auto found = deviceTier.free.find(key);
     evicted.push_back(oldest->allocation);
-    imageOrder.pop_front();
+    imageOrder.erase(order);
     const auto bytes = oldest->allocation.allocationBytes;
     deviceTier.retainedBytes -= bytes;
     imageBytes -= bytes;
@@ -490,6 +494,11 @@ bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
     --imageSlots;
     ++deviceTier.evictions;
     ++imageEvictions;
+}
+
+bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
+    if (imageOrder.empty()) return false;
+    evictImageSlot(imageOrder.begin(), evicted);
     return true;
 }
 

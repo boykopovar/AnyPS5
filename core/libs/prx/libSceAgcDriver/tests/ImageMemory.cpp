@@ -879,6 +879,40 @@ void EmptyBlockReclamation() {
     Clean();
 }
 
+void StandaloneHeapPressure() {
+    ResetMock();
+    {
+        auto context = NewContext();
+        context.memory.memoryHeapCount = 3;
+        context.memory.memoryHeaps[2] = {214 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.memory.memoryTypes[2].heapIndex = 2;
+        context.physical = Handle<VkPhysicalDevice>(1);
+        context.memoryProperties2 = MemoryProperties2;
+        mock.reportedBarUsage = 178 * MiB;
+        const auto healthyImage = NewImage(2 * MiB);
+        auto healthy = Take(context, healthyImage);
+        Bind(healthyImage, healthy);
+        const auto healthyMemory = MemoryOf(healthy);
+        Drop(healthyImage, healthy);
+        Expect(context.bufferPool->RetainedImages() == 1, "pressure on another heap stopped standalone image retention");
+
+        const auto otherImage = NewImage(2 * MiB, 256, 1u << 2u);
+        auto other = Take(context, otherImage);
+        Bind(otherImage, other);
+        const auto otherMemory = MemoryOf(other);
+        Drop(otherImage, other);
+        Expect(!mock.memories[Index(otherMemory)].active, "standalone image memory was retained on its over-budget heap");
+        Expect(context.bufferPool->RetainedImages() == 1, "returning memory to an over-budget heap evicted another heap's image");
+
+        const auto reuseImage = NewImage(2 * MiB);
+        auto reused = Take(context, reuseImage);
+        Bind(reuseImage, reused);
+        Expect(MemoryOf(reused) == healthyMemory, "a healthy heap lost its reusable standalone image memory");
+        Drop(reuseImage, reused);
+    }
+    Clean();
+}
+
 void VulkanFailures() {
     for (const auto result : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_TOO_MANY_OBJECTS, VK_ERROR_DEVICE_LOST}) {
         ResetMock();
@@ -1132,6 +1166,7 @@ int main(int argc, char** argv) {
         HostAllocationFailures();
         HostFailuresPreserveLiveSiblings();
         EmptyBlockReclamation();
+        StandaloneHeapPressure();
         std::puts("image allocation: Vulkan failures and reclamation");
         VulkanFailures();
         SmallHeapFallback();
