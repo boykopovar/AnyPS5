@@ -230,6 +230,22 @@ void TestStatusAndAttributes() {
     Require(last.first == root.first && last.second == nullptr && last.flag == 0, "getLastChild of a node without children keeps the document in the id");
     Parent(&document, XmlNodeId{root.first, reinterpret_cast<void*>(4), 0});
     Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&document) == static_cast<int>(0x80850201), "getParent of a node it cannot reach sets a not-found status");
+    _ZN3sce3Xml3Dom8Document11resetStatusEv(&document);
+    Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&document) == 0, "resetStatus clears a not-found status");
+    Parent(&document, XmlNodeId{});
+    _ZN3sce3Xml3Dom8Document11resetStatusEv(&document);
+    Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&document) == 0, "resetStatus clears an invalid-node status");
+    _ZN3sce3Xml3Dom8Document11resetStatusEv(&document);
+    Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&document) == 0, "resetStatus on a clear status keeps it clear");
+    XmlHandle copy{nullptr};
+    _ZN3sce3Xml3Dom8DocumentC1ERKS2_(&copy, &document);
+    Parent(&document, XmlNodeId{});
+    _ZN3sce3Xml3Dom8Document11resetStatusEv(&copy);
+    Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&document) == 0, "a copy shares the status it resets");
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&copy);
+    XmlHandle empty{nullptr};
+    _ZN3sce3Xml3Dom8Document11resetStatusEv(&empty);
+    Require(_ZNK3sce3Xml3Dom8Document9getStatusEv(&empty) == static_cast<int>(0x80850002), "resetStatus leaves an empty document as it was");
     _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
 }
 
