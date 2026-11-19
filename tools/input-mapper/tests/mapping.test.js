@@ -141,6 +141,14 @@ test('unknown, malformed and duplicate controller remaps report their line', () 
     assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross'}, {button: 'A', destination: 'None'}]), /set more than once/);
 });
 
+test('binding errors name the action without the spaces around it', () => {
+    assert.deepEqual(parseIni('Cross = KEY:\n  Cross  = PAD:x\nFoo bar = KEY:A\n').errors, [
+        {line: 1, message: 'Cross: Unknown or empty KEY value.'},
+        {line: 2, message: 'Cross: Cross cannot use PAD.'},
+        {line: 3, message: 'Foo bar: Unknown or empty action.'}
+    ]);
+});
+
 test('setting names canonicalize like the native parser', () => {
     const imported = parseIni('leftstickdeadzone = 8\nMOUSESENSITIVITY = 1e0\n');
     assert.deepEqual(imported.errors, []);
