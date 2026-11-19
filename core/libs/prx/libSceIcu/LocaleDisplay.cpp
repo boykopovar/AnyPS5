@@ -73,10 +73,17 @@ std::int32_t APS5_VABI uloc_getDisplayScript_nid_postfix(
     std::int32_t* status) {
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0) return 0;
+    if (scriptCapacity < 0 || (!script && scriptCapacity > 0)) {
+        auto local = static_cast<UErrorCode>(incoming);
+        const auto length = uloc_getDisplayScript(
+            Icu::DefaultLocaleName(), Icu::DefaultLocaleName(), nullptr, scriptCapacity, &local);
+        WriteStatus(status, incoming, local, __func__);
+        return length;
+    }
     const std::string localeText = locale ? ReadText(locale, __func__, "locale") : Icu::DefaultLocaleName();
     const std::string displayText = displayLocale ? ReadText(displayLocale, __func__, "display locale") : Icu::DefaultLocaleName();
     auto local = static_cast<UErrorCode>(incoming);
-    if (scriptCapacity <= 0 || !script) {
+    if (scriptCapacity == 0) {
         const auto length = uloc_getDisplayScript(localeText.c_str(), displayText.c_str(), nullptr, scriptCapacity, &local);
         WriteStatus(status, incoming, local, __func__);
         return length;

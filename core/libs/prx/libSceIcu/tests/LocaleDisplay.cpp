@@ -101,6 +101,22 @@ void CheckGuestPointers() {
     Require(uloc_getDisplayScript_nid_postfix("sr_Latn", "en", nullptr, 16, &status) == 0);
     Require(status == U_ILLEGAL_ARGUMENT_ERROR);
     status = 0;
+    Require(uloc_getDisplayScript_nid_postfix(
+        reinterpret_cast<const char*>(0x10),
+        reinterpret_cast<const char*>(0x10),
+        nullptr,
+        16,
+        &status) == 0);
+    Require(status == U_ILLEGAL_ARGUMENT_ERROR);
+    status = 0;
+    Require(uloc_getDisplayScript_nid_postfix(
+        reinterpret_cast<const char*>(0x10),
+        reinterpret_cast<const char*>(0x10),
+        output.data(),
+        -1,
+        &status) == 0);
+    Require(status == U_ILLEGAL_ARGUMENT_ERROR);
+    status = 0;
     RequireInvalidArgument([&] { uloc_getDisplayScript_nid_postfix("sr_Latn", "en", output.data(), 16, nullptr); });
     errno = 73;
     RequireInvalidArgument([&] {
