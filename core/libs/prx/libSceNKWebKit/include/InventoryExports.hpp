@@ -2207,7 +2207,6 @@ int APS5_VABI _ZN7WebCore15PlatformDisplay13sharedDisplayEv();
 int APS5_VABI _ZN7WebCore15PlatformDisplay16sharingGLContextEv();
 int APS5_VABI _ZN7WebCore15PlatformDisplay27sharedDisplayForCompositingEv();
 int APS5_VABI _ZN7WebCore15RenderBlockFlow30findClosestTextAtAbsolutePointERKNS_10FloatPointE();
-int APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_();
 int APS5_VABI _ZN7WebCore15SQLiteStatement10bindDoubleEid();
 int APS5_VABI _ZN7WebCore15SQLiteStatement14executeCommandEv();
 int APS5_VABI _ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi();
