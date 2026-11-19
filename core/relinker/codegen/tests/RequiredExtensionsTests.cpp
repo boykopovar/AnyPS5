@@ -19,6 +19,13 @@ void Check(const char* name, const std::vector<std::uint8_t>& bytes, const std::
     throw 1;
 }
 
+void CheckRanges(const char* name, const std::vector<std::uint8_t>& bytes, const std::vector<Domain::CodeRange>& ranges, const std::uint32_t expected) {
+    const auto actual = Codegen::RequiredExtensions(bytes.data(), bytes.size(), ranges);
+    if (actual == expected) return;
+    std::fprintf(stderr, "%s: expected 0x%x, got 0x%x\n", name, expected, actual);
+    throw 1;
+}
+
 void ScansEveryInstruction() {
     Check("lzcnt", {0xF3, 0x0F, 0xBD, 0xC1}, bit(CpuExtension::Lzcnt));
     Check("tzcnt", {0xF3, 0x0F, 0xBC, 0xC1}, bit(CpuExtension::Bmi1));
@@ -58,6 +65,12 @@ void UnionsAcrossBytes() {
           bit(CpuExtension::Lzcnt) | bit(CpuExtension::Avx2));
 }
 
+void ScansOutsideFunctionRanges() {
+    CheckRanges("covered-avx2", {0xC5, 0xFD, 0xFE, 0xC1}, {{0, 4}}, bit(CpuExtension::Avx2));
+    CheckRanges("outside-range-avx2", {0x90, 0x90, 0xC5, 0xFD, 0xFE, 0xC1}, {{0, 2}}, bit(CpuExtension::Avx2));
+    CheckRanges("uncovered-undecodable", {0x90, 0xC4}, {{0, 1}}, Codegen::AllCpuExtensions);
+}
+
 void RequiresEverythingOnUndecodableBytes() {
     Check("undecodable", {0xC4}, Codegen::AllCpuExtensions);
 }
@@ -70,6 +83,7 @@ int main() {
     DistinguishesBroadcastSource();
     RequiresAvx2();
     UnionsAcrossBytes();
+    ScansOutsideFunctionRanges();
     RequiresEverythingOnUndecodableBytes();
     std::puts("Required extension tests passed");
     return 0;

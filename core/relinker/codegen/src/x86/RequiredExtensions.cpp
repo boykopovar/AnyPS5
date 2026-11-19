@@ -213,7 +213,8 @@ std::uint32_t _classify(const Encoding& encoding) {
 
 std::uint32_t RequiredExtensions(const std::uint8_t* data, const std::size_t size, const std::vector<Domain::CodeRange>& codeRanges) {
     if (data == nullptr || size == 0) return 0;
-    const auto scanner = MakeInstructionScanner({}, codeRanges);
+    const auto ranges = MergeCodeRanges(codeRanges);
+    const auto scanner = MakeInstructionScanner({}, ranges);
     const std::vector<std::uint8_t> bytes(data, data + size);
     std::uint32_t required = 0;
     try {
@@ -227,6 +228,14 @@ std::uint32_t RequiredExtensions(const std::uint8_t* data, const std::size_t siz
     } catch (...) {
         return required | AllCpuExtensions;
     }
+    std::size_t covered = 0;
+    for (const auto& range : ranges) {
+        const auto begin = static_cast<std::size_t>(std::min<std::uint64_t>(range.Begin, size));
+        const auto end = static_cast<std::size_t>(std::min<std::uint64_t>(range.End, size));
+        if (begin > covered) required |= RequiredExtensions(data + covered, begin - covered);
+        covered = std::max(covered, end);
+    }
+    if (covered < size) required |= RequiredExtensions(data + covered, size - covered);
     return required;
 }
 
