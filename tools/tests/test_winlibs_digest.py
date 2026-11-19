@@ -14,6 +14,18 @@ DOWNLOAD = re.compile(r'^\s*curl .*winlibs_mingw/releases/download/.*\$WINLIBS_Z
 CHECK = '          echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -'
 
 
+def posix_bash():
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    if os.name == "nt":
+        system = Path(os.environ.get("SystemRoot", "C:/Windows")).resolve()
+        entries = [entry for entry in entries
+                   if not Path(entry).resolve().is_relative_to(system) and "WindowsApps" not in Path(entry).parts]
+    return shutil.which("bash", path=os.pathsep.join(entries))
+
+
+BASH = posix_bash()
+
+
 class WinlibsDigestTests(unittest.TestCase):
     def workflow(self, name):
         return (REPOSITORY / name).read_text(encoding="utf-8").splitlines()
@@ -34,7 +46,7 @@ class WinlibsDigestTests(unittest.TestCase):
                 self.assertEqual(text.count("WINLIBS_SHA256: " + DIGEST), text.count("WINLIBS_ZIP: "))
                 self.assertGreater(text.count("WINLIBS_ZIP: "), 0)
 
-    @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "requires bash and sha256sum")
+    @unittest.skipUnless(BASH and shutil.which("sha256sum"), "requires a POSIX bash and sha256sum")
     def test_the_check_accepts_the_matching_archive_and_rejects_another(self):
         command = CHECK.strip()
         with tempfile.TemporaryDirectory() as directory:
@@ -42,10 +54,10 @@ class WinlibsDigestTests(unittest.TestCase):
             archive.write_bytes(b"not the compiler archive")
             environment = dict(os.environ, RUNNER_TEMP=Path(directory).as_posix())
             environment["WINLIBS_SHA256"] = "0" * 64
-            rejected = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
+            rejected = subprocess.run([BASH,"-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
             self.assertNotEqual(rejected.returncode, 0)
             environment["WINLIBS_SHA256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
-            accepted = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
+            accepted = subprocess.run([BASH,"-e", "-o", "pipefail", "-c", command], env=environment, capture_output=True)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
 

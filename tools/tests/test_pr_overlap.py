@@ -596,10 +596,20 @@ class ReportSizeCapTests(unittest.TestCase):
         self.assertRegex(report, r"_Report truncated: \d+ more lines omitted\._\n\Z")
 
 
+def posix_bash():
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    if os.name == "nt":
+        system = Path(os.environ.get("SystemRoot", "C:/Windows")).resolve()
+        entries = [entry for entry in entries
+                   if not Path(entry).resolve().is_relative_to(system) and "WindowsApps" not in Path(entry).parts]
+    return shutil.which("bash", path=os.pathsep.join(entries))
+
+
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
-        if not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):
-            self.skipTest("the workflow step runs in bash with jq, sed and sha256sum on Linux")
+        self.bash = posix_bash()
+        if not self.bash or not all(shutil.which(tool) for tool in ("jq", "sed", "sha256sum")):
+            self.skipTest("the workflow step runs in bash with jq, sed and sha256sum")
         lines = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-overlap.yml").read_text(encoding="utf-8").splitlines()
         start = next(index for index, line in enumerate(lines) if "tools/pr_overlap.py" in line)
         indent = len(lines[start]) - len(lines[start].lstrip())
@@ -635,7 +645,7 @@ class CommentStateTests(unittest.TestCase):
         ])
         (self.root / "step.sh").write_bytes(script.encode("utf-8"))
         environment = dict(os.environ, RUNNER_TEMP=str(self.root), GH_REPO="owner/project")
-        result = subprocess.run(["bash", "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
+        result = subprocess.run([self.bash, "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return [call.split(" ")[:3] for call in calls.read_text(encoding="utf-8").splitlines()]
 
