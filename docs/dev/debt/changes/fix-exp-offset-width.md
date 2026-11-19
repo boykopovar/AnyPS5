@@ -1,0 +1,9 @@
+# libc
+
+## change [_LExp]
+
+- [_LExp](../../../core/libs/prx/libc/src/MathExact.cpp) (libc) - matches firmware 13.42's system `libSceLibcInternal.sprx` as measured off-console: x-only cutoffs at ±29490 ignore `offset`, above +29490 stores `y*inf` and raises overflow, below -29490 stores `0*y` with no range state; a NaN multiplier is stored; overflow always returns signed infinity; underflow returns +0 with `ERANGE`; subnormal results return `Finite` and preserve inexact. `offset` is read as 64 bits, as that module and PPSA10122 01.101.000's `libc.prx` (0x45be0) do; 300,000 calls each with an offset outside and inside 16 bits match that title's code run natively on Windows at 64-, 53- and 24-bit precision and in each rounding direction. An offset beyond ±200,000 is treated as ±200,000. Console results and signaling NaNs remain unverified.
+
+## change [_Exp and _FExp]
+
+- [_Exp and _FExp](../../../core/libs/prx/libc/src/DinkumwareInternals.cpp) (libc) - signaling NaNs, directed rounding and flush-to-zero modes are unverified, and titles whose `libc.prx` contracts multiply-adds to FMA, such as PPSA13934, differ by one unit in the last place on 889 `_FExp` and 15 `_Exp` of 300,000 random calls. Finite results use the constants, evaluation order and half-epsilon shortcut of the `libc.prx` that titles ship and match that of PPSA04158, PPSA05916, PPSA07923 and PPSA20423 on those calls, run on a Windows host. Special operands follow PRAGMATA PPSA02530's bundled `libc.prx`: the x-only cutoffs at ±229/±1842 store `0.0*y` below and `y*inf` with overflow above, ignoring the offset; a zero multiplier keeps its sign, a NaN multiplier leaves `*px` unchanged, and `+inf` with zero or `-inf` with infinity is invalid. The offset is read as 64 bits, as PPSA10122's `libc.prx` does: 300,000 calls each with an offset outside 16 bits match it at round-to-nearest.

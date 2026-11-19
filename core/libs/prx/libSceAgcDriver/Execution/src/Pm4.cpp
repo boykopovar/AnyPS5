@@ -161,11 +161,13 @@ bool memorySelector(std::uint32_t selector) {
 }
 
 std::uint32_t dmaSource(std::span<const std::uint32_t> packet) {
-    return ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
+    const auto selector = ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
+    return selector == (DmaSelectGds | 12u) ? DmaSelectGds : selector;
 }
 
 std::uint32_t dmaDestination(std::span<const std::uint32_t> packet) {
-    return ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
+    const auto selector = ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
+    return selector == (DmaSelectGds | 12u) ? DmaSelectGds : selector;
 }
 
 // The bytes a COPY_DATA or DMA_DATA stores: an immediate is a repeating 32-bit pattern, a memory
@@ -490,6 +492,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     size(2);
                     require(eventIndex == 0, "invalid stream-out statistics event index");
                     break;
+                case 0x38:
+                    graphics();
+                    size(4);
+                    require(eventIndex == 1, "invalid pixel pipe statistics control event index");
+                    require((packet[2] & ~0x07fffff8u) == 0 && packet[3] == 0, "unsupported PIXEL_PIPE_STAT_CONTROL reserved bits");
+                    require(((packet[2] >> 3u) & 0x3fu) == 0, "PIXEL_PIPE_STAT_CONTROL counters other than occlusion count 0 are not implemented");
+                    require(((packet[2] >> 9u) & 3u) == 2, "PIXEL_PIPE_STAT_CONTROL dump strides other than 128 bits are not implemented");
+                    break;
                 case 0x39:
                     graphics();
                     size(4);
@@ -702,12 +712,14 @@ bool PredicationPasses(const QueueState& queue) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
     if (predication.operation == 1) {
         constexpr std::uint64_t ready = 1ull << 63u;
-        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
-        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        require(queue.sampleDumpBlocks != 0, "Z-pass predication with no counter block enabled by PIXEL_PIPE_STAT_CONTROL is not implemented");
         std::uint64_t samples = 0;
         for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
-            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
-            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if (((queue.sampleDumpBlocks >> db) & 1u) == 0) continue;
+            std::array<std::uint64_t, 2> pair{};
+            GuestMemory::Read(predication.address + db * SampleDumpStride, std::as_writable_bytes(std::span(pair)), 8);
+            const auto begin = pair[0];
+            const auto end = pair[1];
             if ((begin & ready) == 0 || (end & ready) == 0) {
                 require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
                 return true;
@@ -1197,6 +1209,10 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x2a: queue.indexType = packet[1]; return;
         case 0x91: executeIndexAttributes(readIndexAttributes(packet), queue); return;
         case 0x2f: queue.instanceCount = packet[1]; return;
+        case 0x46:
+            if (!SampleControl(packet)) throw std::runtime_error("packet requires driver execution");
+            queue.sampleDumpBlocks = SampleControlBlocks(packet);
+            return;
         case 0x63: case 0x64: case 0x9f:
             ExecuteIndirectRegisters(packet, ReadIndirectRegisters(packet), queue);
             return;

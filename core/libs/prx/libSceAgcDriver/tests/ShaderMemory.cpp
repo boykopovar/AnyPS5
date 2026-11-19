@@ -1875,6 +1875,24 @@ void verifyTypeZeroImageMaterialization() {
         }), "raw-to-known descriptor transition: cached Raw descriptor was not invalidated and replaced by KnownValue");
     }
 
+    phase = 4u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory forcedSpanMemory({}, multiPending, nullptr, hookWaits);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorForceSync));
+        const auto forcedCapture = forcedSpanMemory.Capture(request);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorEndForceSync));
+        require(std::ranges::any_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }) && std::ranges::none_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
+        }), "force-sync descriptor span: a T# span read under SrtDescriptorForceSync took the KnownValue bytes instead of reading through the flush hook");
+    }
+
     for (std::uint32_t record = 0; record < 128u; ++record) {
         std::copy(oldT.begin(), oldT.end(), srt.begin() + record * 8u);
     }
@@ -11793,6 +11811,7 @@ void verifyGuardedNullPointers() {
         std::string function;
         std::size_t calls = 0;
         std::size_t stores = 0;
+        std::size_t latches = 0;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             const auto opcode = words[cursor] & 0xffffu;
@@ -11803,9 +11822,13 @@ void verifyGuardedNullPointers() {
             if (opcode == spv::OpAccessChain && count == 6u && names[words[cursor + 3]] == "fault_buffer" && constants.contains(words[cursor + 5]) && constants[words[cursor + 5]] == BdaAbi::SrtGuardWord) guardWords.push_back(words[cursor + 2]);
             if (function == "main" && opcode == spv::OpFunctionCall && names[words[cursor + 3]] == "record_bda_fault") ++calls;
             if (function == "main" && opcode == spv::OpAtomicStore && std::find(guardWords.begin(), guardWords.end(), words[cursor + 1]) != guardWords.end()) ++stores;
+            if (function == "main" && opcode == spv::OpAtomicCompareExchange && std::find(guardWords.begin(), guardWords.end(), words[cursor + 3]) != guardWords.end()) {
+                require(count == 9u && constants.contains(words[cursor + 8]) && constants[words[cursor + 8]] == 0u, "guarded pointer: the first-fault latch does not compare against zero");
+                ++latches;
+            }
             cursor += count;
         }
-        return std::pair{calls, stores};
+        return std::array{calls, stores, latches};
     };
 
     NestedRequest branch(branchCode, root.data());
@@ -11818,8 +11841,8 @@ void verifyGuardedNullPointers() {
     branch.request.context.memory = validRegions;
     const auto validResult = Recompile(branch.request, *valid);
     require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a guarded program has no fault buffer");
-    const auto [branchCalls, branchStores] = guardSites(*validResult);
-    require(branchCalls == 0u && branchStores == 1u, ("guarded pointer: a guarded read calls record_bda_fault " + std::to_string(branchCalls) + " times in main and stores its record to the fault buffer's guard word " + std::to_string(branchStores) + " times, expected one store and no call").c_str());
+    const auto [branchCalls, branchStores, branchLatches] = guardSites(*validResult);
+    require(branchCalls == 0u && branchStores == 0u && branchLatches == 1u, "guarded pointer: a continuing guarded read must latch its first fault without overwriting the guard word or calling record_bda_fault");
 
     for (const auto pointer : {std::uint64_t{0}, unmapped}) {
         for (const auto condition : {1u, 0u}) {
@@ -11905,8 +11928,8 @@ void verifyGuardedNullPointers() {
     chain.request.context.memory = mappedChainRegions;
     const auto mappedChainResult = Recompile(chain.request, *mappedChain);
     require(chainResult->poisonedSrtReads == 3u && nullChainResult->poisonedSrtReads == 1u && mappedChainResult->poisonedSrtReads == 0u, "guarded pointer: a chain result does not count its poisoned reads");
-    const auto [chainCalls, chainStores] = guardSites(*mappedChainResult);
-    require(chainCalls == 0u && chainStores == mappedChain->plan->guardedSrtSlots.size(), ("guarded pointer: a chain's guarded reads call record_bda_fault " + std::to_string(chainCalls) + " times in main and store to the guard word " + std::to_string(chainStores) + " times, expected one store per guard and no call").c_str());
+    const auto [chainCalls, chainStores, chainLatches] = guardSites(*mappedChainResult);
+    require(chainCalls == 0u && chainStores == 0u && chainLatches == mappedChain->plan->guardedSrtSlots.size(), "guarded pointer: a continuing chain must latch once per guard without overwriting the guard word or calling record_bda_fault");
     require(samePipeline(*chainResult, *mappedChainResult) && samePipeline(*nullChainResult, *mappedChainResult), "guarded pointer: a chain's poison changed the variant, the specialization or the module");
 
     const auto poisonedWords = [](const ResourceCapture& capture, std::uint32_t pc, std::uint64_t base) {
@@ -12533,6 +12556,55 @@ void verifyGcnSampleThroughVolume() {
         require(module.SampledImageKind(sample).first == spv::Dim3D, "GCN volume sample: a sample through a 3D T# does not read a 3D image");
         const std::vector<std::uint32_t> expected{0x3f000000u, 0x3f000000u, 0x3f800000u};
         require(module.Components(sample.coordinate) == expected, "GCN volume sample: a sample through a 3D T# does not take its z from the third address VGPR");
+    }
+}
+
+void verifyGcnTableImageConversion() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    image.cube = true;
+    image.table = 0u;
+    image.tableOperation = TableOperation::Supported;
+    image.numericClass = IrTextureNumericClass::Float;
+    ResourceSnapshot snapshot{};
+    snapshot.tables.tables.resize(1u);
+    auto& column = snapshot.tables.tables.front();
+    column.records = 2u;
+    column.keys = 2u;
+    column.codes = SharedValues<std::uint32_t>(std::vector<std::uint32_t>{0u, 1u});
+    const DescriptorValue rawCube{{0x02340203u, 0x02800000u, 0x003fc0ffu, 0xb6d803acu, 0u, 0u, 0u, 0u}, 8u, 0xffu};
+    DescriptorValue partialCube = rawCube;
+    partialCube.availableDwordMask = 0x09u;
+    column.words = SharedValues<DescriptorValue>(std::vector<DescriptorValue>{rawCube, partialCube});
+    {
+        GcnGuestShaderScope gcn;
+        ShaderInfo info{};
+        info.images.push_back(image);
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto good = resolved.map.at(mapStart);
+        const auto bad = resolved.map.at(mapStart + 1u);
+        require(resolved.elements.size() == 1u && (resolved.map.at(good + Abi::ImageRecordFlags) & Abi::PoisonFlag) == 0u, "GCN table image conversion: complete GCN cube descriptor was poisoned");
+        const auto fault = resolved.map.at(bad + Abi::ImageRecordFlags);
+        require((fault & Abi::PoisonFlag) != 0u && resolved.faults == 1u, "GCN table image conversion: partial descriptor was not poisoned");
+        const auto& poison = resolved.poison.at(fault & ~Abi::PoisonFlag);
+        require(poison.reason == Abi::PoisonReason::OutsideSnapshot, "GCN table image conversion: partial descriptor lost its OutsideSnapshot reason");
+    }
+    {
+        ShaderInfo ps5Info{};
+        ps5Info.images.push_back(image);
+        ps5Info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        const auto resolved = ResourceMaterializer::ResolveImageTables(ps5Info, snapshot);
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto bad = resolved.map.at(mapStart);
+        const auto fault = resolved.map.at(bad + Abi::ImageRecordFlags);
+        require((fault & Abi::PoisonFlag) != 0u, "GCN table image conversion: raw GCN descriptor in PS5 mode was not poisoned");
+        const auto& poison = resolved.poison.at(fault & ~Abi::PoisonFlag);
+        require(poison.reason == Abi::PoisonReason::NumericClass, "GCN table image conversion: raw GCN descriptor in PS5 mode did not poison on numeric class");
     }
 }
 
@@ -13429,6 +13501,7 @@ int main(int argc, char** argv) {
         verifyGcnSampleAddresses();
         verifyGcnStoreAddresses();
         verifyGcnDimensionQueries();
+        verifyGcnTableImageConversion();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
@@ -13597,6 +13670,35 @@ int main(int argc, char** argv) {
             return std::pair{id.has_value(), decorated};
         };
         require(readOnly("flattened_srt") == std::pair{true, true}, "the flattened SRT is not decorated NonWritable");
+        {
+            std::uint32_t srtId = 0u;
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                if ((first.spirv[at] & 0xffffu) == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&first.spirv[at + 2u]), "flattened_srt") == 0) srtId = first.spirv[at + 1u];
+            }
+            require(srtId != 0u, "the flattened SRT variable is not named");
+            std::set<std::uint32_t> chains;
+            std::size_t srtUses = 0;
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                const auto opcode = first.spirv[at] & 0xffffu;
+                const auto count = first.spirv[at] >> 16u;
+                if (opcode == spv::OpName || opcode == spv::OpDecorate || opcode == spv::OpEntryPoint || opcode == spv::OpVariable) continue;
+                for (std::size_t operand = 1; operand < count; ++operand) {
+                    if (first.spirv[at + operand] != srtId) continue;
+                    ++srtUses;
+                    require((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && operand == 3u, "the flattened SRT is used by something other than the base of an access chain");
+                    chains.insert(first.spirv[at + 2u]);
+                }
+            }
+            require(srtUses != 0u && !chains.empty(), "the flattened SRT is never read through an access chain");
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                const auto opcode = first.spirv[at] & 0xffffu;
+                const auto count = first.spirv[at] >> 16u;
+                if (opcode == spv::OpName || opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) continue;
+                for (std::size_t operand = 1; operand < count; ++operand) {
+                    if (chains.contains(first.spirv[at + operand])) require(opcode == spv::OpLoad && operand == 3u, "a flattened SRT access chain is used by something other than a load");
+                }
+            }
+        }
         for (const auto* table : {"bda_pagetable", "table_map"}) require(!readOnly(table).first || readOnly(table).second, "a read-only BDA page table or image table map is not decorated NonWritable");
         payload = 0x40000000u;
         AgcDriver::ShaderMemory updatedMemory({});
