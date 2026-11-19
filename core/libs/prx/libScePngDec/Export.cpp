@@ -177,7 +177,7 @@ std::uint32_t chunkCrc(const std::uint8_t* type, std::span<const std::uint8_t> d
 void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data, std::optional<std::uint32_t> knownCrc = std::nullopt) {
     const auto size = static_cast<std::uint32_t>(data.size());
     const auto* typeBytes = reinterpret_cast<const std::uint8_t*>(type);
-    const std::uint32_t crc = knownCrc.value_or(chunkCrc(typeBytes, data));
+    const std::uint32_t crc = knownCrc ? *knownCrc : chunkCrc(typeBytes, data);
     for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(size >> shift));
     output.insert(output.end(), typeBytes, typeBytes + 4);
     output.insert(output.end(), data.begin(), data.end());
