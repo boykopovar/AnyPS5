@@ -246,7 +246,6 @@ int APS5_VABI _ZNK6icu_6815Normalizer2Impl23hasDecompBoundaryBeforeEi_nid_postfi
 int APS5_VABI _ZN6icu_6817DictionaryMatcherD0Ev_nid_postfix();
 int APS5_VABI uenum_unextDefault_nid_postfix();
 int APS5_VABI uenum_openCharStringsEnumeration_nid_postfix();
-int APS5_VABI ures_getUInt_nid_postfix();
 int APS5_VABI ures_getBinary_nid_postfix();
 int APS5_VABI udata_readInt16_nid_postfix();
 int APS5_VABI _ZN6icu_685Edits8Iterator4nextEaR10UErrorCode_nid_postfix();
@@ -2024,7 +2023,6 @@ int APS5_VABI _ZN6icu_6813ResourceValueD2Ev_nid_postfix();
 int APS5_VABI utrie2_get32_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString13doLastIndexOfEDsii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tiMMuYmTWRo_nid_no_patch();
-int APS5_VABI ucnv_cbFromUWriteSub_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tmx6qeUDqns_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl9recomposeERNS_16ReorderingBufferEia_nid_postfix();
 int APS5_VABI ucnv_getType_nid_postfix();
