@@ -6,6 +6,8 @@
 
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libkernel/libkernel.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -15,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using FreeType::GuestBBox;
 using FreeType::GuestOutlineFuncs;
@@ -190,28 +193,41 @@ APS5_VABI int CubicTo(const GuestVector* control1, const GuestVector* control2, 
 
 extern "C" int APS5_VABI FT_Outline_Get_BBox_nid_postfix(GuestOutline* outline, GuestBBox* boundingBox) {
     if (!boundingBox) return FT_Err_Invalid_Argument;
+    GuestArena::HostWrite write(boundingBox, sizeof(*boundingBox));
+    if (!write.Open() || !GuestWritable_nid_no_patch(boundingBox, sizeof(*boundingBox))) return FT_Err_Invalid_Argument;
     if (!outline) return FT_Err_Invalid_Outline;
-    if (outline->n_points == 0 || outline->n_contours == 0) {
-        *boundingBox = {};
+    GuestOutline header{};
+    if (!GuestCopyIn_nid_no_patch(&header, outline, sizeof(header))) return FT_Err_Invalid_Argument;
+    if (header.n_points == 0 || header.n_contours == 0) {
+        GuestBBox empty{};
+        if (!GuestCopyOut_nid_no_patch(boundingBox, &empty, sizeof(empty))) return FT_Err_Invalid_Argument;
         return 0;
     }
-    if (!outline->points || !outline->tags)
+    if (!header.points || !header.tags)
         throw std::invalid_argument("FT_Outline_Get_BBox: null point or tag array in a nonempty outline");
+    std::vector<GuestVector> points(header.n_points);
+    std::vector<unsigned char> tags(header.n_points);
+    if (!GuestCopyIn_nid_no_patch(points.data(), header.points, points.size() * sizeof(GuestVector)) ||
+        !GuestCopyIn_nid_no_patch(tags.data(), header.tags, tags.size())) {
+        return FT_Err_Invalid_Argument;
+    }
     GuestBBox control{Unset, Unset, -Unset, -Unset};
     GuestBBox on = control;
-    for (std::uint32_t index = 0; index < outline->n_points; ++index) {
-        Include(outline->points[index], control);
-        if ((outline->tags[index] & 3) == FT_CURVE_TAG_ON) Include(outline->points[index], on);
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        Include(points[index], control);
+        if ((tags[index] & 3) == FT_CURVE_TAG_ON) Include(points[index], on);
     }
+    GuestBBox result{};
     if (control.xMin < on.xMin || control.xMax > on.xMax || control.yMin < on.yMin || control.yMax > on.yMax) {
-        if (!outline->contours) Undefined("null contour array in a nonempty outline");
+        if (!header.contours) Undefined("null contour array in a nonempty outline");
         Walk walk{{}, on};
         const GuestOutlineFuncs functions{MoveTo, LineTo, ConicTo, CubicTo, 0, 0};
         const int error = FT_Outline_Decompose_nid_postfix(outline, &functions, &walk);
         if (error != 0) return error;
-        *boundingBox = walk.box;
+        result = walk.box;
     } else {
-        *boundingBox = on;
+        result = on;
     }
+    if (!GuestCopyOut_nid_no_patch(boundingBox, &result, sizeof(result))) return FT_Err_Invalid_Argument;
     return 0;
 }
