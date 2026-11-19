@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
