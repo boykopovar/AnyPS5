@@ -57,6 +57,14 @@ DivisionResult divideWide(std::uint64_t high, std::uint64_t low,
     }
     return {quotient, remainder};
 }
+
+std::uint64_t widthMask(unsigned bits) {
+    return bits == 64 ? UINT64_MAX : ((UINT64_C(1) << bits) - 1);
+}
+
+std::uint64_t widthSign(unsigned bits) {
+    return UINT64_C(1) << (bits - 1);
+}
 }
 
 GuestCpu::GuestCpu(std::span<const std::uint8_t> program, std::size_t stackBytes)
@@ -203,6 +211,36 @@ void GuestCpu::writeOperand(const Operand& operand, std::uint64_t value, bool wi
     }
 }
 
+std::uint64_t GuestCpu::readOperandWidth(const Operand& operand, unsigned bits) const {
+    if (bits == 16) {
+        const auto mask = widthMask(16);
+        if (operand.isRegister) return registers_[operand.index] & mask;
+        checkMemory(operand.address, 2, false);
+        const auto address = static_cast<std::size_t>(operand.address);
+        return static_cast<std::uint64_t>(memory_[address]) |
+               (static_cast<std::uint64_t>(memory_[address + 1]) << 8);
+    }
+    return readOperand(operand, bits == 64);
+}
+
+void GuestCpu::writeOperandWidth(const Operand& operand, std::uint64_t value,
+                                 unsigned bits) {
+    if (bits == 16) {
+        const auto mask = widthMask(16);
+        if (operand.isRegister) {
+            registers_[operand.index] =
+                (registers_[operand.index] & ~mask) | (value & mask);
+        } else {
+            checkMemory(operand.address, 2, true);
+            const auto address = static_cast<std::size_t>(operand.address);
+            memory_[address] = static_cast<std::uint8_t>(value);
+            memory_[address + 1] = static_cast<std::uint8_t>(value >> 8);
+        }
+        return;
+    }
+    writeOperand(operand, value, bits == 64);
+}
+
 void GuestCpu::push64(std::uint64_t value) {
     if (registers_[4] < 8 || registers_[4] > memory_.size()) throw std::runtime_error("Guest stack overflow");
     const auto next = registers_[4] - 8;
@@ -231,8 +269,14 @@ void GuestCpu::updateParity(std::uint64_t value) {
 
 void GuestCpu::updateArithmeticFlags(std::uint64_t lhs, std::uint64_t rhs,
                                      std::uint64_t result, bool wide, bool subtraction) {
-    const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-    const auto sign = wide ? (std::uint64_t{1} << 63) : (std::uint64_t{1} << 31);
+    updateArithmeticFlagsWidth(lhs, rhs, result, wide ? 64u : 32u, subtraction);
+}
+
+void GuestCpu::updateArithmeticFlagsWidth(std::uint64_t lhs, std::uint64_t rhs,
+                                          std::uint64_t result, unsigned bits,
+                                          bool subtraction) {
+    const auto mask = widthMask(bits);
+    const auto sign = widthSign(bits);
     lhs &= mask;
     rhs &= mask;
     result &= mask;
@@ -327,7 +371,9 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
         }
         // XCHG r/m32,r32 or r/m64,r64. A memory operand is accessed
         // only after complete ModR/M decoding; no flag changes.
-        if (!operand16 && opcode == 0x87) {
+        if (opcode == 0x87) {
+            if (operand16)
+                throw std::runtime_error("Unsupported 16-bit XCHG");
             const auto modrm = read8();
             const auto reg = static_cast<std::size_t>(((modrm >> 3) & 7) + (rexR ? 8 : 0));
             const auto operand = decodeOperand(modrm, extended, rexX);
@@ -533,7 +579,8 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 throw std::runtime_error("LEA requires a memory addressing operand");
             const auto reg = static_cast<std::size_t>(((modrm >> 3) & 7) + (rexR ? 8 : 0));
             const auto operand = decodeOperand(modrm, extended, rexX);
-            registers_[reg] = wide ? operand.address : static_cast<std::uint32_t>(operand.address);
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            writeOperandWidth({true, reg, 0}, operand.address, operandBits);
             continue;
         }
         // 66 89 /r and 66 8B /r: 16-bit MOV. Register destinations
@@ -586,8 +633,6 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             }
             continue;
         }
-        if (operand16 && !(opcode >= 0xB8 && opcode <= 0xBF))
-            throw std::runtime_error("Unsupported 16-bit operand-size instruction");
         if (opcode == 0x89 || opcode == 0x8B) {
             const auto modrm = read8();
             const auto reg = static_cast<std::size_t>(((modrm >> 3) & 7) + (rexR ? 8 : 0));
@@ -623,13 +668,17 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto operand = decodeOperand(modrm, extended, rexX);
             const bool reversed = opcode == 0x03 || opcode == 0x0B || opcode == 0x23 ||
                                   opcode == 0x2B || opcode == 0x33 || opcode == 0x3B;
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto lhs = (reversed ? registers_[reg] : readOperand(operand, wide)) & mask;
-            const auto rhs = (reversed ? readOperand(operand, wide) : registers_[reg]) & mask;
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto mask = widthMask(operandBits);
+            const auto registerValue = registers_[reg] & mask;
+            const auto lhs = (reversed ? registerValue :
+                              readOperandWidth(operand, operandBits)) & mask;
+            const auto rhs = (reversed ? readOperandWidth(operand, operandBits) :
+                              registerValue) & mask;
             std::uint64_t result = 0;
             if (opcode == 0x01 || opcode == 0x03) {
                 result = (lhs + rhs) & mask;
-                updateArithmeticFlags(lhs, rhs, result, wide, false);
+                updateArithmeticFlagsWidth(lhs, rhs, result, operandBits, false);
             } else if (opcode == 0x09 || opcode == 0x0B ||
                        opcode == 0x21 || opcode == 0x23 ||
                        opcode == 0x31 || opcode == 0x33 || opcode == 0x85) {
@@ -639,15 +688,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 carryFlag_ = false;
                 overflowFlag_ = false;
                 updateParity(result);
-                signFlag_ = (result & (wide ? (std::uint64_t{1} << 63) : (std::uint64_t{1} << 31))) != 0;
+                signFlag_ = (result & widthSign(operandBits)) != 0;
             } else {
                 result = (lhs - rhs) & mask;
-                updateArithmeticFlags(lhs, rhs, result, wide, true);
+                updateArithmeticFlagsWidth(lhs, rhs, result, operandBits, true);
             }
             zeroFlag_ = result == 0;
             if (opcode != 0x39 && opcode != 0x3B && opcode != 0x85) {
-                if (reversed) registers_[reg] = result;
-                else writeOperand(operand, result, wide);
+                if (reversed) writeOperandWidth({true, reg, 0}, result, operandBits);
+                else writeOperandWidth(operand, result, operandBits);
             }
             continue;
         }
@@ -662,13 +711,24 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto operation = static_cast<unsigned>((program_[ip_] >> 3) & 7);
             if (operation == 2 || operation == 3) {
                 const auto modrm = read8();
-                const bool imm32 = opcode == 0x81;
-                const auto operand = decodeOperand(modrm, extended, rexX, imm32 ? 4 : 1);
-                const auto immediate = imm32 ? static_cast<std::int64_t>(readSigned32()) :
-                    static_cast<std::int64_t>(static_cast<std::int8_t>(read8()));
-                const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-                const auto sign = wide ? (UINT64_C(1) << 63) : (UINT64_C(1) << 31);
-                const auto lhs = readOperand(operand, wide) & mask;
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+                const bool imm16 = opcode == 0x81 && operand16;
+                const bool imm32 = opcode == 0x81 && !operand16;
+                const auto operand = decodeOperand(modrm, extended, rexX,
+                    operand16 ? 2 : (imm32 ? 4 : 1));
+                std::int64_t immediate = 0;
+                if (imm16) {
+                    const auto low = static_cast<std::uint16_t>(read8());
+                    const auto high = static_cast<std::uint16_t>(read8());
+                    immediate = static_cast<std::int16_t>(low | (high << 8));
+                } else if (imm32) {
+                    immediate = readSigned32();
+                } else {
+                    immediate = static_cast<std::int8_t>(read8());
+                }
+                const auto mask = widthMask(operandBits);
+                const auto sign = widthSign(operandBits);
+                const auto lhs = readOperandWidth(operand, operandBits) & mask;
                 const auto rhs = static_cast<std::uint64_t>(immediate) & mask;
                 const auto carryIn = static_cast<std::uint64_t>(carryFlag_);
                 const bool subtract = operation == 3;
@@ -683,7 +743,7 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 zeroFlag_ = result == 0;
                 signFlag_ = (result & sign) != 0;
                 updateParity(result);
-                writeOperand(operand, result, wide);
+                writeOperandWidth(operand, result, operandBits);
                 continue;
             }
         }
@@ -698,52 +758,169 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 const auto operand = decodeOperand(modrm, extended, rexX, opcode == 0xC1 ? 1 : 0);
                 const auto rawCount = opcode == 0xC1 ? static_cast<unsigned>(read8()) :
                     opcode == 0xD1 ? 1u : static_cast<unsigned>(registers_[1] & 0xFF);
-                const auto bits = wide ? 64u : 32u;
-                const auto count = (rawCount & (wide ? 63u : 31u)) % bits;
-                if (count == 0) continue;
-                const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-                const auto value = readOperand(operand, wide) & mask;
-                const auto result = operation == 0 ?
-                    ((value << count) | (value >> (bits - count))) & mask :
-                    ((value >> count) | (value << (bits - count))) & mask;
-                carryFlag_ = operation == 0 ? (result & 1u) != 0 :
-                    ((result >> (bits - 1)) & 1u) != 0;
-                if (count == 1) {
-                    const bool msb = ((result >> (bits - 1)) & 1u) != 0;
-                    overflowFlag_ = operation == 0 ? (msb != carryFlag_) :
-                        (msb != (((result >> (bits - 2)) & 1u) != 0));
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+                const auto maskedCount = rawCount & (wide ? 63u : 31u);
+                if (maskedCount == 0) continue;
+                const auto count = maskedCount % operandBits;
+                const auto mask = widthMask(operandBits);
+                const auto value = readOperandWidth(operand, operandBits) & mask;
+                if (count == 0) {
+                    carryFlag_ = operation == 0 ? (value & 1u) != 0 :
+                        ((value >> (operandBits - 1)) & 1u) != 0;
+                    continue;
                 }
-                writeOperand(operand, result, wide);
+                const auto result = operation == 0 ?
+                    ((value << count) | (value >> (operandBits - count))) & mask :
+                    ((value >> count) | (value << (operandBits - count))) & mask;
+                carryFlag_ = operation == 0 ? (result & 1u) != 0 :
+                    ((result >> (operandBits - 1)) & 1u) != 0;
+                if (count == 1) {
+                    const bool msb = ((result >> (operandBits - 1)) & 1u) != 0;
+                    overflowFlag_ = operation == 0 ? (msb != carryFlag_) :
+                        (msb != (((result >> (operandBits - 2)) & 1u) != 0));
+                }
+                writeOperandWidth(operand, result, operandBits);
                 continue;
             }
         }
         if (opcode == 0x81) {
             const auto modrm = read8();
             const auto operation = static_cast<unsigned>((modrm >> 3) & 7);
-            const auto operand = decodeOperand(modrm, extended, rexX, 4);
-            const auto immediate = readSigned32();
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto operand = decodeOperand(modrm, extended, rexX, operand16 ? 2 : 4);
+            std::int64_t immediate = 0;
+            if (operand16) {
+                const auto low = static_cast<std::uint16_t>(read8());
+                const auto high = static_cast<std::uint16_t>(read8());
+                immediate = static_cast<std::int16_t>(low | (high << 8));
+            } else {
+                immediate = readSigned32();
+            }
             if (operation != 0 && operation != 1 && operation != 4 &&
                 operation != 5 && operation != 6 && operation != 7)
                 throw std::runtime_error("Unsupported group 1 imm32 operation");
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto lhs = readOperand(operand, wide) & mask;
-            const auto rhs = static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate)) & mask;
+            const auto mask = widthMask(operandBits);
+            const auto lhs = readOperandWidth(operand, operandBits) & mask;
+            const auto rhs = static_cast<std::uint64_t>(immediate) & mask;
             std::uint64_t result = 0;
             if (operation == 1 || operation == 4 || operation == 6) {
                 result = operation == 1 ? (lhs | rhs) :
                          operation == 4 ? (lhs & rhs) : (lhs ^ rhs);
                 zeroFlag_ = result == 0;
                 updateParity(result);
-                signFlag_ = (result & (wide ? (UINT64_C(1) << 63) : (UINT64_C(1) << 31))) != 0;
+                signFlag_ = (result & widthSign(operandBits)) != 0;
                 carryFlag_ = false;
                 overflowFlag_ = false;
             } else {
                 const bool subtract = operation != 0;
                 result = (subtract ? lhs - rhs : lhs + rhs) & mask;
-                updateArithmeticFlags(lhs, rhs, result, wide, subtract);
+                updateArithmeticFlagsWidth(lhs, rhs, result, operandBits, subtract);
             }
-            if (operation != 7) writeOperand(operand, result, wide);
+            if (operation != 7) writeOperandWidth(operand, result, operandBits);
             continue;
+        }
+        if (opcode == 0xF6) {
+            const auto modrm = read8();
+            const auto operation = static_cast<unsigned>((modrm >> 3) & 7);
+            const auto operand = decodeOperand(modrm, extended, rexX,
+                operation == 0 ? 1 : 0);
+            const auto readByteReg = [&](std::size_t index) -> std::uint8_t {
+                if (!hasRex && index >= 4 && index <= 7)
+                    return static_cast<std::uint8_t>(registers_[index - 4] >> 8);
+                return static_cast<std::uint8_t>(registers_[index]);
+            };
+            const auto writeByteReg = [&](std::size_t index, std::uint8_t value) {
+                if (!hasRex && index >= 4 && index <= 7) {
+                    const auto parent = index - 4;
+                    registers_[parent] = (registers_[parent] & ~UINT64_C(0xFF00)) |
+                        (static_cast<std::uint64_t>(value) << 8);
+                } else {
+                    registers_[index] = (registers_[index] & ~UINT64_C(0xFF)) | value;
+                }
+            };
+            const auto readByte = [&]() -> std::uint8_t {
+                if (operand.isRegister) return readByteReg(operand.index);
+                checkMemory(operand.address, 1, false);
+                return memory_[static_cast<std::size_t>(operand.address)];
+            };
+            const auto writeByte = [&](std::uint8_t value) {
+                if (operand.isRegister) writeByteReg(operand.index, value);
+                else {
+                    checkMemory(operand.address, 1, true);
+                    memory_[static_cast<std::size_t>(operand.address)] = value;
+                }
+            };
+            if (operation == 0) {
+                const auto value = readByte();
+                const auto result = static_cast<std::uint8_t>(value & read8());
+                zeroFlag_ = result == 0;
+                signFlag_ = (result & 0x80u) != 0;
+                updateParity(result);
+                carryFlag_ = false;
+                overflowFlag_ = false;
+                continue;
+            }
+            if (operation == 2) {
+                writeByte(static_cast<std::uint8_t>(~readByte()));
+                continue;
+            }
+            if (operation == 3) {
+                const auto value = readByte();
+                const auto result = static_cast<std::uint8_t>(0u - value);
+                updateArithmeticFlagsWidth(0, value, result, 8, true);
+                writeByte(result);
+                continue;
+            }
+            if (operation == 4) {
+                const auto product = static_cast<std::uint32_t>(
+                    static_cast<std::uint8_t>(registers_[0])) * readByte();
+                registers_[0] = (registers_[0] & ~UINT64_C(0xFFFF)) |
+                    static_cast<std::uint16_t>(product);
+                carryFlag_ = overflowFlag_ = (product >> 8) != 0;
+                continue;
+            }
+            if (operation == 5) {
+                const auto product = static_cast<std::int16_t>(
+                    static_cast<std::int16_t>(static_cast<std::int8_t>(registers_[0])) *
+                    static_cast<std::int16_t>(static_cast<std::int8_t>(readByte())));
+                registers_[0] = (registers_[0] & ~UINT64_C(0xFFFF)) |
+                    static_cast<std::uint16_t>(product);
+                carryFlag_ = overflowFlag_ =
+                    product < INT8_MIN || product > INT8_MAX;
+                continue;
+            }
+            if (operation == 6) {
+                const auto divisor = readByte();
+                if (divisor == 0)
+                    throw std::runtime_error("Guest division by zero");
+                const auto dividend = static_cast<std::uint16_t>(registers_[0]);
+                const auto quotient = static_cast<unsigned>(dividend) / divisor;
+                if (quotient > 0xFFu)
+                    throw std::runtime_error("Guest division quotient overflow");
+                const auto remainder = static_cast<unsigned>(dividend) % divisor;
+                registers_[0] = (registers_[0] & ~UINT64_C(0xFFFF)) |
+                    static_cast<std::uint16_t>((remainder << 8) | quotient);
+                continue;
+            }
+            if (operation == 7) {
+                const auto divisor = static_cast<std::int8_t>(readByte());
+                if (divisor == 0)
+                    throw std::runtime_error("Guest division by zero");
+                const auto dividend = static_cast<std::int16_t>(registers_[0]);
+                if (dividend == INT16_MIN && divisor == -1)
+                    throw std::runtime_error("Guest division quotient overflow");
+                const auto quotient = dividend / divisor;
+                const auto remainder = dividend % divisor;
+                if (quotient < INT8_MIN || quotient > INT8_MAX)
+                    throw std::runtime_error("Guest division quotient overflow");
+                registers_[0] = (registers_[0] & ~UINT64_C(0xFFFF)) |
+                    static_cast<std::uint16_t>(
+                        (static_cast<std::uint16_t>(
+                            static_cast<std::uint8_t>(remainder)) << 8) |
+                        static_cast<std::uint8_t>(quotient));
+                continue;
+            }
+            throw std::runtime_error("Unsupported F6 group operation");
         }
         // F7 /0 TEST r/m,imm32 (sign-extended with REX.W).
         // TEST updates logic flags but never changes the destination.
@@ -755,15 +932,24 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto group = static_cast<unsigned>((program_[ip_] >> 3) & 7);
             if (group == 0) {
                 const auto modrm = read8();
-                const auto operand = decodeOperand(modrm, extended, rexX, 4);
-                const auto immediate = readSigned32();
-                const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-                const auto value = readOperand(operand, wide) & mask;
-                const auto result = value &
-                    (static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate)) & mask);
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+                const auto operand = decodeOperand(modrm, extended, rexX,
+                    operand16 ? 2 : 4);
+                std::uint64_t immediate = 0;
+                if (operand16) {
+                    const auto low = static_cast<std::uint16_t>(read8());
+                    const auto high = static_cast<std::uint16_t>(read8());
+                    immediate = static_cast<std::uint16_t>(low | (high << 8));
+                } else {
+                    immediate = static_cast<std::uint64_t>(
+                        static_cast<std::int64_t>(readSigned32()));
+                }
+                const auto mask = widthMask(operandBits);
+                const auto value = readOperandWidth(operand, operandBits) & mask;
+                const auto result = value & (immediate & mask);
                 zeroFlag_ = result == 0;
                 updateParity(result);
-                signFlag_ = (result & (wide ? (UINT64_C(1) << 63) : (UINT64_C(1) << 31))) != 0;
+                signFlag_ = (result & widthSign(operandBits)) != 0;
                 carryFlag_ = false;
                 overflowFlag_ = false;
                 continue;
@@ -775,10 +961,18 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto modrm = read8();
             const auto operation = static_cast<unsigned>((modrm >> 3) & 7);
             if (operation == 4 || operation == 5) {
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
                 const auto operand = decodeOperand(modrm, extended, rexX);
-                const auto value = readOperand(operand, wide);
+                const auto value = readOperandWidth(operand, operandBits);
                 if (operation == 4) {
-                    if (!wide) {
+                    if (operandBits == 16) {
+                        const auto product = static_cast<std::uint32_t>(
+                            static_cast<std::uint16_t>(registers_[0])) *
+                            static_cast<std::uint16_t>(value);
+                        writeOperandWidth({true, 0, 0}, product, 16);
+                        writeOperandWidth({true, 2, 0}, product >> 16, 16);
+                        carryFlag_ = overflowFlag_ = (product >> 16) != 0;
+                    } else if (operandBits == 32) {
                         const auto product =
                             static_cast<std::uint64_t>(static_cast<std::uint32_t>(registers_[0])) *
                             static_cast<std::uint32_t>(value);
@@ -791,7 +985,16 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                         registers_[2] = product.high;
                         carryFlag_ = overflowFlag_ = product.high != 0;
                     }
-                } else if (!wide) {
+                } else if (operandBits == 16) {
+                    const auto product = static_cast<std::int32_t>(
+                        static_cast<std::int16_t>(registers_[0])) *
+                        static_cast<std::int32_t>(static_cast<std::int16_t>(value));
+                    writeOperandWidth({true, 0, 0}, static_cast<std::uint32_t>(product), 16);
+                    writeOperandWidth({true, 2, 0},
+                        static_cast<std::uint32_t>(product) >> 16, 16);
+                    carryFlag_ = overflowFlag_ =
+                        product < INT16_MIN || product > INT16_MAX;
+                } else if (operandBits == 32) {
                     const auto product =
                         static_cast<std::int64_t>(static_cast<std::int32_t>(registers_[0])) *
                         static_cast<std::int64_t>(static_cast<std::int32_t>(value));
@@ -821,11 +1024,27 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 continue;
             }
             if (operation == 7) {
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
                 const auto operand = decodeOperand(modrm, extended, rexX);
-                const auto divisor = readOperand(operand, wide);
+                const auto divisor = readOperandWidth(operand, operandBits);
                 if (divisor == 0)
                     throw std::runtime_error("Guest division by zero");
-                if (!wide) {
+                if (operandBits == 16) {
+                    auto dividend = static_cast<std::int64_t>(
+                        (static_cast<std::uint32_t>(
+                            static_cast<std::uint16_t>(registers_[2])) << 16) |
+                        static_cast<std::uint16_t>(registers_[0]));
+                    if (dividend > INT32_MAX) dividend -= (std::int64_t{1} << 32);
+                    const auto divisorSigned = static_cast<std::int16_t>(divisor);
+                    const auto quotient = dividend / divisorSigned;
+                    const auto remainder = dividend % divisorSigned;
+                    if (quotient < INT16_MIN || quotient > INT16_MAX)
+                        throw std::runtime_error("Guest division quotient overflow");
+                    writeOperandWidth({true, 0, 0},
+                        static_cast<std::uint32_t>(quotient), 16);
+                    writeOperandWidth({true, 2, 0},
+                        static_cast<std::uint32_t>(remainder), 16);
+                } else if (operandBits == 32) {
                     const auto divisorBits = static_cast<std::uint32_t>(divisor);
                     const auto dividend =
                         (static_cast<std::uint64_t>(
@@ -879,11 +1098,23 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             if (operation == 6) {
                 // DIV r/m32 or r/m64: unsigned EDX:EAX / operand.
                 // Quotient overflow and zero divisor raise a guest fault.
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
                 const auto operand = decodeOperand(modrm, extended, rexX);
-                const auto divisor = readOperand(operand, wide);
+                const auto divisor = readOperandWidth(operand, operandBits);
                 if (divisor == 0)
                     throw std::runtime_error("Guest division by zero");
-                if (!wide) {
+                if (operandBits == 16) {
+                    const auto dividend =
+                        (static_cast<std::uint32_t>(
+                            static_cast<std::uint16_t>(registers_[2])) << 16) |
+                        static_cast<std::uint16_t>(registers_[0]);
+                    const auto quotient = dividend / static_cast<std::uint16_t>(divisor);
+                    if (quotient > 0xFFFFu)
+                        throw std::runtime_error("Guest division quotient overflow");
+                    writeOperandWidth({true, 0, 0}, quotient, 16);
+                    writeOperandWidth({true, 2, 0},
+                        dividend % static_cast<std::uint16_t>(divisor), 16);
+                } else if (operandBits == 32) {
                     const auto dividend =
                         (static_cast<std::uint64_t>(static_cast<std::uint32_t>(registers_[2])) << 32) |
                         static_cast<std::uint32_t>(registers_[0]);
@@ -902,15 +1133,16 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             }
             if (operation != 2 && operation != 3)
                 throw std::runtime_error("Unsupported F7 group operation");
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
             const auto operand = decodeOperand(modrm, extended, rexX);
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto value = readOperand(operand, wide) & mask;
+            const auto mask = widthMask(operandBits);
+            const auto value = readOperandWidth(operand, operandBits) & mask;
             if (operation == 2) {
-                writeOperand(operand, (~value) & mask, wide);
+                writeOperandWidth(operand, (~value) & mask, operandBits);
             } else {
                 const auto result = (std::uint64_t{0} - value) & mask;
-                updateArithmeticFlags(0, value, result, wide, true);
-                writeOperand(operand, result, wide);
+                updateArithmeticFlagsWidth(0, value, result, operandBits, true);
+                writeOperandWidth(operand, result, operandBits);
             }
             continue;
         }
@@ -937,14 +1169,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             }
             if (operation != 0 && operation != 1)
                 throw std::runtime_error("Unsupported FF group operation");
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto lhs = readOperand(operand, wide) & mask;
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto mask = widthMask(operandBits);
+            const auto lhs = readOperandWidth(operand, operandBits) & mask;
             const auto rhs = std::uint64_t{1};
-            const auto result = (operation == 0 ? lhs + rhs : lhs - rhs) & mask;
+            const auto result = ((operation == 0 ? lhs + rhs : lhs - rhs)) & mask;
             const bool savedCarry = carryFlag_;
-            updateArithmeticFlags(lhs, rhs, result, wide, operation == 1);
+            updateArithmeticFlagsWidth(lhs, rhs, result, operandBits, operation == 1);
             carryFlag_ = savedCarry;
-            writeOperand(operand, result, wide);
+            writeOperandWidth(operand, result, operandBits);
             continue;
         }
         // ADC/SBB with a register source or destination (10/11/12/13,
@@ -957,10 +1190,14 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto operand = decodeOperand(modrm, extended, rexX);
             const bool reverse = opcode == 0x13 || opcode == 0x1B;
             const bool subtract = opcode == 0x19 || opcode == 0x1B;
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto sign = wide ? (UINT64_C(1) << 63) : (UINT64_C(1) << 31);
-            const auto lhs = (reverse ? registers_[reg] : readOperand(operand, wide)) & mask;
-            const auto rhs = (reverse ? readOperand(operand, wide) : registers_[reg]) & mask;
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto mask = widthMask(operandBits);
+            const auto sign = widthSign(operandBits);
+            const auto registerValue = registers_[reg] & mask;
+            const auto lhs = (reverse ? registerValue :
+                              readOperandWidth(operand, operandBits)) & mask;
+            const auto rhs = (reverse ? readOperandWidth(operand, operandBits) :
+                              registerValue) & mask;
             const auto carryIn = static_cast<std::uint64_t>(carryFlag_);
             const auto intermediate = subtract ? (lhs - rhs) & mask : (lhs + rhs) & mask;
             const auto result = subtract ? (intermediate - carryIn) & mask :
@@ -973,8 +1210,8 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             zeroFlag_ = result == 0;
             signFlag_ = (result & sign) != 0;
             updateParity(result);
-            if (reverse) registers_[reg] = result;
-            else writeOperand(operand, result, wide);
+            if (reverse) writeOperandWidth({true, reg, 0}, result, operandBits);
+            else writeOperandWidth(operand, result, operandBits);
             continue;
         }
         // Group 2 shifts: C1 r/m,imm8; D1 r/m,1; D3 r/m,CL.
@@ -988,38 +1225,52 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                                   static_cast<unsigned>(registers_[1] & 0xFF);
             if (operation != 4 && operation != 5 && operation != 7)
                 throw std::runtime_error("Unsupported shift operation");
-            const auto bits = wide ? 64u : 32u;
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
             const auto count = rawCount & (wide ? 63u : 31u);
             if (count == 0) continue; // x86 leaves flags and operand unchanged.
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto value = readOperand(operand, wide) & mask;
+            const auto mask = widthMask(operandBits);
+            const auto value = readOperandWidth(operand, operandBits) & mask;
             std::uint64_t result = 0;
             bool newCarry = false;
             if (operation == 4) { // SHL/SAL
-                result = (value << count) & mask;
-                newCarry = ((value >> (bits - count)) & 1) != 0;
+                if (count >= operandBits) {
+                    newCarry = count == operandBits && (value & 1) != 0;
+                } else {
+                    result = (value << count) & mask;
+                    newCarry = ((value >> (operandBits - count)) & 1) != 0;
+                }
             } else if (operation == 5) { // SHR
-                result = value >> count;
-                newCarry = ((value >> (count - 1)) & 1) != 0;
+                if (count >= operandBits) {
+                    newCarry = count == operandBits &&
+                        ((value >> (operandBits - 1)) & 1) != 0;
+                } else {
+                    result = value >> count;
+                    newCarry = ((value >> (count - 1)) & 1) != 0;
+                }
             } else { // SAR: explicit sign fill, without implementation-defined signed shifts.
-                result = value >> count;
-                const bool negative = ((value >> (bits - 1)) & 1) != 0;
-                if (negative) result |= (mask << (bits - count)) & mask;
-                newCarry = ((value >> (count - 1)) & 1) != 0;
+                const bool negative = ((value >> (operandBits - 1)) & 1) != 0;
+                if (count >= operandBits) {
+                    result = negative ? mask : 0;
+                    newCarry = negative;
+                } else {
+                    result = value >> count;
+                    if (negative) result |= (mask << (operandBits - count)) & mask;
+                    newCarry = ((value >> (count - 1)) & 1) != 0;
+                }
             }
             result &= mask;
             carryFlag_ = newCarry;
             zeroFlag_ = result == 0;
             updateParity(result);
-            signFlag_ = ((result >> (bits - 1)) & 1) != 0;
+            signFlag_ = ((result >> (operandBits - 1)) & 1) != 0;
             // OF is architecturally defined only for a count of one.
             // For other counts we retain its prior value.
             if (count == 1) {
                 if (operation == 4) overflowFlag_ = signFlag_ != carryFlag_;
-                else if (operation == 5) overflowFlag_ = ((value >> (bits - 1)) & 1) != 0;
+                else if (operation == 5) overflowFlag_ = ((value >> (operandBits - 1)) & 1) != 0;
                 else overflowFlag_ = false;
             }
-            writeOperand(operand, result, wide);
+            writeOperandWidth(operand, result, operandBits);
             continue;
         }
         // Group 1 immediate arithmetic: 83 /0 ADD, /5 SUB, /7 CMP.
@@ -1032,8 +1283,9 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             if (operation != 0 && operation != 1 && operation != 4 &&
                 operation != 5 && operation != 6 && operation != 7)
                 throw std::runtime_error("Unsupported group 1 immediate operation");
-            const auto mask = wide ? UINT64_MAX : static_cast<std::uint64_t>(UINT32_MAX);
-            const auto lhs = readOperand(operand, wide) & mask;
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto mask = widthMask(operandBits);
+            const auto lhs = readOperandWidth(operand, operandBits) & mask;
             const auto rhs = static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate)) & mask;
             std::uint64_t result = 0;
             if (operation == 1 || operation == 4 || operation == 6) {
@@ -1041,15 +1293,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                          operation == 4 ? (lhs & rhs) : (lhs ^ rhs);
                 zeroFlag_ = result == 0;
                 updateParity(result);
-                signFlag_ = (result & (wide ? (UINT64_C(1) << 63) : (UINT64_C(1) << 31))) != 0;
+                signFlag_ = (result & widthSign(operandBits)) != 0;
                 carryFlag_ = false;
                 overflowFlag_ = false;
             } else {
                 const bool subtract = operation != 0;
                 result = (subtract ? lhs - rhs : lhs + rhs) & mask;
-                updateArithmeticFlags(lhs, rhs, result, wide, subtract);
+                updateArithmeticFlagsWidth(lhs, rhs, result, operandBits, subtract);
             }
-            if (operation != 7) writeOperand(operand, result, wide);
+            if (operation != 7) writeOperandWidth(operand, result, operandBits);
             continue;
         }
         // Three-operand IMUL: 6B uses sign-extended imm8, 69 imm32.
@@ -1058,15 +1310,35 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto modrm = read8();
             const auto destination = static_cast<std::size_t>(
                 ((modrm >> 3) & 7) + (rexR ? 8 : 0));
-            const auto source = decodeOperand(modrm, extended, rexX, opcode == 0x6B ? 1 : 4);
-            const auto immediate = opcode == 0x6B
-                ? static_cast<std::int64_t>(static_cast<std::int8_t>(read8()))
-                : static_cast<std::int64_t>(readSigned32());
-            const auto sourceBits = readOperand(source, wide);
+            const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+            const auto source = decodeOperand(modrm, extended, rexX,
+                opcode == 0x6B ? 1 : (operand16 ? 2 : 4));
+            std::int64_t immediate = 0;
+            if (opcode == 0x6B) {
+                immediate = static_cast<std::int8_t>(read8());
+            } else if (operand16) {
+                const auto low = static_cast<std::uint16_t>(read8());
+                const auto high = static_cast<std::uint16_t>(read8());
+                immediate = static_cast<std::int16_t>(low | (high << 8));
+            } else {
+                immediate = readSigned32();
+            }
+            const auto sourceBits = readOperandWidth(source, operandBits);
             const auto multiplier = static_cast<std::uint64_t>(immediate);
             const auto result = sourceBits * multiplier; // defined unsigned wrap
-            registers_[destination] = wide ? result : static_cast<std::uint32_t>(result);
-            if (wide) {
+            writeOperandWidth({true, destination, 0}, result, operandBits);
+            if (operandBits == 16) {
+                const auto product =
+                    static_cast<std::int32_t>(static_cast<std::int16_t>(sourceBits)) *
+                    static_cast<std::int32_t>(immediate);
+                carryFlag_ = overflowFlag_ =
+                    product < INT16_MIN || product > INT16_MAX;
+            } else if (operandBits == 32) {
+                const auto signedSource = static_cast<std::int64_t>(
+                    static_cast<std::int32_t>(sourceBits));
+                const auto product = signedSource * immediate;
+                carryFlag_ = overflowFlag_ = product < INT32_MIN || product > INT32_MAX;
+            } else {
                 const bool sourceNegative = (sourceBits >> 63) != 0;
                 const bool immediateNegative = immediate < 0;
                 const auto sourceMagnitude = sourceNegative
@@ -1078,11 +1350,6 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                     : static_cast<std::uint64_t>(INT64_MAX);
                 carryFlag_ = overflowFlag_ = immediateMagnitude != 0 &&
                     sourceMagnitude > limit / immediateMagnitude;
-            } else {
-                const auto signedSource = static_cast<std::int64_t>(
-                    static_cast<std::int32_t>(sourceBits));
-                const auto product = signedSource * immediate;
-                carryFlag_ = overflowFlag_ = product < INT32_MIN || product > INT32_MAX;
             }
             continue;
         }
@@ -1091,7 +1358,7 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             const auto second = read8();
             // 0F 1F /0: multi-byte NOP with ModR/M/SIB/displacement.
             // Decode addressing bytes but never dereference the operand.
-            if (second == 0x1F && !operand16) {
+            if (second == 0x1F) {
                 const auto modrm = read8();
                 if (((modrm >> 3) & 7) != 0)
                     throw std::runtime_error("Unsupported multi-byte NOP group");
@@ -1106,9 +1373,10 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 const auto destination = static_cast<std::size_t>(
                     ((modrm >> 3) & 7) + (rexR ? 8 : 0));
                 const auto operand = decodeOperand(modrm, extended, rexX);
-                const auto source = readOperand(operand, wide);
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+                const auto source = readOperandWidth(operand, operandBits);
                 if (evaluateCondition(static_cast<std::uint8_t>(second & 0x0F)))
-                    registers_[destination] = source;
+                    writeOperandWidth({true, destination, 0}, source, operandBits);
                 continue;
             }
             // MOVZX/MOVSX r32/r64, r/m8 (0F B6 / 0F BE).
@@ -1130,15 +1398,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                     checkMemory(operand.address, 1, false);
                     byteValue = memory_[static_cast<std::size_t>(operand.address)];
                 }
+                const auto destinationBits = wide ? 64u : (operand16 ? 16u : 32u);
                 if (second == 0xB6) {
-                    registers_[destination] = byteValue;
+                    writeOperandWidth({true, destination, 0}, byteValue, destinationBits);
                 } else {
                     const auto signedValue = byteValue < 0x80
                         ? static_cast<std::int64_t>(byteValue)
                         : static_cast<std::int64_t>(byteValue) - 256;
-                    registers_[destination] = wide
-                        ? static_cast<std::uint64_t>(signedValue)
-                        : static_cast<std::uint32_t>(signedValue);
+                    writeOperandWidth({true, destination, 0},
+                        static_cast<std::uint64_t>(signedValue), destinationBits);
                 }
                 continue;
             }
@@ -1160,15 +1428,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                         static_cast<std::uint16_t>(memory_[offset]) |
                         (static_cast<std::uint16_t>(memory_[offset + 1]) << 8));
                 }
+                const auto destinationBits = wide ? 64u : (operand16 ? 16u : 32u);
                 if (second == 0xB7) {
-                    registers_[destination] = wordValue;
+                    writeOperandWidth({true, destination, 0}, wordValue, destinationBits);
                 } else {
                     const auto signedValue = wordValue < 0x8000
                         ? static_cast<std::int64_t>(wordValue)
                         : static_cast<std::int64_t>(wordValue) - 65536;
-                    registers_[destination] = wide
-                        ? static_cast<std::uint64_t>(signedValue)
-                        : static_cast<std::uint32_t>(signedValue);
+                    writeOperandWidth({true, destination, 0},
+                        static_cast<std::uint64_t>(signedValue), destinationBits);
                 }
                 continue;
             }
@@ -1199,13 +1467,25 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 const auto modrm = read8();
                 const auto reg = static_cast<std::size_t>(((modrm >> 3) & 7) + (rexR ? 8 : 0));
                 const auto operand = decodeOperand(modrm, extended, rexX);
-                const auto rhs = readOperand(operand, wide);
-                const auto lhs = wide ? registers_[reg] : static_cast<std::uint32_t>(registers_[reg]);
+                const auto operandBits = wide ? 64u : (operand16 ? 16u : 32u);
+                const auto mask = widthMask(operandBits);
+                const auto rhs = readOperandWidth(operand, operandBits) & mask;
+                const auto lhs = registers_[reg] & mask;
                 const auto result = lhs * rhs; // Unsigned modular product avoids signed-overflow UB.
-                registers_[reg] = wide ? result : static_cast<std::uint32_t>(result);
+                writeOperandWidth({true, reg, 0}, result, operandBits);
                 // x86 IMUL sets CF and OF iff the full signed product cannot
                 // be represented at the selected operand width.
-                if (wide) {
+                if (operandBits == 16) {
+                    const auto product =
+                        static_cast<std::int32_t>(static_cast<std::int16_t>(lhs)) *
+                        static_cast<std::int32_t>(static_cast<std::int16_t>(rhs));
+                    carryFlag_ = overflowFlag_ =
+                        product < INT16_MIN || product > INT16_MAX;
+                } else if (operandBits == 32) {
+                    const auto product = static_cast<std::int64_t>(static_cast<std::int32_t>(lhs)) *
+                                         static_cast<std::int64_t>(static_cast<std::int32_t>(rhs));
+                    carryFlag_ = overflowFlag_ = product < INT32_MIN || product > INT32_MAX;
+                } else {
                     const bool leftNegative = (lhs >> 63) != 0;
                     const bool rightNegative = (rhs >> 63) != 0;
                     const auto leftMagnitude = leftNegative ? std::uint64_t{0} - lhs : lhs;
@@ -1215,14 +1495,12 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                         : static_cast<std::uint64_t>(INT64_MAX);
                     carryFlag_ = overflowFlag_ = rightMagnitude != 0 &&
                         leftMagnitude > limit / rightMagnitude;
-                } else {
-                    const auto product = static_cast<std::int64_t>(static_cast<std::int32_t>(lhs)) *
-                                         static_cast<std::int64_t>(static_cast<std::int32_t>(rhs));
-                    carryFlag_ = overflowFlag_ = product < INT32_MIN || product > INT32_MAX;
                 }
                 continue;
             }
             if (second >= 0x80 && second <= 0x8F) {
+                if (operand16)
+                    throw std::runtime_error("Unsupported 16-bit near Jcc");
                 const auto displacement = readSigned32();
                 if (evaluateCondition(second & 0x0F)) jumpRelative(displacement);
                 continue;
@@ -1232,14 +1510,14 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
                 " at offset " + std::to_string(ip_ - 2));
         }
         if (opcode == 0xC9) {
-            if (wide || extended || rexR || rexX)
+            if (wide || extended || rexR || rexX || operand16)
                 throw std::runtime_error("Unsupported LEAVE prefix");
             registers_[4] = registers_[5];
             registers_[5] = pop64();
             continue;
         }
         if (opcode == 0xC3) {
-            if (wide || extended) throw std::runtime_error("Unsupported RET prefix");
+            if (wide || extended || operand16) throw std::runtime_error("Unsupported RET prefix");
             if (callDepth_ == 0) return registers_[0];
             const auto destination = pop64();
             if (destination >= program_.size()) throw std::runtime_error("Guest return outside code bounds");
@@ -1248,11 +1526,15 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             continue;
         }
         if (opcode >= 0x50 && opcode <= 0x57) {
+            if (operand16)
+                throw std::runtime_error("Unsupported 16-bit PUSH");
             const auto index = static_cast<std::size_t>(opcode - 0x50 + (extended ? 8 : 0));
             push64(registers_[index]);
             continue;
         }
         if (opcode >= 0x58 && opcode <= 0x5F) {
+            if (operand16)
+                throw std::runtime_error("Unsupported 16-bit POP");
             const auto index = static_cast<std::size_t>(opcode - 0x58 + (extended ? 8 : 0));
             registers_[index] = pop64();
             continue;
@@ -1276,21 +1558,41 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             continue;
         }
         if (opcode == 0x05 && !wide && !extended) {
-            const auto left = static_cast<std::uint32_t>(registers_[0]);
-            const auto right = read32();
-            const auto result = static_cast<std::uint32_t>(left + right);
-            registers_[0] = result;
-            zeroFlag_ = result == 0;
-            updateArithmeticFlags(left, right, result, false, false);
+            if (operand16) {
+                const auto left = static_cast<std::uint16_t>(registers_[0]);
+                const auto low = static_cast<std::uint16_t>(read8());
+                const auto high = static_cast<std::uint16_t>(read8());
+                const auto right = static_cast<std::uint16_t>(low | (high << 8));
+                const auto result = static_cast<std::uint16_t>(left + right);
+                writeOperandWidth({true, 0, 0}, result, 16);
+                updateArithmeticFlagsWidth(left, right, result, 16, false);
+            } else {
+                const auto left = static_cast<std::uint32_t>(registers_[0]);
+                const auto right = read32();
+                const auto result = static_cast<std::uint32_t>(left + right);
+                registers_[0] = result;
+                zeroFlag_ = result == 0;
+                updateArithmeticFlags(left, right, result, false, false);
+            }
             continue;
         }
         if (opcode == 0x3D && !wide && !extended) {
-            const auto left = static_cast<std::uint32_t>(registers_[0]);
-            const auto right = read32();
-            updateArithmeticFlags(left, right, static_cast<std::uint32_t>(left - right), false, true);
+            if (operand16) {
+                const auto left = static_cast<std::uint16_t>(registers_[0]);
+                const auto low = static_cast<std::uint16_t>(read8());
+                const auto high = static_cast<std::uint16_t>(read8());
+                const auto right = static_cast<std::uint16_t>(low | (high << 8));
+                updateArithmeticFlagsWidth(left, right,
+                    static_cast<std::uint16_t>(left - right), 16, true);
+            } else {
+                const auto left = static_cast<std::uint32_t>(registers_[0]);
+                const auto right = read32();
+                updateArithmeticFlags(left, right,
+                    static_cast<std::uint32_t>(left - right), false, true);
+            }
             continue;
         }
-        if (opcode == 0xE8 && !wide && !extended) {
+        if (opcode == 0xE8 && !wide && !extended && !operand16) {
             const auto displacement = readSigned32();
             const auto returnAddress = ip_;
             jumpRelative(displacement);
@@ -1298,11 +1600,11 @@ std::uint64_t GuestCpu::run(std::size_t maxInstructions) {
             ++callDepth_;
             continue;
         }
-        if (opcode == 0xE9 && !wide && !extended) {
+        if (opcode == 0xE9 && !wide && !extended && !operand16) {
             jumpRelative(readSigned32());
             continue;
         }
-        if (opcode == 0xEB && !wide && !extended) {
+        if (opcode == 0xEB && !wide && !extended && !operand16) {
             const auto offset = static_cast<std::int8_t>(read8());
             jumpRelative(offset);
             continue;
