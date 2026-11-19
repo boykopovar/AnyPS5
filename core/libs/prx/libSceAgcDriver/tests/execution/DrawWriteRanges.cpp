@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -144,6 +145,49 @@ int main() {
         Require(Contains(exact, depth.address, depth.address + depthBytes) && !Touches(exact, depth.address + depthBytes, depth.address + depthBytes + 1), "the exact depth range is not DepthSliceBytes");
         Require(Contains(exact, depth.stencilAddress, depth.stencilAddress + stencilBytes) && !Touches(exact, depth.stencilAddress + stencilBytes, depth.stencilAddress + stencilBytes + 1), "the exact stencil range is not DepthSliceBytes");
         for (const auto& [begin, end] : exact) Require(Contains(estimated, begin, end), "an exact range is not inside the estimates");
+        const auto drawRanges = [&](const ShaderRecompiler::RecompileResult& result, bool exactWrites) {
+            const std::array<AgcDriver::Graphics::CompiledShader, 1> only{{{ShaderRecompiler::ShaderStage::Fragment, &result, 0}}};
+            return DrawWriteRanges(state, only, exactWrites);
+        };
+        const auto anyAddress = [](const Ranges& ranges) { return Contains(ranges, 0, std::numeric_limits<std::uint64_t>::max()); };
+        const auto bound = [](ShaderRecompiler::DescriptorRole role) {
+            ShaderRecompiler::DescriptorBinding binding;
+            binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+            binding.role = role;
+            binding.count = 1;
+            return binding;
+        };
+        ShaderRecompiler::RecompileResult imageWriter;
+        imageWriter.bindings.push_back(images);
+        auto readingTable = imageWriter;
+        readingTable.bindings.push_back(bound(ShaderRecompiler::DescriptorRole::BdaPagetable));
+        readingTable.bdaWrites = false;
+        readingTable.spirv = std::vector<std::uint32_t>{0x07230203u, 0x00010300u, 0u, 1u, 0u};
+        auto storingTable = readingTable;
+        storingTable.bdaWrites = true;
+        auto unreadableTable = readingTable;
+        unreadableTable.spirv = ShaderRecompiler::SharedSpirv{};
+        auto gds = imageWriter;
+        gds.bindings.push_back(bound(ShaderRecompiler::DescriptorRole::Gds));
+        auto missingWords = imageWriter;
+        missingWords.bindings[0].count = 3;
+        missingWords.bindings[0].imageWritten = {true, false, true};
+        auto missingReadOnly = missingWords;
+        missingReadOnly.bindings[0].imageWritten = {true, false, false};
+        const auto gdsBase = AgcDriver::Pm4::GdsAddress();
+        for (const bool exactWrites : {false, true}) {
+            const auto reading = drawRanges(readingTable, exactWrites);
+            Require(!anyAddress(reading) && Contains(reading, written, written + surfaceBytes) && !Touches(reading, readOnly, readOnly + surfaceBytes), "a draw that only reads through its address table lost its bounds");
+            Require(anyAddress(drawRanges(storingTable, exactWrites)), "a draw that stores through its address table has bounded writes");
+            Require(anyAddress(drawRanges(unreadableTable, exactWrites)), "a draw with an address table and an unreadable module has bounded writes");
+            const auto gdsRanges = drawRanges(gds, exactWrites);
+            Require(!anyAddress(gdsRanges) && Contains(gdsRanges, gdsBase, gdsBase + AgcDriver::Pm4::GdsBytes), "a draw that binds GDS misses the GDS range");
+            Require(Contains(gdsRanges, written, written + surfaceBytes), "a draw that binds GDS lost its written image");
+            Require(anyAddress(drawRanges(missingWords, exactWrites)), "a written storage image without descriptor words has bounded draw writes");
+            Require(!anyAddress(drawRanges(missingReadOnly, exactWrites)), "a read-only storage image without descriptor words made draw writes unbounded");
+        }
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> mixed{{{ShaderRecompiler::ShaderStage::Vertex, &readingTable, 0}, {ShaderRecompiler::ShaderStage::Fragment, &storingTable, 0}}};
+        Require(anyAddress(DrawWriteRanges(targets, mixed, true)), "a draw whose second stage stores through its address table has bounded writes");
         std::printf("draw write ranges: color %zu bytes (estimate %llu), depth %llu, stencil %llu\n", color.bytes, static_cast<unsigned long long>(2 * color.bytes + 65536), static_cast<unsigned long long>(depthBytes), static_cast<unsigned long long>(stencilBytes));
         std::puts("draw write ranges tests passed");
         return 0;
