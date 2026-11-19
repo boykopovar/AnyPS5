@@ -41,6 +41,16 @@ public:
     double pageZoomFactor = 1.0;
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
+    bool isClosed = false;
+    std::optional<std::u16string> title;
+    Retained<URL> activeURL;
+    Retained<URL> provisionalURL;
+    Retained<URL> committedURL;
+    double estimatedProgress = 0.0;
+    std::optional<std::u16string> applicationNameForUserAgent;
+    std::optional<std::u16string> customUserAgent;
+    std::optional<std::u16string> customTextEncodingName;
+    bool backgroundExtendsBeyondPage = false;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
@@ -74,6 +84,27 @@ public:
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
     std::vector<std::u16string> overrideLanguages;
+
+    Retained<ProcessPoolConfiguration> Duplicate() const {
+        auto copy = Make<ProcessPoolConfiguration>();
+        copy->injectedBundlePath = injectedBundlePath;
+        copy->webProcessPath = webProcessPath;
+        copy->networkProcessPath = networkProcessPath;
+        copy->cookieStoragePath = cookieStoragePath;
+        copy->userId = userId;
+        copy->fullySynchronousModeIsAllowedForTesting = fullySynchronousModeIsAllowedForTesting;
+        copy->ignoreSynchronousMessagingTimeoutsForTesting = ignoreSynchronousMessagingTimeoutsForTesting;
+        copy->processSwapsOnNavigationFromClient = processSwapsOnNavigationFromClient;
+        copy->processSwapsOnNavigationFromExperimentalFeatures = processSwapsOnNavigationFromExperimentalFeatures;
+        copy->processSwapsOnWindowOpenWithOpener = processSwapsOnWindowOpenWithOpener;
+        copy->alwaysKeepAndReuseSwappedProcesses = alwaysKeepAndReuseSwappedProcesses;
+        copy->isAutomaticProcessWarmingEnabledByClient = isAutomaticProcessWarmingEnabledByClient;
+        copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
+        copy->usesWebProcessCache = usesWebProcessCache;
+        copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
+        copy->overrideLanguages = overrideLanguages;
+        return copy;
+    }
 };
 
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
@@ -100,6 +131,7 @@ public:
     std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
+    std::vector<std::string> fontAllowList;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
