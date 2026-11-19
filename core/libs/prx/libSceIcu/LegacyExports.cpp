@@ -2,6 +2,7 @@
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ucnv.h"
+#include <putilimp.h>
 #include <cerrno>
 #include <cstdint>
 #include <limits>
@@ -7974,8 +7975,8 @@ int APS5_VABI sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch() {
 }
 APS5_EXPORT("p0Bb5fo1gx8", sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch);
 
-int APS5_VABI uprv_tzname_clear_cache_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI uprv_tzname_clear_cache_nid_postfix() {
+    uprv_tzname_clear_cache();
 }
 
 int APS5_VABI sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch() {
