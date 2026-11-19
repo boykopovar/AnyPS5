@@ -1053,7 +1053,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_vr_tracker_tests tests/GuestVrTracker.cpp)
     target_include_directories(guest_vr_tracker_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_vr_tracker_tests PRIVATE libSceVrTracker libc)
+    target_link_libraries(guest_vr_tracker_tests PRIVATE libSceVrTracker libkernel libc)
     configure_windows_unwind(guest_vr_tracker_tests)
     add_test(NAME guest_vr_tracker COMMAND guest_vr_tracker_tests)
     if(WIN32)
