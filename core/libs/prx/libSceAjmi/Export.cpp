@@ -210,9 +210,10 @@ int APS5_VABI sceAjmiStrError() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchJobControlBufferRa() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI sceAjmiBatchJobControlBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* sidebandInput, std::size_t sidebandInputSize, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress) {
+    return sceAjmBatchJobControlBufferRa_nid_disambig1(position, instance, flags, sidebandInput, sidebandInputSize, sidebandOutput, sidebandOutputSize, returnAddress);
 }
+APS5_EXPORT("J3UwQ5e6sNU", sceAjmiBatchJobControlBufferRa_nid_no_patch);
 
 int APS5_VABI sceAjmiInstanceSwitch() {
     NotImplemented_nid_no_patch(__func__);
@@ -267,8 +268,9 @@ int APS5_VABI sceAjmiInstanceExtend() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchJobRunSplitBufferRa() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI sceAjmiBatchJobRunSplitBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* inputBuffers, std::size_t inputBuffersNum, const AjmBuffer* outputBuffers, std::size_t outputBuffersNum, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress) {
+    return sceAjmBatchJobRunSplitBufferRa_nid_disambig1(position, instance, flags, inputBuffers, inputBuffersNum, outputBuffers, outputBuffersNum, sidebandOutput, sidebandOutputSize, returnAddress);
 }
+APS5_EXPORT("r7NMFYcJi08", sceAjmiBatchJobRunSplitBufferRa_nid_no_patch);
 
 }
