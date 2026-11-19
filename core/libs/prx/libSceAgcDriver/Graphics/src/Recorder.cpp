@@ -4940,6 +4940,7 @@ void Recorder::FinishUpTo(std::uint64_t serial) {
         try {
             finish(std::move(batch), true, 0, false, !draining);
         } catch (...) {
+            if (validationFailure == nullptr) throw;
             if (!failure) failure = std::current_exception();
             draining = true;
         }
@@ -4965,6 +4966,7 @@ void Recorder::Sync() {
         try {
             finish(std::move(batch), true, source, false, !draining);
         } catch (...) {
+            if (validationFailure == nullptr) throw;
             if (!failure) failure = std::current_exception();
             draining = true;
         }
@@ -5046,6 +5048,7 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         try {
             finish(std::move(batch), true, source, false, !draining);
         } catch (...) {
+            if (validationFailure == nullptr) throw;
             if (!failure) failure = std::current_exception();
             draining = true;
         }
@@ -5245,6 +5248,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
         try {
             finish(std::move(batch), true, source, false, !draining);
         } catch (...) {
+            if (validationFailure == nullptr) throw;
             if (!failure) failure = std::current_exception();
             draining = true;
         }
@@ -5296,6 +5300,7 @@ bool Recorder::Reap() {
         try {
             finish(std::move(batch), false, 4, false, !draining);
         } catch (...) {
+            if (validationFailure == nullptr) throw;
             if (!failure) failure = std::current_exception();
             draining = true;
         }
