@@ -67,6 +67,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MoveMaskLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/VariableShiftLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -183,6 +184,11 @@ if(BUILD_TESTING)
     target_link_libraries(variable_shift_lowering_tests PRIVATE relinker_core)
     add_test(NAME variable_shift_lowering COMMAND variable_shift_lowering_tests)
     set_tests_properties(variable_shift_lowering PROPERTIES TIMEOUT 60)
+
+    add_test_executable(gather_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/GatherLoweringTests.cpp)
+    target_link_libraries(gather_lowering_tests PRIVATE relinker_core)
+    add_test(NAME gather_lowering COMMAND gather_lowering_tests)
+    set_tests_properties(gather_lowering PROPERTIES TIMEOUT 60)
 
     add_test_executable(masked_store_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/MaskedStoreLoweringTests.cpp)
     target_link_libraries(masked_store_lowering_tests PRIVATE relinker_core)
@@ -354,6 +360,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MoveMaskLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/VariableShiftLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
     )
     target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
@@ -680,6 +687,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MoveMaskLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/VariableShiftLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
