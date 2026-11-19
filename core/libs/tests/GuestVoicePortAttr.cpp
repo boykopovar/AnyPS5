@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -66,6 +67,8 @@ int main() {
                 Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == 0);
                 Require(buffer[0] == original[0] && buffer[1] == 0 && buffer[2] == original[2]);
                 Require(buffer[3] == original[3] && buffer[4] == original[4] && buffer[5] == original[5]);
+                errno = 42;
+                Require(sceVoiceGetPortAttr(port, attr, reinterpret_cast<void*>(0x10), size) == invalidArgument && errno == 42);
                 buffer = original;
             } else if (type == (attr == 1003 ? 5 : 0)) {
                 Require(Throws([&] { sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size); }, "device attribute backend"));

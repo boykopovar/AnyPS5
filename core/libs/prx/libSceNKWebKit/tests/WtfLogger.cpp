@@ -62,6 +62,12 @@ void TestLogSiteIdentifier() {
     RequireText(_ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&highByte), "caf\xE9::m(1) ");
     RequireThrows([&] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&nullMethod); });
     RequireThrows([] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(nullptr); });
+    const auto* const unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    const NKWebKit::WtfAbi::LogSiteIdentifier unreadableClass{unmapped, "run", 1};
+    const NKWebKit::WtfAbi::LogSiteIdentifier unreadableMethod{"Cls", unmapped, 1};
+    RequireThrows([] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(reinterpret_cast<const NKWebKit::WtfAbi::LogSiteIdentifier*>(std::uintptr_t{0x10})); });
+    RequireThrows([&] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&unreadableClass); });
+    RequireThrows([&] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&unreadableMethod); });
     std::printf("WTF::Logger::LogSiteIdentifier::toString: names and hex passed\n");
 }
 
