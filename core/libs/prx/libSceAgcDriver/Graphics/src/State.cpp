@@ -146,6 +146,13 @@ void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, 
     if ((value & mask) != 0) throw std::runtime_error(zeroMessage(offset, value, name));
 }
 
+bool viewportProgrammed(const Registers& registers) {
+    for (std::uint32_t word = 0; word < 6; ++word) {
+        if (read(registers, 0x10f + word) != (word % 2 == 0 ? 0x3f800000u : 0u)) return true;
+    }
+    return false;
+}
+
 std::string vteMessage(std::uint32_t viewportControl) {
     std::ostringstream message;
     message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms, or 0 for positions without a viewport transform; other combinations are unsupported";
@@ -1918,7 +1925,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
     bool collapsed = false;
-    if (viewportControl == 0u) {
+    if (viewportControl == 0u && !viewportProgrammed(cx)) {
         result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
     } else {
         const auto xs = readFloat(cx, 0x10f);
@@ -2726,7 +2733,7 @@ bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTa
     }
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
-    const bool viewportCovers = viewportControl == 0u || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
+    const bool viewportCovers = (viewportControl == 0u && !viewportProgrammed(cx)) || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
     const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= extent.width && covered.extent.height >= extent.height;
     return viewportCovers && scissorCovers;
 }

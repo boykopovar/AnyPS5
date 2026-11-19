@@ -915,6 +915,84 @@
           ]
         }
       ]
+    },
+    {
+      "id": "ds-write-src2-b64-unaligned-positive",
+      "instruction": "ds_write_src2_b64",
+      "description": "Aligned and four-byte-misaligned addresses with a positive qword displacement on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[4:5]\nds_write_b64 v8, v[6:7] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_write_src2_b64 v20 offset:2\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "unaligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "aligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
+    },
+    {
+      "id": "ds-write-src2-b64-unaligned-negative",
+      "instruction": "ds_write_src2_b64",
+      "description": "Aligned and four-byte-misaligned addresses with a negative qword displacement on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, 8, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[6:7]\nds_write_b64 v8, v[4:5] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_write_src2_b64 v20 offset:32766\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "unaligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "aligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
+    },
+    {
+      "id": "ds-add-src2-u64-unaligned-positive",
+      "instruction": "ds_add_src2_u64",
+      "description": "Aligned and four-byte-misaligned 64-bit atomic add addresses on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[4:5]\nds_write_b64 v8, v[6:7] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_add_src2_u64 v20 offset:2\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x00000001", "0x00000002", "0x00000003", "0x00000004"]},
+        {"name": "unaligned-distinct", "input": ["0x00000001", "0x00000002", "0x00000003", "0x00000004"]},
+        {"name": "aligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
     }
   ]
 }

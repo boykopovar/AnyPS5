@@ -148,6 +148,13 @@ int DocumentGetStatus(const XmlHandle* document) {
     return Live(document).status;
 }
 
+void DocumentResetStatus(const XmlHandle* document) {
+    if (document == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    if (document->impl == nullptr) return;
+    Live(document);
+    RefOf(document)->generation->status = 0;
+}
+
 bool DocumentIsReadOnly(const XmlHandle* document) {
     if (document == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
     if (document->impl == nullptr) return true;

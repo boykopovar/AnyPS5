@@ -253,6 +253,8 @@ void SignatureGuestPointers() {
 }
 
 int main() {
+    u_flushDefaultConverter_nid_postfix();
+    u_flushDefaultConverter_nid_postfix();
     NameMatching();
     Signatures();
     SignatureGuestPointers();
