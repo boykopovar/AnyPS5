@@ -304,6 +304,42 @@ void RotatesNothingWithoutLimit() {
     Require(Slurp(path).size() == 550, "a file with no limit lost lines");
 }
 
+void RotationFailureKeepsAppending() {
+    const auto path = g_directory / "rotate-blocked.log";
+    const std::filesystem::path older = RotatedName(path.string(), 1);
+    const std::filesystem::path blocker = RotatedName(path.string(), 2);
+    for (const auto& leftover : {path, older, blocker}) std::filesystem::remove_all(leftover);
+    std::ofstream(older, std::ios::binary) << "older\n";
+    std::filesystem::create_directory(blocker);
+    std::ofstream(blocker / "kept.txt", std::ios::binary) << "kept\n";
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open for the blocked rotation");
+    Pipe terminalError;
+    Require(MakePipe(terminalError, error), "terminal pipe");
+    std::string expected;
+    {
+        Tee tee(file, NoHandle, terminalError.write, NoHandle, NoHandle);
+        tee.SetRotation(path.string(), 10, 2);
+        for (int index = 0; index < 20; ++index) {
+            const std::string line = "line " + std::to_string(index) + "\n";
+            tee.Note(line.data(), line.size());
+            expected += line;
+        }
+        tee.Flush(true);
+        Require(!tee.FileFailed(), "a blocked rotation was recorded as a write failure");
+    }
+    Require(Slurp(path) == expected, "the live file stopped growing or lost lines after the rotation failed");
+    Require(Slurp(older) == "older\n", "a rotated file was changed by the blocked rotation");
+    Require(std::filesystem::is_directory(blocker) && Slurp(blocker / "kept.txt") == "kept\n", "the blocking directory was touched");
+    const std::string notices = Drain(terminalError.read);
+    std::size_t count = 0;
+    for (auto at = notices.find("could not be rotated"); at != std::string::npos; at = notices.find("could not be rotated", at + 1)) ++count;
+    Require(count == 1, "the rotation failure was not reported exactly once on the terminal");
+    Close(terminalError.read);
+    Close(terminalError.write);
+}
+
 void InvalidLimitsStopBeforeOpening() {
     const auto path = g_directory / "limits-refused.log";
     std::filesystem::remove(path);
@@ -777,6 +813,7 @@ int main(int argc, char** argv) {
     RotationPolicy();
     RotatesWhenFull();
     RotatesNothingWithoutLimit();
+    RotationFailureKeepsAppending();
     InvalidLimitsStopBeforeOpening();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
