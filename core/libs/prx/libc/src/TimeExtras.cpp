@@ -59,9 +59,10 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base) {
     if (time == nullptr || base != timeUtc) return 0;
     const std::int64_t micros = _Xtime_get_ticks_nid_postfix();
-    time->sec = floorDivide(micros, 1000000);
-    time->nsec = (micros - time->sec * 1000000) * 1000;
-    return timeUtc;
+    Xtime now{};
+    now.sec = floorDivide(micros, 1000000);
+    now.nsec = (micros - now.sec * 1000000) * 1000;
+    return GuestCopyOut_nid_no_patch(time, &now, sizeof(now)) ? timeUtc : 0;
 }
 
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time) {
