@@ -241,6 +241,9 @@ class PublicHeaderPackageTests(unittest.TestCase):
             (directory / "Link").symlink_to(target, target_is_directory=True)
         except OSError as error:
             self.skipTest(str(error))
+        spelled = directory / "Link" / ".." / "Dependency.hpp"
+        if os.path.realpath(spelled) == os.path.realpath(os.path.abspath(spelled)):
+            self.skipTest("host resolves the symlink-parent path without changing its target")
         self.api.write_text('#include "Link/../Dependency.hpp"\n', encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "changes when normalized"):
             package_headers.package(self.source, self.output, "v1")
