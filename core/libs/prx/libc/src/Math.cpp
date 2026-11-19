@@ -5538,7 +5538,6 @@ long double APS5_VABI tanl_nid_postfix(long double x) { return TanlMsun(x); }
 long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
-long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return Expm1lMsun(x); }
 long double APS5_VABI erfl_nid_postfix(long double x) { return ErflMsun(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return ErfclMsun(x); }

@@ -2941,18 +2941,32 @@ int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
         return ::inet_pton(family, text.c_str(), address);
 #endif
     };
-    const std::string head(src, std::strcspn(src, " \t\n\v\f\r"));
+    std::string head;
+    bool whitespace = false;
+    for (auto current = reinterpret_cast<std::uintptr_t>(src);; ++current) {
+        char byte = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&byte, reinterpret_cast<const void*>(current), sizeof(byte));
+        errno = savedErrno;
+        if (!copied) return fail(NET_EFAULT);
+        if (byte == '\0') break;
+        if (std::string_view(" \t\n\v\f\r").find(byte) != std::string_view::npos) {
+            whitespace = true;
+            break;
+        }
+        head.push_back(byte);
+        if (current == UINTPTR_MAX) return fail(NET_EFAULT);
+    }
     const auto colon = head.rfind(':');
     const bool dottedTail = af == NET_AF_INET6 && colon != std::string::npos && head.find('.', colon) != std::string::npos;
     std::array<unsigned char, 16> address{};
     if (dottedTail && convert(AF_INET, head.substr(colon + 1), address.data()) != 1) {
         return 0;
     }
-    const std::string text = af == NET_AF_INET || dottedTail ? head : std::string(src);
-    const int converted = af == NET_AF_INET6 ? __inet_pton_nid_postfix(af, text.c_str(), address.data()) : convert(AF_INET, text, address.data());
-    if (converted == 1 && dst != nullptr) {
-        std::memcpy(dst, address.data(), af == NET_AF_INET ? 4 : 16);
-    }
+    if (af == NET_AF_INET6 && !dottedTail && whitespace) return 0;
+    const int converted = af == NET_AF_INET6 ? __inet_pton_nid_postfix(af, head.c_str(), address.data()) : convert(AF_INET, head, address.data());
+    if (converted == 1 && dst != nullptr &&
+        !GuestCopyOut_nid_no_patch(dst, address.data(), af == NET_AF_INET ? 4 : 16)) return fail(NET_EFAULT);
     return converted;
 }
 
@@ -3629,24 +3643,47 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
     }
     const std::array<unsigned char, 4> bytes{static_cast<unsigned char>(address >> 24), static_cast<unsigned char>(address >> 16),
                                              static_cast<unsigned char>(address >> 8), static_cast<unsigned char>(address)};
-    std::memcpy(dst, bytes.data(), bytes.size());
-    return 1;
+    return GuestCopyOut_nid_no_patch(dst, bytes.data(), bytes.size()) ? 1 : fail(NET_EFAULT);
 }
 
 int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     constexpr std::uint32_t nonblockingRequest = 0x8004667e;
     constexpr std::uint32_t readableRequest = 0x4004667f;
+    constexpr std::uint32_t requestIn = 0x80000000u;
+    constexpr std::uint32_t requestOut = 0x40000000u;
+    constexpr std::uint32_t requestVoid = 0x20000000u;
+    constexpr std::array<std::uint32_t, 3> socketRequests{0x40047307u, 0x80047308u, 0x40047309u};
     std::shared_ptr<NativeSocketHandle> native;
+    int family = 0;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(socketId);
-        if (it != g_socks.end()) native = it->second.native;
+        if (it != g_socks.end()) {
+            native = it->second.native;
+            family = it->second.family;
+        }
     }
     if (!native) {
         if (!GuestSocketIsOpen_nid_no_patch(socketId)) return fail(NET_EBADF);
         return ioctl_nid_postfix(socketId, command, argument) == 0 ? 0 : fail(*__error_nid_postfix());
     }
-    if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
+    if (command != nonblockingRequest && command != readableRequest) {
+        const std::uint32_t length = (command >> 16) & 0x1fff;
+        if ((command & (requestIn | requestOut | requestVoid)) == 0 || ((command & (requestIn | requestOut)) != 0 && length == 0) ||
+            ((command & requestVoid) != 0 && length != 0 && length != sizeof(int)))
+            return fail(NET_ENOTTY);
+        if ((command & requestIn) != 0 && (command & requestVoid) == 0) {
+            std::vector<unsigned char> input(length);
+            if (!GuestCopyIn_nid_no_patch(input.data(), argument, length)) return fail(NET_EFAULT);
+        }
+        const char group = static_cast<char>((command >> 8) & 0xff);
+        const std::uint32_t number = command & 0xff;
+        if (group == 'i' || group == 'r' || group == 'f' || std::find(socketRequests.begin(), socketRequests.end(), command) != socketRequests.end())
+            return fail(NET_ENOTTY);
+        if (family == NET_AF_INET) return fail(NET_EADDRNOTAVAIL);
+        if (family != NET_AF_INET6 || (group == 'u' && number >= 106 && number <= 109)) return fail(NET_ENOTTY);
+        return fail(NET_EOPNOTSUPP);
+    }
     if (!argument) return fail(NET_EFAULT);
     if (command == nonblockingRequest) {
         int enable = 0;

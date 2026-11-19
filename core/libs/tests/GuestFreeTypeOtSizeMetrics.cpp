@@ -66,6 +66,16 @@ template <typename TCall> bool Throws(TCall call) {
     return false;
 }
 
+template <typename TCall> bool Invalid(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
 bool Equals(const GuestSizeMetrics& m, std::uint16_t xPpem, std::uint16_t yPpem, std::int64_t xScale, std::int64_t yScale, std::int64_t ascender, std::int64_t descender, std::int64_t height, std::int64_t maxAdvance) {
     return m.x_ppem == xPpem && m.y_ppem == yPpem && m.x_scale == xScale && m.y_scale == yScale && m.ascender == ascender && m.descender == descender &&
         m.height == height && m.max_advance == maxAdvance;
@@ -115,7 +125,12 @@ void SelectMetrics() {
     Fixture bitmap(2);
     FT_Select_Metrics_nid_postfix(&bitmap.face, 2);
     Require(Equals(bitmap.size.metrics, 18, 16, 65536, 65536, 1024, 0, 1024, 1152), "a bitmap face copies the strike metrics");
-    Require(Throws([&] { FT_Select_Metrics_nid_postfix(&bitmap.face, 3); }), "a strike index past the table throws");
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&bitmap.face, 3); }), "a strike index past the table throws");
+
+    Fixture missingTable(3);
+    missingTable.face.available_sizes = nullptr;
+    Require(Invalid([&] { FT_Select_Metrics_nid_postfix(&missingTable.face, 0); }), "a missing strike table throws");
+    Require(Invalid([] { FT_Select_Metrics_nid_postfix(nullptr, 0); }), "a null face throws");
 }
 
 void MatchSize() {
@@ -138,16 +153,6 @@ void MatchSize() {
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0x07, "only nominal requests are matched");
     Fixture outlineOnly(1);
     Require(FT_Match_Size_nid_postfix(&outlineOnly.face, nullptr, 0, &index) == 0x23, "a face without strikes is an invalid face handle");
-}
-
-template <typename TCall> bool Invalid(TCall call) {
-    errno = 71;
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return errno == 71;
-    }
-    return false;
 }
 
 template <typename TCall> bool InvalidArgument(TCall call) {

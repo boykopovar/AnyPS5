@@ -1079,6 +1079,56 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             Require(value == 0xff000000, "cached sampled image ignored copied compression-metadata writes");
         }
     }
+    {
+        TextureDetiler detiler(context);
+        auto imageContext = context;
+        imageContext.detiler = &detiler;
+        TextureCache textureCache(imageContext);
+        imageContext.textureCache = &textureCache;
+        struct Clear {
+            const Context& context;
+            Recorder& recorder;
+            ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+        } clear{context, recorder};
+        const auto linearView = [&](std::uint32_t pitchField, std::uint32_t format = 56u, std::uint64_t base = 0) {
+            const auto at = address + base;
+            ShaderRecompiler::RecompileResult program;
+            ShaderRecompiler::DescriptorBinding binding;
+            binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+            binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+            binding.descriptorSet = 0;
+            binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+            binding.count = 1;
+            binding.imageSamplers = {0};
+            binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+            binding.guestDescriptor = {static_cast<std::uint32_t>(at >> 8), static_cast<std::uint32_t>(at >> 40) | (format << 20) | (3u << 30), 15u | (63u << 14), 0x90000fac, pitchField, 0, 0, 0};
+            program.bindings.push_back(binding);
+            return program;
+        };
+        const auto narrowProgram = linearView(0);
+        const auto widePitchProgram = linearView(64);
+        const CompiledShader narrow{ShaderRecompiler::ShaderStage::Compute, &narrowProgram, 0};
+        const CompiledShader widePitch{ShaderRecompiler::ShaderStage::Compute, &widePitchProgram, 0};
+        recorder.Sync();
+        auto first = std::make_shared<ShaderResources>(imageContext, narrow);
+        recorder.Sync();
+        if (first->StorageImages().size() != 1) {
+            std::cout << "skipped, host imports are unavailable: a linear view with another pitch not tested\n";
+        } else {
+            auto second = std::make_shared<ShaderResources>(imageContext, widePitch);
+            Require(second->SampledTextures().size() == 1, "a linear view with another pitch over the same surface made no texture");
+            recorder.Keep(second);
+            const auto repackedProgram = linearView(0, 43u, 65536);
+            const CompiledShader repackedView{ShaderRecompiler::ShaderStage::Compute, &repackedProgram, 0};
+            auto repacked = std::make_shared<ShaderResources>(imageContext, repackedView);
+            recorder.Sync();
+            Require(repacked->SampledTextures().size() == 1 && repacked->SampledTextures().front()->SharedStorageSource() != nullptr, "a repacked 10_11_11 view lost its storage source");
+            recorder.Keep(repacked);
+            std::cout << "a linear view with another pitch does not reuse the surface's storage image: ok\n";
+        }
+        recorder.Keep(first);
+        recorder.Sync();
+    }
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
