@@ -104,6 +104,7 @@ downloads/
 !demo/web/i18n/*.json
 !/docs/run-report.schema.json
 !/docs/run-report-fixtures/*.json
+!/cmake/IcuDataFilter.json
 !tools/titles.json
 !tools/input-mapper/package.json
 
