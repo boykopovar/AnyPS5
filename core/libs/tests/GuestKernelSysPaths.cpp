@@ -32,6 +32,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef __linux__
+#include <csignal>
+#include <sched.h>
+#include <sys/prctl.h>
+#include <sys/wait.h>
+#endif
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -249,6 +255,47 @@ int main(int argc, char** argv) {
                 Require(call(variant, "p2/missing", output.data(), output.size()) == -1 && *error() == 2);
             }
         }
+    } else if (test == "readlink_remounts") {
+#ifdef __linux__
+        const auto read = LoadFunction<std::int64_t (APS5_VABI*)(const char*, char*, std::size_t)>(sys, "readlink", patched);
+        const auto unshares = [] {
+            const pid_t child = fork();
+            if (child == 0) _exit(unshare(CLONE_NEWUSER | CLONE_NEWNS) == 0 ? 0 : 1);
+            int status = 0;
+            return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        };
+        if (!unshares()) {
+            std::fputs("SKIP: unprivileged user and mount namespaces unavailable\n", stderr);
+            skipped = true;
+        } else {
+            Require(std::filesystem::create_directory(root / "end"));
+            Require(!MakeLink("end", root / "p31", true));
+            for (int index = 30; index > 0; --index)
+                Require(!MakeLink("p" + std::to_string(index + 1), root / ("p" + std::to_string(index)), true));
+            Require(!MakeLink("cycle", root / "end" / "cycle", false));
+            const pid_t churn = fork();
+            Require(churn >= 0);
+            if (churn == 0) {
+                prctl(PR_SET_PDEATHSIG, SIGKILL);
+                while (unshares()) {}
+                _exit(1);
+            }
+            const auto path = (root / "p1" / "cycle").generic_string();
+            std::array<char, 16> output{};
+            int failures = 0;
+            for (int call = 0; call < 20000; ++call)
+                if (read(path.c_str(), output.data(), output.size()) != 5) ++failures;
+            int status = 0;
+            const bool churning = waitpid(churn, &status, WNOHANG) == 0;
+            kill(churn, SIGKILL);
+            waitpid(churn, &status, 0);
+            if (failures != 0) std::fprintf(stderr, "readlink through 31 links failed %d of 20000 times while mount namespaces were created\n", failures);
+            Require(churning && failures == 0);
+        }
+#else
+        std::fputs("SKIP: mount namespaces are Linux only\n", stderr);
+        skipped = true;
+#endif
     } else if (test == "symlinkat") {
         const auto link = LoadFunction<int (APS5_VABI*)(const char*, int, const char*)>(sys, "symlinkat", patched);
         *error() = 71;
