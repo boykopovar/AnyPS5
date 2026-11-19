@@ -3,12 +3,21 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -127,6 +136,114 @@ void AllocationFailures() {
     Require(allocations.empty());
 }
 
+void GuestPointerValidation() {
+    struct ProtectedPages {
+        std::size_t pageSize = 0;
+        std::uint8_t* base = nullptr;
+        ProtectedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize;
+            base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096u;
+            void* mapped = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<std::uint8_t*>(mapped);
+#endif
+        }
+        ~ProtectedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, 2 * pageSize);
+#endif
+        }
+        void Protect() {
+#ifdef _WIN32
+            DWORD previous = 0;
+            Require(VirtualProtect(base, pageSize, PAGE_READONLY, &previous) != 0);
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+            Require(mprotect(base, pageSize, PROT_READ) == 0);
+            Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+        }
+    } pages;
+
+    auto* const validStack = sk_new_nid_postfix(nullptr);
+    Require(validStack != nullptr);
+    const std::size_t allocsBefore = allocations.size();
+
+    LibreSslStack roTemplate = *validStack;
+    std::memcpy(pages.base, &roTemplate, sizeof(roTemplate));
+    LibreSslStack roGrowTemplate = *validStack;
+    roGrowTemplate.num = roGrowTemplate.numAlloc - 1;
+    std::memcpy(pages.base + 256, &roGrowTemplate, sizeof(roGrowTemplate));
+    std::memset(pages.base + 512, 0xa5, 64);
+    pages.Protect();
+
+    auto* const roStack = reinterpret_cast<LibreSslStack*>(pages.base);
+    auto* const roGrowStack = reinterpret_cast<LibreSslStack*>(pages.base + 256);
+    auto** const roData = reinterpret_cast<char**>(pages.base + 512);
+    auto* const noAccess = pages.base + pages.pageSize;
+    auto* const unmapped = reinterpret_cast<void*>(std::uintptr_t{1});
+
+    auto expectInvalid = [&](LibreSslStack* target, void* element) {
+        errno = E2BIG;
+        bool threw = false;
+        try {
+            sk_push_nid_postfix(target, element);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(errno == E2BIG);
+        Require(allocations.size() == allocsBefore);
+    };
+
+    expectInvalid(nullptr, Item(0));
+    expectInvalid(reinterpret_cast<LibreSslStack*>(unmapped), Item(0));
+    expectInvalid(reinterpret_cast<LibreSslStack*>(noAccess), Item(0));
+    expectInvalid(roStack, Item(0));
+    expectInvalid(roGrowStack, Item(0));
+    Require(roStack->num == 0 && roStack->numAlloc == 4 && roStack->sorted == 0);
+    Require(roGrowStack->num == 3 && roGrowStack->numAlloc == 4 && roGrowStack->sorted == 0);
+
+    LibreSslStack badDataStack{};
+    badDataStack.num = 0;
+    badDataStack.numAlloc = 4;
+    badDataStack.sorted = 1;
+
+    badDataStack.data = reinterpret_cast<char**>(unmapped);
+    expectInvalid(&badDataStack, Item(0));
+    Require(badDataStack.num == 0 && badDataStack.numAlloc == 4 && badDataStack.sorted == 1);
+
+    badDataStack.data = reinterpret_cast<char**>(noAccess);
+    expectInvalid(&badDataStack, Item(0));
+    Require(badDataStack.num == 0 && badDataStack.numAlloc == 4 && badDataStack.sorted == 1);
+
+    badDataStack.data = roData;
+    expectInvalid(&badDataStack, Item(0));
+    Require(badDataStack.num == 0 && badDataStack.numAlloc == 4 && badDataStack.sorted == 1);
+
+    badDataStack.num = 3;
+    badDataStack.data = reinterpret_cast<char**>(unmapped);
+    expectInvalid(&badDataStack, Item(0));
+    Require(badDataStack.num == 3 && badDataStack.numAlloc == 4 && badDataStack.sorted == 1);
+
+    badDataStack.data = roData;
+    expectInvalid(&badDataStack, Item(0));
+    Require(badDataStack.num == 3 && badDataStack.numAlloc == 4 && badDataStack.sorted == 1);
+
+    sk_free_nid_postfix(validStack);
+    Require(allocations.empty());
+}
+
 }
 
 int main() {
@@ -139,5 +256,6 @@ int main() {
     Growth();
     FreeNull();
     AllocationFailures();
+    GuestPointerValidation();
     std::puts("libSceLibreSsl3 stack tests passed");
 }

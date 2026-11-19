@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -211,6 +212,7 @@ void Driver::stop() {
     PerformanceTrace::StopOutput();
     FlushAsyncLogAtEnd_nid_no_patch();
     StopProfileOutput_nid_no_patch();
+    CaptureTrace::Stop();
     stopped = true;
 }
 
