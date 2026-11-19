@@ -134,4 +134,13 @@ std::int32_t APS5_VABI uloc_getDisplayCountry_nid_postfix(
     return Display(locale, displayLocale, country, countryCapacity, status, uloc_getDisplayCountry, __func__);
 }
 
+std::int32_t APS5_VABI uloc_getDisplayVariant_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* variant,
+    std::int32_t variantCapacity,
+    std::int32_t* status) {
+    return Display(locale, displayLocale, variant, variantCapacity, status, uloc_getDisplayVariant, __func__);
+}
+
 }
