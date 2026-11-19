@@ -727,5 +727,31 @@ class BlobTextsTests(unittest.TestCase):
         self.assertEqual(texts["aaa"], "\ufffd\ufffd")
 
 
+class BaseSourcesTests(unittest.TestCase):
+    def listing(self, *entries):
+        return "".join(f"{mode} {kind} {blob}\t{name}\0" for mode, kind, blob, name in entries).encode()
+
+    def test_keeps_only_regular_non_test_cpp_blobs(self):
+        output = self.listing(
+            ("100644", "blob", "a1", "core/libs/prx/libX/Export.cpp"),
+            ("100644", "blob", "a2", "core/libs/prx/libX/src/Impl.cpp"),
+            ("100644", "blob", "b1", "core/libs/prx/libX/Export.hpp"),
+            ("120000", "blob", "b2", "core/libs/prx/libX/Link.cpp"),
+            ("100644", "blob", "b3", "core/libs/prx/libX/tests/Test.cpp"),
+            ("100644", "blob", "b4", "core/libs/prx/libX/Tests/Case.cpp"),
+            ("160000", "commit", "b5", "core/libs/prx/libX/sub.cpp"),
+        )
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            sources = pr_overlap.base_sources("root", "refs/pr/base")
+        self.assertEqual(sources, [("a1", "core/libs/prx/libX/Export.cpp"), ("a2", "core/libs/prx/libX/src/Impl.cpp")])
+        self.assertEqual(run.call_args.args[0][-4:], ["-z", "refs/pr/base", "--", "core/libs"])
+
+    def test_empty_listing_has_no_sources(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b""
+            self.assertEqual(pr_overlap.base_sources("root", "ref"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
