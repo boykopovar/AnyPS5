@@ -7,6 +7,8 @@ namespace Icu {
 struct Converter;
 } // namespace Icu
 
+struct UEnumeration;
+
 extern "C" {
 
 int APS5_VABI sceIcuLegacyUnknown__plus__plus_DD8eRY6mw_nid_no_patch();
@@ -287,7 +289,7 @@ int APS5_VABI sceIcuLegacyUnknown_661mp52xIO4_nid_no_patch();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer213normalizeUTF8EjNS_11StringPieceERNS_8ByteSinkEPNS_5EditsER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EEaSEOS1__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_68uKzUhNGcw_nid_no_patch();
-int APS5_VABI ucnv_openAllNames_nid_postfix();
+UEnumeration* APS5_VABI ucnv_openAllNames_nid_postfix(std::int32_t*);
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator18handleSafePreviousEi_nid_postfix();
 int APS5_VABI utext_current32_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_6E6JYwebVac_nid_no_patch();
