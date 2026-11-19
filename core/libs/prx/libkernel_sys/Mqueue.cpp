@@ -1,13 +1,14 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include <cerrno>
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -34,6 +35,7 @@ constexpr int GuestEagain = 35;
 constexpr int GuestEmsgsize = 40;
 constexpr int GuestEtimedout = 60;
 constexpr int GuestEnametoolong = 63;
+constexpr int GuestClockRealtime = 0;
 constexpr int GuestOAccmode = 0x0003;
 constexpr int GuestOWronly = 0x0001;
 constexpr int GuestORdwr = 0x0002;
@@ -55,8 +57,8 @@ struct Message {
 
 struct Queue {
     std::mutex lock;
-    std::condition_variable readable;
-    std::condition_variable writable;
+    TimedWait::Condition readable;
+    TimedWait::Condition writable;
     std::int64_t maxmsg = DefaultMessages;
     std::int64_t msgsize = DefaultMessageSize;
     std::vector<Message> messages;
@@ -110,25 +112,45 @@ int CheckName(const char* path, std::string& name) {
     return 0;
 }
 
-std::chrono::system_clock::time_point Deadline(const GuestTimespec* abstime) {
-    using Clock = std::chrono::system_clock;
-    const std::int64_t maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::duration::max()).count();
-    if (abstime->seconds >= maxSeconds) return Clock::time_point::max();
-    if (abstime->seconds <= -maxSeconds) return Clock::time_point::min();
-    return Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(abstime->seconds)) +
-                            std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(abstime->nanoseconds)));
+std::uint64_t MonotonicDeadline(const GuestTimespec* abstime) {
+    KernelTimespec realtime{};
+    clock_gettime_nid_postfix(GuestClockRealtime, &realtime);
+    const std::uint64_t monotonic = TimedWait::NowNanos();
+    if (abstime->seconds < realtime.tv_sec ||
+        (abstime->seconds == realtime.tv_sec && abstime->nanoseconds <= realtime.tv_nsec)) return monotonic;
+    std::uint64_t seconds = static_cast<std::uint64_t>(abstime->seconds) - static_cast<std::uint64_t>(realtime.tv_sec);
+    std::int64_t nanoseconds = abstime->nanoseconds - realtime.tv_nsec;
+    if (nanoseconds < 0) {
+        --seconds;
+        nanoseconds += 1000000000;
+    }
+    constexpr std::uint64_t NanosecondsPerSecond = 1000000000ULL;
+    const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+    if (seconds > (maximum - monotonic) / NanosecondsPerSecond) return maximum;
+    const std::uint64_t deadline = monotonic + seconds * NanosecondsPerSecond;
+    const std::uint64_t remainder = static_cast<std::uint64_t>(nanoseconds);
+    return remainder > maximum - deadline ? maximum : deadline + remainder;
 }
 
 template <typename Ready>
-int WaitFor(const Open& open, std::unique_lock<std::mutex>& lock, std::condition_variable& signal, const GuestTimespec* abstime, Ready ready) {
+int WaitFor(const Open& open, std::unique_lock<std::mutex>& lock, TimedWait::Condition& signal, const GuestTimespec* abstime, Ready ready) {
     if (ready()) return 0;
     if (open.nonblocking) return GuestEagain;
     if (abstime == nullptr) {
-        signal.wait(lock, ready);
+        signal.Wait(lock, ready);
         return 0;
     }
     if (abstime->nanoseconds < 0 || abstime->nanoseconds >= 1000000000) return GuestEinval;
-    return signal.wait_until(lock, Deadline(abstime), ready) ? 0 : GuestEtimedout;
+    const std::uint64_t deadline = MonotonicDeadline(abstime);
+    constexpr std::uint64_t MaxWaitChunkNanos = 24ULL * 60 * 60 * 1000000000ULL;
+    for (;;) {
+        const std::uint64_t now = TimedWait::NowNanos();
+        if (deadline <= now) return ready() ? 0 : GuestEtimedout;
+        const std::uint64_t remaining = deadline - now;
+        const std::uint64_t chunk = remaining < MaxWaitChunkNanos ? remaining : MaxWaitChunkNanos;
+        if (signal.WaitUntil(lock, now + chunk, ready)) return 0;
+        if (chunk == remaining) return GuestEtimedout;
+    }
 }
 
 }
@@ -221,7 +243,7 @@ int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std
     auto position = queue.messages.begin();
     while (position != queue.messages.end() && position->priority >= priority) ++position;
     queue.messages.insert(position, std::move(entry));
-    queue.readable.notify_one();
+    queue.readable.NotifyOne();
     return 0;
 }
 
@@ -236,7 +258,7 @@ std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer
     if (const int error = WaitFor(*open, lock, queue.readable, abstime, available)) return Fail(error);
     Message entry = std::move(queue.messages.front());
     queue.messages.erase(queue.messages.begin());
-    queue.writable.notify_one();
+    queue.writable.NotifyOne();
     lock.unlock();
     if (!entry.bytes.empty() && !GuestCopyOut_nid_no_patch(buffer, entry.bytes.data(), entry.bytes.size())) return Fail(GuestEfault);
     if (priority != nullptr && !GuestCopyOut_nid_no_patch(priority, &entry.priority, sizeof(entry.priority))) return Fail(GuestEfault);

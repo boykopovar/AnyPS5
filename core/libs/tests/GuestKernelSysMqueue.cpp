@@ -135,6 +135,10 @@ void Waiting() {
     const auto start = std::chrono::steady_clock::now();
     Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &deadline) == -1 && Error() == Etimedout);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(100));
+    const auto shortDeadline = FromNow(std::chrono::milliseconds(2));
+    const auto shortStart = std::chrono::steady_clock::now();
+    Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &shortDeadline) == -1 && Error() == Etimedout);
+    Require(std::chrono::steady_clock::now() - shortStart >= std::chrono::milliseconds(1));
     Require(kmq_timedsend_nid_postfix(queue, "a", 1, 0, &invalid) == 0);
     Require(kmq_timedsend_nid_postfix(queue, "b", 1, 0, &invalid) == -1 && Error() == Einval);
     Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &invalid) == 1 && buffer[0] == 'a');
