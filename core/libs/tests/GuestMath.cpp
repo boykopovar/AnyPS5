@@ -308,6 +308,52 @@ static void CheckFegetenv() {
     Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
 }
 
+static void CheckSincosRemquoGuestPointers() {
+    const auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    static const double readOnlyDouble = 7.0;
+    static const float readOnlyFloat = 7.0f;
+    static const int readOnlyQuotient = 7;
+    auto* const unmappedDouble = reinterpret_cast<double*>(std::uintptr_t{0x10});
+    auto* const unmappedFloat = reinterpret_cast<float*>(std::uintptr_t{0x10});
+    auto* const unmappedQuotient = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    double sine = 5.0;
+    double cosine = 5.0;
+    Require(rejectsKeepingErrno([&] { sincos_nid_postfix(1.0, unmappedDouble, &cosine); }) && cosine == 5.0);
+    Require(rejectsKeepingErrno([&] { sincos_nid_postfix(1.0, &sine, unmappedDouble); }));
+    Require(rejectsKeepingErrno([&] { sincos_nid_postfix(INFINITY, const_cast<double*>(&readOnlyDouble), &cosine); }) && cosine == 5.0);
+    Require(rejectsKeepingErrno([&] { sincos_nid_postfix(INFINITY, &sine, const_cast<double*>(&readOnlyDouble)); }));
+    float sineFloat = 5.0f;
+    float cosineFloat = 5.0f;
+    Require(rejectsKeepingErrno([&] { sincosf_nid_postfix(1.0f, unmappedFloat, &cosineFloat); }) && cosineFloat == 5.0f);
+    Require(rejectsKeepingErrno([&] { sincosf_nid_postfix(1.0f, &sineFloat, unmappedFloat); }));
+    Require(rejectsKeepingErrno([&] { sincosf_nid_postfix(INFINITY, const_cast<float*>(&readOnlyFloat), &cosineFloat); }) && cosineFloat == 5.0f);
+    Require(rejectsKeepingErrno([&] { sincosf_nid_postfix(INFINITY, &sineFloat, const_cast<float*>(&readOnlyFloat)); }));
+    Require(rejectsKeepingErrno([&] { remquo_nid_postfix(7.0, 3.0, unmappedQuotient); }));
+    Require(rejectsKeepingErrno([&] { remquo_nid_postfix(INFINITY, 3.0, const_cast<int*>(&readOnlyQuotient)); }));
+    Require(rejectsKeepingErrno([&] { remquof_nid_postfix(7.0f, 3.0f, unmappedQuotient); }));
+    Require(rejectsKeepingErrno([&] { remquof_nid_postfix(7.0f, 0.0f, const_cast<int*>(&readOnlyQuotient)); }));
+    Require(*static_cast<const volatile double*>(&readOnlyDouble) == 7.0);
+    Require(*static_cast<const volatile float*>(&readOnlyFloat) == 7.0f);
+    Require(*static_cast<const volatile int*>(&readOnlyQuotient) == 7);
+    errno = 0;
+    sincos_nid_postfix(INFINITY, &sine, &cosine);
+    Require(std::isnan(sine) && std::isnan(cosine) && errno == EDOM);
+    errno = 0;
+    sincosf_nid_postfix(INFINITY, &sineFloat, &cosineFloat);
+    Require(std::isnan(sineFloat) && std::isnan(cosineFloat) && errno == EDOM);
+    errno = 0;
+    sincos_nid_postfix(0.0, &sine, &cosine);
+    Require(sine == 0.0 && cosine == 1.0 && errno == 0);
+    sincosf_nid_postfix(0.0f, &sineFloat, &cosineFloat);
+    Require(sineFloat == 0.0f && cosineFloat == 1.0f && errno == 0);
+}
+
 template<typename Bits>
 struct ModfCase { Bits input, fraction, integral; unsigned flags; };
 
@@ -5283,6 +5329,7 @@ int main() {
     CheckNearbyint();
     CheckNearbyintEnvironment();
     CheckFegetenv();
+    CheckSincosRemquoGuestPointers();
     CheckLongDouble();
     CheckScalbnErrno();
     CheckAtanConsoleBits();

@@ -2738,8 +2738,14 @@ float APS5_VABI tanf_nid_postfix(float x) {
 }
 
 void APS5_VABI sincosf_nid_postfix(float x, float* sinp, float* cosp) {
-    *sinp = sinf_nid_postfix(x);
-    *cosp = cosf_nid_postfix(x);
+    const int savedErrno = errno;
+    const float sine = sinf_nid_postfix(x);
+    const float cosine = cosf_nid_postfix(x);
+    const int resultErrno = errno;
+    errno = savedErrno;
+    if (!GuestCopyOut_nid_no_patch(sinp, &sine, sizeof(sine))) throw std::invalid_argument("sincosf: unwritable sine");
+    if (!GuestCopyOut_nid_no_patch(cosp, &cosine, sizeof(cosine))) throw std::invalid_argument("sincosf: unwritable cosine");
+    errno = resultErrno;
 }
 
 static std::int32_t HighWord(double x) {
@@ -3817,25 +3823,22 @@ float APS5_VABI atanhf_nid_postfix(float x) {
  * s_sin.c and s_cos.c merged by Steven G. Kargl.  Descriptions of the
  * algorithms are contained in the original files.
  */
-void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
+static bool SincosHost(double x, double* sinp, double* cosp) {
     const std::int32_t ix = HighWord(x) & 0x7fffffff;
     if (ix <= 0x3fe921fb) {
         if (ix < 0x3e400000 && static_cast<int>(x) == 0) {
             *sinp = x;
             *cosp = 1;
-            return;
+            return false;
         }
         *sinp = KernelSin(x, 0, 0);
         *cosp = KernelCos(x, 0);
-        return;
+        return false;
     }
     if (ix >= 0x7ff00000) {
-        if (ix == 0x7ff00000) {
-            errno = EDOM;
-        }
         *sinp = x - x;
         *cosp = x - x;
-        return;
+        return ix == 0x7ff00000;
     }
     double y[2];
     switch (RemPio2(x, y) & 3) {
@@ -3855,6 +3858,16 @@ void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
             *sinp = -KernelCos(y[0], y[1]);
             *cosp = KernelSin(y[0], y[1], 1);
     }
+    return false;
+}
+
+void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
+    double sine;
+    double cosine;
+    const bool domain = SincosHost(x, &sine, &cosine);
+    if (!GuestCopyOut_nid_no_patch(sinp, &sine, sizeof(sine))) throw std::invalid_argument("sincos: unwritable sine");
+    if (!GuestCopyOut_nid_no_patch(cosp, &cosine, sizeof(cosine))) throw std::invalid_argument("sincos: unwritable cosine");
+    if (domain) errno = EDOM;
 }
 
 float APS5_VABI atanf_nid_postfix(float x) {
@@ -5868,14 +5881,16 @@ double APS5_VABI remainder_nid_postfix(double x, double y) {
 double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    const int quotient = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    if (!GuestCopyOut_nid_no_patch(quo, &quotient, sizeof(quotient))) throw std::invalid_argument("remquo: unwritable quotient");
     SetRemainderDomainError(x, y);
     return static_cast<double>(remainder);
 }
 float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    const int quotient = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    if (!GuestCopyOut_nid_no_patch(quo, &quotient, sizeof(quotient))) throw std::invalid_argument("remquof: unwritable quotient");
     SetRemainderDomainError(x, y);
     return static_cast<float>(remainder);
 }
