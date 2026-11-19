@@ -312,10 +312,7 @@ void Run(Context context, std::uint8_t* block) {
     limited.limits.maxImageArrayLayers = 2;
     auto threeLayers = spanning;
     threeLayers.depthOrLastArray = 2;
-    try {
-        static_cast<void>(DepthSurfaceStorage(limited, {}, threeLayers, 0));
-    } catch (const std::exception&) {
-    }
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(limited, {}, threeLayers, 0)); }, "maxImageArrayLayers", "a three-layer view under a two-layer limit was built, so the store back below would not follow a failed construction");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
 }
 
