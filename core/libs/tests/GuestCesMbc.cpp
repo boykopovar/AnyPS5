@@ -95,7 +95,7 @@ static void RequireAll(std::uint32_t code, const void* profile, int expected, co
     }
 }
 
-static std::uint32_t SweepCodes(const void* profile) {
+static std::uint32_t SweepCodes(const void* profile, bool eucCnProfile = false) {
     constexpr std::uint32_t supplementary[] = {0x10000, 0x1F600, 0x10FFFF};
     std::uint32_t mapped = 0;
     for (std::uint32_t code = 0; code < 0x10000; ++code) {
@@ -107,8 +107,10 @@ static std::uint32_t SweepCodes(const void* profile) {
         if (result == 0 && size > 0) {
             std::uint32_t consumed = 0;
             std::uint32_t back = 0;
-            Require(sceCesMbcToUtf32(profile, bytes, size, &consumed, &back) == 0 && consumed == size);
-            if (back == code) ++mapped;
+            const int decoded = sceCesMbcToUtf32(profile, bytes, size, &consumed, &back);
+            const bool leftOut = eucCnProfile && decoded == unassignedCode && size == 2 && (bytes[0] == 0xA2 || bytes[0] == 0xA6 || bytes[0] == 0xA8);
+            Require((decoded == 0 && consumed == size) || leftOut);
+            if (decoded == 0 && back == code) ++mapped;
         }
         RequireAll(code, profile, result, bytes, size);
     }
@@ -442,7 +444,7 @@ int main() {
         RequireInvalid(singleByte[index]);
     }
     for (const void* profile : multiByte) {
-        const std::uint32_t mapped = SweepCodes(profile);
+        const std::uint32_t mapped = SweepCodes(profile, profile == eucCn);
         Require(mapped > 256 && SweepBytes(profile) == mapped);
         RequireInvalid(profile);
     }

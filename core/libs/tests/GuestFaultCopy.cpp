@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -27,6 +28,7 @@ static void* const NonCanonical = reinterpret_cast<void*>(0x8000000000000000ull)
 
 static volatile sig_atomic_t g_outside = 0;
 static volatile sig_atomic_t g_seen = 0;
+static volatile sig_atomic_t g_resetHandHits = 0;
 static struct sigaction g_chained{};
 
 static void Earlier(int, siginfo_t*, void*) {
@@ -37,6 +39,18 @@ static void Earlier(int, siginfo_t*, void*) {
 static void Later(int signal, siginfo_t* info, void* context) {
     ++g_seen;
     g_chained.sa_sigaction(signal, info, context);
+}
+
+static void OnResetHandSegv(int) {
+    ++g_resetHandHits;
+    if (g_resetHandHits >= 2) _exit(42);
+}
+
+static void DisableCoreDumps() {
+    struct rlimit limit{};
+    limit.rlim_cur = 0;
+    limit.rlim_max = 0;
+    setrlimit(RLIMIT_CORE, &limit);
 }
 
 static void RequireExit(pid_t child, int code) {
@@ -62,6 +76,58 @@ static void RequireEarlierHandlerKeepsOtherFaults() {
         _exit(6);
     }
     RequireExit(child, 42);
+}
+
+static void RequireSigIgnWithSigInfoChains() {
+    std::fflush(nullptr);
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        DisableCoreDumps();
+        alarm(10);
+        if (unsetenv("APS5_GUEST_COPY_SYSCALL") != 0) _exit(2);
+        struct sigaction action{};
+        action.sa_handler = SIG_IGN;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_SIGINFO;
+        if (sigaction(SIGSEGV, &action, nullptr) != 0) _exit(3);
+        std::uint32_t source = 0x12345678u;
+        std::uint32_t destination = 0u;
+        if (!GuestCopyIn_nid_no_patch(&destination, &source, sizeof(destination)) || destination != source) _exit(4);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(5);
+        if (raise(SIGSEGV) != 0) _exit(6);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(7);
+        _exit(0);
+    }
+    RequireExit(child, 0);
+}
+
+static void RequireResetHandChainsToDefault() {
+    std::fflush(nullptr);
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        DisableCoreDumps();
+        alarm(10);
+        if (unsetenv("APS5_GUEST_COPY_SYSCALL") != 0) _exit(2);
+        g_resetHandHits = 0;
+        struct sigaction action{};
+        action.sa_handler = OnResetHandSegv;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_RESETHAND;
+        if (sigaction(SIGSEGV, &action, nullptr) != 0) _exit(3);
+        std::uint32_t source = 0x87654321u;
+        std::uint32_t destination = 0u;
+        if (!GuestCopyIn_nid_no_patch(&destination, &source, sizeof(destination)) || destination != source) _exit(4);
+        if (raise(SIGSEGV) != 0) _exit(5);
+        if (g_resetHandHits != 1) _exit(6);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(7);
+        raise(SIGSEGV);
+        _exit(8);
+    }
+    int status = 0;
+    Require(waitpid(child, &status, 0) == child);
+    Require(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
 }
 
 static void RequireLaterHandlerChains() {
@@ -191,6 +257,8 @@ static void RequireThreads() {
 
 int main() {
     RequireEarlierHandlerKeepsOtherFaults();
+    RequireSigIgnWithSigInfoChains();
+    RequireResetHandChainsToDefault();
     RequireCopies();
     RequireFaults();
     RequireThreads();

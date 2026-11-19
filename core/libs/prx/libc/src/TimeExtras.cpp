@@ -1,6 +1,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdint>
+#include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
@@ -43,6 +44,13 @@ GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* r
     return localtime_s_nid_postfix(timer, result);
 }
 
+char* APS5_VABI ctime_r_nid_postfix(const std::int64_t* timer, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("ctime_r: null buffer");
+    GuestTm local{};
+    if (localtime_r_nid_postfix(timer, &local) == nullptr) return nullptr;
+    return asctime_r_nid_postfix(&local, buffer);
+}
+
 std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
     const std::int64_t years = floorDivide(time->tm_mon, 12);
     const std::int64_t month = time->tm_mon - years * 12 + 1;
@@ -59,9 +67,10 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base) {
     if (time == nullptr || base != timeUtc) return 0;
     const std::int64_t micros = _Xtime_get_ticks_nid_postfix();
-    time->sec = floorDivide(micros, 1000000);
-    time->nsec = (micros - time->sec * 1000000) * 1000;
-    return timeUtc;
+    Xtime now{};
+    now.sec = floorDivide(micros, 1000000);
+    now.nsec = (micros - now.sec * 1000000) * 1000;
+    return GuestCopyOut_nid_no_patch(time, &now, sizeof(now)) ? timeUtc : 0;
 }
 
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time) {
