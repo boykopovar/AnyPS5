@@ -35,6 +35,7 @@ std::vector<Case> cases(std::uint8_t imm) {
         {"VPBROADCASTD", {0xC4, 0xE2, 0x79, 0x58, 0x00}, {0xC4, 0xE2, 0x79, 0x18, 0x00}},
         {"VPBROADCASTQ", {0xC4, 0xE2, 0x7D, 0x59, 0x00}, {0xC4, 0xE2, 0x7D, 0x19, 0x00}},
         {"VPBROADCASTQ", {0xC4, 0xE2, 0x79, 0x59, 0x00}, {0xC4, 0xE1, 0x7B, 0x12, 0x00}},
+        {"VMOVNTDQA", {0xC4, 0xE2, 0x7D, 0x2A, 0x00}, {0xC4, 0xE1, 0x7D, 0x6F, 0x00}},
     };
 }
 
@@ -83,6 +84,8 @@ void decoding() {
              Bytes{0xC4, 0xE3, 0x74, 0x02, 0xC2, 0x01},
              Bytes{0xC5, 0xFD, 0xFE, 0xC1},
              Bytes{0xC4, 0xE2, 0x7D, 0x78, 0x00},
+             Bytes{0xC4, 0xE2, 0x79, 0x2A, 0x00},
+             Bytes{0xC4, 0xE2, 0x7D, 0x2A, 0xC1},
              Bytes{0xC4, 0xE3},
              Bytes{0x90}})
         require(!Codegen::DecodeAvx2Twin(bytes.data(), bytes.size()), "An instruction without an AVX1 twin was rewritten");
@@ -109,7 +112,7 @@ void matching() {
 
 #if LOWERING_EXECUTION_AVAILABLE
 
-struct Registers {
+struct alignas(32) Registers {
     Vector Ymm0;
     Vector Ymm1;
     Vector Ymm2;
@@ -161,6 +164,8 @@ Vector expected(const std::string& name, const Bytes& site, const Registers& in,
         for (unsigned i = 0; i < 8; ++i) out[i] = in.Memory[i % 4];
     } else if (name == "VPBROADCASTD") {
         for (unsigned i = 0; i < (wide ? 8u : 4u); ++i) out[i] = in.Memory[0];
+    } else if (name == "VMOVNTDQA") {
+        out = in.Memory;
     } else if (name == "VPBROADCASTQ") {
         for (unsigned i = 0; i < (wide ? 8u : 4u); ++i) out[i] = in.Memory[i % 2];
     }
