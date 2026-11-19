@@ -1363,5 +1363,20 @@ class CheckCompileWindowsResponseTextTests(unittest.TestCase):
             check_compile.windows_response_text(b"\xff\xff\xff")
 
 
+class CheckCompileResponseQuotingTests(unittest.TestCase):
+    def test_defaults_to_posix(self):
+        self.assertEqual(check_compile.response_quoting([]), "posix")
+        self.assertEqual(check_compile.response_quoting(["cc", "-c"]), "posix")
+
+    def test_last_option_wins(self):
+        arguments = ["cc", "--rsp-quoting=windows", "--rsp-quoting=posix"]
+        self.assertEqual(check_compile.response_quoting(arguments), "posix")
+        self.assertEqual(check_compile.response_quoting(["--rsp-quoting=windows"]), "windows")
+
+    def test_unknown_quoting_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "unsupported response-file quoting --rsp-quoting=shell"):
+            check_compile.response_quoting(["--rsp-quoting=shell"])
+
+
 if __name__ == "__main__":
     unittest.main()
