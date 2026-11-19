@@ -509,19 +509,41 @@ void RequireEventFlagInit(const NpEventFlagObject* self, const char* message) {
     if (self->state == 0) throw std::invalid_argument(message);
 }
 
+NpAllocator GuestAllocator(const void* allocator, const char* function) {
+    NpAllocator callbacks {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&callbacks, allocator, sizeof(callbacks));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return callbacks;
+}
+
 void* AllocateObject(std::size_t size, NpAllocator* allocator) {
-    auto* header = static_cast<std::uint8_t*>(allocator->allocate(size + NP_OBJECT_HEADER_SIZE, allocator->context));
+    constexpr const char* Function = "sce::np::Object::operator new";
+    const NpAllocator callbacks = GuestAllocator(allocator, Function);
+    auto* header = static_cast<std::uint8_t*>(callbacks.allocate(size + NP_OBJECT_HEADER_SIZE, callbacks.context));
     if (header == nullptr) return nullptr;
-    std::memcpy(header, &allocator, sizeof(allocator));
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(header, &allocator, sizeof(allocator));
+    errno = savedErrno;
+    if (!stored) {
+        callbacks.release(header, callbacks.context);
+        NotImplementedAt_nid_no_patch(Function, __FILE__, __LINE__);
+    }
     return header + NP_OBJECT_HEADER_SIZE;
 }
 
 void ReleaseObject(void* object) {
+    constexpr const char* Function = "sce::np::Object::operator delete";
     if (object == nullptr) return;
     auto* header = static_cast<std::uint8_t*>(object) - NP_OBJECT_HEADER_SIZE;
     NpAllocator* allocator = nullptr;
-    std::memcpy(&allocator, header, sizeof(allocator));
-    allocator->release(header, allocator->context);
+    const int savedErrno = errno;
+    const bool loaded = GuestCopyIn_nid_no_patch(&allocator, header, sizeof(allocator));
+    errno = savedErrno;
+    if (!loaded) NotImplementedAt_nid_no_patch(Function, __FILE__, __LINE__);
+    const NpAllocator callbacks = GuestAllocator(allocator, Function);
+    callbacks.release(header, callbacks.context);
 }
 
 constexpr int NP_ERROR_NOT_INITIALIZED = static_cast<int>(0x80558001);
@@ -876,15 +898,18 @@ NpAllocator* APS5_VABI _sceNpAllocatorExConvertAllocator(NpAllocatorEx* allocato
 }
 
 void* APS5_VABI _sceNpAllocatorExMalloc(NpAllocatorEx* allocator, std::size_t size) {
-    return allocator->allocator.allocate(size, allocator->allocator.context);
+    const NpAllocator callbacks = GuestAllocator(allocator, __func__);
+    return callbacks.allocate(size, callbacks.context);
 }
 
 void* APS5_VABI _sceNpAllocatorExRealloc(NpAllocatorEx* allocator, void* pointer, std::size_t size) {
-    return allocator->allocator.reallocate(pointer, size, allocator->allocator.context);
+    const NpAllocator callbacks = GuestAllocator(allocator, __func__);
+    return callbacks.reallocate(pointer, size, callbacks.context);
 }
 
 void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer) {
-    allocator->allocator.release(pointer, allocator->allocator.context);
+    const NpAllocator callbacks = GuestAllocator(allocator, __func__);
+    callbacks.release(pointer, callbacks.context);
 }
 
 char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text) {

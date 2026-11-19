@@ -396,6 +396,37 @@ void TestObjectsThroughStoredAllocator() {
         "a failed array allocation returns null");
 }
 
+template <typename Call>
+bool RefusedUnmapped(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void TestAllocatorGuestPointers() {
+    auto* unmapped = reinterpret_cast<NpAllocatorEx*>(std::uintptr_t{0x10});
+    AllocatorRecord record {};
+    NpAllocatorEx allocatorEx {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+    errno = 71;
+    Require(RefusedUnmapped([&] { _sceNpAllocatorExMalloc(unmapped, 8); }) && RefusedUnmapped([&] { _sceNpAllocatorExRealloc(unmapped, nullptr, 8); }) &&
+                RefusedUnmapped([&] { _sceNpAllocatorExFree(unmapped, record.block.data()); }) && record.size == 0 && record.released == nullptr,
+        "an unmapped extended allocator is refused before any callback");
+    Require(RefusedUnmapped([&] { _ZN3sce2np6ObjectnwEmR14SceNpAllocator(8, &unmapped->allocator); }) &&
+                RefusedUnmapped([&] { _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, unmapped); }),
+        "allocating an object through an unmapped allocator is refused");
+    Require(RefusedUnmapped([&] { _ZN3sce2np6ObjectdlEPv(reinterpret_cast<void*>(std::uintptr_t{0x20})); }),
+        "freeing an object whose header is unmapped is refused");
+    void* object = _ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx);
+    auto* stale = reinterpret_cast<NpAllocator*>(std::uintptr_t{0x10});
+    std::memcpy(record.block.data(), &stale, sizeof(stale));
+    Require(RefusedUnmapped([&] { _ZN3sce2np6ObjectdaEPv(object); }) && record.released == nullptr,
+        "freeing an object whose stored allocator is unmapped is refused");
+    Require(errno == 71, "refused allocator calls keep errno");
+}
+
 struct SemaphoreWaiter {
     NpSemaphoreObject* semaphore;
     std::atomic<bool> started {false};
@@ -2217,6 +2248,7 @@ int main() {
     TestObjects();
     TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestAllocatorGuestPointers();
     TestSemaphoreObjects();
     TestMutexAndCondObjects();
     TestAllocatorExRecorded();
