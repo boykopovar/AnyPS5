@@ -1633,7 +1633,7 @@ std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     struct DeferredKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, DeferredKeyStorage>();
-    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());
     const std::span<const std::byte> key(storage.data(), length);
     if (disabled || key.empty()) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
     const auto hash = hashKey(key);
