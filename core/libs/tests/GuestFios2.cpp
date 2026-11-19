@@ -302,6 +302,16 @@ static void CheckOpWaitUntilDelegation(const std::string& file) {
     REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
     sceFiosOpDelete(op);
     REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_ERROR_BAD_OP);
+
+    sceFiosSuspend();
+    const SceFiosOp pending = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(pending > 0);
+    const auto start = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) REQUIRE(sceFiosOpWaitUntil(pending, sceFiosTimeGetCurrent() + 1000000) == SCE_FIOS_ERROR_TIMEOUT);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+    sceFiosOpDelete(pending);
+    sceFiosResume();
 }
 
 static void CheckOperationLifecycle(const std::string& file) {
@@ -911,13 +921,18 @@ static void CheckOverlayResolve(const std::string& directory) {
     const std::string source = directory + "/ovlsrc";
     std::filesystem::create_directories(base);
     std::filesystem::create_directories(source);
-    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
-    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(base + name) << "base";
     const auto now = std::filesystem::last_write_time(source + "/a.txt");
     std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(source + "/older.txt", now);
     std::filesystem::last_write_time(base + "/newer.txt", now);
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(base + "/same.txt", now);
+    std::filesystem::last_write_time(source + "/same.txt", now);
+    const KernelTimeval epoch[2]{};
+    REQUIRE(sceKernelUtimes_nid_postfix((base + "/epoch.txt").c_str(), epoch) == 0);
+    REQUIRE(sceKernelUtimes_nid_postfix((source + "/epoch.txt").c_str(), epoch) == 0);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
@@ -937,6 +952,22 @@ static void CheckOverlayResolve(const std::string& directory) {
     REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
     REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
 
+    const std::int32_t rootDestination = AddOverlay(0, 0, "/", source);
+    REQUIRE(Resolve(0, "/") == source);
+    REQUIRE(Resolve(0, "/app0//./asset.bin") == source + "/app0/asset.bin");
+    REQUIRE(Resolve(0, "app0/asset.bin") == "app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootDestination) == SCE_FIOS_OK);
+
+    const std::int32_t rootSource = AddOverlay(0, 0, "/virtual/", "/");
+    REQUIRE(Resolve(0, "/virtual") == "/");
+    REQUIRE(Resolve(0, "/virtual/asset.bin") == "/asset.bin");
+    REQUIRE(Resolve(0, "/virtualized/asset.bin") == "/virtualized/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootSource) == SCE_FIOS_OK);
+
+    const std::int32_t rootToRoot = AddOverlay(0, 0, "/", "/");
+    REQUIRE(Resolve(0, "//app0/./asset.bin") == "/app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootToRoot) == SCE_FIOS_OK);
+
     for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
         const std::int32_t id = AddOverlay(type, 0, base, source);
         REQUIRE(Resolve(0, base + "/a.txt") == source + "/a.txt");
@@ -944,6 +975,8 @@ static void CheckOverlayResolve(const std::string& directory) {
         REQUIRE(Resolve(1, base + "/b.txt") == (type == 3 ? source : base) + "/b.txt");
         REQUIRE(Resolve(0, base + "/older.txt") == source + "/older.txt");
         REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
+        REQUIRE(Resolve(0, base + "/same.txt") == (type == 2 ? base : source) + "/same.txt");
+        REQUIRE(Resolve(0, base + "/epoch.txt") == source + "/epoch.txt");
         REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
     }
 }

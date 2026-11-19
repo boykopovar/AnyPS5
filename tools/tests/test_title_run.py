@@ -1,18 +1,30 @@
 import copy
+import errno
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 import unittest.mock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
+
+
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+ALIAS_INTERPRETER = any(is_app_execution_alias(program) for program in {sys.executable, getattr(sys, "_base_executable", sys.executable)})
+ALIAS_REASON = "the interpreter is an App Execution Alias, whose process image is outside the launched directory"
 
 
 def feature(name):
@@ -83,6 +95,14 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
 
+    def test_duplicate_titles_and_fields_are_refused(self):
+        path = self.root / "titles.json"
+        for text, name in (('{"PPSA00001": {"relink": ["--registry"]}, "PPSA00001": {"seconds": 45}}', "PPSA00001"),
+                           ('{"PPSA00001": {"seconds": 30, "seconds": 90}}', "seconds")):
+            path.write_text(text, encoding="utf-8")
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"titles.json: duplicate field '{name}'"):
+                title_run.load_titles(path)
+
     def test_files_refuse_colons_in_every_path_component(self):
         cases = [{f"{root}/asset.bin:note": {"text": ""}} for root in ("app0", "data", "download0")]
         cases += [
@@ -114,6 +134,18 @@ class TitlesTests(unittest.TestCase):
     def test_fixed_base_on_macos_is_refused(self):
         with self.assertRaisesRegex(ValueError, "fixed_base is not supported on macos"):
             title_run.relink_args({"fixed_base": "0x400000"}, "macos")
+
+    def test_intel_host_gets_to_intel(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({}, "windows", intel_host=True), ["--windows", "--to-intel"])
+
+    def test_amd_host_keeps_the_entry_flags(self):
+        self.assertEqual(title_run.relink_args({}, "linux", intel_host=False), [])
+
+    def test_an_explicit_conversion_is_not_duplicated(self):
+        self.assertEqual(title_run.relink_args({"relink": ["--to-intel"]}, "linux", intel_host=True), ["--to-intel"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--to-rosetta"])
+        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--to-avx"])
 
 
 def bmp(path, width, height, color):
@@ -346,6 +378,241 @@ def package(root, title_id, version="01.000.000", name="Game"):
     return root
 
 
+class AssetCopyTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.source = self.root / "source.bin"
+        self.content = bytes(range(256)) * 256
+        self.source.write_bytes(self.content)
+        self.source.chmod(0o640)
+        os.utime(self.source, ns=(1600000000000000000, 1600000000123456789))
+        self.mode = stat.S_IMODE(self.source.stat().st_mode)
+        self.mtime = self.source.stat().st_mtime_ns
+
+    def require_reflink(self):
+        import fcntl
+        probe = self.root / "clone-probe"
+        try:
+            with self.source.open("rb") as source, probe.open("xb") as target:
+                fcntl.ioctl(target.fileno(), getattr(fcntl, "FICLONE", 0x40049409), source.fileno())
+        except OSError as error:
+            self.skipTest(f"filesystem cannot clone regular files: {error}")
+
+    def assert_source_unchanged(self):
+        self.assertEqual(self.source.read_bytes(), self.content)
+        self.assertEqual(stat.S_IMODE(self.source.stat().st_mode), self.mode)
+        self.assertEqual(self.source.stat().st_mtime_ns, self.mtime)
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_link_tree_clones_assets_with_independent_bytes_and_metadata(self):
+        import fcntl
+        self.require_reflink()
+        source = self.root / "pkg"
+        (source / "nested").mkdir(parents=True)
+        for name in ("overwrite", "append", "truncate", "chmod", "empty"):
+            path = source / "nested" / name
+            shutil.copy2(self.source, path)
+            if name == "empty":
+                path.write_bytes(b"")
+        (source / "alias").symlink_to(self.source)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/skipped").write_bytes(b"module")
+        target = self.root / "app0"
+        with unittest.mock.patch.dict(fcntl.__dict__), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("ordinary copy was used")):
+            fcntl.__dict__.pop("FICLONE", None)
+            title_run.link_tree(source, target, {"sce_module"})
+        self.assertFalse((target / "sce_module").exists())
+        self.assertFalse((target / "alias").is_symlink())
+        self.assertEqual((target / "alias").read_bytes(), self.content)
+        for name in ("overwrite", "append", "truncate", "chmod", "empty"):
+            with self.subTest(name=name):
+                original, staged = source / "nested" / name, target / "nested" / name
+                original_bytes, original_mode = original.read_bytes(), stat.S_IMODE(original.stat().st_mode)
+                self.assertFalse(original.samefile(staged))
+                self.assertEqual(staged.read_bytes(), original_bytes)
+                self.assertEqual(stat.S_IMODE(staged.stat().st_mode), original_mode)
+                self.assertEqual(staged.stat().st_mtime_ns, original.stat().st_mtime_ns)
+                if name == "overwrite":
+                    with staged.open("r+b") as stream:
+                        stream.write(b"working")
+                elif name == "append":
+                    with staged.open("ab") as stream:
+                        stream.write(b"working")
+                elif name == "truncate":
+                    with staged.open("r+b") as stream:
+                        stream.truncate(10)
+                elif name == "chmod":
+                    staged.chmod(0o400)
+                self.assertEqual(original.read_bytes(), original_bytes)
+                self.assertEqual(stat.S_IMODE(original.stat().st_mode), original_mode)
+        self.assert_source_unchanged()
+        self.source.write_bytes(b"source later changed")
+        self.assertEqual((target / "alias").read_bytes(), self.content)
+        (target / "alias").write_bytes(b"changed alias")
+        self.assertEqual(self.source.read_bytes(), b"source later changed")
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_prepare_clones_assets_and_preserves_module_staging(self):
+        self.require_reflink()
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "nested").mkdir()
+        asset = source / "nested/config.bin"
+        asset.write_bytes(self.content)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/libc.prx").write_bytes(b"\x7fELF" + bytes(60))
+        build, work = self.root / "build", self.root / "work"
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "core/libs/libs/libkernel.prx").write_bytes(b"runtime")
+        (build / "core/libs/libs/libmimalloc.so").write_bytes(b"allocator runtime")
+        work.mkdir()
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("ordinary copy was used")):
+            title_run.prepare("PPSA00001", {"package": source}, {}, "linux", build, work)
+        self.assertEqual((work / "input/sce_module/libc.prx").read_bytes(), b"\x7fELF" + bytes(60))
+        self.assertEqual((work / "libs/libkernel.prx").read_bytes(), b"runtime")
+        self.assertFalse((work / "app0/sce_module").exists())
+        (work / "app0/nested/config.bin").write_bytes(b"working")
+        self.assertEqual(asset.read_bytes(), self.content)
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_clone_errors_fall_back_after_partial_destination_writes(self):
+        import fcntl
+        for error in (errno.EOPNOTSUPP, errno.EXDEV, errno.EINVAL, errno.ENOTTY, errno.EPERM, errno.EIO):
+            with self.subTest(error=error):
+                target = self.root / str(error)
+
+                def fail(destination, request, source):
+                    os.write(destination, b"partial destination" * 10000)
+                    raise OSError(error, "clone refused")
+
+                with unittest.mock.patch.object(fcntl, "ioctl", side_effect=fail) as clone, \
+                        unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+                    feature("copy_asset")(self.source, target)
+                clone.assert_called_once()
+                fallback.assert_called_once_with(self.source, target)
+                self.assertEqual(target.read_bytes(), self.content)
+                self.assertFalse(target.samefile(self.source))
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), self.mode)
+                self.assertEqual(target.stat().st_mtime_ns, self.mtime)
+                self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_cross_filesystem_falls_back_to_an_independent_copy(self):
+        import fcntl
+        try:
+            directory = tempfile.TemporaryDirectory(dir="/dev/shm")
+        except OSError as error:
+            self.skipTest(f"separate temporary filesystem unavailable: {error}")
+        self.addCleanup(directory.cleanup)
+        target = Path(directory.name) / "copied.bin"
+        if target.parent.stat().st_dev == self.source.stat().st_dev:
+            self.skipTest("temporary directory is not on a different filesystem")
+        with unittest.mock.patch.object(fcntl, "ioctl", wraps=fcntl.ioctl) as clone, \
+                unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+            feature("copy_asset")(self.source, target)
+        clone.assert_called_once()
+        fallback.assert_called_once_with(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), self.mode)
+        target.write_bytes(b"working")
+        target.chmod(0o400)
+        self.assert_source_unchanged()
+
+    def test_other_platforms_use_copy2_without_importing_fcntl(self):
+        for platform in ("win32", "darwin"):
+            with self.subTest(platform=platform), unittest.mock.patch.object(sys, "platform", platform), \
+                    unittest.mock.patch.dict(sys.modules, {"fcntl": None}), \
+                    unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+                target = self.root / platform
+                feature("copy_asset")(self.source, target)
+                fallback.assert_called_once_with(self.source, target)
+                self.assertEqual(target.read_bytes(), self.content)
+                self.assertFalse(target.samefile(self.source))
+                target.write_bytes(b"working")
+                self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_missing_fcntl_uses_copy2(self):
+        target = self.root / "copied.bin"
+        with unittest.mock.patch.dict(sys.modules, {"fcntl": None}), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+            feature("copy_asset")(self.source, target)
+        fallback.assert_called_once_with(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assert_source_unchanged()
+
+    def test_existing_targets_keep_copy2_same_file_protection(self):
+        target = self.root / "existing"
+        target.write_bytes(b"old destination")
+        feature("copy_asset")(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        for name in ("hardlink", "symlink"):
+            with self.subTest(name=name):
+                alias = self.root / name
+                try:
+                    if name == "hardlink":
+                        os.link(self.source, alias)
+                    else:
+                        alias.symlink_to(self.source)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest(f"{name} unavailable: {error}")
+                with self.assertRaises((shutil.SameFileError, PermissionError)) as caught:
+                    feature("copy_asset")(self.source, alias)
+                if isinstance(caught.exception, PermissionError):
+                    self.assertEqual(os.name, "nt")
+                    self.assertEqual(getattr(caught.exception, "winerror", None), 32)
+                self.assertEqual(alias.read_bytes(), self.content)
+                self.assert_source_unchanged()
+        with self.assertRaises((shutil.SameFileError, PermissionError)) as caught:
+            feature("copy_asset")(self.source, self.source)
+        if isinstance(caught.exception, PermissionError):
+            self.assertEqual(os.name, "nt")
+            self.assertEqual(getattr(caught.exception, "winerror", None), 32)
+        self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_cloned_metadata_failure_propagates_without_copy_fallback(self):
+        import fcntl
+        self.require_reflink()
+        target = self.root / "metadata-error"
+        with unittest.mock.patch.object(title_run.shutil, "copystat", side_effect=PermissionError("metadata refused")), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("metadata failure was hidden")):
+            with self.assertRaisesRegex(PermissionError, "metadata refused"):
+                feature("copy_asset")(self.source, target)
+        self.assertFalse(target.samefile(self.source))
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FIFO validation is POSIX-specific")
+    def test_nonregular_and_missing_sources_keep_copy2_validation(self):
+        import fcntl
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo)
+        with unittest.mock.patch.object(fcntl, "ioctl", side_effect=AssertionError("nonregular source was cloned")):
+            with self.assertRaises(shutil.SpecialFileError):
+                feature("copy_asset")(fifo, self.root / "out")
+            with self.assertRaises(FileNotFoundError):
+                feature("copy_asset")(self.root / "missing", self.root / "out")
+        self.assertFalse((self.root / "out").exists())
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_copy_fallback_failure_propagates_without_touching_source(self):
+        import fcntl
+        with unittest.mock.patch.object(fcntl, "ioctl", side_effect=OSError(errno.EXDEV, "different filesystem")), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=PermissionError("copy refused")):
+            with self.assertRaisesRegex(PermissionError, "copy refused"):
+                feature("copy_asset")(self.source, self.root / "out")
+        self.assert_source_unchanged()
+
+
 class PreparationTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -413,6 +680,13 @@ class PreparationTests(unittest.TestCase):
             title_run.main(common)
         self.assertFalse((self.root / "out").exists())
 
+    def test_games_without_a_title_package_are_refused(self):
+        games = self.root / "games"
+        games.mkdir()
+        with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
+            title_run.main(["--games", str(games), "--out", str(self.root / "out")])
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -420,6 +694,16 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(sorted(found), ["PPSA00001", "PPSA00002"])
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
+
+    def test_overlapping_game_directories_find_each_package_once(self):
+        games = self.root / "games"
+        homebrew = games / "homebrew"
+        package(homebrew / "PPSA00001", "PPSA00001")
+        package(games / "PPSA00002", "PPSA00002")
+        expected = title_run.discover([games])
+        for directories in ([games, homebrew], [homebrew, games], [games, games]):
+            with self.subTest(directories=directories):
+                self.assertEqual(title_run.discover(directories), expected)
 
     def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
@@ -528,6 +812,100 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
         self.assertTrue((self.root / "app0/eboot.bin").is_file())
         self.assertFalse((self.root / "app0/sce_module").exists())
+
+    def test_staged_asset_writes_leave_the_package_unchanged(self):
+        for operation in ("overwrite", "append", "truncate"):
+            with self.subTest(operation=operation):
+                source = self.root / operation / "pkg"
+                original = source / "assets/nested/data.bin"
+                original.parent.mkdir(parents=True)
+                original.write_bytes(b"original package bytes")
+                staged = self.root / operation / "app0"
+                title_run.link_tree(source, staged, set())
+                asset = staged / "assets/nested/data.bin"
+                if operation == "overwrite":
+                    with asset.open("r+b") as stream:
+                        stream.write(b"changed")
+                    expected = b"changedl package bytes"
+                elif operation == "append":
+                    with asset.open("ab") as stream:
+                        stream.write(b" appended")
+                    expected = b"original package bytes appended"
+                else:
+                    with asset.open("r+b") as stream:
+                        stream.truncate(8)
+                    expected = b"original"
+                self.assertEqual(asset.read_bytes(), expected)
+                self.assertEqual(original.read_bytes(), b"original package bytes")
+
+    def test_staged_asset_permissions_leave_the_package_unchanged(self):
+        source = self.root / "pkg"
+        source.mkdir()
+        original = source / "data.bin"
+        original.write_bytes(b"package bytes")
+        original.chmod(0o600)
+        mode = stat.S_IMODE(original.stat().st_mode)
+        title_run.link_tree(source, self.root / "app0", set())
+        staged = self.root / "app0/data.bin"
+        self.addCleanup(staged.chmod, 0o600)
+        self.addCleanup(original.chmod, 0o600)
+        staged.chmod(0o400)
+        self.assertFalse(staged.stat().st_mode & stat.S_IWRITE)
+        self.assertEqual(stat.S_IMODE(original.stat().st_mode), mode)
+        self.assertEqual(original.read_bytes(), b"package bytes")
+
+    def test_staged_symlinked_asset_does_not_write_through_to_its_target(self):
+        source = self.root / "pkg"
+        source.mkdir()
+        original = self.root / "outside.bin"
+        original.write_bytes(b"linked source bytes")
+        alias = source / "alias.bin"
+        try:
+            alias.symlink_to(original)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        title_run.link_tree(source, self.root / "app0", set())
+        staged = self.root / "app0/alias.bin"
+        self.assertEqual(staged.read_bytes(), b"linked source bytes")
+        staged.write_bytes(b"working bytes")
+        self.assertEqual(original.read_bytes(), b"linked source bytes")
+        self.assertTrue(alias.is_symlink())
+        self.assertFalse(staged.is_symlink())
+
+    def test_prepare_isolates_assets_and_keeps_module_inputs(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("sce_module/libc.prx", "sce_modules/helper.prx", "Media/Plugins/plugin.sprx"):
+            module = source / name
+            module.parent.mkdir(parents=True, exist_ok=True)
+            module.write_bytes(elf)
+        asset = source / "Media/Plugins/config.bin"
+        asset.write_bytes(b"source configuration")
+        build = self.root / "build"
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "core/libs/libs/libkernel.prx").write_bytes(b"host runtime")
+        (build / "core/libs/libs/libmimalloc.so").write_bytes(b"allocator runtime")
+        work = self.root / "work"
+        work.mkdir()
+        entry = {"relink": ["--module-dir", "Media/Plugins"]}
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted executable")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+            executable = title_run.prepare("PPSA00001", {"package": source}, entry, "linux", build, work)
+        self.assertEqual(executable.read_bytes(), b"converted executable")
+        self.assertEqual((work / "input/sce_module/libc.prx").read_bytes(), elf)
+        self.assertEqual((work / "input/sce_modules/helper.prx").read_bytes(), elf)
+        self.assertEqual((work / "input/Media/Plugins/plugin.sprx").read_bytes(), elf)
+        self.assertFalse((work / "app0/sce_module").exists())
+        self.assertEqual((work / "libs/libkernel.prx").read_bytes(), b"host runtime")
+        (work / "app0/Media/Plugins/config.bin").write_bytes(b"run configuration")
+        (work / "app0/Media/Plugins/plugin.sprx").write_bytes(b"run module")
+        self.assertEqual(asset.read_bytes(), b"source configuration")
+        self.assertEqual((source / "Media/Plugins/plugin.sprx").read_bytes(), elf)
+        self.assertEqual((work / "input/Media/Plugins/plugin.sprx").read_bytes(), elf)
 
     def test_files_are_staged_without_touching_the_package(self):
         source = package(self.root / "pkg", "PPSA00001")
@@ -776,12 +1154,14 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 3)
 
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_of_the_last_process(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "job process list is Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_ignores_processes_outside_owned(self):
         child = "import subprocess, time; time.sleep(1); subprocess.run(['cmd.exe', '/c', 'exit 0']); raise SystemExit(7)"
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
@@ -789,6 +1169,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_follows_a_junctioned_interpreter(self):
         interpreter = Path(getattr(sys, "_base_executable", sys.executable))
         target = interpreter.parent
@@ -1167,6 +1548,209 @@ class RunReportTests(unittest.TestCase):
         report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
         self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
+
+
+class InsideTests(unittest.TestCase):
+    def test_inside_rejects_absolute_and_traversing_paths(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b"))
+        for path in ("/abs/x", "a/../b", "a\\b", "C:x", ""):
+            self.assertFalse(title_run.inside(path), path)
+
+    def test_inside_requires_a_listed_root_when_given(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b", roots=("a",)))
+        self.assertFalse(title_run.inside("a", roots=("a",)))
+        self.assertFalse(title_run.inside("b/c", roots=("a",)))
+
+
+class SectionTests(unittest.TestCase):
+    def test_section_returns_dict_or_empty(self):
+        import title_run
+        self.assertEqual(title_run.section({"x": {"k": 1}}, "x"), {"k": 1})
+        self.assertEqual(title_run.section({"x": 5}, "x"), {})
+        self.assertEqual(title_run.section({}, "x"), {})
+
+
+class CheckPadTests(unittest.TestCase):
+    def test_check_pad_rejects_missing_events_and_unknown_fields(self):
+        import title_run
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"repeat": 1})
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"events": [], "not_a_field": 1})
+class RunHelperTests(unittest.TestCase):
+    def test_fps_of_hides_frame_rate_from_a_failed_relink(self):
+        self.assertIsNone(title_run.fps_of({"outcome": "relink-failed", "fps": 60}))
+        self.assertEqual(title_run.fps_of({"outcome": "ok", "fps": 60}), 60)
+
+    def test_last_run_returns_the_most_recent_run(self):
+        self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
+
+    def test_report_fields_read_missing_and_truncated_values_as_none(self):
+        run = {"report": {"shaders": {"x": 2}, "missing": ["f"], "truncated": {"functions": 3, "unsupported": 4},
+                          "unsupported": ["op"]}}
+        self.assertEqual(title_run.shader_count(run, "x"), 2)
+        self.assertEqual(title_run.missing_functions(run), ["f"])
+        self.assertEqual(title_run.truncated_functions(run), 3)
+        self.assertEqual(title_run.truncated_unsupported(run), 4)
+        self.assertEqual(title_run.unsupported_instructions(run), ["op"])
+        self.assertIsNone(title_run.report_field({}, "missing"))
+
+    def test_distinct_counts_unique_key_combinations(self):
+        entries = [{"a": 1, "b": 2}, {"a": 1, "b": 3}, {"a": 2}]
+        self.assertEqual(title_run.distinct(entries, ["a"]), 2)
+        self.assertEqual(title_run.distinct(entries, ["a", "b"]), 3)
+        self.assertIsNone(title_run.distinct(None, ["a"]))
+
+    def test_display_formats_values_for_the_report(self):
+        self.assertEqual(title_run.display(None), "not recorded")
+        self.assertEqual(title_run.display(12.34), "12.3")
+        self.assertEqual(title_run.display(7), "7")
+
+    def test_last_line_skips_trailing_blank_lines(self):
+        self.assertEqual(title_run.last_line("a\n\n  b  \n\n"), "b")
+        self.assertEqual(title_run.last_line(""), "")
+class ReportFileTests(unittest.TestCase):
+    def write(self, directory, name, text):
+        path = Path(directory) / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_read_report_returns_the_run_average_from_a_well_formed_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "report.json",
+                              json.dumps({"format": "anyps5-report", "run": {"averageFps": 60}}))
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
+
+    def test_read_report_returns_none_for_other_or_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(title_run.read_report(Path(directory) / "missing.json"))
+            self.assertIsNone(title_run.read_report(self.write(directory, "a.json", '{"format": "other"}')))
+            self.assertIsNone(title_run.read_report(self.write(directory, "b.json", "{not json")))
+            self.assertIsNone(title_run.read_report(self.write(directory, "c.json", "[1]")))
+
+    def test_take_report_moves_the_report_and_reads_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work, run_dir = Path(directory) / "work", Path(directory) / "run"
+            work.mkdir()
+            run_dir.mkdir()
+            self.assertIsNone(title_run.take_report(work, run_dir))
+            (work / title_run.REPORT_FILE).write_text(
+                json.dumps({"format": "anyps5-report", "run": {"averageFps": 30}}), encoding="utf-8")
+            report = title_run.take_report(work, run_dir)
+            self.assertEqual(report["averageFps"], 30)
+            self.assertFalse((work / title_run.REPORT_FILE).exists())
+            self.assertTrue((run_dir / title_run.REPORT_FILE).is_file())
+class ModuleFileTests(unittest.TestCase):
+    def test_is_module_recognises_the_elf_magic_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / 'm.prx'
+            module.write_bytes(b'\x7fELF' + b'0' * 20)
+            text = root / 't.txt'
+            text.write_text('hello', encoding='utf-8')
+            self.assertTrue(title_run.is_module(module))
+            self.assertFalse(title_run.is_module(text))
+
+class CheckFilesTests(unittest.TestCase):
+    def test_valid_text_and_content_entries_pass(self):
+        title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
+        title_run.check_files({})
+
+    def test_destination_must_be_a_relative_path_under_a_file_root(self):
+        for destination in ("a.txt", "other/a.txt", "../app0/a.txt", "/app0/a.txt", "app0\\a.txt"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "must be a relative path under"):
+                title_run.check_files({destination: {"text": "x"}})
+
+    def test_source_must_be_a_single_text_or_content_string(self):
+        for source in ("text", {}, {"text": 1}, {"other": "x"}, {"text": "x", "content": "y"}):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "must be"):
+                title_run.check_files({"app0/a.txt": source})
+
+    def test_content_must_stay_inside_the_content_directory(self):
+        for content in ("../x", "/x", "a\\b", "c:x"):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
+                title_run.check_files({"app0/a.txt": {"content": content}})
+
+
+class CollectFramesTests(unittest.TestCase):
+    def test_keeps_first_middle_and_last_frames_in_numeric_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            for index in (0, 1, 2, 10, 11):
+                (work / f"frame_{index}.bmp").write_bytes(b"x")
+            (work / "other.txt").write_text("keep")
+            destination = Path(directory) / "out" / "frames"
+            kept = title_run.collect_frames(work, destination)
+            self.assertEqual(kept, ["frame_0.bmp", "frame_2.bmp", "frame_11.bmp"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(kept))
+            self.assertEqual(sorted(path.name for path in work.iterdir()), ["other.txt"])
+
+    def test_no_frames_still_creates_the_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "frames"
+            self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
+            self.assertTrue(destination.is_dir())
+
+    def test_single_frame_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            (work / "frame_5.bmp").write_bytes(b"x")
+            self.assertEqual(title_run.collect_frames(work, Path(directory) / "out"), ["frame_5.bmp"])
+
+
+class DiffEntriesTests(unittest.TestCase):
+    def test_splits_entries_into_before_only_now_only_and_both(self):
+        before = [{"a": 1, "b": 2, "n": 3}, {"a": 1, "b": 2, "n": 4}, {"a": 1, "b": 3, "n": 1}]
+        now = [{"a": 1, "b": 2, "n": 5}, {"a": 9, "b": 9, "n": 2}]
+        diff = title_run.diff_entries(before, now, ["a", "b"], "n")
+        self.assertEqual(diff["onlyBefore"], [{"a": 1, "b": 3, "n": 1}])
+        self.assertEqual(diff["onlyNow"], [{"a": 9, "b": 9, "n": 2}])
+        self.assertEqual(diff["both"], [{"a": 1, "b": 2, "before": 7, "now": 5}])
+
+    def test_missing_side_gives_no_diff(self):
+        self.assertIsNone(title_run.diff_entries(None, [], ["a"], "n"))
+        self.assertIsNone(title_run.diff_entries([], None, ["a"], "n"))
+
+    def test_non_integer_counts_add_nothing(self):
+        diff = title_run.diff_entries([{"a": 1, "n": "x"}], [{"a": 1, "n": 2.5}], ["a"], "n")
+        self.assertEqual(diff["both"], [{"a": 1, "before": 0, "now": 0}])
+
+    def test_empty_inputs_give_empty_lists(self):
+        self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class HostIsIntelTests(unittest.TestCase):
+    def check(self, system, **replaced):
+        with patch.object(title_run, "os", system), patch.object(title_run, "sys", SimpleNamespace(platform=replaced.get("platform", "linux"))):
+            return title_run.host_is_intel()
+
+    def test_windows_reads_the_processor_identifier(self):
+        for identifier, expected in (("Intel64 Family 6", True), ("  INTEL64", True), ("AMD64 Family 25", False), ("", False)):
+            with self.subTest(identifier=identifier):
+                self.assertIs(self.check(SimpleNamespace(name="nt", environ={"PROCESSOR_IDENTIFIER": identifier})), expected)
+        self.assertIs(self.check(SimpleNamespace(name="nt", environ={})), False)
+
+    def test_macos_is_intel_only_on_x86_64(self):
+        for machine, expected in (("x86_64", True), ("arm64", False)):
+            system = SimpleNamespace(name="posix", uname=lambda machine=machine: SimpleNamespace(machine=machine))
+            self.assertIs(self.check(system, platform="darwin"), expected)
+
+    def test_linux_reads_proc_cpuinfo(self):
+        system = SimpleNamespace(name="posix")
+        for text, expected in (("vendor_id\t: GenuineIntel\n", True), ("vendor_id\t: AuthenticAMD\n", False)):
+            with self.subTest(text=text), patch.object(title_run, "Path") as path:
+                path.return_value.read_text.return_value = text
+                self.assertIs(self.check(system), expected)
+                path.assert_called_once_with("/proc/cpuinfo")
+
+    def test_unreadable_cpuinfo_is_not_intel(self):
+        with patch.object(title_run, "Path") as path:
+            path.return_value.read_text.side_effect = OSError("missing")
+            self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
 if __name__ == "__main__":
