@@ -172,6 +172,16 @@ void Indefinite() {
     X509_free_nid_postfix(certificate);
 }
 
+void DefiniteConstructedEoc() {
+    Bytes encoded{0x30, 0x80, 0x30, 0x02, 0x00, 0x00, 0x00, 0x00};
+    Memory memory{Cat({encoded, {0xcc}})};
+    const auto method = Method();
+    auto bio = Bio(memory, method);
+    Require(!d2i_X509_bio_nid_postfix(&bio, nullptr), "a malformed certificate fails");
+    Require(memory.offset == encoded.size() + 1, "an EOC inside a definite constructed value does not end its parent");
+    ERR_clear_error_nid_postfix();
+}
+
 void ReadFailurePreservesOutput() {
     const auto method = Method();
     Memory complete{Certificate("Keep")};
@@ -236,6 +246,7 @@ int main() {
     DefiniteAndCursor();
     Reuse();
     Indefinite();
+    DefiniteConstructedEoc();
     ReadFailurePreservesOutput();
     DecodeFailureClearsOutput();
     ShortHeaderRead();
