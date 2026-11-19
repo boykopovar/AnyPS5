@@ -4556,6 +4556,37 @@ static void CheckAsinConsoleBits() {
     }
 }
 
+static void CheckRoundFlagsAndSignalingNans() {
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    const auto raised = [] {
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT) & Flags;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return flags;
+    };
+    const auto wide = [](std::uint64_t bits) { return std::bit_cast<double>(bits); };
+    const auto narrow = [](std::uint32_t bits) { return std::bit_cast<float>(bits); };
+    const auto round = [](std::uint64_t bits) { return std::bit_cast<std::uint64_t>(round_nid_postfix(std::bit_cast<double>(bits))); };
+    const auto roundf = [](std::uint32_t bits) { return std::bit_cast<std::uint32_t>(roundf_nid_postfix(std::bit_cast<float>(bits))); };
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(round(0x4004000000000000ull) == 0x4008000000000000ull && round(0xc004000000000000ull) == 0xc008000000000000ull && raised() == 0);
+    Require(round(0x3fe0000000000000ull) == 0x3ff0000000000000ull && round(0x3fdfffffffffffffull) == 0 && round(0xbfd0000000000000ull) == 0x8000000000000000ull && raised() == 0);
+    Require(round(0x8000000000000000ull) == 0x8000000000000000ull && round(0x4330000000000000ull) == 0x4330000000000000ull && raised() == 0);
+    Require(round(0x4340000000000000ull) == 0x4340000000000000ull && raised() == FE_INEXACT);
+    Require(round(0xc340000000000001ull) == 0xc340000000000001ull && raised() == FE_INEXACT);
+    Require(round(0x7ff4000000000000ull) == 0x7ff4000000000000ull && raised() == 0);
+    Require(roundf(0x40200000u) == 0x40400000u && roundf(0xc0200000u) == 0xc0400000u && roundf(0x3f000000u) == 0x3f800000u && roundf(0x3e800000u) == 0 && raised() == 0);
+    Require(roundf(0x80000000u) == 0x80000000u && roundf(0x4b000000u) == 0x4b000000u && raised() == 0);
+    Require(roundf(0x4b800000u) == 0x4b800000u && raised() == FE_INEXACT);
+    Require(roundf(0xcb800001u) == 0xcb800001u && raised() == FE_INEXACT);
+    Require(roundf(0x7fa00000u) == 0x7fa00000u && raised() == 0);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(wide(0x7ff4000000000000ull), 1.0)) == 0x7ff4000000000000ull && raised() == 0);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(1.0, wide(0x7ff4000000000000ull))) == 0x7ff4000000000000ull && raised() == 0);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(0x1p-68, 1.0)) == 0 && raised() == FE_INEXACT);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(narrow(0x7fa00000u), 1.0f)) == 0x7fa00000u && raised() == 0);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(1.0f, narrow(0x7fa00000u))) == 0x7fa00000u && raised() == 0);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(0x1p-66f, 1.0f)) == 0 && raised() == FE_INEXACT);
+}
+
 static void CheckFdimFlags() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -4664,6 +4695,7 @@ static void CheckLog1pDomainEnvironment() {
 
 int main() {
     CheckFdimFlags();
+    CheckRoundFlagsAndSignalingNans();
     CheckRemainderConsoleBits();
     CheckFloatClassification();
     CheckDinkumwareConstants();

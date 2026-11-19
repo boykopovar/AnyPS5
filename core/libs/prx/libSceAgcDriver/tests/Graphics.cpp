@@ -5888,8 +5888,8 @@ void InitialContextTests() {
     Require(queue.context.at(0x3) == 0 && queue.context.at(0x8) == 0 && queue.context.at(0x9) == 0x3f800000, "depth bounds overlap render override");
     Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x313) == 0x6000 && queue.context.at(0x2f9) == 0x2d, "initial raster controls are incomplete");
     Require(queue.context.at(0x30e) == 0xffffffff && queue.context.at(0x30f) == 0xffffffff, "initial sample mask excludes samples");
-    Require(queue.context.at(0x206) == 0, "the initial viewport control is not its reset value");
-    Require(queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x8f) == 0xffffffffu, "the initial color masks are not their reset values");
+    Require(queue.context.at(0x206) == 0x43f, "the initial viewport control does not apply the viewport transform");
+    Require(queue.context.at(0x8e) == 0 && queue.context.at(0x8f) == 0, "the initial color masks write color");
     queue.userConfig[0x242] = 4;
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
@@ -5898,21 +5898,27 @@ void InitialContextTests() {
     const auto offsetX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x110)));
     const auto scaleY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x111)));
     const auto offsetY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x112)));
-    Require(state.viewport.x == offsetX - scaleX && state.viewport.y == offsetY - scaleY && state.viewport.width == 2 * scaleX && state.viewport.height == 2 * scaleY, "a draw that programmed its viewport transform but never wrote the viewport control lost the transform");
-    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the reset viewport control was rejected for its viewport control");
+    Require(state.viewport.x == offsetX - scaleX && state.viewport.y == offsetY - scaleY && state.viewport.width == 2 * scaleX && state.viewport.height == 2 * scaleY, "a draw with the initial viewport control lost its viewport transform");
     {
         queue.context[0x111] = std::bit_cast<std::uint32_t>(-scaleY);
         const auto flipped = AgcDriver::Graphics::DecodeState(queue);
-        Require(flipped.viewport.y == offsetY + scaleY && flipped.viewport.height == -2 * scaleY, "a negative Y scale was dropped for a draw that never wrote the viewport control");
+        Require(flipped.viewport.y == offsetY + scaleY && flipped.viewport.height == -2 * scaleY, "a negative Y scale was dropped for a draw with the initial viewport control");
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(scaleY);
+    }
+    Require(queue.context.at(0x206) == 0x43f, "initial homogeneous viewport mode changed");
+    queue.context[0x206] = 0;
+    {
+        const auto programmed = AgcDriver::Graphics::DecodeState(queue);
+        Require(programmed.viewport.x == offsetX - scaleX && programmed.viewport.y == offsetY - scaleY && programmed.viewport.width == 2 * scaleX && programmed.viewport.height == 2 * scaleY, "a draw that wrote a zero viewport control lost its programmed viewport transform");
         std::array<std::uint32_t, 6> words{};
         for (std::uint32_t word = 0; word < 6; ++word) {
             words[word] = queue.context.at(0x10f + word);
             queue.context[0x10f + word] = word % 2 == 0 ? 0x3f800000u : 0u;
         }
-        const auto untouched = AgcDriver::Graphics::DecodeState(queue);
-        Require(untouched.viewport.x == 0.0f && untouched.viewport.y == 0.0f && untouched.viewport.width == static_cast<float>(untouched.renderExtent.width) && untouched.viewport.height == static_cast<float>(untouched.renderExtent.height), "a draw that never programmed a viewport did not get a viewport covering its render target");
+        const auto untransformed = AgcDriver::Graphics::DecodeState(queue);
+        Require(untransformed.viewport.x == 0.0f && untransformed.viewport.y == 0.0f && untransformed.viewport.width == static_cast<float>(untransformed.renderExtent.width) && untransformed.viewport.height == static_cast<float>(untransformed.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the viewport transform disabled was rejected for its viewport control");
         for (std::uint32_t word = 0; word < 6; ++word) queue.context[0x10f + word] = words[word];
-        queue.context[0x111] = std::bit_cast<std::uint32_t>(scaleY);
     }
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
@@ -5925,7 +5931,7 @@ void InitialContextTests() {
     queue.context.erase(0x2dc);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.ClearContext();
-    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x206) == 0, "clear did not restore controls, color masks and viewport control");
+    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0 && queue.context.at(0x206) == 0x43f, "clear did not restore controls, color masks and viewport control");
     Require(!queue.context.contains(0xdead), "unknown context register acquired a default");
 }
 
