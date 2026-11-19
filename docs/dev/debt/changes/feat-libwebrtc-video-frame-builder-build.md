@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::VideoFrame::Builder::build](../../../core/libs/prx/libwebrtc/src/VideoFrameBuilder.cpp) (libwebrtc) - nothing is checked on the console. As in [video_frame.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/video/video_frame.cc), it copies every builder field into the returned 216-byte `VideoFrame` (returned through the hidden result pointer, which it returns), takes a reference on the frame buffer through its virtual `AddRef`, and leaves `processing_time_` unset. Unset optionals copy only their flag, and an engaged colour space is copied as its 68 bytes, as the guest `std::optional` copy constructors are assumed to do. A builder without a frame buffer throws `std::invalid_argument` where the firmware's `RTC_CHECK` aborts. A builder holding packet infos throws through `NotImplemented_nid_no_patch` before touching the result or the buffer, because copying `RtpPacketInfos` takes a reference on a guest object whose layout is not modelled. A null builder or result throws. Closes when: compared with the console and packet infos are copied.

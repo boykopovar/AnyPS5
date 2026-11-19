@@ -70,6 +70,16 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
 
 using BufferRelease = int(APS5_VABI*)(const void*);
 
+constexpr std::size_t ColorSpaceEngagedOffset = 68;
+
+void CopyOptional(WebRtcOptionalInt64& destination, const WebRtcOptionalInt64& source) {
+    if (source.engaged)
+        destination.value = source.value;
+    else
+        reinterpret_cast<unsigned char*>(&destination.value)[0] = 0;
+    destination.engaged = source.engaged;
+}
+
 void ReleaseVideoFrameBuffer(void* buffer) {
     if (!buffer)
         return;
@@ -126,6 +136,45 @@ WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_fra
         CallReference(checked.videoFrameBuffer, ReleaseSlot, "VideoFrame::Builder::set_video_frame_buffer requires a frame buffer with a virtual Release");
     checked.videoFrameBuffer = replacement;
     return builder;
+}
+
+WebRtcVideoFrame* APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(WebRtcVideoFrame* frame, WebRtcVideoFrameBuilder* builder) {
+    const WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder::build requires a builder");
+    if (!frame)
+        throw std::invalid_argument("VideoFrame::Builder::build requires a result frame");
+    if (!checked.videoFrameBuffer)
+        throw std::invalid_argument("VideoFrame::Builder::build requires a video frame buffer");
+    if (checked.packetInfos)
+        NotImplemented_nid_no_patch("VideoFrame::Builder::build with packet infos: copying the guest packet info reference");
+    CallReference(checked.videoFrameBuffer, AddRefSlot, "VideoFrame::Builder::build requires a frame buffer with a virtual AddRef");
+    frame->id = checked.id;
+    frame->videoFrameBuffer = checked.videoFrameBuffer;
+    frame->timestampRtp = checked.timestampRtp;
+    frame->ntpTimeMs = checked.ntpTimeMs;
+    frame->timestampUs = checked.timestampUs;
+    CopyOptional(frame->presentationTimestamp, checked.presentationTimestamp);
+    CopyOptional(frame->referenceTime, checked.referenceTime);
+    frame->rotation = checked.rotation;
+    if (checked.colorSpace[ColorSpaceEngagedOffset])
+        std::memcpy(frame->colorSpace, checked.colorSpace, ColorSpaceEngagedOffset);
+    else
+        frame->colorSpace[0] = 0;
+    frame->colorSpace[ColorSpaceEngagedOffset] = checked.colorSpace[ColorSpaceEngagedOffset];
+    frame->useLowLatencyRendering = checked.useLowLatencyRendering;
+    if (checked.hasMaxCompositionDelayInFrames)
+        frame->maxCompositionDelayInFrames = checked.maxCompositionDelayInFrames;
+    else
+        reinterpret_cast<unsigned char*>(&frame->maxCompositionDelayInFrames)[0] = 0;
+    frame->hasMaxCompositionDelayInFrames = checked.hasMaxCompositionDelayInFrames;
+    if (checked.hasUpdateRect)
+        std::memcpy(frame->updateRect, checked.updateRect, sizeof(frame->updateRect));
+    else
+        reinterpret_cast<unsigned char*>(frame->updateRect)[0] = 0;
+    frame->hasUpdateRect = checked.hasUpdateRect;
+    frame->packetInfos = nullptr;
+    reinterpret_cast<unsigned char*>(frame->processingTime)[0] = 0;
+    frame->hasProcessingTime = false;
+    return frame;
 }
 
 void** APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void** result, const WebRtcVideoFrame* frame) {

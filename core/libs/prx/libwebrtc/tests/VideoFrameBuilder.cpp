@@ -236,6 +236,115 @@ void TestRenderTimeMs() {
     Require(threw);
 }
 
+WebRtcVideoFrame FilledFrame() {
+    WebRtcVideoFrame frame;
+    std::memset(&frame, 0xA5, sizeof(frame));
+    return frame;
+}
+
+bool FrameUntouched(const WebRtcVideoFrame& frame) {
+    const WebRtcVideoFrame filled = FilledFrame();
+    return std::memcmp(&frame, &filled, sizeof(frame)) == 0;
+}
+
+template<typename Exception, typename Call> bool Throws(Call call) {
+    try {
+        call();
+    } catch (const Exception&) {
+        return true;
+    }
+    return false;
+}
+
+void TestBuildCopiesEveryField() {
+    g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
+    g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
+    RefBuffer buffer{g_refVtable};
+    WebRtcVideoFrameBuilder builder = Filled();
+    builder.id = 0x1234;
+    builder.videoFrameBuffer = &buffer;
+    builder.timestampUs = -7000;
+    builder.presentationTimestamp = {11, true};
+    builder.referenceTime = {22, true};
+    builder.timestampRtp = 0xDEADBEEFu;
+    builder.ntpTimeMs = 987654321;
+    builder.rotation = 270;
+    for (std::size_t index = 0; index < 68; ++index)
+        builder.colorSpace[index] = static_cast<unsigned char>(index + 1);
+    builder.colorSpace[68] = 1;
+    builder.useLowLatencyRendering = true;
+    builder.maxCompositionDelayInFrames = 3;
+    builder.hasMaxCompositionDelayInFrames = true;
+    builder.updateRect[0] = 1;
+    builder.updateRect[1] = 2;
+    builder.updateRect[2] = 30;
+    builder.updateRect[3] = 40;
+    builder.hasUpdateRect = true;
+    builder.packetInfos = nullptr;
+    const WebRtcVideoFrameBuilder before = builder;
+    WebRtcVideoFrame frame = FilledFrame();
+    g_order.clear();
+    Require(_ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder) == &frame);
+    Require(std::memcmp(&before, &builder, sizeof(builder)) == 0);
+    Require(buffer.addRefs == 1 && buffer.releases == 0 && g_order == std::vector<int>{1});
+    Require(frame.id == 0x1234 && frame.videoFrameBuffer == &buffer);
+    Require(frame.timestampRtp == 0xDEADBEEFu && frame.ntpTimeMs == 987654321 && frame.timestampUs == -7000);
+    Require(frame.presentationTimestamp.engaged && frame.presentationTimestamp.value == 11);
+    Require(frame.referenceTime.engaged && frame.referenceTime.value == 22);
+    Require(frame.rotation == 270);
+    Require(std::memcmp(frame.colorSpace, builder.colorSpace, 69) == 0);
+    Require(frame.useLowLatencyRendering && frame.hasMaxCompositionDelayInFrames && frame.maxCompositionDelayInFrames == 3);
+    Require(frame.hasUpdateRect && frame.updateRect[0] == 1 && frame.updateRect[1] == 2 && frame.updateRect[2] == 30 && frame.updateRect[3] == 40);
+    Require(frame.packetInfos == nullptr && !frame.hasProcessingTime);
+    _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame);
+    Require(buffer.addRefs == 1 && buffer.releases == 1);
+}
+
+void TestBuildLeavesUnsetOptionalsUnset() {
+    g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
+    g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
+    RefBuffer buffer{g_refVtable};
+    WebRtcVideoFrameBuilder builder = Filled();
+    _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(&builder);
+    void* reference = &buffer;
+    _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(&builder, &reference);
+    _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(&builder, 42);
+    WebRtcVideoFrame frame = FilledFrame();
+    _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder);
+    Require(buffer.addRefs == 2);
+    Require(frame.id == 0 && frame.videoFrameBuffer == &buffer && frame.timestampUs == 42000 && frame.timestampRtp == 0 && frame.ntpTimeMs == 0);
+    Require(!frame.presentationTimestamp.engaged && !frame.referenceTime.engaged && frame.colorSpace[68] == 0);
+    Require(frame.rotation == 0 && !frame.useLowLatencyRendering && !frame.hasMaxCompositionDelayInFrames && !frame.hasUpdateRect);
+    Require(frame.packetInfos == nullptr && !frame.hasProcessingTime);
+    Require(_ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(&frame) == 42);
+    _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame);
+    _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
+    Require(buffer.addRefs == 2 && buffer.releases == 2);
+}
+
+void TestBuildRejectsInvalidInput() {
+    g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
+    g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
+    RefBuffer buffer{g_refVtable};
+    WebRtcVideoFrameBuilder builder = Filled();
+    _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(&builder);
+    WebRtcVideoFrame frame = FilledFrame();
+    Require(Throws<std::invalid_argument>([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder); }));
+    Require(FrameUntouched(frame));
+    builder.videoFrameBuffer = &buffer;
+    Require(Throws<std::invalid_argument>([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(nullptr, &builder); }));
+    Require(Throws<std::invalid_argument>([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, nullptr); }));
+    builder.packetInfos = &builder;
+    Require(Throws<std::runtime_error>([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder); }));
+    Require(FrameUntouched(frame) && buffer.addRefs == 0 && buffer.releases == 0);
+    const void* withoutAddRef[] = {nullptr, reinterpret_cast<const void*>(RefRelease)};
+    RefBuffer broken{withoutAddRef};
+    builder.packetInfos = nullptr;
+    builder.videoFrameBuffer = &broken;
+    Require(Throws<std::invalid_argument>([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder); }));
+    Require(FrameUntouched(frame) && broken.releases == 0);
+}
+
 void TestNullBuilderThrows() {
     try {
         _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(nullptr, 1);
@@ -263,5 +372,8 @@ int main() {
     TestNullDestructorThrows();
     TestRenderTimeMs();
     TestNullBuilderThrows();
+    TestBuildCopiesEveryField();
+    TestBuildLeavesUnsetOptionalsUnset();
+    TestBuildRejectsInvalidInput();
     return 0;
 }
