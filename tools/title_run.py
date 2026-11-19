@@ -25,7 +25,7 @@ import title_run_cache
 import unwrap_self
 from audit_dump import comparison_path
 from package_release import native_auxiliary_runtimes, windows_runtime
-OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering", "incomplete")
+OUTCOMES = ("relink-failed", "launch-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering", "incomplete")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
@@ -357,7 +357,7 @@ def pair(before, now):
 
 
 def fps_of(run):
-    return None if run.get("outcome") in ("relink-failed", "incomplete") else run.get("fps")
+    return None if run.get("outcome") in ("relink-failed", "launch-failed", "incomplete") else run.get("fps")
 
 
 def report_field(run, name):
@@ -1134,7 +1134,15 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
         env["APS5_PAD_INPUT_FILE"] = str(pad_file)
     started = time.monotonic()
     with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
-        session = Session([str(executable)], work, env, stdout, stderr, owned=work)
+        try:
+            session = Session([str(executable)], work, env, stdout, stderr, owned=work)
+        except OSError as error:
+            message = " ".join(f"{type(error).__name__}: {error}".split())
+            stderr.write((message + "\n").encode("utf-8", errors="replace"))
+            return {"outcome": "launch-failed", "exit_code": None, "seconds": round(time.monotonic() - started, 1),
+                    "presents": 0, "fps": 0.0, "first_error": message, "warnings": {}, "frames": [], "report": None,
+                    "native": {"summary": [], "report": None}, "cache_policy": policy,
+                    "gpu": "", "driver": "", "os": "", "cpu": "", **({"pad_queued_s": None} if pad else {})}
         try:
             while session.alive() and time.monotonic() - started < seconds:
                 if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):

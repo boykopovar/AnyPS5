@@ -2041,6 +2041,24 @@ class RunHelperTests(unittest.TestCase):
         self.assertIsNone(title_run.fps_of({"outcome": "relink-failed", "fps": 60}))
         self.assertEqual(title_run.fps_of({"outcome": "ok", "fps": 60}), 60)
 
+    def test_launch_failure_is_reported_without_aborting_the_run(self):
+        error = OSError(623, "Illegal System DLL Relocation\nThe system DLL was relocated")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            run_dir = Path(directory) / "run1"
+            with unittest.mock.patch.object(title_run, "Session", side_effect=error):
+                result = title_run.run_title(work / "eboot.exe", work, run_dir, 1, {})
+            self.assertEqual(result["outcome"], "launch-failed")
+            self.assertIsNone(result["exit_code"])
+            self.assertEqual(result["presents"], 0)
+            self.assertIn("Illegal System DLL Relocation", result["first_error"])
+            self.assertNotIn("\n", result["first_error"])
+            self.assertIn(result["first_error"], (run_dir / "stderr.log").read_text(encoding="utf-8"))
+            self.assertIsNone(title_run.fps_of(result))
+            self.assertEqual(result["native"], {"summary": [], "report": None})
+            self.assertIn("status", result["cache_policy"])
+
     def test_last_run_returns_the_most_recent_run(self):
         self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
 
