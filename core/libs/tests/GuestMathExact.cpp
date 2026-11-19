@@ -153,6 +153,16 @@ static void CheckFiniteClassification() {
     for (const double value : {static_cast<double>(INFINITY), -static_cast<double>(INFINITY), static_cast<double>(NAN)}) Require(__isfinite_nid_postfix(value) == 0);
 }
 
+static void CheckIlogblReadsTheBits() {
+    Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+    const int zero = ilogbl_nid_postfix(-0.0L);
+    const int smallest = ilogbl_nid_postfix(Extended(0x0000, 0x0000000000000001ull));
+    const int largestSubnormal = ilogbl_nid_postfix(Extended(0x8000, 0x7fffffffffffffffull));
+    const int signaling = ilogbl_nid_postfix(Extended(0x7fff, 0x8000000000000001ull));
+    const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+    Require(zero == INT_MIN && smallest == -16445 && largestSubnormal == -16383 && signaling == INT_MAX && exceptions == 0);
+}
+
 static void CheckErrno() {
     errno = 0;
     Require(std::isnan(fmodl_nid_postfix(NAN, 1.0L)) && errno == EDOM);
@@ -955,6 +965,7 @@ int main(int argc, char** argv) {
     CheckSignalingNanPassThrough();
     CheckModflPartsAndFlags();
     CheckErrno();
+    CheckIlogblReadsTheBits();
     CheckFiniteClassification();
     CheckConsoleQuirks();
     CheckRoundingModes();

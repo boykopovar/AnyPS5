@@ -787,9 +787,11 @@ long double APS5_VABI logbl_nid_postfix(long double x) {
 }
 
 int APS5_VABI ilogbl_nid_postfix(long double x) {
-    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return INT_MAX;
-    ErrnoGuard guard;
-    return std::ilogb(x);
+    const ExtendedBits bits = Bits(x);
+    const int field = bits.signExponent & 0x7fff;
+    if (field == 0x7fff) return INT_MAX;
+    if (field != 0) return field - 16383;
+    return bits.mantissa != 0 ? static_cast<int>(std::bit_width(bits.mantissa)) - 16446 : INT_MIN;
 }
 
 long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
