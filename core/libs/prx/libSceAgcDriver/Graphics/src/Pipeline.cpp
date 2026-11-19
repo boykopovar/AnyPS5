@@ -382,8 +382,8 @@ ColorWriteMasks channelWriteMasks(const State& state, std::span<const VkPipeline
     return masks;
 }
 
-VkPipelineColorBlendAttachmentState keyedBlend(const Context& context, VkPipelineColorBlendAttachmentState blend) {
-    if (context.dynamicColorWriteMask) blend.colorWriteMask = 0;
+VkPipelineColorBlendAttachmentState keyedBlend(bool dynamicColorWriteMask, VkPipelineColorBlendAttachmentState blend) {
+    if (dynamicColorWriteMask) blend.colorWriteMask = 0;
     return blend;
 }
 
@@ -489,7 +489,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             for (std::uint32_t sample = 0; sample < state.samples; ++sample) sampleKey(state.sampleLocations[pixel * 8u + sample]);
         }
     }
-    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context, blend));
+    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context.dynamicColorWriteMask, blend));
     appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
@@ -536,7 +536,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
-Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
+Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicColorWriteMask(context.dynamicColorWriteMask && !FragmentInterlock(shaders)), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
@@ -719,7 +719,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
         dynamicDepthBiasEnable = libraries && narrowLibraryKeys && context.dynamicDepthBiasEnable;
         if (dynamicDepthBiasEnable) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE);
-        if (context.dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
+        if (dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
         dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
@@ -794,8 +794,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const auto firstMasks = channelWriteMasks(state, state.blends, false);
         const auto secondMasks = channelWriteMasks(state, state.blends, true);
         for (std::size_t index = 0; index < firstChannels.size(); ++index) {
-            firstChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : firstMasks[index];
-            secondChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : secondMasks[index];
+            firstChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : firstMasks[index];
+            secondChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : secondMasks[index];
         }
         if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
             blend.logicOpEnable = VK_TRUE;
@@ -1086,7 +1086,7 @@ void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state
 }
 
 void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
-    if (!context.dynamicColorWriteMask || state.blends.empty()) return;
+    if (!dynamicColorWriteMask || state.blends.empty()) return;
     const auto masks = channelWriteMasks(state, masked != nullptr ? std::span(masked->blends) : std::span(state.blends), secondChannel);
     recording.SetColorWriteMasks(context, std::span(masks).first(state.blends.size()));
 }
@@ -1201,7 +1201,8 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
-    for (const auto& blend : state.blends) append(key, keyedBlend(context, blend));
+    const bool dynamicColorWriteMask = context.dynamicColorWriteMask && !FragmentInterlock(shaders);
+    for (const auto& blend : state.blends) append(key, keyedBlend(dynamicColorWriteMask, blend));
     key.Put(state.colorRop);
     append(key, narrowLibraryKeys);
     key.PutBytes(state.blendConstants.data(), sizeof(state.blendConstants));
