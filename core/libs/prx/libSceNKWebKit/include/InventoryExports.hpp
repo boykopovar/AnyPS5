@@ -4036,7 +4036,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConst
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_33StickyPositionViewportConstraintsE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_5ColorE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE();
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9ImageDataE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE();
 int APS5_VABI _ZN7bmalloc11Deallocator18deallocateSlowCaseEPv();
 int APS5_VABI _ZN7bmalloc11IsoPageBase18allocatePageMemoryEv();
