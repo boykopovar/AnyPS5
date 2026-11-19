@@ -242,6 +242,14 @@ static void CheckUnusableGuestPointers(GuestLibrary& library, FT_Library native)
     errno = 71;
     Require(FT_Outline_Render_nid_postfix(&library, &outline, readOnly) == FT_Err_Invalid_Argument);
     Require(errno == 71 && readOnly->source == nullptr && spans.empty());
+    const FT_Error noLibrary = FT_Outline_Render(nullptr, &nativeOutline, nullptr);
+    Require(noLibrary == FT_Err_Invalid_Library_Handle);
+    GuestLibrary emptyLibrary{};
+    for (GuestLibrary* unusable : {reinterpret_cast<GuestLibrary*>(0x10), reinterpret_cast<GuestLibrary*>(reinterpret_cast<std::uintptr_t>(&library) + 1), &emptyLibrary}) {
+        errno = 71;
+        Require(FT_Outline_Render_nid_postfix(unusable, &outline, readOnly) == noLibrary);
+        Require(errno == 71 && readOnly->source == nullptr && spans.empty());
+    }
 
     GuestRasterParams unmappedTarget{};
     unmappedTarget.flags = FT_RASTER_FLAG_AA;

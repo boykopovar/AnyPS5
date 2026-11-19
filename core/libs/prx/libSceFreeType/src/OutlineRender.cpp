@@ -74,11 +74,11 @@ extern "C" {
 
 int APS5_VABI FT_Outline_Render_nid_postfix(GuestLibrary* library, GuestOutline* outline, GuestRasterParams* params) {
     FT_Library host = nullptr;
-    if (library && (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyIn(&host, &library->host, sizeof(host)))) {
-        host = nullptr;
+    if (!library || reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyIn(&host, &library->host, sizeof(host)) || !host) {
+        return FT_Outline_Render(nullptr, nullptr, nullptr);
     }
     GuestOutline header{};
-    if (!library || !outline || !CopyIn(&header, outline, sizeof(header))) return FT_Outline_Render(host, nullptr, nullptr);
+    if (!outline || !CopyIn(&header, outline, sizeof(header))) return FT_Outline_Render(host, nullptr, nullptr);
     std::vector<GuestVector> guestPoints(header.n_points);
     std::vector<unsigned char> tags(header.n_points);
     std::vector<std::uint16_t> contours(header.n_contours);
