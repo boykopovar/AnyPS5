@@ -1,3 +1,5 @@
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -153,8 +155,15 @@ int APS5_VABI SSL_is_quic_nid_postfix() {
 
 int APS5_VABI EVP_MD_block_size_nid_postfix(const void* md) {
     if (!md) return -1;
-    if (md == EVP_sha1_nid_postfix() || md == EVP_sha224_nid_postfix()) return static_cast<const LibreSsl3::DigestMethod*>(md)->blockSize;
-    return static_cast<const EvpMd*>(md)->blockSize;
+    const std::size_t offset = md == EVP_sha1_nid_postfix() || md == EVP_sha224_nid_postfix()
+        ? offsetof(LibreSsl3::DigestMethod, blockSize)
+        : offsetof(EvpMd, blockSize);
+    std::int32_t blockSize = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&blockSize, static_cast<const std::byte*>(md) + offset, sizeof(blockSize));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return blockSize;
 }
 
 }
