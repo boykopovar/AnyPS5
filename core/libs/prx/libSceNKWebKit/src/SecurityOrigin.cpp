@@ -597,6 +597,10 @@ bool APS5_VABI _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(const Security
     return IsSameSchemeHostPort(origin, second);
 }
 
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(const SecurityOrigin* self, const SecurityOrigin* other) {
+    return IsSameSchemeHostPort(Checked(self), Checked(other));
+}
+
 String APS5_VABI _ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(const SecurityOrigin* self) {
     const auto& origin = Checked(self);
     const auto& protocol = Protocol(origin.data);

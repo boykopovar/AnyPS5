@@ -135,6 +135,10 @@ static bool SameOrigin(const OriginRef& a, const OriginRef& b) {
     return _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(a.get(), b.get());
 }
 
+static bool SameSchemeHostPort(const OriginRef& a, const OriginRef& b) {
+    return _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), b.get());
+}
+
 static bool Equal(const OriginRef& a, const OriginRef& b) {
     return _ZNK7WebCore14SecurityOrigin5equalEPKS0_(a.get(), b.get());
 }
@@ -257,22 +261,27 @@ static void TestOpaqueOrigins() {
         Require((*origin)->data.storage.opaque.object != 0);
         Require((*origin)->data.storage.opaque.processIdentifier == _ZN7WebCore7Process10identifierEv());
         Require(SameOrigin(*origin, *origin));
+        Require(SameSchemeHostPort(*origin, *origin));
         Require(Equal(*origin, *origin));
         Require(Is(_ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(origin->get()), ""));
         Require(!Suffix(*origin, "example.com"));
     }
     Require(data->data.storage.opaque.object != data2->data.storage.opaque.object);
     Require(!SameOrigin(data, data2));
+    Require(!SameSchemeHostPort(data, data2));
     Require(!Equal(data, data2));
     auto http = Create("http", "example.com");
     Require(!SameOrigin(data, http));
     Require(!SameOrigin(http, data));
+    Require(!SameSchemeHostPort(data, http));
+    Require(!SameSchemeHostPort(http, data));
     Require(!Equal(http, data));
 
     auto copy = _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(data.get());
     Require(copy.get() != data.get());
     Require(IsOpaque(copy));
     Require(SameOrigin(data, copy));
+    Require(SameSchemeHostPort(data, copy));
     Require(Equal(copy, data));
 }
 
@@ -287,6 +296,7 @@ static void TestFileOrigins() {
 
     auto other = Create("file", "", "", "/other");
     Require(SameOrigin(file, other));
+    Require(SameSchemeHostPort(file, other));
     Require(Equal(file, other));
     other->enforcesFilePathSeparation = true;
     Require(Is(ToString(other), "null"));
@@ -295,10 +305,14 @@ static void TestFileOrigins() {
     Require(!SameOrigin(other, file));
     Require(!Equal(file, other));
     Require(SameOrigin(other, other));
+    Require(!SameSchemeHostPort(file, other));
+    Require(!SameSchemeHostPort(other, file));
+    Require(!SameSchemeHostPort(other, other));
 
     auto server = Create("file", "server", "", "/share");
     Require(Is(ToString(server), "file://"));
     Require(!SameOrigin(file, server));
+    Require(!SameSchemeHostPort(file, server));
 
     auto blob = MakeURL("blob", "", "", "https://example.com/uuid", false);
     Require(ThrowsNotImplemented([&] { _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE(&blob.url); }));
@@ -308,8 +322,14 @@ static void TestComparisons() {
     auto a = Create("https", "example.com");
     auto b = Create("https", "example.com", "443", "/other");
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
+    Require(SameSchemeHostPort(b, a));
     Require(Equal(a, b));
     Require(!SameOrigin(a, Create("http", "example.com")));
+    Require(!SameSchemeHostPort(a, Create("http", "example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "www.example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "example.com", "8443")));
+    Require(SameSchemeHostPort(Create("http", "example.com", "8080"), Create("http", "example.com", "8080", "/x")));
     Require(!SameOrigin(a, Create("https", "www.example.com")));
     Require(!SameOrigin(a, Create("https", "example.com", "8443")));
     Require(!Equal(a, Create("https", "example.com", "8443")));
@@ -317,6 +337,7 @@ static void TestComparisons() {
     b->domainWasSetInDOM = true;
     b->domain = Make("example.com");
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
     Require(!Equal(a, b));
     Require(!Equal(b, a));
     a->domainWasSetInDOM = true;
@@ -325,11 +346,14 @@ static void TestComparisons() {
     a->domain = Make("other.com");
     Require(!Equal(a, b));
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
 
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin5equalEPKS0_(a.get(), nullptr); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin5equalEPKS0_(nullptr, a.get()); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(a.get(), nullptr); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(nullptr, a.get()); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), nullptr); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(nullptr, a.get()); }));
 }
 
 static void TestIsolatedCopy() {
