@@ -16,7 +16,7 @@ static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     int handle = 0;
     try {
@@ -40,4 +40,7 @@ int main() {
     Require(sceVideoOutClose(handle) == 0, "close failed");
     LibcRunShutdown_nid_postfix();
     std::printf("guest VideoOut vblank status tests passed\n");
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

@@ -2867,7 +2867,12 @@ void VulkanDevice::startJournalReplay() {
     state->journalReplay = Graphics::StartPipelineJournalReplay(graphicsContext(), Graphics::PipelineJournalDeviceFingerprint(state->properties), {[this](const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return ReplayComputePipeline(shader, pushConstants); }});
 }
 
-VulkanDevice::~VulkanDevice() = default;
+VulkanDevice::~VulkanDevice() {
+    if (state != nullptr && state->journalReplay != nullptr) {
+        state->journalReplay->Cancel();
+        state->journalReplay->Wait();
+    }
+}
 
 VkPipelineCreateFlags VulkanDevice::computePipelineFlags() const {
     return (graphicsContext().pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0) | VK_PIPELINE_CREATE_DISPATCH_BASE_BIT;

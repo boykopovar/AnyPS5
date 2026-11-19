@@ -45,7 +45,7 @@ std::array<std::uint8_t, 0x20> ModeRecord(std::uint32_t size) {
 
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     std::array<std::uint8_t, 0x18> info{};
     const auto mode = ModeRecord(0x20);
@@ -101,3 +101,5 @@ int main() {
     LibcRunShutdown_nid_postfix();
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

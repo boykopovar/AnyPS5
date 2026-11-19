@@ -179,7 +179,7 @@ void testDumpQueue() {
 
 }
 
-int main(int argc, char** argv) {
+static int GuestMain(int argc, char** argv) {
     WaitMode = argc > 1 && std::strcmp(argv[1], "wait") == 0;
     VideoOutTestEnvironment environment;
     try {
@@ -198,3 +198,5 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

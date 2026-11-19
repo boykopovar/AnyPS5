@@ -41,7 +41,7 @@ static void UnsetEnvironment(const char* name) {
 #endif
 }
 
-int main(int argc, char** argv) {
+static int GuestMain(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? std::string_view(argv[1]) : std::string_view{};
     const bool heightOnly = mode == "height-only";
     const bool widthOnly = mode == "width-only";
@@ -163,4 +163,7 @@ int main(int argc, char** argv) {
 
     Require(sceVideoOutClose(handle) == 0);
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

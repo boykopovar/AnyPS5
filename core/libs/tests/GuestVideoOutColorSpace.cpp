@@ -27,7 +27,7 @@ static void ExpectFailure(auto&& action) {
     Require(failed);
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     VideoOutColorSpaceConversionSettings settings{};
     std::memset(&settings, 0x5A, sizeof(settings));
@@ -109,3 +109,5 @@ int main() {
     LibcRunShutdown_nid_postfix();
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

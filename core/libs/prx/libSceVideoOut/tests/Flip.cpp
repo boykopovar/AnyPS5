@@ -33,9 +33,6 @@
 #ifdef _WIN32
 #include <SDL.h>
 #endif
-#ifdef __APPLE__
-#include <crt_externs.h>
-#endif
 
 #undef main
 
@@ -1614,10 +1611,6 @@ void testOutputResolutionOverride() {
 
 }
 
-#ifdef __APPLE__
-extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, void*), void* block);
-#endif
-
 int runTests(int argc, char** argv) {
     VideoOutTestEnvironment environment;
 #ifdef _WIN32
@@ -1681,12 +1674,4 @@ int runTests(int argc, char** argv) {
     }
 }
 
-int main(int argc, char** argv) {
-#ifdef __APPLE__
-    static_cast<void>(argc);
-    static_cast<void>(argv);
-    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(*_NSGetArgc(), *_NSGetArgv())); }, nullptr);
-#else
-    return runTests(argc, argv);
-#endif
-}
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, runTests); }

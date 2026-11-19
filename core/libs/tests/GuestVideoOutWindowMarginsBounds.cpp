@@ -83,7 +83,7 @@ void TestClosedHandleBounds(int handle) {
 
 } // namespace
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
 
     TestUnopenedHandleBounds();
@@ -107,3 +107,5 @@ int main() {
 
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

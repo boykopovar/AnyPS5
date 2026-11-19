@@ -180,7 +180,7 @@ int run() {
 
 }
 
-int main() {
+static int GuestMain(int, char**) {
     try {
         return run();
     } catch (const std::exception& error) {
@@ -190,3 +190,5 @@ int main() {
         return 1;
     }
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }
