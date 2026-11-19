@@ -1,10 +1,10 @@
 #include "prx/libSceJpegEnc/include/Api.hpp"
-#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -148,27 +148,10 @@ std::int32_t validateEncodeParam(const JpegEncEncodeParam* param, JpegEncEncodeP
     return 0;
 }
 
-std::uint8_t clampToByte(float value) {
-    return static_cast<std::uint8_t>(std::clamp(value + 0.5f, 0.0f, 255.0f));
-}
-
-void yuvToRgb(std::uint8_t y, std::uint8_t u, std::uint8_t v, std::uint8_t* rgb) {
-    const float cb = static_cast<float>(u) - 128.0f;
-    const float cr = static_cast<float>(v) - 128.0f;
-    rgb[0] = clampToByte(y + 1.402f * cr);
-    rgb[1] = clampToByte(y - 0.344136f * cb - 0.714136f * cr);
-    rgb[2] = clampToByte(y + 1.772f * cb);
-}
-
 std::optional<std::vector<std::uint8_t>> toPackedPixels(const JpegEncEncodeParam& param, std::uint32_t channels) {
     const auto* image = static_cast<const std::uint8_t*>(param.image);
     const std::size_t width = param.image_width;
-    std::size_t rowBytes = width;
-    if (param.pixel_format == PIXEL_FORMAT_R8G8B8A8 || param.pixel_format == PIXEL_FORMAT_B8G8R8A8) {
-        rowBytes = width * 4;
-    } else if (param.pixel_format == PIXEL_FORMAT_Y8U8Y8V8) {
-        rowBytes = ((width + 1) & ~1u) * 2;
-    }
+    const std::size_t rowBytes = channels == 1 ? width : width * 4;
     std::vector<std::uint8_t> rowBuffer(rowBytes);
     std::vector<std::uint8_t> pixels(width * param.image_height * channels);
     for (std::size_t y = 0; y < param.image_height; ++y) {
@@ -188,11 +171,6 @@ std::optional<std::vector<std::uint8_t>> toPackedPixels(const JpegEncEncodeParam
                 out[x * 3 + 1] = row[x * 4 + 1];
                 out[x * 3 + 2] = row[x * 4 + 0];
                 break;
-            case PIXEL_FORMAT_Y8U8Y8V8: {
-                const std::uint8_t* pair = row + (x / 2) * 4;
-                yuvToRgb(pair[(x % 2) * 2], pair[1], pair[3], out + x * 3);
-                break;
-            }
             default:
                 out[x] = row[x];
                 break;
@@ -213,6 +191,60 @@ Decoder::Jpeg::Sampling toSampling(const JpegEncEncodeParam& param) {
     case SAMPLING_TYPE_420: return Decoder::Jpeg::Sampling::Yuv420;
     }
     throw std::invalid_argument("sceJpegEncEncode: invalid sampling type");
+}
+
+std::optional<std::vector<std::uint8_t>> encodeYuyv(const JpegEncEncodeParam& param, Decoder::Jpeg::Sampling sampling,
+                                                   std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    const std::size_t width = param.image_width;
+    const std::size_t height = param.image_height;
+    const std::size_t chromaStride = (width + 1) / 2;
+    const std::size_t lumaStride = chromaStride * 2;
+    const bool halfChromaHeight = sampling == Decoder::Jpeg::Sampling::Yuv420;
+    const std::size_t lumaRows = height + (halfChromaHeight && (height & 1));
+    const std::size_t lumaSize = lumaStride * lumaRows;
+    const std::size_t chromaSize = chromaStride * (halfChromaHeight ? lumaRows / 2 : lumaRows);
+    const std::size_t size = lumaSize + 2 * chromaSize;
+    const auto planes = std::make_unique_for_overwrite<std::uint8_t[]>(size);
+    const std::size_t rowBytes = lumaStride * 2;
+    const auto row = std::make_unique_for_overwrite<std::uint8_t[]>(rowBytes);
+    const auto* image = static_cast<const std::uint8_t*>(param.image);
+    for (std::size_t y = 0; y < height; ++y) {
+        if (!copyIn(row.get(), image + y * param.image_pitch, rowBytes)) return std::nullopt;
+        auto* luma = planes.get() + y * lumaStride;
+        auto* cb = planes.get() + lumaSize + (halfChromaHeight ? y / 2 : y) * chromaStride;
+        auto* cr = cb + chromaSize;
+        const bool average = halfChromaHeight && (y & 1);
+        for (std::size_t pair = 0; pair < chromaStride; ++pair) {
+            const auto* source = row.get() + pair * 4;
+            luma[pair * 2] = source[0];
+            luma[pair * 2 + 1] = source[pair * 2 + 1 < width ? 2 : 0];
+            if (average) {
+                const auto bias = static_cast<unsigned>(pair & 1);
+                cb[pair] = static_cast<std::uint8_t>((cb[pair] + source[1] + bias) / 2);
+                cr[pair] = static_cast<std::uint8_t>((cr[pair] + source[3] + bias) / 2);
+            } else {
+                cb[pair] = source[1];
+                cr[pair] = source[3];
+            }
+        }
+    }
+    if (lumaRows != height) {
+        std::memcpy(planes.get() + height * lumaStride, planes.get() + (height - 1) * lumaStride, lumaStride);
+    }
+    return Decoder::Jpeg::EncodePlanarYuv({planes.get(), size}, param.image_width, param.image_height,
+                                          toQuality(param), sampling, restartBlocks, restartRows);
+}
+
+std::optional<std::vector<std::uint8_t>> encodePixels(const JpegEncEncodeParam& param) {
+    const auto sampling = toSampling(param);
+    const auto restartBlocks = param.restart_interval > 0 ? static_cast<std::uint32_t>(param.restart_interval) : 0;
+    const std::uint32_t restartRows = param.restart_interval == RESTART_INTERVAL_PER_ROW ? 1 : 0;
+    if (param.pixel_format == PIXEL_FORMAT_Y8U8Y8V8) return encodeYuyv(param, sampling, restartBlocks, restartRows);
+    const std::uint32_t channels = param.pixel_format == PIXEL_FORMAT_Y8 ? 1 : 3;
+    const auto pixels = toPackedPixels(param, channels);
+    if (!pixels) return std::nullopt;
+    return Decoder::Jpeg::Encode(*pixels, param.image_width, param.image_height, channels, toQuality(param),
+                                 sampling, restartBlocks, restartRows);
 }
 
 }  // namespace
@@ -263,12 +295,9 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     if (result != 0) return result;
     if (localParam.encode_mode == ENCODE_MODE_MJPEG) throw std::runtime_error("sceJpegEncEncode: MJPEG encode mode is not implemented");
 
-    const std::uint32_t channels = localParam.pixel_format == PIXEL_FORMAT_Y8 ? 1 : 3;
-    const std::optional<std::vector<std::uint8_t>> pixels = toPackedPixels(localParam, channels);
-    if (!pixels) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
-    const std::uint32_t restartBlocks = localParam.restart_interval > 0 ? static_cast<std::uint32_t>(localParam.restart_interval) : 0;
-    const std::uint32_t restartRows = localParam.restart_interval == RESTART_INTERVAL_PER_ROW ? 1 : 0;
-    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(*pixels, localParam.image_width, localParam.image_height, channels, toQuality(localParam), toSampling(localParam), restartBlocks, restartRows);
+    const auto encoded = encodePixels(localParam);
+    if (!encoded) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    const auto& jpeg = *encoded;
     if (jpeg.size() > localParam.jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
     if (!canCopyOut(localParam.jpeg, jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;

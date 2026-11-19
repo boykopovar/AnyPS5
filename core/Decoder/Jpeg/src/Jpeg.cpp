@@ -47,36 +47,61 @@ int toSubsampling(Sampling sampling) {
     throw std::invalid_argument("Jpeg::Encode: invalid sampling");
 }
 
+void validateEncodeOptions(std::uint32_t width, std::uint32_t height, int quality,
+                           std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    if (width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        throw std::invalid_argument("Jpeg::Encode: unsupported image size");
+    }
+    if (quality < 1 || quality > 100) throw std::invalid_argument("Jpeg::Encode: quality must be 1-100");
+    if (restartBlocks > MAX_DIMENSION || restartRows > MAX_DIMENSION || (restartBlocks != 0 && restartRows != 0)) {
+        throw std::invalid_argument("Jpeg::Encode: invalid restart interval");
+    }
+}
+
+void configureEncoder(tjhandle handle, int quality, int subsampling, std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    if (tj3Set(handle, TJPARAM_QUALITY, quality) < 0 || tj3Set(handle, TJPARAM_SUBSAMP, subsampling) < 0 ||
+        (restartBlocks != 0 && tj3Set(handle, TJPARAM_RESTARTBLOCKS, static_cast<int>(restartBlocks)) < 0) ||
+        (restartRows != 0 && tj3Set(handle, TJPARAM_RESTARTROWS, static_cast<int>(restartRows)) < 0)) {
+        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
+    }
+}
+
 }  // namespace
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, int quality, Sampling sampling, std::uint32_t restartBlocks,
                                  std::uint32_t restartRows) {
-    if (width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
-        throw std::invalid_argument("Jpeg::Encode: unsupported image size");
-    }
+    validateEncodeOptions(width, height, quality, restartBlocks, restartRows);
     if (channels != 1 && channels != 3) throw std::invalid_argument("Jpeg::Encode: channels must be 1 or 3");
-    if (quality < 1 || quality > 100) throw std::invalid_argument("Jpeg::Encode: quality must be 1-100");
     if (pixels.size() < static_cast<std::size_t>(width) * height * channels) {
         throw std::invalid_argument("Jpeg::Encode: pixel buffer is too small");
     }
-    if (restartBlocks > MAX_DIMENSION || restartRows > MAX_DIMENSION || (restartBlocks != 0 && restartRows != 0)) {
-        throw std::invalid_argument("Jpeg::Encode: invalid restart interval");
-    }
     const int subsampling = toSubsampling(sampling);
     Handle handle(TJINIT_COMPRESS);
-    if (tj3Set(handle, TJPARAM_QUALITY, quality) < 0 || tj3Set(handle, TJPARAM_SUBSAMP, channels == 1 ? TJSAMP_GRAY : subsampling) < 0) {
-        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
-    }
-    if ((restartBlocks != 0 && tj3Set(handle, TJPARAM_RESTARTBLOCKS, static_cast<int>(restartBlocks)) < 0) ||
-        (restartRows != 0 && tj3Set(handle, TJPARAM_RESTARTROWS, static_cast<int>(restartRows)) < 0)) {
-        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
-    }
+    configureEncoder(handle, quality, channels == 1 ? TJSAMP_GRAY : subsampling, restartBlocks, restartRows);
     Buffer buffer;
     std::size_t size = 0;
     const int pixelFormat = channels == 1 ? TJPF_GRAY : TJPF_RGB;
     if (tj3Compress8(handle, pixels.data(), static_cast<int>(width), 0, static_cast<int>(height), pixelFormat, &buffer.data, &size) < 0) {
         throw std::runtime_error("Jpeg::Encode: encoding failed");
+    }
+    return {buffer.data, buffer.data + size};
+}
+
+std::vector<std::uint8_t> EncodePlanarYuv(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
+                                          int quality, Sampling sampling, std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    validateEncodeOptions(width, height, quality, restartBlocks, restartRows);
+    const int subsampling = toSubsampling(sampling);
+    const int cols = static_cast<int>(width);
+    const int rows = static_cast<int>(height);
+    const auto required = tj3YUVBufSize(cols, 1, rows, subsampling);
+    if (required == 0 || pixels.size() < required) throw std::invalid_argument("Jpeg::EncodePlanarYuv: pixel buffer is too small");
+    Handle handle(TJINIT_COMPRESS);
+    configureEncoder(handle, quality, subsampling, restartBlocks, restartRows);
+    Buffer buffer;
+    std::size_t size = 0;
+    if (tj3CompressFromYUV8(handle, pixels.data(), cols, 1, rows, &buffer.data, &size) < 0) {
+        throw std::runtime_error("Jpeg::EncodePlanarYuv: encoding failed");
     }
     return {buffer.data, buffer.data + size};
 }
