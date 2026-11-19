@@ -39,6 +39,13 @@ void DistinguishesAvx1() {
     Check("vperm2f128", {0xC4, 0xE3, 0x7D, 0x06, 0xC1, 0x00}, 0);
 }
 
+void DistinguishesBroadcastSource() {
+    Check("vbroadcastss-reg", {0xC4, 0xE2, 0x7D, 0x18, 0xC1}, bit(CpuExtension::Avx2));
+    Check("vbroadcastss-mem", {0xC4, 0xE2, 0x7D, 0x18, 0x00}, 0);
+    Check("vbroadcastsd-reg", {0xC4, 0xE2, 0x7D, 0x19, 0xC1}, bit(CpuExtension::Avx2));
+    Check("vbroadcastsd-mem", {0xC4, 0xE2, 0x7D, 0x19, 0x00}, 0);
+}
+
 void RequiresAvx2() {
     Check("vpaddd", {0xC5, 0xFD, 0xFE, 0xC1}, bit(CpuExtension::Avx2));
     Check("vpermd", {0xC4, 0xE2, 0x7D, 0x36, 0xC1}, bit(CpuExtension::Avx2));
@@ -60,6 +67,7 @@ void RequiresEverythingOnUndecodableBytes() {
 int main() {
     ScansEveryInstruction();
     DistinguishesAvx1();
+    DistinguishesBroadcastSource();
     RequiresAvx2();
     UnionsAcrossBytes();
     RequiresEverythingOnUndecodableBytes();

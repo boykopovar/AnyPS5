@@ -27,6 +27,8 @@ struct Encoding {
     std::uint8_t Prefix = 0;
     bool Vector256 = false;
     std::uint8_t Opcode = 0;
+    std::uint8_t ModRm = 0;
+    bool HasModRm = false;
 };
 
 bool _rex(const std::uint8_t byte) {
@@ -81,6 +83,10 @@ Encoding _parse(const std::uint8_t* data, const std::size_t length) {
         encoding.Prefix = _vexPrefix(data[index + 2]);
         encoding.Vector256 = (data[index + 2] & 4) != 0;
         encoding.Opcode = data[index + 3];
+        if (index + 5 <= length) {
+            encoding.ModRm = data[index + 4];
+            encoding.HasModRm = true;
+        }
         return encoding;
     }
     if (data[index] == kTwoByteVex) {
@@ -91,6 +97,10 @@ Encoding _parse(const std::uint8_t* data, const std::size_t length) {
         encoding.Prefix = _vexPrefix(data[index + 1]);
         encoding.Vector256 = (data[index + 1] & 4) != 0;
         encoding.Opcode = data[index + 2];
+        if (index + 4 <= length) {
+            encoding.ModRm = data[index + 3];
+            encoding.HasModRm = true;
+        }
         return encoding;
     }
     if (data[index] != kTwoByteEscape) {
@@ -180,6 +190,9 @@ std::uint32_t _classify(const Encoding& encoding) {
         if (map == kMap0F38 && (opcode == 0xF0 || opcode == 0xF1)) return movbe;
         return 0;
     }
+    if (map == kMap0F38 && prefix == kOperandSizePrefix && (opcode == 0x18 || opcode == 0x19) &&
+        encoding.HasModRm && (encoding.ModRm & 0xC0) == 0xC0)
+        return avx2;
     if (map == kMap0F38) {
         if (opcode == 0xF2 || opcode == 0xF3 || opcode == 0xF5 || opcode == 0xF6 || opcode == 0xF7)
             return bmi1 | bmi2;
