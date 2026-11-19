@@ -15915,14 +15915,6 @@ int APS5_VABI _ZN7WebCore13MIMETypeCacheC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore13MIMETypeCacheD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13MIMETypeCacheD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13MIMETypeCacheaSERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -27037,10 +27029,6 @@ int APS5_VABI _ZNK7WebCore13KeyboardEvent7keyCodeEv() {
 }
 
 int APS5_VABI _ZNK7WebCore13KeyboardEvent8charCodeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore13MIMETypeCache7isEmptyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -1916,9 +1916,7 @@ int APS5_VABI _ZN7WebCore13MIMETypeCacheC1ERKS0_();
 int APS5_VABI _ZN7WebCore13MIMETypeCacheC1Ev();
 int APS5_VABI _ZN7WebCore13MIMETypeCacheC2ERKS0_();
 int APS5_VABI _ZN7WebCore13MIMETypeCacheC2Ev();
-int APS5_VABI _ZN7WebCore13MIMETypeCacheD0Ev();
 int APS5_VABI _ZN7WebCore13MIMETypeCacheD1Ev();
-int APS5_VABI _ZN7WebCore13MIMETypeCacheD2Ev();
 int APS5_VABI _ZN7WebCore13MIMETypeCacheaSERKS0_();
 int APS5_VABI _ZN7WebCore13MIMETypeCachedaEPv();
 int APS5_VABI _ZN7WebCore13MIMETypeCachedlEPv();
@@ -5014,7 +5012,6 @@ int APS5_VABI _ZNK7WebCore13JSHTMLElement21pushEventHandlerScopeEPN3JSC14JSGloba
 int APS5_VABI _ZNK7WebCore13KeyboardEvent7keyCodeEv();
 int APS5_VABI _ZNK7WebCore13KeyboardEvent8charCodeEv();
 int APS5_VABI _ZNK7WebCore13MIMETypeCache11isAvailableEv();
-int APS5_VABI _ZNK7WebCore13MIMETypeCache7isEmptyEv();
 int APS5_VABI _ZNK7WebCore13RenderElement16imageOrientationEv();
 int APS5_VABI _ZNK7WebCore13ScriptElement13scriptContentEv();
 int APS5_VABI _ZNK7WebCore14DOMCacheEngine6Record4copyEv();
