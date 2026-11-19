@@ -952,6 +952,7 @@ private:
     // them null and resolves per call as before; vkWaitSemaphoresKHR stays a lazy lookup (timeline
     // semaphores are optional).
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
+    PFN_vkGetSemaphoreCounterValueKHR getSemaphoreCounterValue = nullptr;
     PFN_vkResetFences resetFences = nullptr;
     PFN_vkWaitForFences waitForFences = nullptr;
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
@@ -970,6 +971,8 @@ private:
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
+    bool gpuDone(const Batch& batch) const;
+    std::uint64_t readTimeline() const;
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
@@ -1033,6 +1036,8 @@ private:
 
     Context context;
     VkSemaphore timeline = VK_NULL_HANDLE;
+    bool fenceless = false;
+    mutable std::uint64_t reachedSerial = 0;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
     struct ProgressWatcher;
