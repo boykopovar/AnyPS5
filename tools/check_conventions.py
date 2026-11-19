@@ -370,6 +370,7 @@ class Check:
             source = self.show(path)
             fenced = fenced_lines(source)
             entries = debt_entries(source) if is_debt(path) else {}
+            bases = link_bases(path, source)
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
                     name = debt_name(entries.get(number, text))
@@ -378,10 +379,10 @@ class Check:
                         self.report("debt-file", path, number, expected)
                 if number in fenced:
                     continue
-                for target, resolved in links(link_base(path), text):
+                for target, resolved in links(bases[number], text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
-                for target, resolved, fragment in fragment_links(path, text):
+                for target, resolved, fragment in fragment_links(bases[number], text):
                     if resolved.endswith(".md") and resolved in self.tree and fragment not in self.anchors(resolved):
                         self.report("doc-anchor", path, number, target)
         deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
@@ -393,10 +394,11 @@ class Check:
                 checked = {number for number, _ in files.get(path, [])}
                 source = self.show(path)
                 fenced = fenced_lines(source)
+                bases = link_bases(path, source)
                 for number, text in enumerate(source.split("\n"), 1):
                     if number in checked or number in fenced:
                         continue
-                    for target, resolved in links(link_base(path), text):
+                    for target, resolved in links(bases[number], text):
                         if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
                             self.report("doc-link", path, number, target)
 
@@ -639,8 +641,15 @@ def is_debt_fragment(path):
     return path.startswith(DEBT_CHANGES) and path.endswith(".md") and "/" not in path[len(DEBT_CHANGES):]
 
 
-def link_base(path):
-    return f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
+def link_bases(path, source):
+    bases = {}
+    base = f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
+    for number, line in enumerate(source.split("\n"), 1):
+        if is_debt_fragment(path) and line.startswith("# "):
+            library = line[2:].strip()
+            base = DEBT if library == PurePosixPath(DEBT).stem else f"{DEBT_DIR}{library}.md"
+        bases[number] = base
+    return bases
 
 
 def long_debt_entry(text):

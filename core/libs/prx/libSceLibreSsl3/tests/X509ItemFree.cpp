@@ -37,12 +37,17 @@ void TestNull() {
     RequireNoException([] { AUTHORITY_KEYID_free_nid_postfix(nullptr); });
     RequireNoException([] { X509_CRL_free_nid_postfix(nullptr); });
     RequireNoException([] { PKCS7_free_nid_postfix(nullptr); });
+    void* const unreadable = reinterpret_cast<void*>(std::uintptr_t{1});
+    Require(X509_check_akid_nid_postfix(nullptr, nullptr) == 0);
+    Require(X509_check_akid_nid_postfix(unreadable, nullptr) == 0);
 }
 
 void TestNonNull() {
     void* const unreadable = reinterpret_cast<void*>(std::uintptr_t{1});
     RequireNotImplemented([&] { AUTHORITY_KEYID_free_nid_postfix(unreadable); });
     RequireNotImplemented([&] { PKCS7_free_nid_postfix(unreadable); });
+    RequireNotImplemented([&] { X509_check_akid_nid_postfix(nullptr, unreadable); });
+    RequireNotImplemented([&] { X509_check_akid_nid_postfix(unreadable, unreadable); });
 }
 
 }

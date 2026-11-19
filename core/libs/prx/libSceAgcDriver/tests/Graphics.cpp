@@ -8669,6 +8669,24 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
     {
         using AgcDriver::Graphics::StorageTextureBudget;
+        auto card = memory;
+        card.memoryHeaps[2].size = 12 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT level{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        level.heapBudget[2] = 10112 * MiB;
+        level.heapUsage[2] = (2769 + 3007 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB) == 3007 * MiB, "the fixture no longer shows a 12 GiB card with 1282 MiB of storage images holding the sampled cache at 3007 MiB");
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget did not give the sampled cache what the storage images held, 256 MiB of slack and a sixteenth of headroom leave");
+        level.heapUsage[2] = (2769 + 5173 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget of the sampled cache moved when the cache filled it");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB) == 906 * MiB, "the fixture no longer shows a full sampled cache squeezing the storage cache below the 1282 MiB it holds");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB, true) == 4663 * MiB, "the demand budget of the storage cache counted more of the sampled cache than its 2 GiB floor");
+        level.heapUsage[2] = (2769 + 5173 + 4000) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 4000) * MiB, 4000 * MiB, true) == 2455 * MiB, "the demand budget of the sampled cache did not yield to storage images that grew");
+        level.heapUsage[2] = (9000 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, 1282 * MiB, 1282 * MiB, true) == 2 * GiB && StorageTextureBudget(card, &level, 0, 1282 * MiB, true) == 512 * MiB, "the demand budgets lost their floors on a heap other users fill");
+    }
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
         auto small = memory;
         small.memoryHeaps[2].size = 8 * GiB;
         VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
@@ -13824,6 +13842,55 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+void pipelineDeferredBuildTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    auto vertex = std::make_unique<ShaderRecompiler::RecompileResult>();
+    ShaderRecompiler::RecompileResult fragment;
+    vertex->spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex->variantId = 401;
+    fragment.variantId = 402;
+    std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, vertex.get(), 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    auto mainKey = std::make_unique<std::array<std::uint32_t, 1>>(std::array<std::uint32_t, 1>{51});
+    std::array<std::uint32_t, 1> fragmentKey{52};
+    const auto mainLayout = makeHandle<VkDescriptorSetLayout>();
+    const auto fragmentLayout = makeHandle<VkDescriptorSetLayout>();
+    Require(DefersPipelineBuild(shaders), "APS5_ASYNC_PIPELINE_WORDS=1 did not defer a pipeline with SPIR-V");
+    const auto created = mock.pipelineCreateCount;
+    std::uint64_t hash = 1;
+    {
+        const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, *mainKey, fragmentKey};
+        Require(ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash) == nullptr && hash == 0, "a cold deferred pipeline was returned before its build");
+    }
+    const auto copiedVertex = *vertex;
+    vertex.reset();
+    mainKey.reset();
+    shaders[0].program = &copiedVertex;
+    const std::array<std::uint32_t, 1> sameMainKey{51};
+    const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, sameMainKey, fragmentKey};
+    std::shared_ptr<Pipeline> resident;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while ((resident = ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash)) == nullptr) {
+        Require(std::chrono::steady_clock::now() < deadline, "a deferred pipeline build never became resident");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(mock.pipelineCreateCount > created, "the deferred build created no pipeline");
+    const auto built = mock.pipelineCreateCount;
+    Require(CachedPipeline(context, State{}, VertexInputLayout{}, resources, shaders) == resident && mock.pipelineCreateCount == built, "the deferred build stored a pipeline under another key than the draw's");
+    VertexInputLayout other;
+    other.bindings.push_back({0, 16u, VK_VERTEX_INPUT_RATE_VERTEX});
+    Require(ResidentPipelineOrDeferredBuild(context, State{}, other, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr) == nullptr, "a second cold configuration was returned before its build");
+    ClearCachedPipelines(context.device);
+    resident.reset();
+    Require(mock.live == 0, "deferred pipeline builds leaked Vulkan objects past ClearCachedPipelines");
+}
+
 // The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
 // entries keep coming back after their eviction, so the bound doubles and a later pass finds every
 // pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
@@ -15079,6 +15146,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
             pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build") {
+            pipelineDeferredBuildTests();
+            std::cout << "deferred pipeline builds skip cold draws and store the draw's pipeline\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-touch") {
