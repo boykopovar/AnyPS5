@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,13 @@
 #include <set>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using namespace SslLayout;
 
@@ -164,6 +172,80 @@ void RegisterCallbacks() {
 template <typename TValue>
 TValue InternalField(const LibreSslSsl* ssl, std::size_t offset) {
     return Read<TValue>(ssl->internal, offset);
+}
+
+template <typename TAction>
+void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, location);
+}
+
+template <typename T>
+T* ReadOnlyCopy(const T& value) {
+    static_assert(sizeof(T) <= 4096);
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, &value, sizeof(T));
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, &value, sizeof(T));
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return reinterpret_cast<T*>(page);
+}
+
+void ReleaseReadOnlyCopy(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+void TestGuestPointers() {
+    auto* unmappedContext = reinterpret_cast<LibreSslCtx*>(std::uintptr_t {0x10});
+    auto* unmappedSsl = reinterpret_cast<LibreSslSsl*>(std::uintptr_t {0x10});
+    RequireRejected([&] { SSL_CTX_free_nid_postfix(unmappedContext); });
+    RequireRejected([&] { SSL_new_nid_postfix(unmappedContext); });
+    RequireRejected([&] { SSL_free_nid_postfix(unmappedSsl); });
+    RequireRejected([&] { SSL_set_fd_nid_postfix(unmappedSsl, 7); });
+    RequireRejected([&] { SSL_get_fd_nid_postfix(unmappedSsl); });
+
+    LibreSslCtx* ctx = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    LibreSslSsl* ssl = SSL_new_nid_postfix(ctx);
+    Require(ctx != nullptr && ssl != nullptr);
+    LibreSslCtx* readOnlyContext = ReadOnlyCopy(*ctx);
+    LibreSslSsl* readOnlySsl = ReadOnlyCopy(*ssl);
+    RequireRejected([&] { SSL_CTX_free_nid_postfix(readOnlyContext); });
+    RequireRejected([&] { SSL_new_nid_postfix(readOnlyContext); });
+    RequireRejected([&] { SSL_free_nid_postfix(readOnlySsl); });
+    RequireRejected([&] { SSL_set_fd_nid_postfix(readOnlySsl, 7); });
+    Require(std::memcmp(readOnlyContext, ctx, sizeof(*ctx)) == 0 && std::memcmp(readOnlySsl, ssl, sizeof(*ssl)) == 0);
+    Require(SSL_get_fd_nid_postfix(readOnlySsl) == -1);
+    ReleaseReadOnlyCopy(readOnlySsl);
+    ReleaseReadOnlyCopy(readOnlyContext);
+
+    LibreSslCtx detached = *ctx;
+    detached.internal = reinterpret_cast<LibreSslCtxInternal*>(std::uintptr_t {0x10});
+    RequireRejected([&] { SSL_new_nid_postfix(&detached); });
+    detached.references = 1;
+    RequireRejected([&] { SSL_CTX_free_nid_postfix(&detached); });
+    Require(ctx->references == 3);
+
+    Require(SSL_set_fd_nid_postfix(ssl, 9) == 1 && SSL_get_fd_nid_postfix(ssl) == 9);
+    SSL_free_nid_postfix(ssl);
+    SSL_CTX_free_nid_postfix(ctx);
 }
 
 void TestMethodGetters() {
@@ -565,6 +647,7 @@ int main() {
     InitializeHeap();
     RegisterCallbacks();
     Run(TestMethodGetters);
+    Run(TestGuestPointers);
     Run(TestMethodSlots);
     Run(TestContextNew);
     Run(TestContextReferences);

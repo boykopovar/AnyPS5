@@ -152,6 +152,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -217,6 +218,26 @@ constexpr std::uint64_t VerifyParamResetFlags = 0x4;
 constexpr std::uint64_t VerifyParamLocked = 0x8;
 constexpr std::uint64_t VerifyParamOnce = 0x10;
 constexpr std::uint64_t VerifyFlagUseCheckTime = 0x2;
+
+template <typename T>
+T CopyGuestRecord(const T* source, const char* function) {
+    T value {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+T& ValidatedGuest(T* object, const char* function) {
+    CopyGuestRecord(object, function);
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(object, sizeof(T));
+    errno = savedErrno;
+    if (!writable) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return *object;
+}
 
 const LibreSslMethod& MethodOf(const LibreSslCtx& ctx) {
     const auto* method = static_cast<const LibreSslMethod*>(ctx.method);
@@ -528,23 +549,24 @@ LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
 
 void APS5_VABI SSL_CTX_free_nid_postfix(LibreSslCtx* ctx) {
     if (!ctx) return;
-    if (std::atomic_ref<int>(ctx->references).fetch_sub(1) - 1 > 0) return;
-    LibreSslCtxInternal& internal = InternalOf(*ctx, __func__);
-    LibreSslFreeVerifyParam_nid_no_patch(static_cast<LibreSslX509VerifyParam*>(ctx->param), __func__);
+    LibreSslCtx& context = ValidatedGuest(ctx, __func__);
+    if (std::atomic_ref<int>(context.references).fetch_sub(1) - 1 > 0) return;
+    LibreSslCtxInternal& internal = ValidatedGuest(&InternalOf(context, __func__), __func__);
+    LibreSslFreeVerifyParam_nid_no_patch(static_cast<LibreSslX509VerifyParam*>(context.param), __func__);
     if (internal.sessions) NotImplemented_nid_no_patch("SSL_CTX_free: session cache");
     LibreSslFreeExData_nid_no_patch(ExClassSslCtx, ctx, reinterpret_cast<LibreSslExData*>(&internal.exData));
-    X509_STORE_free_nid_postfix(static_cast<LibreSslX509Store*>(ctx->certStore));
-    FreeStackShell(static_cast<LibreSslStack*>(ctx->cipherList));
+    X509_STORE_free_nid_postfix(static_cast<LibreSslX509Store*>(context.certStore));
+    FreeStackShell(static_cast<LibreSslStack*>(context.cipherList));
     FreeStackShell(static_cast<LibreSslStack*>(internal.cipherListById));
     FreeCertificate(static_cast<Certificate*>(internal.cert));
     FreeStackWithElements(static_cast<LibreSslStack*>(internal.clientCa), "SSL_CTX_free: client CA list");
-    FreeStackWithElements(static_cast<LibreSslStack*>(ctx->extraCerts), "SSL_CTX_free: extra certificates");
+    FreeStackWithElements(static_cast<LibreSslStack*>(context.extraCerts), "SSL_CTX_free: extra certificates");
     if (internal.srtpProfiles) NotImplemented_nid_no_patch("SSL_CTX_free: SRTP profiles");
     if (internal.clientCertEngine) NotImplemented_nid_no_patch("SSL_CTX_free: client certificate engine");
     free_nid_postfix(internal.tlsextEcpointformatlist);
     free_nid_postfix(internal.tlsextSupportedgroups);
     free_nid_postfix(internal.alpnClientProtoList);
-    free_nid_postfix(ctx->internal);
+    free_nid_postfix(context.internal);
     free_nid_postfix(ctx);
 }
 
@@ -553,12 +575,13 @@ LibreSslSsl* APS5_VABI SSL_new_nid_postfix(LibreSslCtx* ctx) {
         LibreSslPutSslErrorX_nid_no_patch(ReasonNullSslCtx);
         return nullptr;
     }
-    if (!ctx->method) {
+    LibreSslCtx& context = ValidatedGuest(ctx, __func__);
+    if (!context.method) {
         LibreSslPutSslErrorX_nid_no_patch(ReasonSslCtxHasNoDefaultSslVersion);
         return nullptr;
     }
-    LibreSslCtxInternal& ctxInternal = InternalOf(*ctx, __func__);
-    const LibreSslMethod& method = MethodOf(*ctx);
+    LibreSslCtxInternal& ctxInternal = ValidatedGuest(&InternalOf(context, __func__), __func__);
+    const LibreSslMethod& method = MethodOf(context);
     auto* ssl = static_cast<LibreSslSsl*>(calloc_nid_postfix(1, sizeof(LibreSslSsl)));
     if (!ssl) {
         LibreSslPutSslErrorX_nid_no_patch(ErrorMallocFailure);
@@ -572,7 +595,7 @@ LibreSslSsl* APS5_VABI SSL_new_nid_postfix(LibreSslCtx* ctx) {
     }
     bool created = false;
     try {
-        created = PopulateSsl(*ssl, *ctx, ctxInternal) && method.internal->sslNew(ssl) != 0;
+        created = PopulateSsl(*ssl, context, ctxInternal) && method.internal->sslNew(ssl) != 0;
     } catch (...) {
         DestroySsl(*ssl, false, false);
         throw;
@@ -591,24 +614,26 @@ LibreSslSsl* APS5_VABI SSL_new_nid_postfix(LibreSslCtx* ctx) {
 
 void APS5_VABI SSL_free_nid_postfix(LibreSslSsl* ssl) {
     if (!ssl) return;
-    if (std::atomic_ref<int>(ssl->references).fetch_sub(1) - 1 > 0) return;
-    DestroySsl(*ssl, true, true);
+    LibreSslSsl& connection = ValidatedGuest(ssl, __func__);
+    if (std::atomic_ref<int>(connection.references).fetch_sub(1) - 1 > 0) return;
+    DestroySsl(connection, true, true);
 }
 
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd) {
     if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
+    LibreSslSsl& connection = ValidatedGuest(ssl, __func__);
     LibreSsl::Bio* bio = LibreSslNewSocketBio_nid_no_patch(fd);
     if (!bio) {
         LibreSslPutSslError_nid_no_patch(ssl, ErrorBufferLibrary);
         return 0;
     }
-    SetBio(*ssl, bio, bio);
+    SetBio(connection, bio, bio);
     return 1;
 }
 
 int APS5_VABI SSL_get_fd_nid_postfix(const LibreSslSsl* ssl) {
     if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
-    return LibreSslBioDescriptor_nid_no_patch(static_cast<const LibreSsl::Bio*>(ssl->rbio));
+    return LibreSslBioDescriptor_nid_no_patch(static_cast<const LibreSsl::Bio*>(CopyGuestRecord(ssl, __func__).rbio));
 }
 
 }
