@@ -3442,6 +3442,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_mutexattr_protocol_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+
+    add_test_executable(guest_kernel_pipe_capacity_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPipeCapacity.cpp)
+    target_include_directories(guest_kernel_pipe_capacity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_pipe_capacity_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_pipe_capacity_tests)
+    add_test(NAME guest_kernel_pipe_capacity COMMAND guest_kernel_pipe_capacity_tests)
+    set_tests_properties(guest_kernel_pipe_capacity PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(guest_kernel_pipe_capacity PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
