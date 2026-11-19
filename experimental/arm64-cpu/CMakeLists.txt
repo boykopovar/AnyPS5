@@ -32,6 +32,9 @@ if(ANYPS5_GUEST_CPU_TESTS)
     add_executable(anyps5_guest_cpu_carry_rotate_tests tests/GuestCpuCarryRotateTests.cpp)
     target_link_libraries(anyps5_guest_cpu_carry_rotate_tests PRIVATE anyps5_guest_cpu)
     add_test(NAME guest_cpu_carry_rotate COMMAND anyps5_guest_cpu_carry_rotate_tests)
+    add_executable(anyps5_guest_cpu_word_byte_alu_tests tests/GuestCpuWordByteAluTests.cpp)
+    target_link_libraries(anyps5_guest_cpu_word_byte_alu_tests PRIVATE anyps5_guest_cpu)
+    add_test(NAME guest_cpu_word_byte_alu COMMAND anyps5_guest_cpu_word_byte_alu_tests)
     # Differential comparisons execute native x86-64 instructions and therefore
     # run only on x86-64 GCC/Clang hosts; iOS ARM64 remains compile-only.
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" AND
@@ -45,6 +48,9 @@ if(ANYPS5_GUEST_CPU_TESTS)
         add_executable(anyps5_guest_cpu_carry_arithmetic_differential_tests tests/GuestCpuCarryArithmeticDifferentialTests.cpp)
         target_link_libraries(anyps5_guest_cpu_carry_arithmetic_differential_tests PRIVATE anyps5_guest_cpu)
         add_test(NAME guest_cpu_carry_arithmetic_differential COMMAND anyps5_guest_cpu_carry_arithmetic_differential_tests)
+        add_executable(anyps5_guest_cpu_word_byte_differential_tests tests/GuestCpuWordByteDifferentialTests.cpp)
+        target_link_libraries(anyps5_guest_cpu_word_byte_differential_tests PRIVATE anyps5_guest_cpu)
+        add_test(NAME guest_cpu_word_byte_differential COMMAND anyps5_guest_cpu_word_byte_differential_tests)
     endif()
     # Linux-only ELF Stage 3: compiler-generated function bytes, no relocations.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND

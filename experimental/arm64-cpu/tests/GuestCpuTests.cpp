@@ -1344,12 +1344,12 @@ int main() {
         std::fprintf(stderr, "M25 truncated word MOV accepted at line %d\\n", __LINE__);
         return EXIT_FAILURE;
     }
-    const auto movWordUnsupported = std::to_array<std::uint8_t>({0x66, 0x01, 0xC0, 0xC3});
+    const auto wordXchgUnsupported = std::to_array<std::uint8_t>({0x66, 0x87, 0xC0, 0xC3});
     rejected = false;
-    try { GuestCpu(movWordUnsupported).run(); }
+    try { GuestCpu(wordXchgUnsupported).run(); }
     catch (const std::runtime_error&) { rejected = true; }
     if (!rejected) {
-        std::fprintf(stderr, "M25 unsupported word arithmetic accepted at line %d\\n", __LINE__);
+        std::fprintf(stderr, "M25 unsupported word xchg accepted at line %d\\n", __LINE__);
         return EXIT_FAILURE;
     }
 
