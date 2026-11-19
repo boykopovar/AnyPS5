@@ -462,6 +462,20 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(missing["io_errors"])
         self.assertTrue((self.root / "missing" / "process.json").is_file())
 
+    def test_log_limit_stops_running_child_after_partial_block(self):
+        limit = 1024 * 1024
+        for fd, name in ((1, "stdout.txt"), (2, "stderr.txt")):
+            with self.subTest(stream=name):
+                directory = self.root / name
+                child = f"import os,time;os.write({fd},b'x'*{limit + 1});time.sleep(20)"
+                result = runner.execute_replay_trial([sys.executable, "-c", child], directory,
+                                                     dict(os.environ), 5, limit)
+                self.assertTrue(result["log_limit"])
+                self.assertFalse(result["timed_out"])
+                self.assertFalse(result["io_errors"])
+                self.assertFalse(result["cleanup_failed"])
+                self.assertEqual((directory / name).read_bytes(), b"x" * limit)
+
     def test_real_log_quota_and_owned_descendant_cleanup(self):
         result = runner.execute_replay_trial([sys.executable, "-c", "import os;os.write(1,b'x'*262144);os.write(2,b'y'*262144)"],
                                             self.root / "quota", dict(os.environ), 5, 1024)
