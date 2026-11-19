@@ -228,6 +228,20 @@ void Format() {
     }
     Pair fixed(0, "en_US", u"#,##0.00");
     Literal(fixed.guest, -1234.5, u"-1,234.50");
+    char16_t untouched = u'X';
+    Oracle::Field field{2, -91, -92};
+    std::int32_t argumentStatus = -128;
+    const auto missingLength = GuestOutput(fixed.guest, 1, 0, nullptr, 5, 2, &untouched, 1, &field, &argumentStatus);
+    Require(missingLength == 0 && argumentStatus == 1 && untouched == u'X',
+        "missing decimal input reports illegal argument and preserves the output buffer");
+    Require(field.field == 2 && field.begin == 0 && field.end == 0, "missing decimal input clears field indexes");
+    Compare(fixed.guest, fixed.native, 1, 0, nullptr, 0);
+    Compare(fixed.guest, fixed.native, 1, 0, nullptr, 1);
+    Compare(fixed.guest, fixed.native, 1, 0, nullptr, INT32_MAX, 2, false);
+    Refuses([&] {
+        std::int32_t status = 0;
+        unum_formatDecimal_nid_postfix(fixed.guest, nullptr, -1, nullptr, 0, nullptr, &status);
+    });
     Pair precision(0, "en_US", u"0.##############################");
     constexpr const char* exact = "123456789012345678901234567890.123456789012345";
     constexpr std::u16string_view wanted = u"123456789012345678901234567890.123456789012345";

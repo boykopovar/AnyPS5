@@ -123,9 +123,10 @@ void WriteField(UFieldPosition* pointer, const Backend::Field& value) {
     if (!GuestCopyOut_nid_no_patch(Offset(reinterpret_cast<unsigned char*>(pointer), 4), indices.data(), sizeof(indices))) NotImplemented_nid_no_patch(__func__);
 }
 
-enum class Operation { Double, Decimal, Symbol, Text };
+enum class Operation { Double, Decimal, MissingDecimal, Symbol, Text };
 
 bool EarlyError(Operation operation, std::int32_t error) {
+    if (operation == Operation::MissingDecimal) return error == Icu::IllegalArgument;
     if (error == Icu::UnsupportedError) return operation == Operation::Symbol || operation == Operation::Text;
     if (error == 0x10110) return operation == Operation::Decimal;
     return error == 0x10111 && (operation == Operation::Double || operation == Operation::Decimal);
@@ -254,13 +255,15 @@ std::int32_t APS5_VABI unum_formatDecimal_nid_postfix(const UNumberFormat* forma
     if (before > 0) return -1;
     if ((!result && capacity != 0) || capacity < 0) { WriteStatus(status, before, Icu::IllegalArgument); return -1; }
     const auto owner = Find(format);
-    if (!number && length != 0) NotImplemented_nid_no_patch(__func__);
+    if (!number && length < 0) NotImplemented_nid_no_patch(__func__);
     const auto text = ReadString(number, length);
     const std::lock_guard lock(owner->mutex);
-    return Output(Operation::Decimal, result, capacity, position, status, before,
+    const auto operation = !number && length > 0 ? Operation::MissingDecimal : Operation::Decimal;
+    const auto inputLength = length < 0 ? static_cast<std::int32_t>(text.size()) : length;
+    return Output(operation, result, capacity, position, status, before,
         [&](char16_t* output, std::int32_t size, Backend::Field* field, std::int32_t* error) {
             return Backend::Decimal_nid_no_patch(owner->native.get(), number ? text.c_str() : nullptr,
-                static_cast<std::int32_t>(text.size()), output, size, field, error);
+                inputLength, output, size, field, error);
         });
 }
 
