@@ -76,6 +76,7 @@ public:
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, const char* category = nullptr, bool hostPlaced = false);
     void Put(const BufferAllocation& allocation) noexcept;
     VkDeviceSize ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now);
+    VkDeviceSize ReleaseRetainedImages(VkDeviceSize bytes);
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
     static VkDeviceSize SlabBlockBytes(std::size_t capacity);
     SlabSlot TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable);
@@ -219,6 +220,8 @@ private:
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
 VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, std::uint32_t* allocatedType = nullptr, bool newImage = false);
 void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept;
+
+VkDeviceSize ReleaseRetainedImageMemory(const Context& context, VkDeviceSize bytes);
 
 }
 

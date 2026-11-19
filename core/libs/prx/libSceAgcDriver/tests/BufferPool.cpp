@@ -1314,6 +1314,31 @@ void ImageMemoryOverBudget() {
     Expect(mock.frees == 2 && context.bufferPool->RetainedImages() == 1, "the pool retains image memory again once the heap is under its budget");
 }
 
+void RetainedImagesReleasedBeforeHostPlacement() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    reportedBudget = 1000 * MiB;
+    reportedUsage = 500 * MiB;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = 4 * MiB;
+    allocation.memoryTypeIndex = 0;
+    std::uint32_t type = 0;
+    const auto first = AllocateImageMemory(context, allocation, 1u, "test image", &type);
+    const auto second = AllocateImageMemory(context, allocation, 1u, "test image", &type);
+    const auto third = AllocateImageMemory(context, allocation, 1u, "test image", &type);
+    ReleaseImageMemory(context, first, 4 * MiB, 0);
+    ReleaseImageMemory(context, second, 4 * MiB, 0);
+    ReleaseImageMemory(context, third, 4 * MiB, 0);
+    Expect(mock.frees == 0 && context.bufferPool->RetainedImages() == 3, "three released images under the budget were not all retained");
+    Expect(context.bufferPool->ReleaseRetainedImages(0) == 0 && mock.frees == 0, "a zero request released retained image memory");
+    Expect(context.bufferPool->ReleaseRetainedImages(5 * MiB) == 8 * MiB && mock.frees == 2 && context.bufferPool->RetainedImages() == 1, "a 5 MiB request did not free exactly the two oldest retained images");
+    context.retainedImageReclaim = ReleaseRetainedImageMemory;
+    reportedUsage = 999 * MiB;
+    const auto placed = context.DeviceMemoryType(0b11u, 16 * MiB, "test buffer");
+    Expect(mock.frees == 3 && context.bufferPool->RetainedImages() == 0, "an allocation over the device-local budget was placed in host memory while retained image memory was kept");
+    Expect(placed == 1u, "an allocation that still does not fit after the release was not placed in the host memory type");
+}
+
 void ImageMemoryReuse() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -1723,6 +1748,7 @@ int main(int argc, char** argv) {
         ImageMemoryReclaim();
         RenderTargetMemoryReuse();
         ImageMemoryOverBudget();
+        RetainedImagesReleasedBeforeHostPlacement();
         HostPlacement();
         HostSlotBeforeCacheRelease();
         RefusedDevicePlacement();

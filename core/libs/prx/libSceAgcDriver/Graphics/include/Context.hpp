@@ -247,6 +247,7 @@ struct Context {
     std::mutex* settleQueueMutex = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
     VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage) = nullptr;
+    VkDeviceSize (*retainedImageReclaim)(const Context& context, VkDeviceSize bytes) = nullptr;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
@@ -449,6 +450,11 @@ struct Context {
                 const auto after = ReportedHeap(heap);
                 if (after.Fits(bytes)) return type;
             }
+        }
+        if (retainedImageReclaim != nullptr) {
+            const auto now = ReportedHeap(heap);
+            const auto wanted = bytes + (now.usage > now.budget ? now.usage - now.budget : 0u);
+            if (retainedImageReclaim(*this, wanted) != 0 && ReportedHeap(heap).Fits(bytes)) return type;
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
