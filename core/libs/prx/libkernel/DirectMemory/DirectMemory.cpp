@@ -795,10 +795,13 @@ void ForgetFlexibleFiles(std::uintptr_t start, std::uintptr_t end) {
         it = g_flexibleFiles.erase(it);
         const auto cutStart = std::max(start, rangeStart);
         const auto cutEnd = std::min(end, entry.end);
-        if (fallocate(entry.descriptor->file, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(entry.offset + (cutStart - rangeStart)), static_cast<off_t>(cutEnd - cutStart)) != 0)
-            throw std::system_error(errno, std::generic_category(), "release flexible memory backing pages");
         if (rangeStart < cutStart) g_flexibleFiles[rangeStart] = FlexibleFile{cutStart, entry.offset, entry.descriptor};
         if (cutEnd < entry.end) it = g_flexibleFiles.emplace(cutEnd, FlexibleFile{entry.end, entry.offset + (cutEnd - rangeStart), entry.descriptor}).first;
+        if (fallocate(entry.descriptor->file, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(entry.offset + (cutStart - rangeStart)), static_cast<off_t>(cutEnd - cutStart)) != 0) {
+            static std::atomic<std::uint64_t> failures{0};
+            const auto count = failures.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[memory] flexible memory 0x%llx+0x%llx keeps its backing pages until its file closes: fallocate failed (%s); %llu such releases\n", static_cast<unsigned long long>(cutStart), static_cast<unsigned long long>(cutEnd - cutStart), std::strerror(errno), static_cast<unsigned long long>(count));
+        }
     }
 }
 
@@ -845,7 +848,7 @@ bool FlexibleBacking(std::uintptr_t address, std::size_t bytes, int* file, std::
     auto it = g_flexibleFiles.upper_bound(address);
     if (it == g_flexibleFiles.begin()) return false;
     --it;
-    if (bytes > it->second.end - std::min(it->second.end, address) || address < it->first) return false;
+    if (bytes == 0 || address < it->first || address >= it->second.end || bytes > it->second.end - address) return false;
     const int duplicate = fcntl(it->second.descriptor->file, F_DUPFD_CLOEXEC, 0);
     if (duplicate < 0) throw std::system_error(errno, std::generic_category(), "duplicate a flexible memory backing");
     *file = duplicate;
@@ -955,7 +958,7 @@ bool FlexibleHostFallback(std::uintptr_t address, std::size_t bytes) {
     auto it = g_flexibleFiles.upper_bound(address);
     if (it == g_flexibleFiles.begin()) return false;
     --it;
-    return address >= it->first && bytes <= it->second.end - std::min(it->second.end, address);
+    return bytes != 0 && address >= it->first && address < it->second.end && bytes <= it->second.end - address;
 }
 
 void RegisterSharedBacking() {

@@ -3557,6 +3557,12 @@ static void CheckFlexibleMemorySharedBacking() {
     struct stat info {};
     Require(fstat(file, &info) == 0 && static_cast<std::uint64_t>(info.st_size) % (std::uint64_t{64} << 20u) == 0);
     close(file);
+    file = -1;
+    Require(!GuestArena::GuestArenaSharedBacking_nid_postfix(address + page, 0, &file, &offset) && file == -1);
+    Require(!GuestArena::GuestArenaSharedBacking_nid_postfix(address + page * 4, 0, &file, &offset) && file == -1);
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address + page, 0));
+    Require(!GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address + page * 4, 0));
+    Require(GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(address + page * 3, page));
     GuestArena::SharedBackingRun runs[2]{};
     std::size_t count = 0;
     Require(GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 4, &file, runs, 2, &count));
