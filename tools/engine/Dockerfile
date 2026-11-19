@@ -8,13 +8,13 @@ RUN xvfb-run -a wineboot --init && wineserver -w
 COPY tools/engine/sources.py tools/engine/compatibility.py tools/engine/bootstrap.py tools/engine/dependencies.lock /opt/buildscripts/
 RUN python3 /opt/buildscripts/bootstrap.py
 FROM tooling AS supplied
-ARG ANYPS5_UPSTREAM_REF=main
+ARG ANYPS5_UPSTREAM_REF=3c07e1d05e545cb5988041da0fa63ea8dd36673e
 ADD --keep-git-dir=true https://github.com/boykopovar/AnyPS5.git#${ANYPS5_UPSTREAM_REF} /upstream
 COPY . /supplied
 FROM supplied AS compile
 ARG ANYPS5_BUILD_JOBS=4
 ARG ANYPS5_CACHE_SCOPE=default
-ARG ANYPS5_UPSTREAM_REF=main
+ARG ANYPS5_UPSTREAM_REF=3c07e1d05e545cb5988041da0fa63ea8dd36673e
 ENV ANYPS5_BUILD_JOBS=${ANYPS5_BUILD_JOBS}
 ENV ANYPS5_UPSTREAM_REF=${ANYPS5_UPSTREAM_REF}
 COPY tools/engine/build.py tools/engine/package.py tools/engine/bundle.py tools/engine/pe.py tools/engine/upstream.py tools/engine/upstream.lock /opt/buildscripts/

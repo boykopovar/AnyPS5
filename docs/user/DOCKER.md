@@ -6,7 +6,7 @@ Build the Windows x86-64 engine, native launcher, desktop helper and local web a
 docker compose up --build
 ```
 
-Run this in the folder containing `compose.yaml`. A clone and a source ZIP both work. No host compiler, Git, CMake, Ninja, Python or Node installation is required. Docker retrieves upstream source and dependencies; existing host `b/` output is not used.
+Run this in the folder containing `compose.yaml`. A clone and a source ZIP both work. No host compiler, Git, CMake, Ninja, Python or Node installation is required. Docker retrieves the tested upstream source and dependencies; existing host `b/` output is not used.
 
 ## Requirements
 
@@ -53,21 +53,21 @@ Configuration, cached bundles, tokens, logs, games and saves are retained. Reins
 
 ## Upstream source updates
 
-Every engine build resolves the configured ref from `https://github.com/boykopovar/AnyPS5.git` through BuildKit's Git source operation. The default is **main**. The build records the exact resolved upstream SHA, fork overlay base, built-source fingerprint and dependency revisions in the engine manifest. The web app's About view displays the upstream SHA and engine identity.
+Every engine build resolves the configured ref from `https://github.com/boykopovar/AnyPS5.git` through BuildKit's Git source operation. The default is the exact upstream revision this fork was last tested with, `base_revision` in `tools/engine/upstream.lock`, so every clone of the same fork commit builds the same upstream source. The build records the exact resolved upstream SHA, fork overlay base, built-source fingerprint and dependency revisions in the engine manifest. The web app's About view displays the upstream SHA and engine identity.
 
 The builder compares supplied fork files with the base in `tools/engine/upstream.lock`, retains upstream changes to unmodified files and merges the fork's changes into updated files. New launcher/build files are retained. A conflict, missing source, unsupported dependency change or failed compilation stops the build; the host checkout and prior completed exports are not replaced. There is no silent fallback to stale upstream source.
 
 Third-party source follows the resolved upstream gitlinks, including recursive modules. `tools/engine/dependencies.lock` retains tested toolchain downloads and baseline submodule metadata; baseline submodule revisions do not override newer upstream gitlinks. Explicit fork dependency overrides and deletions belong in `upstream.lock`. When rebasing the fork, maintainers must advance its base to the upstream revision used for that rebase.
 
-For an exact upstream source selection:
+To build newer or different upstream source, set the ref. Use `main` for the latest upstream, or a full commit SHA for an exact revision:
 
 ```powershell
-$env:ANYPS5_UPSTREAM_REF = '<full upstream commit SHA>'
+$env:ANYPS5_UPSTREAM_REF = 'main'
 docker compose up -d --build --wait
 Remove-Item Env:ANYPS5_UPSTREAM_REF
 ```
 
-Plain `up` can reuse existing images; use `--build` to check upstream. A web-only build does not rebuild the engine. New upstream commits can introduce regressions, and latest source does not guarantee title compatibility. Pin a tested SHA for a shared release and include it with the source ZIP and engine ZIP. Byte-for-byte reproducibility is not claimed.
+Plain `up` can reuse existing images; use `--build` to rebuild. A web-only build does not rebuild the engine. New upstream commits can introduce regressions or fail to merge with the fork, and latest source does not guarantee title compatibility. Keep the default for a shared release and include its SHA with the source ZIP and engine ZIP. Byte-for-byte reproducibility is not claimed.
 
 After a successful engine update, install its helper using the generated installer or **Start-AnyPS5.cmd**. Existing prepared games keep their own runtime libraries; updating the engine does not automatically upgrade them or migrate saves into a new copy.
 
@@ -110,9 +110,9 @@ Back up collection/state and complete game folders, including their saves, setti
 
 The fork's **Sync upstream into fork** GitHub Actions workflow checks `boykopovar/AnyPS5` daily at 09:23 UTC and can be started manually. It prepares a merge into `sync/upstream`, refreshes the overlay base and recursive dependency metadata, runs integration tests, then opens a pull request against this fork's `main`. It does not replace `main` or merge the pull request automatically. An existing open sync pull request is retained for review, including a manual candidate whose title starts with `chore(sync): merge upstream `. Merge conflicts or failed tests stop publication and appear as a failed workflow run.
 
-Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Docker builds continue checking upstream independently of source-sync pull requests.
+Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Merging a sync pull request advances the default upstream revision in `upstream.lock`, `compose.yaml` and `tools/engine/Dockerfile` together.
 
-For a manual source sync, work on a new branch, merge upstream without discarding fork changes, update recursive submodules, run `python tools/engine/sources.py --write`, and advance `tools/engine/upstream.lock` to that exact upstream SHA. Run the checks below and open a pull request. Do not force-reset the fork to upstream or replace installed game runtimes during a source sync.
+For a manual source sync, work on a new branch, merge upstream without discarding fork changes, update recursive submodules, run `python tools/engine/sources.py --write`, and advance `base_revision` in `tools/engine/upstream.lock` and the `ANYPS5_UPSTREAM_REF` defaults in `compose.yaml` and `tools/engine/Dockerfile` to that exact upstream SHA. Run the checks below and open a pull request. Do not force-reset the fork to upstream or replace installed game runtimes during a source sync.
 
 Run the engine/source integration, worker and web backend tests with a development Python installation:
 

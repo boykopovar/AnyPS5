@@ -8,7 +8,7 @@ Tool for automatic executables porting to Linux and Windows.
 
 The relinker-only build runs on macOS, including Apple silicon.
 
-Build this fork's Windows engine and local library app with **`docker compose up --build`**. Each engine build checks upstream `main` and merges the fork's launcher features. Stop its containers/network with **`docker compose down`**; game data and settings are retained. See [Docker setup and limitations](docs/user/DOCKER.md), and the web app's **About** tab, before sharing a build.
+Build this fork's Windows engine and local library app with **`docker compose up --build`**. Each engine build uses the upstream revision this fork was tested with (`tools/engine/upstream.lock`) and merges the fork's launcher features. Stop its containers/network with **`docker compose down`**; game data and settings are retained. See [Docker setup and limitations](docs/user/DOCKER.md), and the web app's **About** tab, before sharing a build.
 
 [**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
 

@@ -186,6 +186,17 @@ class SourceTests(unittest.TestCase):
             self.assertIn(value, dockerfile)
 
 
+    def test_default_upstream_ref_is_the_locked_base_revision(self):
+        root = Path(__file__).resolve().parents[2]
+        base = json.loads(Path(__file__).with_name('upstream.lock').read_text())['base_revision']
+        compose = (root / 'compose.yaml').read_text()
+        dockerfile = Path(__file__).with_name('Dockerfile').read_text()
+        self.assertIn('${ANYPS5_UPSTREAM_REF:-' + base + '}', compose)
+        defaults = [line for line in dockerfile.splitlines() if line.startswith('ARG ANYPS5_UPSTREAM_REF')]
+        self.assertTrue(defaults)
+        self.assertEqual(set(defaults), {'ARG ANYPS5_UPSTREAM_REF=' + base})
+
+
 class BundleTests(unittest.TestCase):
     @unittest.skipIf(os.name == 'nt', 'Exporter runs inside Linux')
     def test_export_failure_preserves_completed_bundle_and_reports_unavailable(self):
