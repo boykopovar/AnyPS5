@@ -63,4 +63,30 @@ std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestRes
     return result->mediaType;
 }
 
+const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->nodeHandle ? NKWebKit::ToRef(result->nodeHandle) : nullptr;
+}
+
+const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->urlElementHandle ? NKWebKit::ToRef(result->urlElementHandle) : nullptr;
+}
+
+NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef) {
+    const auto* result = NKWebKit::Cast<NKWebKit::BundleHitTestResult>(hitTestResultRef, __func__);
+    return result->imageRect;
+}
+
+
+const void* APS5_VABI WKBundleFrameCreateHitTestResult(const void* frameRef, NKWebKit::PointValue point) {
+    auto* frame = NKWebKit::Cast<NKWebKit::BundleFrame>(frameRef, __func__);
+    auto result = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
+    auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    node->documentFrame = NKWebKit::Retained<NKWebKit::BundleFrame>::Share(frame);
+    result->nodeHandle = std::move(node);
+    result->imageRect = { point, { 0.0, 0.0 } };
+    return NKWebKit::ToRef(std::move(result));
+}
+
 }

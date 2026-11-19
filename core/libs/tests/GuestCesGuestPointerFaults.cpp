@@ -150,6 +150,54 @@ int main() {
     Require(sceCesUtf8ToUcs2(ascii, 1, unmappedU32, &unit) == ERR_INVALID_DST_BUFFER);
     Require(errno == savedErrno);
 
+    alignas(8) uint8_t sjisSheet[64] = {};
+    alignas(8) uint8_t eucKrSheet[64] = {};
+    const void* sjis = sceCesUcsProfileInitSJis1997Cp932(sjisSheet);
+    const void* eucKr = sceCesUcsProfileInitEucKr(eucKrSheet);
+    Require(sjis != nullptr && eucKr != nullptr);
+    uint8_t utf8[4] = {};
+    uint16_t utf16[2] = {};
+    uint32_t utf32 = 0;
+    const uint32_t letterUtf32be = 0x41000000u;
+    const uint16_t letterUtf16be = 0x4100u;
+    const uint8_t unassignedSjis[] = {0x85, 0x40};
+    constexpr int ERR_UNASSIGNED_CODE = static_cast<int>(0x805C0020);
+    const auto faults = [&](int result) {
+        const bool kept = errno == savedErrno;
+        errno = savedErrno;
+        return result == ERR_INVALID_DST_BUFFER && kept;
+    };
+
+    errno = savedErrno;
+    Require(faults(sceCesEucKrToUtf8(eucKr, ascii, 1, nullptr, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesEucKrToUtf8(eucKr, ascii, 1, unmappedU32, utf8, 4, nullptr)));
+    Require(faults(sceCesEucKrToUtf8(eucKr, ascii, 1, nullptr, utf8, 4, unmappedU32)));
+    Require(faults(sceCesSJisToUcs2(sjis, ascii, 1, nullptr, unmappedU16)));
+    Require(faults(sceCesSJisToUcs2(sjis, ascii, 1, unmappedU32, &unit)));
+    Require(faults(sceCesSJisToUtf8(sjis, ascii, 1, nullptr, unmappedU8, 4, nullptr)));
+    Require(faults(sceCesSJisToUtf8(sjis, ascii, 1, nullptr, utf8, 4, unmappedU32)));
+    Require(faults(sceCesSJisToUtf16(sjis, ascii, 1, nullptr, unmappedU16, 2, nullptr)));
+    Require(faults(sceCesSJisToUtf16(sjis, ascii, 1, nullptr, utf16, 2, unmappedU32)));
+    Require(faults(sceCesSJisToUtf32(sjis, ascii, 1, nullptr, unmappedU32)));
+    Require(faults(sceCesSJisToUtf32(sjis, ascii, 1, unmappedU32, &utf32)));
+    Require(faults(sceCesUtf8ToSJis(ascii, 1, nullptr, sjis, unmappedU8, 2, nullptr)));
+    Require(faults(sceCesUtf8ToSJis(ascii, 1, nullptr, sjis, utf8, 2, unmappedU32)));
+    Require(faults(sceCesUtf8ToSJis(ascii, 1, unmappedU32, sjis, utf8, 2, &size)));
+    Require(faults(sceCesUtf32beToSJis(&letterUtf32be, sjis, unmappedU8, 2, nullptr)));
+    Require(faults(sceCesUtf32beToSJis(&letterUtf32be, sjis, utf8, 2, unmappedU32)));
+    Require(faults(sceCesSbcToUtf16be(cp1252, 'A', unmappedU16, 1, nullptr)));
+    Require(faults(sceCesSbcToUtf16be(cp1252, 'A', utf16, 1, unmappedU32)));
+    Require(faults(sceCesSbcToUtf32be(cp1252, 'A', unmappedU32)));
+    Require(faults(sceCesUtf16beToSbc(&letterUtf16be, 1, nullptr, cp1252, unmappedU8)));
+    Require(faults(sceCesUtf16beToSbc(&letterUtf16be, 1, unmappedU32, cp1252, &byte)));
+    Require(faults(sceCesUtf32beToSbc(&letterUtf32be, cp1252, unmappedU8)));
+    Require(sceCesSJisToUcs2(sjis, unassignedSjis, 2, &size, &unit) == ERR_UNASSIGNED_CODE && size == 2);
+    errno = savedErrno;
+    Require(faults(sceCesSJisToUcs2(sjis, unassignedSjis, 2, unmappedU32, &unit)));
+    Require(sceCesEucKrToUtf8(eucKr, ascii, 1, &size, utf8, 4, &utf32) == 0 && utf8[0] == 'A' && size == 1 && utf32 == 1);
+    Require(sceCesSJisToUtf16(sjis, ascii, 1, &size, utf16, 2, &utf32) == 0 && utf16[0] == 'A' && size == 1 && utf32 == 1);
+    Require(sceCesUtf32beToSbc(&letterUtf32be, cp1252, &byte) == 0 && byte == 'A');
+
     std::puts("guest_ces_guest_pointer_faults ok");
     return 0;
 }
