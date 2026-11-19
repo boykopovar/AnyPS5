@@ -238,6 +238,18 @@ void APS5_VABI RecordDoneSlot(GuestGlyphSlotRec* slot) {
     calls.doneSlot = slot;
 }
 
+GuestGlyphSlotRec* gCorruptTargetSlot = nullptr;
+void* gSavedInternal = nullptr;
+void* gSavedLoader = nullptr;
+
+int APS5_VABI CorruptFaceOnInit(GuestGlyphSlotRec* slot) {
+    gCorruptTargetSlot = slot;
+    gSavedInternal = slot->internal;
+    gSavedLoader = gSavedInternal ? static_cast<GuestSlotInternalRec*>(gSavedInternal)->loader : nullptr;
+    slot->face = reinterpret_cast<GuestFaceRec*>(0x10);
+    return 0x24;
+}
+
 struct DriverFixture {
     Recorder recorder;
     GuestFaceRec face{};
@@ -366,6 +378,19 @@ void GuestPointers() {
     fixture.face.driver = reinterpret_cast<void*>(0x10);
     Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06 && errno == 71,
         "New_GlyphSlot refuses an unreadable driver pointer without changing errno");
+
+    DriverFixture corruptFace;
+    corruptFace.clazz.init_slot = CorruptFaceOnInit;
+    gCorruptTargetSlot = nullptr;
+    gSavedInternal = nullptr;
+    gSavedLoader = nullptr;
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&corruptFace.face, &slot) == 0x24 && errno == 71,
+        "SlotDone ignores an unreadable slot->face during rollback without changing errno");
+    Require(calls.dones == 0 && corruptFace.recorder.frees == 1,
+        "SlotDone skips done_slot and avoids crashing on unreadable slot->face");
+    std::free(gSavedLoader);
+    std::free(gSavedInternal);
 
     ft_glyphslot_free_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10));
     Require(errno == 71, "free_bitmap ignores an unreadable slot without changing errno");

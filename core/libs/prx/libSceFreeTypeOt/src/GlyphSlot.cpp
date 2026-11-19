@@ -71,17 +71,34 @@ bool FreeBitmap(GuestGlyphSlotRec* slot, GuestGlyphSlotRec& guestSlot, const cha
     return written;
 }
 
-GuestDriverRec* DriverOf(GuestGlyphSlotRec* slot, const char* function) {
-    auto* face = static_cast<GuestFaceRec*>(slot->face);
-    if (!face || !face->driver) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    auto* driver = static_cast<GuestDriverRec*>(face->driver);
-    if (!driver->clazz) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    return driver;
+bool DriverOf(
+    const GuestGlyphSlotRec& guestSlot,
+    GuestFaceRec& guestFace,
+    GuestDriverRec& guestDriver,
+    GuestDriverClassPrefix& guestClazz) {
+    if (!guestSlot.face) return false;
+    const int faceErrno = errno;
+    const bool faceCopied = GuestCopyIn_nid_no_patch(&guestFace, guestSlot.face, sizeof(guestFace));
+    errno = faceErrno;
+    if (!faceCopied || !guestFace.driver) return false;
+    const int driverErrno = errno;
+    const bool driverCopied = GuestCopyIn_nid_no_patch(&guestDriver, guestFace.driver, sizeof(guestDriver));
+    errno = driverErrno;
+    if (!driverCopied || !guestDriver.clazz) return false;
+    const int clazzErrno = errno;
+    const bool clazzCopied = GuestCopyIn_nid_no_patch(&guestClazz, guestDriver.clazz, sizeof(guestClazz));
+    errno = clazzErrno;
+    return clazzCopied;
 }
 
-bool UsesOutlines(const GuestDriverRec* driver, const char* function) {
-    if (!driver->root_clazz) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    return !(driver->root_clazz->module_flags & ModuleDriverNoOutlines);
+bool UsesOutlines(const GuestDriverRec& guestDriver, const char* function) {
+    if (!guestDriver.root_clazz) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestModuleClass rootClazz{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&rootClazz, guestDriver.root_clazz, sizeof(rootClazz));
+    errno = savedErrno;
+    if (!copied) return false;
+    return !(rootClazz.module_flags & ModuleDriverNoOutlines);
 }
 
 void* Allocate(GuestMemoryRec* memory, std::int64_t size, std::int32_t* error, const char* function) {
@@ -96,48 +113,68 @@ void Free(GuestMemoryRec* memory, const void* block, const char* function) {
 
 void LoaderDone(GuestGlyphLoaderRec* loader, const char* function) {
     if (!loader) return;
-    GuestMemoryRec* memory = loader->memory;
-    Free(memory, loader->base.outline.points, function);
-    Free(memory, loader->base.outline.tags, function);
-    Free(memory, loader->base.outline.contours, function);
-    Free(memory, loader->base.extra_points, function);
-    Free(memory, loader->base.subglyphs, function);
+    GuestGlyphLoaderRec guestLoader{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestLoader, loader, sizeof(guestLoader));
+    errno = savedErrno;
+    if (!copied) return;
+    GuestMemoryRec* memory = guestLoader.memory;
+    Free(memory, guestLoader.base.outline.points, function);
+    Free(memory, guestLoader.base.outline.tags, function);
+    Free(memory, guestLoader.base.outline.contours, function);
+    Free(memory, guestLoader.base.extra_points, function);
+    Free(memory, guestLoader.base.subglyphs, function);
     Free(memory, loader, function);
 }
 
 std::int32_t SlotInit(GuestGlyphSlotRec* slot, const char* function) {
-    GuestDriverRec* driver = DriverOf(slot, function);
-    GuestDriverClassPrefix* clazz = driver->clazz;
-    GuestMemoryRec* memory = driver->root_memory;
-    slot->library = driver->root_library;
+    GuestGlyphSlotRec guestSlot{};
+    if (!slot || !CopySlotIn(slot, guestSlot)) return InvalidArgument;
+    GuestFaceRec guestFace{};
+    GuestDriverRec guestDriver{};
+    GuestDriverClassPrefix guestClazz{};
+    if (!DriverOf(guestSlot, guestFace, guestDriver, guestClazz)) return InvalidArgument;
+    GuestMemoryRec* memory = guestDriver.root_memory;
+    slot->library = guestDriver.root_library;
     std::int32_t error = 0;
     auto* internal = static_cast<GuestSlotInternalRec*>(Allocate(memory, sizeof(GuestSlotInternalRec), &error, function));
     if (error) return error;
     slot->internal = internal;
-    if (UsesOutlines(driver, function)) {
+    if (UsesOutlines(guestDriver, function)) {
         auto* loader = static_cast<GuestGlyphLoaderRec*>(Allocate(memory, sizeof(GuestGlyphLoaderRec), &error, function));
         if (!error) {
             loader->memory = memory;
             internal->loader = loader;
         }
     }
-    if (!error && clazz->init_slot) error = clazz->init_slot(slot);
+    if (!error && guestClazz.init_slot) error = guestClazz.init_slot(slot);
     return error;
 }
 
 void SlotDone(GuestGlyphSlotRec* slot, const char* function) {
     GuestGlyphSlotRec guestSlot{};
     if (!slot || !CopySlotIn(slot, guestSlot)) return;
-    GuestDriverRec* driver = DriverOf(slot, function);
-    GuestDriverClassPrefix* clazz = driver->clazz;
-    GuestMemoryRec* memory = driver->root_memory;
-    if (clazz->done_slot) clazz->done_slot(slot);
+    GuestFaceRec guestFace{};
+    GuestDriverRec guestDriver{};
+    GuestDriverClassPrefix guestClazz{};
+    if (!DriverOf(guestSlot, guestFace, guestDriver, guestClazz)) return;
+    GuestMemoryRec* memory = guestDriver.root_memory;
+    if (guestClazz.done_slot) guestClazz.done_slot(slot);
     FreeBitmap(slot, guestSlot, function);
     GuestSlotInternalRec* internal = Internal(guestSlot);
     if (!internal) return;
-    if (UsesOutlines(driver, function)) {
-        LoaderDone(static_cast<GuestGlyphLoaderRec*>(internal->loader), function);
-        internal->loader = nullptr;
+    if (UsesOutlines(guestDriver, function)) {
+        GuestSlotInternalRec guestInternal{};
+        const int readErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&guestInternal, internal, sizeof(guestInternal));
+        errno = readErrno;
+        if (copied) {
+            LoaderDone(static_cast<GuestGlyphLoaderRec*>(guestInternal.loader), function);
+            void* clearedLoader = nullptr;
+            const int writeErrno = errno;
+            GuestCopyOut_nid_no_patch(&internal->loader, &clearedLoader, sizeof(clearedLoader));
+            errno = writeErrno;
+        }
     }
     Free(memory, internal, function);
 }
