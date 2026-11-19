@@ -192,7 +192,7 @@ class BundleTests(unittest.TestCase):
         module = importlib.util.spec_from_file_location('engine_export', Path(__file__).with_name('export.py'))
         exporter = importlib.util.module_from_spec(module)
         module.loader.exec_module(exporter)
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(exporter.os, 'chown'):
             root = Path(temporary)
             payload, artifacts, state = root / 'payload', root / 'artifacts', root / 'state'
             manifest = self.make_bundle(payload)
