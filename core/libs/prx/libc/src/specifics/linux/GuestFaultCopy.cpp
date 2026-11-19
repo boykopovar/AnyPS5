@@ -53,21 +53,26 @@ void Chain(int signal, siginfo_t* info, void* context) {
     std::size_t slot = 0;
     while (slot < std::size(CopySignals) && CopySignals[slot] != signal) ++slot;
     if (slot == std::size(CopySignals)) return;
-    const struct sigaction& previous = g_previous[g_active.load(std::memory_order_acquire)][slot];
-    if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
-        previous.sa_sigaction(signal, info, context);
-        return;
-    }
-    if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN && previous.sa_handler != nullptr) {
+    const int active = g_active.load(std::memory_order_acquire);
+    const struct sigaction previous = g_previous[active][slot];
+    if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN) {
+        if ((previous.sa_flags & SA_RESETHAND) != 0) {
+            g_previous[active][slot] = {};
+            g_previous[active][slot].sa_handler = SIG_DFL;
+        }
+        if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
+            previous.sa_sigaction(signal, info, context);
+            return;
+        }
         previous.sa_handler(signal);
         return;
     }
-    if (info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
+    if (info != nullptr && info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
     struct sigaction fallback{};
     fallback.sa_handler = SIG_DFL;
     sigemptyset(&fallback.sa_mask);
     sigaction(signal, &fallback, nullptr);
-    if (info->si_code <= 0) raise(signal);
+    if (info != nullptr && info->si_code <= 0) raise(signal);
 }
 
 void OnCopyFault(int signal, siginfo_t* info, void* context) {
