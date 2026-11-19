@@ -201,7 +201,15 @@ void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
 
+UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* strsrch);
+std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* strsrch);
+std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* strsrch, std::int32_t* status);
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
+void APS5_VABI usearch_reset_nid_postfix(UStringSearch* strsrch);
+void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* strsrch, std::int32_t attribute, std::int32_t value, std::int32_t* status);
+void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* strsrch, std::int32_t position, std::int32_t* status);
+void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* strsrch, const char16_t* pattern, std::int32_t patternLength, std::int32_t* status);
+void APS5_VABI usearch_setText_nid_postfix(UStringSearch* strsrch, const char16_t* text, std::int32_t textLength, std::int32_t* status);
 
 UText* APS5_VABI utext_close(UText* ut);
 
