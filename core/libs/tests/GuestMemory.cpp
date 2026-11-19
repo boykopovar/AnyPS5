@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <cerrno>
 #include <chrono>
@@ -234,6 +235,29 @@ static void CheckVirtualRangeNames() {
     Require(std::strcmp(NameAt(mapping), longest) == 0);
     Require(sceKernelSetVirtualRangeName(mapping, 0, "zero") == 0);
     Require(std::strcmp(NameAt(mapping), longest) == 0);
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(sceKernelSetVirtualRangeName(mapping, length, unreadable) == static_cast<int>(0x8002000eu) && errno == 71);
+    Require(std::strcmp(NameAt(mapping), longest) == 0);
+    void* edge = nullptr;
+    Require(sceKernelMapFlexibleMemory(&edge, length * 2, 3, 0) == 0);
+    auto* const boundary = static_cast<char*>(edge) + length;
+    std::memcpy(boundary - 5, "edge", 5);
+    Require(sceKernelMprotect(boundary, length, 0) == 0);
+    Require(sceKernelSetVirtualRangeName(mapping, length, boundary - 5) == 0);
+    Require(std::strcmp(NameAt(mapping), "edge") == 0);
+    std::memset(boundary - 3, 'x', 3);
+    Require(sceKernelSetVirtualRangeName(mapping, length, boundary - 3) == static_cast<int>(0x8002000eu));
+    Require(std::strcmp(NameAt(mapping), "edge") == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(edge), length * 2) == 0);
+    void* unnamed = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&unnamed, length, 3, 0, unreadable) == 0);
+    Require(NameAt(unnamed)[0] == '\0');
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(unnamed), length) == 0);
+    void* truncated = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&truncated, length, 3, 0, "0123456789012345678901234567890123456789") == 0);
+    Require(std::strcmp(NameAt(truncated), longest) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(truncated), length) == 0);
     Require(sceKernelClearVirtualRangeName(mapping, length) == 0);
     Require(NameAt(mapping)[0] == '\0');
     Require(sceKernelSetVirtualRangeName(mapping, length, "before munmap") == 0);
@@ -882,10 +906,17 @@ static void CheckAllocateDirectMemoryRejectsInvalidArguments() {
 
     void* poolAddr = nullptr;
     Require(sceKernelMemoryPoolReserve(nullptr, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMemoryPoolReserve(reinterpret_cast<void*>(0x10000), page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, 0, 0, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, 1, 0, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, page, 0x2000, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, page, page - 1, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
+    errno = 71;
+    Require(sceKernelMemoryPoolReserve(nullptr, page, 0, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelMemoryPoolReserve(reinterpret_cast<void*>(0x10000), page, 0, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
 
     std::int64_t validPhys = -1;
     Require(sceKernelAllocateDirectMemory(0, DIRECT_MEMORY_SIZE, page, 0, 0, &validPhys) == 0);
@@ -1276,8 +1307,16 @@ static void CheckMemoryPoolArguments() {
     KernelMemoryPoolBatchEntry entries[2]{};
     int processed = -1;
     Require(sceKernelMemoryPoolBatch(nullptr, 1, &processed, 0) == einval);
+    Require(sceKernelMemoryPoolBatch(nullptr, 1, nullptr, 0) == einval);
     Require(sceKernelMemoryPoolBatch(entries, -1, &processed, 0) == einval);
     Require(sceKernelMemoryPoolBatch(entries, 0, &processed, 0) == 0 && processed == 0);
+    Require(sceKernelMemoryPoolBatch(entries, 0, nullptr, 0) == 0);
+    errno = 71;
+    Require(sceKernelMemoryPoolBatch(entries, 0, reinterpret_cast<int*>(0x10), 0) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelMemoryPoolBatch(entries, 1, reinterpret_cast<int*>(0x10), 0) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
     for (const std::uint32_t op : {0u, 9u}) {
         entries[0] = {};
         entries[0].op = op;
@@ -4828,6 +4867,17 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 0) == -1 && *__error_nid_postfix() == 22);
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x7fffffffc000), 0x4000, 4) == 0);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(nullptr, 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), page, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x3fff), page, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), page, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), 0, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4001), page, 0) == 0);
     *__error_nid_postfix() = 77;
     for (int advice = 0; advice <= 10; ++advice) Require(posix_madvise_nid_postfix(memory, page * 3, advice) == 0);
     Require(posix_madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 10) == 0);

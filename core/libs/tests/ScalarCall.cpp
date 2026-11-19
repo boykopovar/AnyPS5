@@ -3,6 +3,7 @@
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include <array>
 #include <cstdint>
@@ -556,6 +557,25 @@ static void CheckRejections() {
     });
 }
 
+static RdnaInstruction Image(std::uint32_t pc, std::uint32_t opcode, std::uint32_t sampler) {
+    const std::array<std::uint32_t, 2> code{0xf0000f08u | (opcode << 18u), 0x00020400u | (sampler / 4u) << 21u};
+    return DecodeRdnaMimg(pc, code, 0u);
+}
+
+static void CheckImageSamplerField() {
+    for (const auto link : {0u, 2u}) {
+        for (const auto opcode : {0x00u, 0x01u, 0x08u, 0x0eu}) {
+            const auto cfg = Build({Call(0u, link, 3u), Image(4u, opcode, 0u), Sopp(12u, 1u), Sop1(16u, 0u, 0x20u, link)});
+            Require(cfg.FindBlockByProgramCounter(0u).terminator.kind == TerminatorKind::Branch);
+        }
+        for (const auto opcode : {0x20u, 0x60u}) {
+            ExpectThrow("escapes the constant-offset call/return model", [=] {
+                Build({Call(0u, link, 3u), Image(4u, opcode, 0u), Sopp(12u, 1u), Sop1(16u, 0u, 0x20u, link)});
+            });
+        }
+    }
+}
+
 static void CheckGuards(const std::string& only) {
     bool checked = false;
     const auto check = [&](const char* name, const char* needle, auto fn) {
@@ -614,6 +634,7 @@ int main(int argc, char** argv) {
             CheckTableCalls();
             CheckTableCalleeProgramCounter();
             CheckHoistedTableCalls();
+            CheckImageSamplerField();
             CheckGuards("");
         } else {
             Require(argc == 2);
