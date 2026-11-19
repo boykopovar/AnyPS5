@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -100,6 +101,57 @@ class MergeBaseTests(unittest.TestCase):
         files, _, _ = pr_overlap.probe({"ref": "refs/pr/2"})
 
         self.assertEqual(files, {"shared.txt"})
+
+    def probe_with_cache(self, pr):
+        diffs = []
+        original = pr_overlap.git
+
+        def recording(*args):
+            if args[0] == "diff":
+                diffs.append(args)
+            return original(*args)
+
+        pr_overlap.load_probe_cache()
+        try:
+            with patch.object(pr_overlap, "git", side_effect=recording):
+                found = pr_overlap.probe(pr)
+            pr_overlap.save_probe_cache()
+        finally:
+            pr_overlap.PROBE_CACHE = pr_overlap.PROBES_SEEN = None
+        return found, diffs
+
+    def test_probe_cache_answers_a_repeated_head_without_diffing(self):
+        sha = commit(self.main, "plain pull request", {"core/libs/prx/lib/Pull.cpp": "int APS5_VABI pulled_nid_postfix(int value) { return value; }\n"})
+        fresh = pr_overlap.probe({"ref": sha})
+
+        first, first_diffs = self.probe_with_cache({"ref": sha})
+        second, second_diffs = self.probe_with_cache({"ref": sha})
+
+        self.assertEqual(first, fresh)
+        self.assertEqual(second, fresh)
+        self.assertEqual(len(first_diffs), 2)
+        self.assertEqual(second_diffs, [])
+
+    def test_probe_cache_rescans_a_head_after_its_merge_base_moves(self):
+        sha = commit(self.head, "pull request change", {"shared.txt": "pull\ntwo\nthree\n"})
+        self.probe_with_cache({"ref": sha})
+        run("update-ref", "refs/pr/base", commit(self.head, "main takes the pull request base", {"other.txt": "main\n"}))
+
+        found, diffs = self.probe_with_cache({"ref": sha})
+
+        self.assertEqual(found, pr_overlap.probe({"ref": sha}))
+        self.assertEqual(found[0], {"shared.txt"})
+        self.assertNotEqual(diffs, [])
+
+    def test_probe_cache_keeps_only_the_heads_of_the_last_run(self):
+        kept = commit(self.main, "kept", {"shared.txt": "kept\ntwo\nthree\n"})
+        dropped = commit(self.main, "dropped", {"shared.txt": "dropped\ntwo\nthree\n"})
+        self.probe_with_cache({"ref": dropped})
+        self.probe_with_cache({"ref": kept})
+
+        cached = pr_overlap.load_export_cache(pr_overlap.probe_cache_path(), pr_overlap.export_cache_version())
+
+        self.assertEqual(list(cached), [f"{self.main} {kept}"])
 
 
 class PrerequisiteHistoryTests(unittest.TestCase):

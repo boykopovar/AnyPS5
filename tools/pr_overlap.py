@@ -31,6 +31,8 @@ PROGRESS_EVERY = 100
 MAX_REPORT_CHARS = 60000
 EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
+PROBE_CACHE = None
+PROBES_SEEN = None
 
 
 def _repository_root():
@@ -461,18 +463,53 @@ def scan(pr):
     pr["removed_exports"] = source_changed_exports(diff, "-")
 
 
+def probe_cache_path():
+    common_dir = git("rev-parse", "--path-format=relative", "--git-common-dir").strip()
+    return _repository_root() / common_dir / "pr_overlap-probes.json"
+
+
+def load_probe_cache():
+    global PROBE_CACHE, PROBES_SEEN
+    PROBE_CACHE = load_export_cache(probe_cache_path(), export_cache_version())
+    PROBES_SEEN = {}
+
+
+def save_probe_cache():
+    if PROBES_SEEN is not None:
+        save_export_cache(probe_cache_path(), export_cache_version(), PROBES_SEEN)
+
+
+def cached_probe(key):
+    entry = PROBE_CACHE.get(key)
+    try:
+        files, exported, added, existing = entry
+        result = set(files), (set(exported), {(library, nid): set(names) for library, nid, names in added}), set(existing)
+    except (TypeError, ValueError):
+        return None
+    PROBES_SEEN[key] = entry
+    return result
+
+
 def probe(pr):
     base = merge_base(pr["ref"])
+    key = f"{base} {pr['ref']}"
+    if PROBE_CACHE is not None and (result := cached_probe(key)) is not None:
+        return result
     changes = git("diff", "--name-status", "--no-renames", "-z", base, pr["ref"]).split("\0")
     files, existing = set(), set()
     for status, path in zip(changes[::2], changes[1::2]):
         files.add(path)
         if status != "A":
             existing.add(path)
-    if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
-        return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
-    return files, (exports(diff), source_changed_exports(diff, "+")), existing
+    found = set(), {}
+    if any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
+        diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
+        found = exports(diff), source_changed_exports(diff, "+")
+    if PROBES_SEEN is not None:
+        PROBES_SEEN[key] = [sorted(files), sorted(found[0]),
+                            [[library, nid, sorted(names)] for (library, nid), names in sorted(found[1].items())],
+                            sorted(existing)]
+    return files, found, existing
 
 
 def related(prs, executor):
@@ -856,8 +893,9 @@ def main(argv=None):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="report open pull requests that overlap each other",
-        epilog="The exports found in the base are cached by source blob in pr_overlap-exports.json inside the git "
-               "directory; deleting that file only makes the next run slower.")
+        epilog="The exports found in the base are cached by source blob in pr_overlap-exports.json, and the files and "
+               "exports each pull request changes by merge base and head in pr_overlap-probes.json, both inside the git "
+               "directory; deleting either file only makes the next run slower.")
     parser.add_argument("--base", default="main")
     parser.add_argument("--out", type=Path, help="write <number>.md for every open pull request (empty when clean)")
     parser.add_argument("--branch", help="check a local branch against the open pull requests instead")
@@ -877,8 +915,11 @@ def main(argv=None):
         BASE_REF = base_commit(args.base)
         branch_sha = resolve_branch(args.branch) if args.branch else None
         fetch_heads(BASE_REF, prs)
+        if args.names or args.branch:
+            load_probe_cache()
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
+            save_probe_cache()
             status = main_status(args.names, BASE_REF)
             blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
             print(lookup_report(args.names, found, status, prs, blob), end="")
@@ -888,6 +929,7 @@ def main(argv=None):
             prs = own(prs, sha)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
+        save_probe_cache()
         current_exports = base_exports(BASE_REF)
         rows = {n: {} for n in prs}
         main_exports = main_export_findings(prs, current_exports)
