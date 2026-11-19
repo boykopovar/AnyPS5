@@ -23640,10 +23640,6 @@ int APS5_VABI _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE() {
     NotImplemented_nid_no_patch(__func__);
 }
