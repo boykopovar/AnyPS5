@@ -53,8 +53,6 @@ alignas(256) constexpr std::array<std::uint32_t, 41> ScalarCode{
     0xd5340019u, 0x20020b04u,
     0xe0781000u, 0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
 };
-constexpr std::uint32_t ScalarFmaFirst = 4;
-constexpr std::uint32_t ScalarFmaLast = 10;
 
 constexpr std::array<std::uint32_t, 16> Halves{
     0x7e00u, 0xfe00u, 0xff2au, 0x7d55u, 0xfc01u, 0x7c01u, 0x7c00u, 0xfc00u,
@@ -64,10 +62,6 @@ constexpr std::array<std::uint32_t, 16> Halves{
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-bool IsNan16(std::uint32_t half) {
-    return (half & 0x7fffu) > 0x7c00u;
 }
 
 std::uint32_t Half(std::uint32_t combination, std::uint32_t operand) {
@@ -136,19 +130,11 @@ Float16NanProbeResult ProbeFloat16HostNans(VulkanDevice& device, const ShaderRec
         const auto scalarSelected = Compile(target, false, mode, ScalarCode);
         const auto scalarHost = Compile(target, true, mode, ScalarCode);
         for (std::uint32_t first = 0; first < Combinations; first += Threads) {
-            const auto scalarExact = Run(device, scalarSelected, ScalarCode, first);
-            const auto scalar = Run(device, scalarHost, ScalarCode, first);
-            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-                for (std::uint32_t index = ScalarFmaFirst; index <= ScalarFmaLast; ++index) {
-                    const std::uint32_t expected = scalarExact[tid * Results + index];
-                    const std::uint32_t actual = scalar[tid * Results + index];
-                    for (const std::uint32_t shift : {0u, 16u}) {
-                        const std::uint32_t expectedHalf = (expected >> shift) & 0xffffu;
-                        const std::uint32_t actualHalf = (actual >> shift) & 0xffffu;
-                        ++result.compared;
-                        if (expectedHalf != actualHalf && !(IsNan16(expectedHalf) && IsNan16(actualHalf) && expectedHalf != 0xfe00u)) ++result.mismatches;
-                    }
-                }
+            const auto selected = Run(device, scalarSelected, ScalarCode, first);
+            const auto host = Run(device, scalarHost, ScalarCode, first);
+            for (std::uint32_t index = 0; index < Threads * Results; ++index) {
+                ++result.compared;
+                if (selected[index] != host[index]) ++result.mismatches;
             }
             if (result.mismatches != 0u) return result;
         }
