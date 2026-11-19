@@ -6296,10 +6296,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_in63SKRkPMY_nid_no_patch() {
 }
 APS5_EXPORT("in63SKRkPMY", libSceNKWebKitLegacyUnknown_in63SKRkPMY_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore8toStringERKN3WTF6VectorINS_11ProxyServerELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22CSSAnimationController16resumeAnimationsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
