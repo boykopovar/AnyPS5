@@ -11762,6 +11762,9 @@ bool storageImportTouchTests(const Device& device, Recorder& recorder) {
         resource.dstSelW = 7;
         auto image = StorageTexture::Create(context, detiler, resource, 0);
         if (HostImportFor(context, address, atlasBytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, atlasBytes)) {
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
             std::cout << "host imports are compared, not watched: storage import touch not tested\n";
             return false;
         }
