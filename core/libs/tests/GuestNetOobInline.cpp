@@ -91,7 +91,7 @@ int main() {
             const int on = 1;
             Require(sceNetSetsockopt(socket, 0xffff, 0x100, &on, 3) == static_cast<int>(0x80410116u));
             Require(*sceNetErrnoLoc() == 22);
-            Require(sceNetSetsockopt(socket, 0xffff, 0x100, nullptr, 4) == static_cast<int>(0x80410116u));
+            Require(sceNetSetsockopt(socket, 0xffff, 0x100, nullptr, 4) == static_cast<int>(0x8041010eu));
         }
         CheckFlag(client, 0);
         std::array<std::uint8_t, 28> address{};
