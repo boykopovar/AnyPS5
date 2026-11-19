@@ -5,12 +5,10 @@
 #include <string>
 #include <vector>
 
-namespace HostBox {
-
-std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const ModalDialogRequest& request) {
+extern "C" bool ShowHostMessageBox_nid_postfix(std::string_view message, const ModalDialogRequest& request, HostBox::HostBoxAnswer& answer) {
     std::vector<std::string> labels;
     labels.reserve(request.buttons.size());
-    for (const auto& label : request.buttons) labels.push_back(HostMessageLabel(label));
+    for (const auto& label : request.buttons) labels.push_back(HostBox::HostMessageLabel(label));
 
     std::vector<SDL_MessageBoxButtonData> buttons;
     buttons.reserve(labels.size());
@@ -29,8 +27,7 @@ std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const 
     data.numbuttons = static_cast<int>(buttons.size());
     data.buttons = buttons.data();
     int pressed = -1;
-    if (SDL_ShowMessageBox(&data, &pressed) != 0) return std::nullopt;
-    return HostBoxAnswer{IndexOfHostButton(pressed, buttons.size(), request.cancel)};
-}
-
+    if (SDL_ShowMessageBox(&data, &pressed) != 0) return false;
+    answer = HostBox::HostBoxAnswer{HostBox::IndexOfHostButton(pressed, buttons.size(), request.cancel)};
+    return true;
 }
