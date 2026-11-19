@@ -7764,10 +7764,6 @@ int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation5cloneEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore4Page28setOverrideViewportArgumentsERKN3WTF8OptionalINS_17ViewportArgumentsEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
