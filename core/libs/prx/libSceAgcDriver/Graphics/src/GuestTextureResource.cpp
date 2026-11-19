@@ -485,7 +485,7 @@ bool DescriptorSingleLevel(std::span<const std::uint32_t> words) {
 bool FirstLayerDescriptor(std::span<const std::uint32_t> words, std::array<std::uint32_t, 8>& narrowed) {
     if (words.size() != narrowed.size()) return false;
     const auto resource = DecodeTextureResource(words);
-    if (resource.dimension != TextureDimension::k2DArray || resource.depthOrLastArray <= resource.baseArray) return false;
+    if ((resource.dimension != TextureDimension::k2DArray && resource.dimension != TextureDimension::k1DArray) || resource.depthOrLastArray <= resource.baseArray) return false;
     std::copy(words.begin(), words.end(), narrowed.begin());
     narrowed[4] = (narrowed[4] & ~0x1fffu) | resource.baseArray;
     return true;
