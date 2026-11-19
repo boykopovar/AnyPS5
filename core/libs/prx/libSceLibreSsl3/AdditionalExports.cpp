@@ -20,10 +20,6 @@ int APS5_VABI SSL_set_accept_state_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_STORE_load_locations_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_read_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -94,10 +90,6 @@ int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
 APS5_EXPORT("PBYz0kpXwg8", Unknown_PBYz0kpXwg8_nid_no_patch);
 
 int APS5_VABI X509_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

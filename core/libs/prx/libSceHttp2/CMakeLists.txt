@@ -87,7 +87,7 @@ if(BUILD_TESTING)
         target_link_libraries(guest_http2_transport_tests PRIVATE ws2_32 bcrypt)
         add_test(NAME guest_http2_dns_first COMMAND guest_http2_transport_tests --dns-first)
         set_tests_properties(guest_http2_dns_first PROPERTIES TIMEOUT 30)
-        set_tests_properties(guest_http2_gzip_members guest_http2_gzip_headers guest_http2 guest_http2_offline_sync guest_http2_offline_async guest_http2_offline_queued guest_http2_offline_declared_length guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http2_gzip_members guest_http2_gzip_headers guest_http2_guest_pointers guest_http2 guest_http2_offline_sync guest_http2_offline_async guest_http2_offline_queued guest_http2_offline_declared_length guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
     add_test(NAME guest_http2_http1_gzip COMMAND guest_http2_transport_tests --http1-gzip)
