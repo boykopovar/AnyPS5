@@ -324,6 +324,7 @@ class CheckSkipsTests(unittest.TestCase):
     def test_high_refresh_skip_is_expected_alongside_device_log_lines(self):
         reason = "current display does not provide 120 Hz"
         log = "\n".join((
+            "[time] scheduler tick raised to 0.5 ms (was 0.50 ms, now 0.50 ms, timed waits fine, timers fire 518 us late)",
             "[src/HostCpu.cpp:220 operator()] host CPU has SSE2 AVX AVX2",
             "[src/VulkanDevice.cpp:2666 VulkanDevice] Vulkan device ready device=0x2 queue=0x3 family=0",
             "[write-watch] host imports resolve write protection: yes",

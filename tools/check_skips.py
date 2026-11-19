@@ -17,7 +17,7 @@ NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECAS
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
 DEVICE_LOG_SOURCE = re.compile(r"\[[^\]]*:\d+ [^\]]*\] ")
-DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|write-watch)\] ")
+DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|time|write-watch)\] ")
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
