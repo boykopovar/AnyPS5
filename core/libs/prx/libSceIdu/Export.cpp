@@ -32,6 +32,22 @@ bool IsEmptyString(const char* text, const char* function) {
     return first == 0;
 }
 
+const char* ReadString(const void* source, const char* function) {
+    const char* value = nullptr;
+    if (!CopyInPreservingErrno(&value, source, sizeof(value))) throw std::invalid_argument(function);
+    return value;
+}
+
+std::size_t StringLength(const char* text, const char* function) {
+    std::size_t length = 0;
+    for (;;) {
+        char value = 0;
+        if (!CopyInPreservingErrno(&value, text + length, sizeof(value))) throw std::invalid_argument(function);
+        if (value == 0) return length;
+        ++length;
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -52,9 +68,11 @@ int APS5_VABI sceIduInstallPkg(const void* first, const void* second) {
     return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceIduIsAppInstalled() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceIduIsAppInstalled(const char* id) {
+    if (id == nullptr) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    const std::size_t length = StringLength(id, __func__);
+    if (length != 36 && length != 9) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceIduIsRifInstalled(const char* name) {
@@ -71,7 +89,6 @@ int APS5_VABI sceIduReboot() {
 }
 
 int APS5_VABI sceIduTerm() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -95,9 +112,10 @@ int APS5_VABI sceIduGetHardwareId(void* id) {
 }
 
 int APS5_VABI sceIduGetPkgInstallStatus(const char* id, void* status, std::uint32_t size) {
-    if (id == nullptr || status == nullptr || size != 0x220) return SCE_IDU_ERROR_INVALID_ARGUMENT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (id == nullptr) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    const std::size_t length = StringLength(id, __func__);
+    if (size != 0x220 || status == nullptr || length != 36) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceIduGetTitleList(void* list, std::int32_t count) {
@@ -116,8 +134,17 @@ int APS5_VABI sceIduNotificationHide(const char* id) {
     return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceIduNotificationShow() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceIduNotificationShow(const void* param) {
+    if (param == nullptr) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    const auto* block = static_cast<const unsigned char*>(param);
+    if (ReadWord(block, __func__) != 0x20) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    const char* required = ReadString(block + 0x10, __func__);
+    if (required == nullptr || IsEmptyString(required, __func__)) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    if (static_cast<std::int32_t>(ReadWord(block + 0x04, __func__)) <= 0) {
+        const char* conditional = ReadString(block + 0x08, __func__);
+        if (conditional == nullptr || IsEmptyString(conditional, __func__)) return SCE_IDU_ERROR_INVALID_ARGUMENT;
+    }
+    return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceIduStartTitle(const void* title, std::int32_t count, const void* items, const void* param) {
