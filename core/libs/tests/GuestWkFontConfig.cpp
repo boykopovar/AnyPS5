@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -79,6 +80,66 @@ void RequireEarlyReturnBeforeUnreadableTail(int invalidArgument) {
     }
 }
 
+
+struct FontRecord {
+    const char* path;
+    const char* name;
+    std::uint32_t attr[5];
+    std::uint32_t tail;
+};
+
+template <typename Call>
+bool Throws(Call call, const void* font, char* out, std::uint32_t size) {
+    try {
+        call(font, out, size);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckRecordReads() {
+    constexpr int bufferTooSmall = static_cast<int>(0x813C0002u);
+    const FontRecord font{"/common/font/SST-Light.otf", "SST Light", {0x14, 1, 2, 0, 1}, 0xA5A5A5A5u};
+
+    std::uint32_t attr[6] = {0x14, 9, 9, 9, 9, 0x77};
+    Require(sceWkFontConfigGetAttr(&font, attr) == 0);
+    Require(std::memcmp(attr, font.attr, sizeof(font.attr)) == 0 && attr[5] == 0x77);
+    const FontRecord otherSize{nullptr, nullptr, {0x99, 6, 9, 2, 2}, 0};
+    attr[0] = 0x14;
+    Require(sceWkFontConfigGetAttr(&otherSize, attr) == 0);
+    Require(attr[0] == 0x99 && attr[1] == 6 && attr[2] == 9 && attr[3] == 2 && attr[4] == 2);
+
+    char out[32];
+    std::memset(out, 'x', sizeof(out));
+    Require(sceWkFontConfigGetFontName(&font, out, 16) == 0);
+    Require(std::memcmp(out, "SST Light", 9) == 0);
+    for (int index = 9; index < 16; ++index) Require(out[index] == '\0');
+    for (int index = 16; index < 32; ++index) Require(out[index] == 'x');
+    std::memset(out, 'x', sizeof(out));
+    Require(sceWkFontConfigGetFontName(&font, out, 10) == 0 && std::strcmp(out, "SST Light") == 0 && out[10] == 'x');
+    std::memset(out, 'x', sizeof(out));
+    Require(sceWkFontConfigGetFontName(&font, out, 9) == bufferTooSmall && out[0] == 'x');
+    Require(sceWkFontConfigGetFontName(&font, out, 0) == bufferTooSmall);
+    const FontRecord empty{nullptr, "", {0x14, 0, 0, 0, 0}, 0};
+    Require(sceWkFontConfigGetFontName(&empty, out, 1) == 0 && out[0] == '\0');
+    Require(sceWkFontConfigGetFontName(&empty, out, 0) == bufferTooSmall);
+
+    GuardedPage page;
+    std::memcpy(page.data + page.size - 3, "SST", 3);
+    const FontRecord runsIntoGuard{nullptr, reinterpret_cast<const char*>(page.data + page.size - 3), {0x14, 0, 0, 0, 0}, 0};
+    Require(Throws(sceWkFontConfigGetFontName, &runsIntoGuard, out, sizeof(out)));
+    const FontRecord nullName{nullptr, nullptr, {0x14, 0, 0, 0, 0}, 0};
+    Require(Throws(sceWkFontConfigGetFontName, &nullName, out, sizeof(out)));
+    std::uint32_t unread[5] = {0x14, 0, 0, 0, 0};
+    bool threw = false;
+    try {
+        sceWkFontConfigGetAttr(page.data + page.size - 0x10 - 8, unread);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && unread[1] == 0);
+}
 } // namespace
 
 int main() {
@@ -110,5 +171,6 @@ int main() {
         }
     }
     RequireEarlyReturnBeforeUnreadableTail(invalidArgument);
+    CheckRecordReads();
     return 0;
 }

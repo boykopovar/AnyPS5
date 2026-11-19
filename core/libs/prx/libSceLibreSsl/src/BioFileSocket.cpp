@@ -64,18 +64,20 @@ int FileFree(Bio* bio) {
 }
 
 int APS5_VABI FileWrite(Bio* bio, const char* data, int size) {
-    if (!bio->data || size < 0 || (size && !data)) return -1;
+    if (size < 0) return -1;
+    if (!bio->initialized || !bio->data || !data) return 0;
     return static_cast<int>(fwrite_nid_postfix(data, 1, static_cast<std::size_t>(size), static_cast<FileStream*>(bio->data)));
 }
 
 int APS5_VABI FileRead(Bio* bio, char* data, int size) {
-    if (!bio->data || size < 0 || (size && !data)) return -1;
+    if (size < 0) return -1;
+    if (!bio->initialized || !bio->data || !data) return 0;
     auto* stream = static_cast<FileStream*>(bio->data);
     const auto count = fread_nid_postfix(data, 1, static_cast<std::size_t>(size), stream);
     const int readError = errno;
     if (size > 0 && count == 0 && ferror_nid_postfix(stream) != 0) {
-        LibreSslPutError_nid_no_patch(2, 0, readError, __FILE__, __LINE__);
-        LibreSslPutError_nid_no_patch(32, 0, 2, __FILE__, __LINE__);
+        LibreSslPutError_nid_no_patch(2, 0xfff, readError, __FILE__, __LINE__);
+        LibreSslPutError_nid_no_patch(32, 0xfff, 2, __FILE__, __LINE__);
         return -1;
     }
     return static_cast<int>(count);
@@ -110,7 +112,7 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     case 8:
         return bio->shutdown;
     case 9:
-        bio->shutdown = argument != 0;
+        bio->shutdown = static_cast<int>(argument);
         return 1;
     case 10:
         return 0;
@@ -193,7 +195,7 @@ std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argumen
     case 8:
         return bio->shutdown;
     case 9:
-        bio->shutdown = argument != 0;
+        bio->shutdown = static_cast<int>(argument);
         return 1;
     case 10:
         return 0;
@@ -229,7 +231,7 @@ LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* value, int closeFlag) {
     auto* bio = BIO_new_nid_postfix(&FileMethod);
     if (!bio) return nullptr;
     bio->data = value;
-    bio->shutdown = closeFlag != 0;
+    bio->shutdown = closeFlag & BioClose;
     bio->initialized = 1;
     return bio;
 }
@@ -239,7 +241,7 @@ LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag) {
     auto* bio = BIO_new_nid_postfix(&SocketMethod);
     if (!bio) return nullptr;
     bio->number = socket;
-    bio->shutdown = closeFlag != 0;
+    bio->shutdown = closeFlag;
     bio->initialized = 1;
     return bio;
 }
