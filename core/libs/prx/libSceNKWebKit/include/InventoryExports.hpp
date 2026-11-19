@@ -4776,7 +4776,6 @@ int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv();
 int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE();
-int APS5_VABI _ZNK3WTF6Thread4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase16secondsUntilFireEv();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase8isActiveEv();
 int APS5_VABI _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE();
