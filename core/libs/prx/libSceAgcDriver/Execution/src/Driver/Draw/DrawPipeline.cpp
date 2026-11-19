@@ -373,7 +373,10 @@ void DrawPipeline::enqueue(Item item) {
     const ClearOnExit<Item> clearReclaim{reclaim};
     const auto lockStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock lock(mutex);
-    if (!retired.empty()) std::swap(retired, reclaim);
+    if (!retired.empty() && watchers == 0) {
+        reclaimedItems += retired.size();
+        std::swap(retired, reclaim);
+    }
     if (profile) lockWaitNs += elapsedNs(lockStart);
     rethrowFailure();
     if (closing) {
@@ -539,6 +542,7 @@ void DrawPipeline::ReleaseRetired() {
     std::vector<Item> done;
     std::lock_guard lock(mutex);
     std::swap(done, retired);
+    reclaimedItems += done.size();
 }
 
 void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
@@ -648,26 +652,78 @@ void DrawPipeline::countWrites(const std::vector<Range>& writes, bool added) {
     }
 }
 
-DrawPipeline::Watch DrawPipeline::WatchWrites() {
-    if (!Busy()) return {Retired(), 0, {}};
+bool DrawPipeline::CountedWatch() {
+    static const bool counted = std::getenv("APS5_NO_DECODE_WATCH_COUNTS") == nullptr;
+    return counted;
+}
+
+DrawPipeline::Watch::~Watch() {
+    if (pinned != nullptr) pinned->releaseWatch(*this);
+}
+
+void DrawPipeline::unpinWatch(Watch& watch) {
+    if (watch.pinned == nullptr) return;
+    --watchers;
+    watch.pinned = nullptr;
+}
+
+void DrawPipeline::releaseWatch(Watch& watch) {
     std::lock_guard lock(mutex);
-    Watch watch{retiredItems.load(std::memory_order_relaxed), items.size(), {}};
+    unpinWatch(watch);
+}
+
+DrawPipeline::Watch DrawPipeline::WatchWrites() {
+    if (!Busy()) return Watch{Retired(), 0};
+    std::lock_guard lock(mutex);
+    Watch watch{retiredItems.load(std::memory_order_relaxed), items.size()};
+    if (CountedWatch()) {
+        if (watch.items != 0) {
+            ++watchers;
+            watch.pinned = this;
+        }
+        return watch;
+    }
     for (const auto& item : items) watch.writes.insert(watch.writes.end(), item.writes.begin(), item.writes.end());
     return watch;
 }
 
-bool DrawPipeline::WrittenSince(const Watch& watch, const std::vector<Range>& reads) {
-    const auto overlaps = [&reads](const std::vector<Range>& writes) {
-        return std::any_of(reads.begin(), reads.end(), [&writes](const Range& read) {
-            return std::any_of(writes.begin(), writes.end(), [&read](const Range& write) { return read.first < write.second && write.first < read.second; });
-        });
+bool DrawPipeline::WrittenSince(Watch& watch, const std::vector<Range>& reads) {
+    auto hullBegin = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t hullEnd = 0;
+    for (const auto& read : reads) {
+        hullBegin = std::min(hullBegin, read.first);
+        hullEnd = std::max(hullEnd, read.second);
+    }
+    const auto overlaps = [&](const std::vector<Range>& writes) {
+        for (const auto& write : writes) {
+            if (write.second <= hullBegin || hullEnd <= write.first) continue;
+            if (std::any_of(reads.begin(), reads.end(), [&write](const Range& read) { return read.first < write.second && write.first < read.second; })) return true;
+        }
+        return false;
     };
-    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) return true;
+    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) {
+        releaseWatch(watch);
+        return true;
+    }
     std::lock_guard lock(mutex);
+    struct Unpin {
+        DrawPipeline& queue;
+        Watch& watch;
+        ~Unpin() { queue.unpinWatch(watch); }
+    } unpin{*this, watch};
     if (std::any_of(items.begin(), items.end(), [&](const Item& item) { return overlaps(item.writes); })) return true;
     const auto retiredNow = retiredItems.load(std::memory_order_relaxed);
     if (retiredNow == watch.retired) return false;
-    return retiredNow - watch.retired > watch.items || overlaps(watch.writes);
+    const auto since = retiredNow - watch.retired;
+    if (since > watch.items) return true;
+    if (watch.pinned == nullptr) return overlaps(watch.writes);
+    if (watch.retired < reclaimedItems || watch.retired - reclaimedItems + since > retired.size()) return true;
+    countedLookups.fetch_add(1, std::memory_order_relaxed);
+    const auto first = static_cast<std::size_t>(watch.retired - reclaimedItems);
+    for (std::size_t index = first; index < first + static_cast<std::size_t>(since); ++index) {
+        if (overlaps(retired[index].writes)) return true;
+    }
+    return false;
 }
 
 bool DrawPipeline::Busy() const {

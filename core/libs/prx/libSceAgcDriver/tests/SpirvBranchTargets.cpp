@@ -1,7 +1,11 @@
 #include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrBuilder.hpp"
+#include "SpirvBackend/SpirvEmitter.hpp"
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+#include <spirv-tools/libspirv.hpp>
+#endif
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
-#include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -51,6 +55,153 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> code) {
     return result.spirv.Copy();
 }
 
+enum class SampleSelection { Plain, Entry, Arithmetic, EntryLoop, Loop };
+
+void requireUniformSampleSelection(SampleSelection shape) {
+    const bool selected = shape != SampleSelection::Plain;
+    const bool arithmetic = shape == SampleSelection::Arithmetic;
+    const bool loop = shape == SampleSelection::EntryLoop || shape == SampleSelection::Loop;
+    IrProgram program;
+    program.SetWaveSize(32u);
+    program.Resources().stage = IrShaderStage::Pixel;
+    program.Resources().srtPlanComplete = true;
+    program.Resources().resourceTrackingComplete = true;
+    program.Metadata().shaderInfoComplete = true;
+    program.Metadata().bindingLayoutComplete = true;
+    auto& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+    program.BlockOrder().push_back(&entry);
+    program.Metadata().blockInfo.emplace_back();
+    IrBlock* headerBlock = &entry;
+    if (shape == SampleSelection::Loop) {
+        headerBlock = &program.CreateBlock();
+        program.BlockOrder().push_back(headerBlock);
+        program.Metadata().blockInfo.emplace_back().id = headerBlock->Id();
+        program.Metadata().blockInfo.front().terminator.kind = TerminatorKind::Branch;
+        program.Metadata().blockInfo.front().terminator.trueBlock = headerBlock->Id();
+        entry.AddBranch(headerBlock);
+    }
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(*headerBlock);
+    auto& zero = builder.Constant(0u);
+    auto& flag = builder.GetUserData(static_cast<ScalarReg>(0u));
+    auto& condition = builder.INotEqual(flag, zero);
+    auto& imageHandle = builder.Emit(IrOpcode::GetImageResource, IrType::ImageResource, {&zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero});
+    auto& samplerHandle = builder.Emit(IrOpcode::GetSamplerResource, IrType::SamplerResource, {&zero, &zero, &zero, &zero});
+    auto& address = builder.Emit(IrOpcode::MakeImageAddress, IrType::ImageAddress, {&zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero, &zero});
+    auto& sample = builder.Emit(IrOpcode::ImageSampleRaw, IrType::U32x4, {&imageHandle, &samplerHandle, &address, &builder.ConstantBool(true)});
+    auto& channel = builder.CompositeExtract(sample, 0u);
+    const auto repair = [&](IrValue& bits) -> IrValue& {
+        auto& magnitude = builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &builder.Constant(0x7fffffffu)});
+        auto& isNan = builder.Emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &builder.Constant(0x7f800000u)});
+        return builder.Select(isNan, builder.Constant(0x7fc12345u), bits);
+    };
+    auto& value = arithmetic ? repair(repair(channel)) : channel;
+    if (selected) {
+        auto& output = builder.Select(condition, value, zero);
+        if (arithmetic) static_cast<void>(repair(repair(output)));
+    }
+    MemoryInfo memory{};
+    memory.kind = ResourceKind::Image;
+    memory.imageDimension = RdnaImageDimension::Dim2D;
+    memory.imageAddressComponents = 3u;
+    memory.imageSampleFlags = RdnaImageSampleFlagCompare;
+    memory.dmask = 0xfu;
+    memory.dataDwords = 4u;
+    memory.componentCount = 4u;
+    program.Resources().memoryInfo.push_back(memory);
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = memory.imageDimension;
+    image.read = true;
+    image.depthCompare = true;
+    image.emulatedCompare = EmulatedCompare::Unsupported;
+    image.fmaskCompatible = false;
+    image.cubeFaceCompatible = false;
+    image.flatLineCompatible = false;
+    program.Info().images.push_back(image);
+    program.Info().samplers.emplace_back().depthCompare = true;
+    auto& layout = program.Metadata().bindings;
+    layout.userDataRegisters = {0u};
+    layout.memoryOffsetDword = 1u;
+    layout.pushDataStartDword = 0u;
+    layout.descriptors = {{DescriptorBindingForImage(image), {0u}}, {DescriptorBindingKind::Samplers, {0u}}};
+    if (loop) {
+        auto& continuation = program.CreateBlock();
+        auto& exit = program.CreateBlock();
+        program.BlockOrder().push_back(&continuation);
+        program.BlockOrder().push_back(&exit);
+        program.Metadata().blockInfo.resize(program.BlockOrder().size());
+        auto& header = program.Metadata().blockInfo[headerBlock->Id()];
+        header.condition = &condition;
+        header.terminator.kind = TerminatorKind::ConditionalBranch;
+        header.terminator.trueBlock = continuation.Id();
+        header.terminator.falseBlock = exit.Id();
+        header.terminator.mergeBlock = exit.Id();
+        header.terminator.continueBlock = continuation.Id();
+        header.terminator.loopHeader = true;
+        auto& backedge = program.Metadata().blockInfo[continuation.Id()];
+        backedge.id = continuation.Id();
+        backedge.terminator.kind = TerminatorKind::Branch;
+        backedge.terminator.trueBlock = headerBlock->Id();
+        program.Metadata().blockInfo[exit.Id()].id = exit.Id();
+        headerBlock->AddBranch(&continuation);
+        headerBlock->AddBranch(&exit);
+        continuation.AddBranch(headerBlock);
+    }
+    ShaderPixelInputInfo pixel{};
+    ShaderStageInputInfo inputs{};
+    inputs.pixel = &pixel;
+    CompiledBindingLayout bindings{};
+    bindings.layout = layout;
+    bindings.pushConstantSizeBytes = 4u;
+    SpirvTargetOptions target{};
+    target.vulkanVersion = 0x00401000u;
+    target.spirvVersion = 0x00010300u;
+    target.subgroupSize = 32u;
+    std::vector<std::uint32_t> words;
+    try {
+        words = SpirvEmitter().Emit(program, inputs, bindings, target);
+    } catch (const std::runtime_error& error) {
+        if (shape == SampleSelection::EntryLoop && std::string_view(error.what()) == "value IR entry block has a predecessor") return;
+        throw;
+    }
+    require(shape != SampleSelection::EntryLoop, "uniform sample selection: accepted a backedge to the entry block");
+    std::uint32_t label = 0u;
+    std::uint32_t loopLabel = 0u;
+    std::uint32_t continueLabel = 0u;
+    bool backedgeFound = false;
+    std::uint32_t selections = 0u;
+    for (std::size_t cursor = 5u; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0u && count <= words.size() - cursor, "uniform sample selection: truncated SPIR-V instruction");
+        const auto opcode = words[cursor] & 0xffffu;
+        if (opcode == spv::OpLabel) label = words[cursor + 1u];
+        if (opcode == spv::OpLoopMerge) {
+            loopLabel = label;
+            continueLabel = words[cursor + 2u];
+        }
+        if (opcode == spv::OpBranch && label == continueLabel) {
+            require(words[cursor + 1u] == loopLabel, "uniform sample selection: backedge does not target the loop header");
+            backedgeFound = true;
+        }
+        if (opcode == spv::OpSelectionMerge && words[cursor + 2u] == spv::SelectionControlDontFlattenMask) ++selections;
+        cursor += count;
+    }
+    require(loop ? loopLabel != 0u && backedgeFound : loopLabel == 0u, "uniform sample selection: unexpected loop structure");
+    require(selections == (selected && !loop ? 1u : 0u) + (arithmetic ? 1u : 0u), "uniform sample selection: unexpected guarded sample region count");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    std::string diagnostics;
+    spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
+    validator.SetMessageConsumer([&](spv_message_level_t, const char*, const spv_position_t&, const char* message) {
+        if (message != nullptr) diagnostics += std::string(message) + '\n';
+    });
+    const bool valid = validator.Validate(words.data(), words.size());
+    require(valid, "uniform sample selection: invalid SPIR-V:\n" + diagnostics);
+#endif
+}
+
 void requireDistinctTargets(const char* name, std::span<const std::uint32_t> code) {
     const auto words = recompile(code);
     for (std::size_t cursor = 5; cursor < words.size();) {
@@ -64,7 +215,9 @@ void requireDistinctTargets(const char* name, std::span<const std::uint32_t> cod
 }
 
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved = false) {
+enum class EntryFact { None, Saturate, Alias, Product };
+
+void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved = false, EntryFact entryFact = EntryFact::None) {
     IrProgram program;
     program.SetWaveSize(32);
     program.Resources().stage = IrShaderStage::Compute;
@@ -97,8 +250,18 @@ void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved 
         return emit(IrOpcode::UGreaterThan32, IrType::Bool, {magnitude, constant(0x7f800000u)});
     };
     const auto select = [&](IrValue* condition) { return emit(IrOpcode::SelectU32, IrType::U32, {condition, nan, zero}); };
-    auto* first = select(isNan(certified ? emit(IrOpcode::LaneId, IrType::U32, {}) : nan));
-    auto* second = select(isNan(first));
+    auto* entry = certified ? emit(IrOpcode::LaneId, IrType::U32, {}) : nan;
+    IrValue* alias = nullptr;
+    if (entryFact != EntryFact::None) {
+        auto* value = emit(IrOpcode::BitCastF32U32, IrType::F32, {entry});
+        if (entryFact == EntryFact::Saturate) value = emit(IrOpcode::FPSaturate32, IrType::F32, {value});
+        if (entryFact == EntryFact::Product) value = emit(IrOpcode::FPMul32, IrType::F32, {value, emit(IrOpcode::BitCastF32U32, IrType::F32, {constant(0x7f7fffffu)})});
+        alias = emit(IrOpcode::BitCastU32F32, IrType::U32, {value});
+        if (entryFact != EntryFact::Alias) entry = alias;
+        emit(IrOpcode::ControlNop, IrType::Void, {});
+    }
+    auto* first = select(isNan(entry));
+    auto* second = select(isNan(entryFact == EntryFact::Alias ? alias : first));
     auto* condition = isNan(second);
     if (certified) {
         auto* magnitude = emit(IrOpcode::BitwiseAnd32, IrType::U32, {second, constant(0x7fffffffu)});
@@ -131,9 +294,16 @@ void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved 
     std::size_t combinedSelects = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
     bool storedNan = false;
+    std::size_t entryChecks = 0u;
+    std::unordered_map<std::uint32_t, std::array<std::uint32_t, 2>> magnitudeComparisons;
     for (std::size_t cursor = 5; cursor < words.size(); cursor += words[cursor] >> 16u) {
         const auto opcode = words[cursor] & 0xffffu;
         if (opcode == spv::OpConstant && (words[cursor] >> 16u) == 4u) constants.emplace(words[cursor + 2], words[cursor + 3]);
+        if (opcode == spv::OpUGreaterThan) magnitudeComparisons.emplace(words[cursor + 2], std::array{words[cursor + 3], words[cursor + 4]});
+        if (opcode == spv::OpSelect) {
+            const auto comparison = magnitudeComparisons.find(words[cursor + 3]);
+            if (comparison != magnitudeComparisons.end() && comparison->second == std::array{words[cursor + 4], words[cursor + 5]}) ++entryChecks;
+        }
         if (opcode == spv::OpLogicalOr) combinedConditions.insert(words[cursor + 2]);
         if (opcode == spv::OpSelect && combinedConditions.contains(words[cursor + 3])) ++combinedSelects;
         if (opcode == spv::OpStore) {
@@ -141,6 +311,7 @@ void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved 
             storedNan |= value != constants.end() && value->second == 0x7fc12345u;
         }
     }
+    if (entryFact != EntryFact::None) require(entryChecks == (entryFact == EntryFact::Saturate ? 0u : 1u), "an entry certificate must reuse magnitude aliases and unconditional bounds without assuming an arithmetic result is bounded");
     if (certified) require(combinedSelects == (unproved ? 2u : 1u), "a certified finite condition must retain only its exact-fallback selection");
     else require(storedNan, "a NaN predicate crossing arithmetic regions lost its exceptional value");
 }
@@ -150,6 +321,11 @@ void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved 
 
 int main() {
     try {
+        requireUniformSampleSelection(SampleSelection::Plain);
+        requireUniformSampleSelection(SampleSelection::Entry);
+        requireUniformSampleSelection(SampleSelection::Arithmetic);
+        requireUniformSampleSelection(SampleSelection::EntryLoop);
+        requireUniformSampleSelection(SampleSelection::Loop);
         constexpr std::array<std::uint32_t, 2> zeroOffsetBranch{0xbf840000u, 0xbf810000u};
         requireDistinctTargets("s_cbranch_scc0 to the next instruction", zeroOffsetBranch);
         constexpr std::array<std::uint32_t, 4> unalignedStore{0x7e020281u, 0xe0700000u, 0x80020100u, 0xbf810000u};
@@ -159,11 +335,14 @@ int main() {
         requireCrossRegionNan(true);
         requireCrossRegionNan(false, true);
         requireCrossRegionNan(false, true, true);
+        requireCrossRegionNan(false, true, false, EntryFact::Saturate);
+        requireCrossRegionNan(false, true, false, EntryFact::Alias);
+        requireCrossRegionNan(false, true, false, EntryFact::Product);
 #endif
     } catch (const std::exception& error) {
         std::fprintf(stderr, "SpirvBranchTargets: %s\n", error.what());
         return 1;
     }
-    std::puts("SpirvBranchTargets: no conditional branch names one label twice");
+    std::puts("SpirvBranchTargets: branch targets and uniform sample selections preserve structure");
     return 0;
 }

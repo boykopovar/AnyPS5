@@ -438,6 +438,18 @@ int main() {
     Require(setupResult.existed_memory_size == GrownMemorySize);
     Require(Read(setupBinPath) == expectedFinalBlob);
     Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
+    errno = 71;
+    Require(sceSaveDataSetupSaveDataMemory2(reinterpret_cast<const SaveDataMemorySetup2*>(0x10), nullptr) == kSaveDataParameter);
+    Require(errno == 71);
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, reinterpret_cast<SaveDataMemorySetupResult*>(0x10)) == kSaveDataParameter);
+    Require(errno == 71);
+    SaveDataMemorySetup2 invalidParamSetup = setup2;
+    invalidParamSetup.option = 1;
+    invalidParamSetup.init_param = reinterpret_cast<const SaveDataParam*>(0x10);
+    Require(sceSaveDataSetupSaveDataMemory2(&invalidParamSetup, nullptr) == kSaveDataParameter);
+    Require(errno == 71);
+    Require(sceSaveDataSetupSaveDataMemory(invalidParamSetup.user_id, invalidParamSetup.memory_size, reinterpret_cast<const SaveDataParam*>(0x10)) == kSaveDataParameter);
+    Require(errno == 71);
     Require(sceSaveDataTerminate() == 0);
     Require(sceSaveDataCreateTransactionResource(1024) == kSaveDataNotInitialized);
     Require(sceSaveDataDeleteTransactionResource(tx) == kSaveDataNotInitialized);

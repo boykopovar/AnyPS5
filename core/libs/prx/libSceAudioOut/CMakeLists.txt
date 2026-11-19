@@ -400,6 +400,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
+    add_test_executable(guest_audio_out2_latency_attributes_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOut2LatencyAttributesBounds.cpp)
+    target_include_directories(guest_audio_out2_latency_attributes_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out2_latency_attributes_bounds_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out2_latency_attributes_bounds_tests)
+    add_test(NAME guest_audio_out2_latency_attributes_bounds COMMAND guest_audio_out2_latency_attributes_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out2_latency_attributes_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out2_context_handles_tests tests/AudioOut2ContextHandles.cpp)
     target_include_directories(audio_out2_context_handles_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out2_context_handles_tests PRIVATE libSceAudioOut libc)
@@ -421,6 +431,16 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out_set_volume PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(guest_audio_out_outputs_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutOutputsBounds.cpp)
+    target_include_directories(guest_audio_out_outputs_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_outputs_bounds_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_outputs_bounds_tests)
+    add_test(NAME guest_audio_out_outputs_bounds COMMAND guest_audio_out_outputs_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_outputs_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
 endif()
 
     add_test_executable(guest_audio_out_port_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPortBounds.cpp)
@@ -428,8 +448,20 @@ endif()
     target_link_libraries(guest_audio_out_port_bounds_tests PRIVATE libSceAudioOut libc)
     configure_windows_unwind(guest_audio_out_port_bounds_tests)
     add_test(NAME guest_audio_out_port_bounds COMMAND guest_audio_out_port_bounds_tests)
+    set_tests_properties(guest_audio_out_port_bounds PROPERTIES ENVIRONMENT "SDL_AUDIODRIVER=dummy")
     if(WIN32)
         set_tests_properties(guest_audio_out_port_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(guest_audio_out_system_state_output_time_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutSystemStateOutputTimeBounds.cpp)
+    target_include_directories(guest_audio_out_system_state_output_time_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_system_state_output_time_bounds_tests PRIVATE libSceAudioOut libkernel libc)
+    configure_windows_unwind(guest_audio_out_system_state_output_time_bounds_tests)
+    add_test(NAME guest_audio_out_system_state_output_time_bounds COMMAND guest_audio_out_system_state_output_time_bounds_tests)
+    set_tests_properties(guest_audio_out_system_state_output_time_bounds PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_system_state_output_time_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
