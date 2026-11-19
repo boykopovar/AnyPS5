@@ -26019,10 +26019,6 @@ int APS5_VABI _ZNK3JSC4Yarr17RegularExpression13matchedLengthEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC6JSCell11toPrimitiveEPNS_14JSGlobalObjectENS_22PreferredPrimitiveTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
