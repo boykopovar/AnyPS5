@@ -59,5 +59,6 @@ bool APS5_VABI _ZNK7WebCore18AdClickAttribution10hasExpiredEv(const NKWebKit::We
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution21hasHigherPriorityThanERKS0_(const NKWebKit::WebCoreAbi::AdClickAttribution* self, const NKWebKit::WebCoreAbi::AdClickAttribution* other);
 void APS5_VABI _ZN7WebCore18AdClickAttribution20markConversionAsSentEv(NKWebKit::WebCoreAbi::AdClickAttribution* self);
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution17wasConversionSentEv(const NKWebKit::WebCoreAbi::AdClickAttribution* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore18AdClickAttribution8toStringEv(const NKWebKit::WebCoreAbi::AdClickAttribution* self);
 
 }

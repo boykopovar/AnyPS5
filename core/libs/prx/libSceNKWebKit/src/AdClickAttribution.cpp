@@ -28,9 +28,59 @@
 #include "prx/libSceNKWebKit/include/AdClickAttributionExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <charconv>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
 namespace {
 
 constexpr double kMaxAgeSeconds = 24.0 * 60.0 * 60.0 * 7.0;
+constexpr double kOneDaySeconds = 24.0 * 60.0 * 60.0;
+
+using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringView;
+
+struct Builder {
+    std::u16string units;
+    bool is8Bit{true};
+
+    void Append(std::string_view text) {
+        units.append(text.begin(), text.end());
+        Check();
+    }
+
+    void Append(const NKWebKit::WtfAbi::StringImpl* impl) {
+        const StringView view = NKWebKit::WtfAbi::ViewOf(impl);
+        if (!view.length) return;
+        if (!view.is8Bit && is8Bit && (view.length > 1 || NKWebKit::WtfAbi::CodeUnitAt(view, 0) > 0xff)) is8Bit = false;
+        for (unsigned i = 0; i < view.length; ++i) units.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, i));
+        Check();
+    }
+
+    void Append(std::uint32_t number) {
+        char digits[10];
+        const auto result = std::to_chars(digits, digits + sizeof(digits), number);
+        Append(std::string_view(digits, static_cast<std::size_t>(result.ptr - digits)));
+    }
+
+    void Check() const {
+        if (units.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) throw std::length_error("WebCore::AdClickAttribution string exceeds maximum length");
+    }
+
+    String Finish() const {
+        void* characters = nullptr;
+        String result(NKWebKit::WtfAbi::CreateUninitialized(static_cast<unsigned>(units.size()), is8Bit, characters));
+        for (std::size_t i = 0; i < units.size(); ++i) {
+            if (is8Bit) static_cast<unsigned char*>(characters)[i] = static_cast<unsigned char>(units[i]);
+            else static_cast<char16_t*>(characters)[i] = units[i];
+        }
+        return result;
+    }
+};
 
 }  // namespace
 
@@ -59,6 +109,36 @@ void APS5_VABI _ZN7WebCore18AdClickAttribution20markConversionAsSentEv(NKWebKit:
 
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution17wasConversionSentEv(const NKWebKit::WebCoreAbi::AdClickAttribution* self) {
     return self->conversion.hasValue && self->conversion.value.wasSent;
+}
+
+String APS5_VABI _ZNK7WebCore18AdClickAttribution8toStringEv(const NKWebKit::WebCoreAbi::AdClickAttribution* self) {
+    if (!self) throw std::invalid_argument("null WebCore::AdClickAttribution");
+    Builder builder;
+    builder.Append("Source: ");
+    builder.Append(self->source);
+    builder.Append("\nDestination: ");
+    builder.Append(self->destination);
+    builder.Append("\nCampaign ID: ");
+    builder.Append(self->campaign);
+    if (self->conversion.hasValue) {
+        builder.Append("\nConversion data: ");
+        builder.Append(self->conversion.value.data);
+        builder.Append("\nConversion priority: ");
+        builder.Append(self->conversion.value.priority);
+        builder.Append("\nConversion earliest time to send: ");
+        if (!self->earliestTimeToSend.hasValue) {
+            builder.Append("Not set");
+        } else {
+            const double secondsUntilSend = self->earliestTimeToSend.value.m_value - _ZN3WTF8WallTime3nowEv().m_value;
+            builder.Append(secondsUntilSend >= kOneDaySeconds && secondsUntilSend <= 2.0 * kOneDaySeconds ? "Within 24-48 hours" : "Outside 24-48 hours");
+        }
+        builder.Append("\nConversion request sent: ");
+        builder.Append(self->conversion.value.wasSent ? "true" : "false");
+    } else {
+        builder.Append("\nNo conversion data.");
+    }
+    builder.Append("\n");
+    return builder.Finish();
 }
 
 }

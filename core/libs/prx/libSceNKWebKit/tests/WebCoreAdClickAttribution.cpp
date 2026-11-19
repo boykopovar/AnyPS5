@@ -5,12 +5,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::AdClickAttribution;
+using NKWebKit::WtfAbi::String;
 
 constexpr double kWeek = 7.0 * 24.0 * 60.0 * 60.0;
 
@@ -100,6 +105,114 @@ void TestConversionSent() {
     Check(_ZNK7WebCore18AdClickAttribution17wasConversionSentEv(&sent));
 }
 
+String Make8(const char* text) {
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text)));
+}
+
+String Make16(std::u16string_view text) {
+    return _ZN3WTF10StringImpl6createEPKDsj(text.data(), static_cast<unsigned>(text.size()));
+}
+
+bool Is8Bit(const String& string) {
+    return string.impl->hashAndFlags & 4;
+}
+
+std::u16string Units(const String& string) {
+    Check(string.impl != nullptr);
+    std::u16string units;
+    for (unsigned i = 0; i < string.impl->length; ++i) {
+        units.push_back(Is8Bit(string) ? static_cast<const unsigned char*>(string.impl->data)[i] : static_cast<const char16_t*>(string.impl->data)[i]);
+    }
+    return units;
+}
+
+std::u16string Widen(std::string_view text) {
+    return std::u16string(text.begin(), text.end());
+}
+
+String Describe(const AdClickAttribution& attribution) {
+    return _ZNK7WebCore18AdClickAttribution8toStringEv(&attribution);
+}
+
+void TestToStringWithoutConversion() {
+    String source = Make8("example.com");
+    String destination = Make8("webkit.org");
+    AdClickAttribution attribution = Make(Now());
+    attribution.campaign = 4294967295u;
+    attribution.source = source.impl;
+    attribution.destination = destination.impl;
+    const String text = Describe(attribution);
+    Check(Is8Bit(text));
+    Check(Units(text) == Widen("Source: example.com\nDestination: webkit.org\nCampaign ID: 4294967295\nNo conversion data.\n"));
+
+    AdClickAttribution empty{};
+    const String emptyText = Describe(empty);
+    Check(Is8Bit(emptyText));
+    Check(Units(emptyText) == Widen("Source: \nDestination: \nCampaign ID: 0\nNo conversion data.\n"));
+}
+
+void TestToStringWithConversion() {
+    String source = Make8("a.test");
+    String destination = Make8("b.test");
+    AdClickAttribution attribution = MakeConverted(63, false);
+    attribution.source = source.impl;
+    attribution.destination = destination.impl;
+    const std::string_view head = "Source: a.test\nDestination: b.test\nCampaign ID: 3\nConversion data: 12\nConversion priority: 63\nConversion earliest time to send: ";
+
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Not set\nConversion request sent: false\n"));
+
+    attribution.conversion.value.wasSent = true;
+    attribution.earliestTimeToSend = {true, WTF::WallTime{Now() + 36.0 * 3600.0}};
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Within 24-48 hours\nConversion request sent: true\n"));
+
+    attribution.earliestTimeToSend.value = WTF::WallTime{Now() + 3600.0};
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Outside 24-48 hours\nConversion request sent: true\n"));
+
+    attribution.earliestTimeToSend.value = WTF::WallTime{Now() + 72.0 * 3600.0};
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Outside 24-48 hours\nConversion request sent: true\n"));
+
+    attribution.earliestTimeToSend.value = WTF::WallTime{Now() - 36.0 * 3600.0};
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Outside 24-48 hours\nConversion request sent: true\n"));
+
+    attribution.earliestTimeToSend.value = WTF::WallTime{std::numeric_limits<double>::quiet_NaN()};
+    Check(Units(Describe(attribution)) == Widen(std::string(head) + "Outside 24-48 hours\nConversion request sent: true\n"));
+}
+
+void TestToStringWidth() {
+    String latin1 = Make16(u"\u00e9");
+    String wide = Make16(u"\u0100x");
+    String wideLatin1 = Make16(u"ab");
+    String narrow = Make8("n");
+
+    AdClickAttribution attribution = Make(Now());
+    attribution.source = latin1.impl;
+    attribution.destination = narrow.impl;
+    const String single = Describe(attribution);
+    Check(Is8Bit(single));
+    Check(Units(single) == u"Source: \u00e9\nDestination: n\nCampaign ID: 3\nNo conversion data.\n");
+
+    attribution.source = narrow.impl;
+    attribution.destination = wideLatin1.impl;
+    const String upconverted = Describe(attribution);
+    Check(!Is8Bit(upconverted));
+    Check(Units(upconverted) == u"Source: n\nDestination: ab\nCampaign ID: 3\nNo conversion data.\n");
+
+    attribution.source = wide.impl;
+    const String wideText = Describe(attribution);
+    Check(!Is8Bit(wideText));
+    Check(Units(wideText) == u"Source: \u0100x\nDestination: ab\nCampaign ID: 3\nNo conversion data.\n");
+}
+
+void TestToStringNull() {
+    bool thrown = false;
+    try {
+        _ZNK7WebCore18AdClickAttribution8toStringEv(nullptr);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Check(thrown);
+}
+
 }  // namespace
 
 int main() {
@@ -107,6 +220,10 @@ int main() {
     TestMarkAsExpired();
     TestHasHigherPriorityThan();
     TestConversionSent();
+    TestToStringWithoutConversion();
+    TestToStringWithConversion();
+    TestToStringWidth();
+    TestToStringNull();
     std::puts("AdClickAttribution tests passed");
     return 0;
 }

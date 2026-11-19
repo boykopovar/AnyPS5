@@ -6208,10 +6208,6 @@ int APS5_VABI _ZN7WebCore9FrameView32recalculateScrollbarOverlayStyleEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore18AdClickAttribution8toStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore23ScaleTransformOperationC2EdddNS_18TransformOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
