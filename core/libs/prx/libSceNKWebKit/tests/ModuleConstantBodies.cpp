@@ -101,10 +101,10 @@ int main() {
     Require(Throws([] { _ZNK9Inspector22RemoteInspectionTarget3urlEv(nullptr); }));
     CheckCleared(&_ZNK9Inspector22RemoteInspectionTarget4nameEv, 8);
     Require(Throws([] { _ZNK9Inspector22RemoteInspectionTarget4nameEv(nullptr); }));
-    Require(_ZN7WebCore17FrameLoaderClientnaEmPv(16, &storage) == &storage);
-    Require(_ZN7WebCore17FrameLoaderClientnaEmPv(0, nullptr) == nullptr);
-    Require(_ZN7WebCore17FrameLoaderClientnwEmPv(16, &storage) == &storage);
-    Require(_ZN7WebCore17FrameLoaderClientnwEmPv(0, nullptr) == nullptr);
+    Require(_ZN7WebCore17FrameLoaderClientnaEmPv(reinterpret_cast<void*>(std::uintptr_t{16}), &storage) == &storage);
+    Require(_ZN7WebCore17FrameLoaderClientnaEmPv(reinterpret_cast<void*>(std::uintptr_t{0}), nullptr) == nullptr);
+    Require(_ZN7WebCore17FrameLoaderClientnwEmPv(reinterpret_cast<void*>(std::uintptr_t{16}), &storage) == &storage);
+    Require(_ZN7WebCore17FrameLoaderClientnwEmPv(reinterpret_cast<void*>(std::uintptr_t{0}), nullptr) == nullptr);
     Require(NotImplementedCalls_nid_no_patch() == before);
     return 0;
 }
