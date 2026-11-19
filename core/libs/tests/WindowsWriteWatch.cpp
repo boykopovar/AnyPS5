@@ -1,11 +1,14 @@
 #define NOMINMAX
 #include "prx/libc/include/WindowsMappings.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstring>
 #include <iostream>
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 using Mappings = GuestArena::WindowsMappings;
@@ -1034,6 +1037,57 @@ void CheckKnownZeroShared() {
     Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
 }
 
+// #18281: a read that faults in a demand-zero page is reported as a write. The driver's read
+// primitives take known-zero spans as zeros instead of reading them, as below; a later store reports.
+void CheckKnownZeroReadsSkipFirstReadReports() {
+    constexpr std::size_t Large = 8u << 20u;
+    constexpr std::size_t Pages = Large / Small;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(memory != nullptr, "known zero read reservation failed");
+    mappings.Commit(memory, Large, PAGE_READWRITE, Large, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::vector<void*> written(Pages);
+    const auto collect = [&] {
+        std::size_t count = written.size();
+        Require(mappings.Collect(address, Large, written.data(), &count, true), "known zero read collect failed");
+        std::set<std::size_t> pages;
+        for (std::size_t index = 0; index < count; ++index) pages.insert((static_cast<unsigned char*>(written[index]) - memory) / Small);
+        return pages;
+    };
+    Require(collect().empty(), "a fresh watched commit reported writes");
+    for (std::size_t page = 0; page < Pages / 4; ++page) static_cast<void>(static_cast<volatile unsigned char*>(memory)[page * Small]);
+    std::array<unsigned char, Small> buffer{};
+    for (std::size_t page = Pages / 4; page < Pages / 2; ++page) {
+        SIZE_T read = 0;
+        Require(ReadProcessMemory(GetCurrentProcess(), memory + page * Small, buffer.data(), buffer.size(), &read) && read == buffer.size(), "a read of a never-written page failed");
+    }
+    const auto reported = collect();
+    for (const auto page : reported) Require(page < Pages / 2, "an untouched page was collected as a write");
+    if (reported.empty()) std::cout << "first reads of demand-zero pages are not reported as writes on this system\n";
+    else std::cout << "first reads of demand-zero pages reported " << reported.size() << " of " << Pages / 2 << " read pages as written\n";
+    auto* half = memory + Large / 2;
+    const auto halfAddress = reinterpret_cast<std::uintptr_t>(half);
+    Require(KnownZeroPages(half, Large / 2) == PagesBelow(Pages / 2), "an untouched page is not known zero");
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> zero;
+    mappings.KnownZero(halfAddress, Large / 2, [](void* context, std::uintptr_t begin, std::uintptr_t end) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(begin, end); }, &zero);
+    std::vector<unsigned char> copy(Large / 2, 0x5a);
+    std::size_t done = 0;
+    for (const auto& [begin, end] : zero) {
+        const auto offset = static_cast<std::size_t>(begin - halfAddress);
+        if (offset > done) std::memcpy(copy.data() + done, half + done, offset - done);
+        std::memset(copy.data() + offset, 0, static_cast<std::size_t>(end - begin));
+        done = static_cast<std::size_t>(end - halfAddress);
+    }
+    if (done < copy.size()) std::memcpy(copy.data() + done, half + done, copy.size() - done);
+    Require(std::all_of(copy.begin(), copy.end(), [](unsigned char value) { return value == 0; }), "a read that skipped known-zero pages did not return zeros");
+    Require(collect().empty(), "a read that skipped known-zero pages was collected as a write");
+    static_cast<volatile unsigned char*>(half)[3 * Small + 5] = 0;
+    Require(collect() == std::set<std::size_t>{Pages / 2 + 3}, "a zero store after a read that skipped known-zero pages was not collected");
+    mappings.Reset(memory, Large);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
@@ -1073,6 +1127,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroResident();
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
+        CheckKnownZeroReadsSkipFirstReadReports();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
