@@ -58,6 +58,7 @@ struct SpirvEmitInfo {
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
     std::uint32_t scratchPoolSlotDwords = 0;
+    bool orderedAppend = false;
     bool anySubgroupSize = false;
 };
 

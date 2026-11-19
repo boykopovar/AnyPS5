@@ -357,6 +357,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
+        info->orderedAppend = state.requirements.orderedAppend;
         info->anySubgroupSize = state.spannedAnySubgroup;
     }
     VerifyScratchPoolReturns(state, words);

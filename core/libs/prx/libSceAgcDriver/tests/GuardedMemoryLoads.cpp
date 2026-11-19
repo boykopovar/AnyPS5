@@ -1,6 +1,7 @@
 #define SPV_ENABLE_UTILITY_CODE
 #include <spirv/unified1/spirv.hpp>
 #undef SPV_ENABLE_UTILITY_CODE
+#include "RuntimeAbi.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
@@ -262,7 +263,7 @@ private:
         case spv::OpLogicalNot: return !argument(3);
         case spv::OpArrayLength:
             require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
-            return rootName(instruction[3]) == "scratch_pool" ? PoolDwords : 16;
+            return rootName(instruction[3]) == "scratch_pool" ? PoolDwords : rootName(instruction[3]) == "gds" ? 16 + RuntimeAbi::GdsMetadataDwords : 16;
         case spv::OpUDiv: return argument(3) / argument(4);
         case spv::OpAtomicIDecrement: return 0;
         case spv::OpLoad:
