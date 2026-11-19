@@ -134,7 +134,12 @@ void TestMount2() {
     mount.dir_name = &absent;
     Check(sceSaveDataMount2(&mount, &result) == SaveDataErrorNotFound, "Mount2 open of a missing save is NOT_FOUND");
     Check(sceSaveDataMount2(nullptr, &result) == SaveDataErrorParameter, "Mount2 with a null mount is PARAMETER");
+    Check(sceSaveDataMount2(reinterpret_cast<const SaveDataMount2*>(0x10), &result) == SaveDataErrorParameter, "Mount2 with an unmapped mount is PARAMETER");
     Check(sceSaveDataMount2(&mount, nullptr) == SaveDataErrorParameter, "Mount2 with a null result is PARAMETER");
+    Check(sceSaveDataMount2(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "Mount2 with an unmapped result is PARAMETER");
+    SaveDataMount2 unmappedDirMount2 = mount;
+    unmappedDirMount2.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataMount2(&unmappedDirMount2, &result) == SaveDataErrorParameter, "Mount2 with an unmapped dir_name is PARAMETER");
 
     SceSaveDataDirName small{};
     std::strcpy(small.data, "mount2-small");
@@ -215,14 +220,19 @@ void TestInitialize2() {
 void TestMountPs4() {
     SaveDataMountResult result{};
     Check(sceSaveDataMount(nullptr, &result) == SaveDataErrorParameter, "null mount is PARAMETER");
+    Check(sceSaveDataMount(reinterpret_cast<const SaveDataMountPs4*>(0x10), &result) == SaveDataErrorParameter, "unmapped mount is PARAMETER");
     SaveDataMountPs4 mount{};
     Check(sceSaveDataMount(&mount, &result) == SaveDataErrorParameter, "null dir_name is PARAMETER");
+    SaveDataMountPs4 unmappedDirMount = mount;
+    unmappedDirMount.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataMount(&unmappedDirMount, &result) == SaveDataErrorParameter, "unmapped dir_name is PARAMETER");
     Check(sceSaveDataUmount(nullptr) == SaveDataErrorParameter, "umount null point is PARAMETER");
     SceSaveDataDirName dir{};
     std::strcpy(dir.data, "kept");
     mount.dir_name = &dir;
     mount.mount_mode = MountReadWrite;
     Check(sceSaveDataMount(&mount, nullptr) == SaveDataErrorParameter, "null mount_result is PARAMETER");
+    Check(sceSaveDataMount(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "unmapped mount_result is PARAMETER");
     Check(sceSaveDataMount(&mount, &result) == 0, "mount existing save directory succeeds");
     Check(result.mount_point.data[0] != '\0', "mount writes mount point");
     Check(sceSaveDataUmount(&result.mount_point) == 0, "umount mounted point succeeds");

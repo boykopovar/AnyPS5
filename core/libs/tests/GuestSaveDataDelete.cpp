@@ -127,8 +127,12 @@ int main() {
     std::memset(unterminated, 'a', sizeof(unterminated));
     Check(Delete(unterminated, sizeof(unterminated)) == SaveDataErrorParameter, "an unterminated name is rejected");
     Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
+    Check(sceSaveDataDelete(reinterpret_cast<const SaveDataDelete*>(0x10)) == SaveDataErrorParameter, "unmapped del returns PARAMETER");
     SaveDataDelete nullDirDel{};
     Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    SaveDataDelete unmappedDirDel{};
+    unmappedDirDel.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataDelete(&unmappedDirDel) == SaveDataErrorParameter, "unmapped dir_name returns PARAMETER");
     Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
     Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
