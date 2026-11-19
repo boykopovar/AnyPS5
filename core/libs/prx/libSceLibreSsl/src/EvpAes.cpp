@@ -540,7 +540,10 @@ int APS5_VABI AesWrapCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const
     if (length % WrapSemiblockBytes || length > static_cast<std::size_t>(INT32_MAX)) return -1;
     if (encrypt ? length < WrapSemiblockBytes : length < 2 * WrapSemiblockBytes) return -1;
     const std::size_t outputLength = encrypt ? length + WrapSemiblockBytes : length - WrapSemiblockBytes;
+    if (outputLength > static_cast<std::size_t>(INT32_MAX)) return -1;
     if (!out) return static_cast<int>(outputLength);
+    const std::size_t plainLength = encrypt ? length : length - WrapSemiblockBytes;
+    if (plainLength < 2 * WrapSemiblockBytes || plainLength > 0x7ffffff0u) return -1;
     const std::size_t semiblocks = length / WrapSemiblockBytes - (encrypt ? 0 : 1);
     std::vector<unsigned char> input(length);
     CopyIn(input.data(), in, length, "aes_wrap_cipher");
@@ -673,5 +676,4 @@ const LibreSslEvpCipher* APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_wrap_nid_postfix(void) {
     return &Aes256Wrap;
 }
-
 }
