@@ -728,6 +728,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_resource_stack_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResourceStack.cpp)
+    target_include_directories(guest_icu_resource_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_resource_stack_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_resource_stack_tests)
+    add_test(NAME guest_icu_resource_stack COMMAND guest_icu_resource_stack_tests)
+    set_tests_properties(guest_icu_resource_stack PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_resource_stack PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
 target_sources(libSceIcu PRIVATE RightToLeft.cpp)
 
 if(BUILD_TESTING)
