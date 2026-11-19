@@ -3993,8 +3993,8 @@ const char* DepthTargetObligation(const Context& context, const DepthTarget& tar
     if (depthWritten && mirrorable(target) && !surface->AnyStale()) return "marking a depth write";
     if (target.htileAddress != 0u) {
         const auto& cleared = clearedHtiles();
-        if (std::ranges::any_of(cleared, [&](const auto& entry) { return HtileFillCovers(target.htileAddress, target.extent, entry.first, entry.second); })) return "an HTILE clear to take";
-        const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(target.extent));
+        if (std::ranges::any_of(cleared, [&](const auto& entry) { return TargetHtileFillCovers(target, entry.first, entry.second); })) return "an HTILE clear to take";
+        const auto bytes = static_cast<std::size_t>(TargetHtileBytes(target));
         auto* recorder = RecorderFor(context);
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         if (recorder != nullptr && recorder->PendingWriteOverlaps(target.htileAddress, bytes)) {
@@ -4029,7 +4029,7 @@ bool DepthTargetOverlaps(const DepthTarget& target, std::uint64_t address, std::
     };
     const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-    return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || (target.stencilAddress != 0u && overlaps(target.stencilAddress, planeBytes(1u))) || (target.htileAddress != 0u && overlaps(target.htileAddress, HtileMetadataBytes(target.extent)));
+    return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || (target.stencilAddress != 0u && overlaps(target.stencilAddress, planeBytes(1u))) || (target.htileAddress != 0u && overlaps(target.htileAddress, TargetHtileBytes(target)));
 }
 
 namespace {
