@@ -4095,5 +4095,33 @@ class MachoCommandsTests(unittest.TestCase):
             list(import_audit.macho_commands("m", data))
 
 
+class ModuleFilesTests(unittest.TestCase):
+    def write(self, directory, name, content):
+        path = Path(directory) / name
+        path.write_bytes(content)
+        return path
+
+    def test_elf_files_and_guest_prx_pe_files_are_yielded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            elf = self.write(directory, "a.bin", b"\x7fELF" + bytes(8))
+            guest = self.write(directory, "b.guest.prx", b"MZ" + bytes(8))
+            self.write(directory, "notes.txt", b"hello world")
+            self.assertEqual(sorted(import_audit.module_files(directory)), sorted([elf, guest]))
+
+    def test_module_extension_with_foreign_content_is_refused(self):
+        for name, content in (("a.prx", b"junk" + bytes(4)), ("b.elf", b"\0\0\0\0"), ("c.sprx", b"MZ" + bytes(4))):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, name, content)
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+    def test_encrypted_module_magic_is_refused_whatever_the_name(self):
+        for magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee"):
+            with self.subTest(magic=magic), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, "data.bin", magic + bytes(4))
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+
 if __name__ == "__main__":
     unittest.main()
