@@ -1,6 +1,7 @@
-/* Derived from stats/rtc_stats_report.cc and api/stats/rtc_stats_report.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from stats/rtc_stats_report.cc, api/stats/rtc_stats_report.h, api/ref_counted_base.h and rtc_base/ref_counter.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright 2016 The WebRTC Project Authors. All rights reserved.
+ *  Copyright 2017 The WebRTC Project Authors. All rights reserved.
  *
  *  Use of this source code is governed by a BSD-style license
  *  that can be found in the LICENSE file in the root of the source
@@ -42,11 +43,15 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -54,6 +59,12 @@ constexpr const char* IncrementMessage = "RTCStatsReport::ConstIterator::operato
 constexpr const char* CompareMessage = "RTCStatsReport::ConstIterator::operator!= requires two readable iterators";
 constexpr const char* DereferenceMessage = "RTCStatsReport::ConstIterator::operator* requires an iterator to a stats entry";
 constexpr const char* ArrowMessage = "RTCStatsReport::ConstIterator::operator-> requires an iterator to a stats entry";
+constexpr const char* BeginMessage = "RTCStatsReport::begin requires a writable result and a valid report";
+constexpr const char* EndMessage = "RTCStatsReport::end requires a writable result and a valid report";
+constexpr const char* DestructorMessage = "RTCStatsReport::ConstIterator destructor requires an iterator holding a valid report reference";
+constexpr std::size_t DeletingDestructorSlot = 1;
+
+using DeletingDestructor = void(APS5_VABI*)(const void*);
 
 struct ErrnoGuard {
     int savedErrno = errno;
@@ -68,6 +79,14 @@ template<typename T> T ReadGuest(const void* address, const char* message) {
     if (!GuestCopyIn_nid_no_patch(&value, address, sizeof(value)))
         throw std::invalid_argument(message);
     return value;
+}
+
+void RequireWritable(const void* address, std::size_t bytes, const char* message) {
+    if (!address)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(const_cast<void*>(address), bytes))
+        throw std::invalid_argument(message);
 }
 
 const WebRtcStatsMapNode* EndNode(const WebRtcRtcStatsReport* report) {
@@ -134,6 +153,120 @@ const void* EntryStats(const WebRtcRtcStatsReportConstIterator* iterator, const 
     return ReadGuest<const void*>(&current.node->stats, message);
 }
 
+WebRtcRtcStatsReportConstIterator* MakeIterator(WebRtcRtcStatsReportConstIterator* result, const WebRtcRtcStatsReport* report, bool atEnd, const char* message) {
+    RequireWritable(result, sizeof(*result), message);
+    RequireWritable(report, sizeof(*report), message);
+    const WebRtcStatsMapNode* node = atEnd ? EndNode(report) : report->stats.beginNode;
+    if (!node)
+        throw std::invalid_argument(message);
+    std::atomic_ref<std::int32_t>(const_cast<WebRtcRtcStatsReport*>(report)->refCount).fetch_add(1, std::memory_order_relaxed);
+    result->report = report;
+    result->node = node;
+    return result;
+}
+
+void ValidateString(const WebRtcGuestString& string) {
+    if (string.capacity < WebRtcGuestStringInlineCapacity || string.size > string.capacity)
+        throw std::invalid_argument(DestructorMessage);
+    if (string.capacity <= WebRtcGuestStringInlineCapacity)
+        return;
+    if (!string.pointer)
+        throw std::invalid_argument(DestructorMessage);
+    if (string.capacity + 1 >= GuestStringStorage::LargeAllocation) {
+        const auto raw = ReadGuest<const void*>(static_cast<const void* const*>(static_cast<const void*>(string.pointer)) - 1, DestructorMessage);
+        if (!raw)
+            throw std::invalid_argument(DestructorMessage);
+    }
+}
+
+void ValidateStats(const void* stats) {
+    if (!stats)
+        return;
+    const auto vtable = ReadGuest<const void* const*>(stats, DestructorMessage);
+    if (!vtable || !ReadGuest<const void*>(vtable + DeletingDestructorSlot, DestructorMessage))
+        throw std::invalid_argument(DestructorMessage);
+}
+
+std::vector<WebRtcStatsMapNode*> CollectPostOrder(WebRtcRtcStatsReport* report) {
+    std::vector<WebRtcStatsMapNode*> nodes;
+    WebRtcStatsMap& map = report->stats;
+    WebRtcStatsMapNode* const end = const_cast<WebRtcStatsMapNode*>(EndNode(report));
+    if (map.size == 0) {
+        if (map.root || map.beginNode != end)
+            throw std::invalid_argument(DestructorMessage);
+        return nodes;
+    }
+    if (!map.root || !map.beginNode || map.beginNode == end)
+        throw std::invalid_argument(DestructorMessage);
+    struct Entry {
+        WebRtcStatsMapNode* node;
+        WebRtcStatsMapNode* parent;
+        bool expanded;
+    };
+    std::vector<Entry> pending{{map.root, end, false}};
+    std::uint64_t seen = 0;
+    while (!pending.empty()) {
+        Entry& current = pending.back();
+        if (current.expanded) {
+            nodes.push_back(current.node);
+            pending.pop_back();
+            continue;
+        }
+        current.expanded = true;
+        if (++seen > map.size)
+            throw std::invalid_argument(DestructorMessage);
+        RequireWritable(current.node, sizeof(WebRtcStatsMapNode), DestructorMessage);
+        const WebRtcStatsMapLinks links = current.node->links;
+        if (links.parent != current.parent)
+            throw std::invalid_argument(DestructorMessage);
+        ValidateString(current.node->id);
+        ValidateStats(current.node->stats);
+        WebRtcStatsMapNode* const node = current.node;
+        if (links.right)
+            pending.push_back({links.right, node, false});
+        if (links.left)
+            pending.push_back({links.left, node, false});
+    }
+    if (seen != map.size)
+        throw std::invalid_argument(DestructorMessage);
+    const WebRtcStatsMapNode* leftmost = map.root;
+    while (leftmost->links.left)
+        leftmost = leftmost->links.left;
+    if (leftmost != map.beginNode)
+        throw std::invalid_argument(DestructorMessage);
+    return nodes;
+}
+
+void DeleteReport(WebRtcRtcStatsReport* report, const std::vector<WebRtcStatsMapNode*>& nodes) {
+    for (WebRtcStatsMapNode* node : nodes) {
+        if (const void* stats = node->stats) {
+            const auto* vtable = *static_cast<const void* const* const*>(stats);
+            reinterpret_cast<DeletingDestructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(stats);
+        }
+        if (node->id.capacity > WebRtcGuestStringInlineCapacity)
+            GuestStringStorage::Deallocate(node->id.pointer, node->id.capacity + 1);
+        _ZdlPv_nid_postfix(node);
+    }
+    _ZdlPv_nid_postfix(report);
+}
+
+void ReleaseReport(const WebRtcRtcStatsReport* constReport) {
+    auto* report = const_cast<WebRtcRtcStatsReport*>(constReport);
+    RequireWritable(report, sizeof(*report), DestructorMessage);
+    std::atomic_ref<std::int32_t> count(report->refCount);
+    const std::int32_t current = count.load(std::memory_order_acquire);
+    if (current <= 0)
+        throw std::invalid_argument(DestructorMessage);
+    std::vector<WebRtcStatsMapNode*> nodes;
+    if (current == 1)
+        nodes = CollectPostOrder(report);
+    if (count.fetch_sub(1, std::memory_order_acq_rel) != 1)
+        return;
+    if (current != 1)
+        nodes = CollectPostOrder(report);
+    DeleteReport(report, nodes);
+}
+
 }
 
 extern "C" {
@@ -161,6 +294,20 @@ const void* APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratordeEv_nid_postfix
 
 const void* APS5_VABI _ZNK6webrtc14RTCStatsReport13ConstIteratorptEv_nid_postfix(const WebRtcRtcStatsReportConstIterator* iterator) {
     return EntryStats(iterator, ArrowMessage);
+}
+
+WebRtcRtcStatsReportConstIterator* APS5_VABI _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(WebRtcRtcStatsReportConstIterator* result, const WebRtcRtcStatsReport* report) {
+    return MakeIterator(result, report, false, BeginMessage);
+}
+
+WebRtcRtcStatsReportConstIterator* APS5_VABI _ZNK6webrtc14RTCStatsReport3endEv_nid_postfix(WebRtcRtcStatsReportConstIterator* result, const WebRtcRtcStatsReport* report) {
+    return MakeIterator(result, report, true, EndMessage);
+}
+
+void APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(WebRtcRtcStatsReportConstIterator* iterator) {
+    const auto value = ReadGuest<WebRtcRtcStatsReportConstIterator>(iterator, DestructorMessage);
+    if (value.report)
+        ReleaseReport(value.report);
 }
 
 }
