@@ -4337,10 +4337,14 @@ static void CheckPosixFixedAnonymousReleasesFlexibleAccounting() {
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
 static void CheckPosixFixedFileReleasesFlexibleAccounting() {
     constexpr std::size_t page = 0x4000;
-    constexpr int fixedShared = 0x11;
+#ifdef _WIN32
+    constexpr int fixedFile = 0x12;
+#else
+    constexpr int fixedFile = 0x11;
+#endif
     const auto path = std::filesystem::path("anyps5-fixed-file-accounting-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
     {
@@ -4359,7 +4363,7 @@ static void CheckPosixFixedFileReleasesFlexibleAccounting() {
     auto* bytes = static_cast<unsigned char*>(base);
     bytes[0] = 0x31;
     bytes[page * 2] = 0x51;
-    Require(mmap_nid_postfix(bytes + page, page, 1, fixedShared, fd, 0) == bytes + page);
+    Require(mmap_nid_postfix(bytes + page, page, 1, fixedFile, fd, 0) == bytes + page);
     Require(bytes[0] == 0x31 && bytes[page] == 0x6d && bytes[page * 2] == 0x51);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - page * 2);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 3) == 0);
@@ -4656,7 +4660,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "fixed-anonymous") == 0) {
         CheckPosixFixedAnonymousMapping();
         CheckPosixFixedAnonymousReleasesFlexibleAccounting();
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
         CheckPosixFixedFileReleasesFlexibleAccounting();
 #endif
         return 0;
