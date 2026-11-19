@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -139,6 +140,24 @@ int main() {
     threw = false;
     try { __inet_network_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw, "__inet_network null throws");
+
+    auto rejectsRuntime = [](auto&& call, const char* what) {
+        errno = 71;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            Require(errno == 71, what);
+            return;
+        }
+        Require(false, what);
+    };
+    const auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    std::uint32_t out = 0x5a5a5a5a;
+    rejectsRuntime([&] { inet_aton_nid_postfix(badText, &out); }, "inet_aton unreadable text");
+    Require(out == 0x5a5a5a5a, "inet_aton unreadable text preserves out");
+    rejectsRuntime([&] { inet_addr_nid_postfix(badText); }, "inet_addr unreadable text");
+    rejectsRuntime([&] { inet_network_nid_postfix(badText); }, "inet_network unreadable text");
+    rejectsRuntime([&] { __inet_network_nid_postfix(badText); }, "__inet_network unreadable text");
 
     return 0;
 }

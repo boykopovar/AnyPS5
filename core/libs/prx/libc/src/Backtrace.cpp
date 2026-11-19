@@ -123,7 +123,7 @@ void WriteBacktraceOutput(void* destination, const void* source, std::size_t byt
 extern "C" {
 
 int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, std::size_t* size) {
-    if (count == nullptr || size == nullptr) throw std::invalid_argument("sceLibcBacktraceGetBufferSize: null output");
+    if (count == nullptr || size == nullptr) return 1;
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     std::size_t total = 0;
     for (const auto& frame : frames) total += RecordSize(frame);
@@ -134,7 +134,7 @@ int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, s
 }
 
 int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int limit, void* buffer, std::size_t size, int* count) {
-    if (buffer == nullptr || count == nullptr) throw std::invalid_argument("sceLibcBacktraceSelf: null argument");
+    if (buffer == nullptr || count == nullptr) return 1;
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     const auto base = reinterpret_cast<std::uintptr_t>(buffer);
     std::size_t used = 0;
@@ -148,8 +148,9 @@ int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int limit, void* buffer, std::siz
         auto* record = reinterpret_cast<FrameRecord*>(base + used);
         const FrameRecord value{nullptr, frame.offset, 0};
         WriteBacktraceOutput(record, &value, sizeof(value), __func__);
-        WriteBacktraceOutput(reinterpret_cast<void*>(base + used + NameOffset), frame.module.c_str(),
-                             frame.module.size() + 1, __func__);
+        std::string tail = frame.module;
+        tail.resize(bytes - NameOffset);
+        WriteBacktraceOutput(reinterpret_cast<void*>(base + used + NameOffset), tail.data(), tail.size(), __func__);
         if (previous != nullptr) WriteBacktraceOutput(previous, &record, sizeof(record), __func__);
         previous = record;
         used += bytes;

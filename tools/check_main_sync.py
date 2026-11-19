@@ -29,7 +29,7 @@ def names(repo, *args):
 
 def resolve_base(repo, name):
     for candidate in (name,) if name else BASES:
-        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}", check=False).returncode == 0:
+        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^0", check=False).returncode == 0:
             return candidate
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 

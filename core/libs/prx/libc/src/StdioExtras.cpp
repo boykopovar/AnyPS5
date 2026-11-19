@@ -62,17 +62,7 @@ extern "C" {
 
 #ifdef _WIN32
 
-int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    return LibcDetail::FormatWindows(buffer, size, format, args);
-}
 
-int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
-    __builtin_sysv_va_end(args);
-    return result;
-}
 
 #endif
 
@@ -184,12 +174,16 @@ void* APS5_VABI _ZnamSt11align_val_t_nid_postfix(std::size_t size, std::size_t a
     return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
 }
 
-void* APS5_VABI _ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
+void* AlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void*) noexcept {
     try {
         return _ZnamSt11align_val_t_nid_postfix(size, alignment);
     } catch (const std::bad_alloc&) {
         return nullptr;
     }
+}
+
+void* APS5_VABI _ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void* tag) noexcept {
+    return AlignedArrayNewNothrow_nid_no_patch(size, alignment, tag);
 }
 
 void APS5_VABI _ZdaPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
@@ -200,8 +194,12 @@ void APS5_VABI _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(void* pointer, st
     _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
 }
 
-void APS5_VABI _ZdaPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+void AlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment) {
     _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+    AlignedArrayDelete_nid_no_patch(pointer, alignment);
 }
 
 void APS5_VABI _ZdaPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
