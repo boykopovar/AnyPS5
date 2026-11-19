@@ -7,13 +7,15 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
 REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
 REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
-FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
+FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
@@ -326,13 +328,22 @@ def select(graph, changed, reasons=None):
     return picked, []
 
 
+@contextmanager
+def ctest_index_file(indices):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "indices.txt"
+        path.write_text(indices + "\n", encoding="utf-8")
+        yield str(path)
+
+
 def plan(build, graph, picked):
     _, listed = build.tests()
     run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
     if not run:
         skip = {build.target(t) for t in listed} - {None}
         return [], [t for t in build.leaves() if t not in skip], len(listed)
-    _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
+    with ctest_index_file("0,0,0," + ",".join(map(str, run))) as index_file:
+        _, selected = build.tests("-I", index_file)
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     if any(not t.get("command") for t in listed if t["name"] in names):
@@ -369,11 +380,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
+        command = ["ctest", "--test-dir", args.build, *args.arguments]
         try:
-            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+            indices = selected.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            return subprocess.run(command).returncode
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{selected}: {error}")
-        return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
+        with ctest_index_file(indices) as index_file:
+            return subprocess.run([*command, "-I", index_file]).returncode
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)

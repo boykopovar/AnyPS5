@@ -316,6 +316,45 @@ class SilentStubTests(unittest.TestCase):
             self.assertIn("[silent-stub]", result.stdout)
             self.assertNotIn("[comment]", result.stdout)
 
+    def test_debt_fragment_allows_comments(self):
+        checker = Path(__file__).resolve().parents[1] / "check_conventions.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Conventions Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=root, capture_output=True, text=True, check=True,
+                )
+
+            git("init", "-q")
+            debt = root / "docs/dev/debt/libSceExample.md"
+            debt.parent.mkdir(parents=True)
+            debt.write_text("# libSceExample\n\n### Functional\n", encoding="utf-8")
+            (root / "docs/dev/TechnicalDebt.md").write_text("# Project technical debt\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "docs: record technical debt")
+            source = root / "core/libs/prx/libSceExample/Export.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text("// Derived from Source/Example.cpp@0123456789abcdef0123456789abcdef01234567\nint value;\n",
+                              encoding="utf-8")
+            fragment = root / "docs/dev/debt/changes/feat-example.md"
+            fragment.parent.mkdir(parents=True)
+            fragment.write_text("# libSceExample\n\n## add Functional\n\n- [Example](../../../core/libs/prx/libSceExample/Export.cpp)"
+                                " (libSceExample) - not compared with a console module.\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "feat: add example")
+            result = subprocess.run(
+                [sys.executable, str(checker), "--base", "HEAD~1"],
+                cwd=root, capture_output=True, text=True,
+                env={key: value for key, value in os.environ.items()
+                     if key not in ("GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY", "GITHUB_ACTIONS")},
+            )
+            self.assertNotIn("[comment]", result.stdout)
+            self.assertNotIn("[debt-fragment]", result.stdout)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 class QuotedPathTests(unittest.TestCase):
     def test_non_ascii_path_does_not_crash_the_checker(self):
@@ -530,6 +569,17 @@ class TestFixtureExportTests(unittest.TestCase):
                 [sys.executable, "-I", str(checker), "--base", "HEAD~1"],
                 cwd=root, capture_output=True, text=True, env=env, timeout=20,
             )
+
+    def test_pragma_once_is_allowed_whatever_its_spacing(self):
+        for directive in ("#pragma once", "#pragma  once", "#pragma\t once", "#  pragma   once"):
+            with self.subTest(directive=directive):
+                result = self.check("core/libs/prx/libSceAjm/include/Port.hpp", f"{directive}\nint Port();\n")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for directive in ("#pragma pack(1)", "#pragma  pack(1)", "#pragma oncely", "#pragma  once_more"):
+            with self.subTest(directive=directive):
+                result = self.check("core/libs/prx/libSceAjm/include/Port.hpp", f"{directive}\nint Port();\n")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("core/libs/prx/libSceAjm/include/Port.hpp:1: error: [extension]", result.stdout)
 
     def test_mock_in_tests_directory_is_not_an_export(self):
         result = self.check("core/libs/prx/libSceAudioOut/tests/Shutdown.cpp",

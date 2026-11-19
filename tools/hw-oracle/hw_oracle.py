@@ -29,6 +29,7 @@ ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
 RUNTIMES = ("hsa", "hip", "vulkan")
+HSA_IDENTITY_KEYS = ("name", "vendor", "product", "chip_id", "asic_revision", "compute_units")
 
 
 def runtime():
@@ -115,6 +116,33 @@ def detected_target(binary, visible_devices):
         environment["ROCR_VISIBLE_DEVICES"] = visible_devices
     return subprocess.run([binary, "--target"], capture_output=True, text=True, check=True,
                           env=environment).stdout.strip()
+
+
+@cache
+def hsa_identity(binary, visible_devices):
+    environment = dict(os.environ)
+    if visible_devices is None:
+        environment.pop("ROCR_VISIBLE_DEVICES", None)
+    else:
+        environment["ROCR_VISIBLE_DEVICES"] = visible_devices
+    output = subprocess.run([binary, "--identity"], capture_output=True, text=True, check=True,
+                            env=environment).stdout
+    fields = {}
+    for line in output.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2 or parts[0] not in HSA_IDENTITY_KEYS or parts[0] in fields or not parts[1]:
+            raise ValueError("hardware oracle returned an invalid HSA identity")
+        fields[parts[0]] = parts[1]
+    if tuple(fields) != HSA_IDENTITY_KEYS:
+        raise ValueError("hardware oracle returned an incomplete HSA identity")
+    for name in ("chip_id", "asic_revision", "compute_units"):
+        try:
+            fields[name] = int(fields[name], 10)
+        except ValueError as error:
+            raise ValueError("hardware oracle returned an invalid HSA identity") from error
+        if fields[name] < 0 or fields[name] > 0xffffffff:
+            raise ValueError("hardware oracle returned an invalid HSA identity")
+    return fields
 
 
 def target():

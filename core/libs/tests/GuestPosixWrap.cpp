@@ -23,6 +23,7 @@ namespace {
 
 constexpr int Enoent = 2;
 constexpr int Ebadf = 9;
+constexpr int Efault = 14;
 constexpr int Eexist = 17;
 constexpr int Einval = 22;
 constexpr int ClockMonotonicFast = 12;
@@ -79,11 +80,70 @@ void TestGetenvNp() {
     Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
 }
 
+void TestSysinfoAndSetenvNp() {
+    Require(Fails(setenv_np(nullptr, "1", 1), Einval));
+    Require(Fails(setenv_np("A", nullptr, 1), Einval));
+    errno = 73;
+    Require(Throws<std::invalid_argument>([] { setenv_np(reinterpret_cast<const char*>(std::uintptr_t{0x10}), "1", 1); }));
+    Require(errno == 73);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "3221225472", 1) == 0);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "4294967296", 0) == 0);
+    char buffer[32]{};
+    Require(getenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", buffer, sizeof(buffer)) == 0);
+    Require(std::strcmp(buffer, "3221225472") == 0);
+    Require(Fails(scePosixForWebKit_sysinfo(nullptr), Efault));
+    struct PaddedSysinfo {
+        PosixForWebKitSysinfo info{};
+        std::uint32_t tail = 0xdeadbeefu;
+    } output{};
+    Require(scePosixForWebKit_sysinfo(&output.info) == 0);
+    Require(output.info.total == 3221225472ULL && output.info.one == 1u && output.tail == 0xdeadbeefu);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "4294967296", 1) == 0);
+    PosixForWebKitSysinfo cached{};
+    Require(scePosixForWebKit_sysinfo(&cached) == 0);
+    Require(cached.total == 3221225472ULL && cached.one == 1u);
+    errno = 73;
+    Require(Throws<std::invalid_argument>([] { scePosixForWebKit_sysinfo(reinterpret_cast<PosixForWebKitSysinfo*>(std::uintptr_t{0x10})); }));
+    Require(errno == 73);
+}
+
+void TestMsetnameSchedAndMmapNp() {
+    Require(msetname(nullptr, 0, nullptr) == 0);
+    void* flex = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flex, 16384, 3, 0) == 0 && flex != nullptr);
+    Require(msetname(flex, 16384, "Heap") == 0);
+    VirtualQueryInfo query{};
+    Require(sceKernelVirtualQuery(flex, 0, &query, sizeof(query)) == 0);
+    Require(std::strcmp(query.name, "SceNKHeap") == 0);
+    Require(msetname(flex, 16384, "SceNKCustom") == 0);
+    Require(sceKernelVirtualQuery(flex, 0, &query, sizeof(query)) == 0);
+    Require(std::strcmp(query.name, "SceNKCustom") == 0);
+    errno = 73;
+    Require(Throws<std::invalid_argument>([&] { msetname(flex, 16384, reinterpret_cast<const char*>(std::uintptr_t{0x10})); }));
+    Require(errno == 73);
+    Require(sceKernelReleaseFlexibleMemory(flex, 16384) == 0);
+
+    KernelSchedParam param{0};
+    Require(Throws<std::runtime_error>([&] { pthread_setschedparam_np(pthread_self_nid_postfix(), 2, &param); }));
+    Require(pthread_setschedparam_np(pthread_self_nid_postfix(), 0, &param) == pthread_setschedparam_nid_postfix(pthread_self_nid_postfix(), 0, &param));
+
+    *__error_nid_postfix() = 0;
+    Require(mmap_np(nullptr, 16384, 3, 0x1012, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+    Require(*__error_nid_postfix() == Einval);
+    *__error_nid_postfix() = 0;
+    Require(mmap_np(nullptr, 16384, 3, (5 << 24) | 0x1002, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+    Require(*__error_nid_postfix() == Einval);
+    Require(Throws<std::runtime_error>([] { mmap_np(nullptr, 16384, 3, 0x1002, -1, 0, nullptr); }));
+    Require(mmap_np(nullptr, 16384, 3, 1, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+}
+
 }
 
 int main() {
     TestClockGettimeNp();
     TestGetenvNp();
+    TestSysinfoAndSetenvNp();
+    TestMsetnameSchedAndMmapNp();
     const auto root = std::filesystem::path("anyps5-posix-wrap-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
