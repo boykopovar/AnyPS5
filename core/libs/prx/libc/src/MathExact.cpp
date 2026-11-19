@@ -747,9 +747,10 @@ extern "C" {
 
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y) { return std::copysign(x, y); }
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y) {
-    if (std::isnan(x)) return x;
-    if (std::isnan(y)) return y;
-    return x > y ? x - y : 0.0L;
+    if (ExtendedNan(Bits(x))) return x;
+    if (ExtendedNan(Bits(y))) return y;
+    const volatile long double difference = x - y;
+    return x > y ? difference : 0.0L;
 }
 
 long double APS5_VABI fmodl_nid_postfix(long double x, long double y) {
@@ -773,11 +774,11 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         ErrnoGuard guard;
         result = std::remquo(x, y, &bits);
     }
-    if (domain) errno = EDOM;
     if (!std::isnan(result)) {
         const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
-        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low))) throw std::invalid_argument("remquol: unwritable quotient");
     }
+    if (domain) errno = EDOM;
     return result;
 }
 
@@ -787,18 +788,25 @@ long double APS5_VABI logbl_nid_postfix(long double x) {
 }
 
 int APS5_VABI ilogbl_nid_postfix(long double x) {
-    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return INT_MAX;
-    ErrnoGuard guard;
-    return std::ilogb(x);
+    const ExtendedBits bits = Bits(x);
+    const int field = bits.signExponent & 0x7fff;
+    if (field == 0x7fff) return INT_MAX;
+    if (field != 0) return field - 16383;
+    return bits.mantissa != 0 ? static_cast<int>(std::bit_width(bits.mantissa)) - 16446 : INT_MIN;
 }
 
 long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
-long double APS5_VABI roundl_nid_postfix(long double x) { return std::isfinite(x) ? std::round(x) : x; }
-
-std::int64_t APS5_VABI lroundl_nid_postfix(long double x) {
-    ErrnoGuard guard;
-    return std::llround(x);
+long double APS5_VABI roundl_nid_postfix(long double x) {
+    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return x;
+    const bool negative = !(x >= 0.0L);
+    const long double whole = floorl_nid_postfix(negative ? -x : x);
+    const long double difference = negative ? x + whole : whole - x;
+    const volatile long double above = 1.0L + whole;
+    const long double rounded = -0.5L < difference ? whole : above;
+    return negative ? -rounded : rounded;
 }
+
+std::int64_t APS5_VABI lroundl_nid_postfix(long double x) { return llroundl_nid_postfix(x); }
 
 std::int64_t APS5_VABI lrintl_nid_postfix(long double x) {
     ErrnoGuard guard;
@@ -842,7 +850,7 @@ long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
         whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
         fraction = x - whole;
     }
-    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modfl: unwritable integral");
     return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }

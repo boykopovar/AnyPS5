@@ -645,14 +645,11 @@ jobs:
           mem_mb=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
           slots=$(( (mem_mb - 2048) / 1024 ))
           slots=$(( slots < 1 ? 1 : slots ))
-          tests=$(( cpus - busy ))
-          tests=$(( tests < 1 ? 1 : tests ))
           slot_dir=$CCACHE_DIR/compile-slots
           mkdir -p -m 1777 "$slot_dir"
           test -w "$slot_dir"
-          echo "cpus=$cpus load=$busy mem_total_mb=$mem_mb -> build jobs $cpus, cold compiles $slots per host, tests $tests"
+          echo "cpus=$cpus load=$busy mem_total_mb=$mem_mb -> build jobs $cpus, cold compiles $slots per host"
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$cpus" >> "$GITHUB_ENV"
-          echo "CTEST_PARALLEL_LEVEL=$tests" >> "$GITHUB_ENV"
           echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
@@ -702,7 +699,14 @@ jobs:
           if [ -f build/select.ninja ]; then ninja -C build -f select.ninja -j "$CMAKE_BUILD_PARALLEL_LEVEL" -l "$(nproc)" selected; else cmake --build build -- -l "$(nproc)"; fi
       - id: libs
         run: cmake --build build --target libs -- -l "$(nproc)"
-      - run: python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
+      - name: Run the tests
+        run: |
+          cpus=$(nproc)
+          busy=$(awk '{ printf "%d", $1 + 0.5 }' /proc/loadavg)
+          tests=$(( cpus - busy ))
+          tests=$(( tests < 4 ? 4 : tests ))
+          echo "cpus=$cpus load=$busy -> tests $tests"
+          CTEST_PARALLEL_LEVEL=$tests python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx

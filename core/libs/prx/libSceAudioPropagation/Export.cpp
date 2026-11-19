@@ -522,7 +522,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagationHandle source, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    requireObject(state, source, Kind::Source, __func__);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;

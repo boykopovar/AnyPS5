@@ -450,6 +450,9 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable count output");
     Require(errno == 71, "errno preserved on unwritable count output");
+    std::uint32_t unknownCount = 7;
+    Require(sceAudioPropagationSourceGetAudioPathCount(0, &unknownCount) == AudioPropagation::ErrorInvalidHandle && unknownCount == 7, "path count of handle 0");
+    Require(sceAudioPropagationSourceGetAudioPathCount(static_cast<AudioPropagationHandle>(-1), &unknownCount) == AudioPropagation::ErrorInvalidHandle && unknownCount == 7, "path count of handle -1");
     AudioPropagationHandle path = 0;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == 0 && path != 0, "path lookup immediately after source creation");
     AudioPropagationHandle repeated = 0;
