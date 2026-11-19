@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #ifndef _WIN32
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -217,22 +218,10 @@ struct Mapping {
 };
 
 std::vector<Mapping> mappings(std::uint64_t begin, std::uint64_t end) {
-    std::ifstream maps("/proc/self/maps");
-    Require(static_cast<bool>(maps), "cannot read /proc/self/maps for a heap mirror's pages");
     std::vector<Mapping> found;
-    std::string line;
-    while (std::getline(maps, line)) {
-        std::istringstream fields(line);
-        std::string span, permissions, offset, device;
-        unsigned long long inode = 0;
-        fields >> span >> permissions >> offset >> device >> inode;
-        const auto dash = span.find('-');
-        Require(dash != std::string::npos && permissions.size() == 4, "unexpected /proc/self/maps line: " + line);
-        const auto first = std::stoull(span.substr(0, dash), nullptr, 16);
-        const auto last = std::stoull(span.substr(dash + 1), nullptr, 16);
-        if (last <= begin || first >= end) continue;
-        found.push_back({std::max<std::uint64_t>(first, begin), std::min<std::uint64_t>(last, end), permissions[0] == 'r', inode == 0 && permissions[3] == 'p'});
-    }
+    HostMapping::Walk(begin, end, "heap mirror pages", [&](const HostMapping::Mapping& mapping) {
+        found.push_back({std::max(mapping.start, begin), std::min(mapping.end, end), mapping.readable, mapping.inode == 0 && !mapping.shared});
+    });
     return found;
 }
 

@@ -168,6 +168,10 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
+        if size < 40:
+            raise ValueError("PE export directory is smaller than its header")
+        if rva + size > 0x100000000:
+            raise ValueError("PE export directory exceeds address space")
         directory = self.read_bytes(data, rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
         if not names:
@@ -200,7 +204,9 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
+                    info = path.stat()
+                    identity = (info.st_dev, info.st_ino) if info.st_ino else path.resolve()
+                    self.files.setdefault(path.name.lower(), {}).setdefault(identity, path)
         self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
@@ -283,15 +289,27 @@ class Symbolizer:
         return self.demangled[symbol]
 
 
-def read_headers(lines):
+def is_ascii_digits(value):
+    return value.isascii() and value.isdigit()
+
+
+def is_hex(value):
+    return re.fullmatch(r"(?:0[xX])?[0-9a-fA-F]+", value) is not None
+
+
+def read_headers(lines, path=None):
     headers = {}
-    for line in lines:
+    for number, line in enumerate(lines, 1):
         parts = line.split(None, 2)
-        fields = parts[2].rsplit(None, 2) if len(parts) == 3 and parts[:2] == ["#", "module"] else []
-        if len(fields) == 3:
-            name = fields[0].lower()
-            identity = (int(fields[1], 16), int(fields[2], 16))
-            headers[name] = False if name in headers else identity
+        if len(parts) < 2 or parts[:2] != ["#", "module"]:
+            continue
+        fields = parts[2].rsplit(None, 2) if len(parts) == 3 else []
+        if len(fields) != 3 or not (is_hex(fields[1]) and is_hex(fields[2])):
+            location = f"{path}:{number}" if path is not None else f"line {number}"
+            raise ValueError(f"{location}: expected '# module <name> <size> <timestamp>'")
+        name = fields[0].lower()
+        identity = (int(fields[1], 16), int(fields[2], 16))
+        headers[name] = False if name in headers else identity
     return headers
 
 
@@ -309,7 +327,7 @@ class Samples:
 def load(path, thread=None):
     lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
     samples = Samples()
-    samples.headers = read_headers(lines)
+    samples.headers = read_headers(lines, path)
     current = None
 
     def record_format(kind, number):
@@ -319,12 +337,16 @@ def load(path, thread=None):
 
     for number, line in enumerate(lines, 1):
         parts = line.split()
-        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples" and parts[1].isdigit():
+        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples":
+            if not is_ascii_digits(parts[1]):
+                raise ValueError(f"{path}:{number}: expected '# <n> samples'")
             samples.total["samples"] += int(parts[1])
             continue
         if line.startswith("#") or not line.strip():
             continue
-        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
+        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples":
+            if not (is_ascii_digits(parts[1]) and is_ascii_digits(parts[3])):
+                raise ValueError(f"{path}:{number}: expected 'thread <id> samples <n>'")
             record_format("address", number)
             current = parts[1]
             samples.threads.add(current)
@@ -332,9 +354,11 @@ def load(path, thread=None):
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and ((fields[2].isdigit() and fields[3].isdigit()) or re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is not None):
             if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
                 raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
+            if not (is_ascii_digits(fields[2]) and is_ascii_digits(fields[3])):
+                raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
             record_format("address", number)
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
@@ -343,8 +367,10 @@ def load(path, thread=None):
                 samples.inclusive[(fields[0], fields[1])] += int(fields[3])
             continue
         frames, _, count = line.rpartition(" ")
-        if not frames or not count.isdigit():
+        if not frames or not is_ascii_digits(count):
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if any(not frame.strip() for frame in frames.split(";")):
+            raise ValueError(f"{path}:{number}: collapsed stack contains an empty frame")
         record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")

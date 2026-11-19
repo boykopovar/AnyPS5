@@ -113,6 +113,12 @@ int main(int argc, char** argv) {
         Status(sceNgs2VoiceGetOwner(voice, &owner, nullptr), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner lost null-index validation");
         Require(owner == 0x5a5a && index == 0x5a5a);
         errno = 71;
+        Status(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2SamplerVoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable sampler output");
+        const auto reverbVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_REVERB));
+        Status(sceNgs2VoiceGetState(reverbVoice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable reverb output");
+        const auto submixerVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Status(sceNgs2VoiceGetState(submixerVoice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2SubmixerVoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable submixer output");
+        Require(errno == 71);
         Status(sceNgs2VoiceGetStateFlags(voice, reinterpret_cast<std::uint32_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetStateFlags accepted an unwritable output");
         Status(sceNgs2VoiceGetOwner(voice, reinterpret_cast<uintptr_t*>(0x10), &index), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner accepted an unwritable rack output");
         Status(sceNgs2VoiceGetOwner(voice, &owner, reinterpret_cast<std::uint32_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner accepted an unwritable index output");

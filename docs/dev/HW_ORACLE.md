@@ -98,6 +98,10 @@ instruction probes. The catalog starts with f32 and f16 arithmetic edge cases, i
 ties, denormals and overflow modes. It does not generate instruction semantics from the ISA form list and it stores no
 expected outputs. A measurement is only the result returned by the configured hardware oracle.
 
+A probe body may contain explicit setup, waits and readback around exactly one instruction under test. Probes for an ISA
+target that most supported GPUs cannot assemble are excluded from the default generate, run and coverage sets; select
+them by ID with `--probe` on a compatible device.
+
 List the curated cases, then generate portable input bundles without a GPU:
 
 ```sh
@@ -116,13 +120,29 @@ python3 tools/hw-oracle/probe_catalog.py run --results-dir measurements --device
 python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --device-label rx-6750-xt
 ```
 
-`run` measures every catalog entry by default; repeat `--probe ID` to select a subset. It does not overwrite an existing
+`run` measures every default catalog entry; repeat `--probe ID` to select explicit entries. It does not overwrite an existing
 measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
-and output words, and the user-supplied device label. The label is not checked against the physical GPU, and the
-assembly target alone does not identify a GPU model or driver. `coverage` checks the individual probe definition
-digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
+and output words, and the user-supplied device label. The ordinary `run` command does not check the label against the
+physical GPU. The assembly target alone does not identify a GPU model or driver. `coverage` checks each probe
+definition digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
 probe's old report stale. It reports missing, stale or invalid files separately and exits 1 when the selected probe set
 is incomplete. Use `--json` for machine-readable coverage data.
+
+### PS5 Linux measurements
+
+A PS5 booted into Linux can run the same raw gfx1013 kernels through a patched `amdgpu` and ROCm HSA stack. The
+[`ps5-rocm`](https://github.com/LEE-CHENYU/ps5-rocm) setup documents the required driver and runtime changes. Do not
+substitute `HSA_OVERRIDE_GFX_VERSION`; the oracle must assemble and execute real gfx1013 code.
+
+`run-ps5-linux` reads the selected HSA agent before dispatch. It requires Linux, the HSA runtime, target `gfx1013`, AMD
+chip ID `0x13fc` and a complete agent identity. It rejects the BC-250 chip ID `0x13fe`. Each report records the product,
+ASIC revision, compute-unit count, operating system and kernel release beside the measured words.
+
+```sh
+python3 tools/hw-oracle/probe_catalog.py run-ps5-linux \
+  --results-dir measurements --device-label ps5-linux \
+  --probe v-add-f32-edge-values
+```
 
 ## Recompiler comparison
 
@@ -171,6 +191,7 @@ here; a result that depends on these differences needs a run on RDNA2.
 | `v_mad_f32`, `v_mac_f32`, `v_madak_f32`, `v_madmk_f32`, `v_mad_f16`, `v_mac_f16`, `v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard` | Not accepted. |
 | SDWA (`_sdwa`) | Not accepted. |
 | `v_interp_p1_f32`, `v_interp_mov_f32` | Not accepted, so the LDS interpolation under [Limits](#limits) is RDNA2 only. |
+| 16-bit VALU operands named as whole VGPRs, such as `v_add_f16 v10, v4, v5` in [Use](#use) | Not accepted by clang 23.1.4 for gfx1100 (`operands are not valid for this GPU or mode`). Name the half: `v_add_f16 v10.l, v4.l, v5.l` returns `00004000` and `00007e01` for the example rows. |
 
 `v_mul_legacy_f32`, `ds_wrxchg2_rtn_*` and `ds_wrxchg2st64_rtn_*` still assemble under these names and give the same
 results as their gfx11 names `v_mul_dx9_zero_f32`, `ds_storexchg_2addr_rtn_*` and `ds_storexchg_2addr_stride64_rtn_*`.
