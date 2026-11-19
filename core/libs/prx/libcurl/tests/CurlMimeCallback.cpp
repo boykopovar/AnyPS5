@@ -16,9 +16,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <source_location>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 using Socket = SOCKET;
@@ -295,6 +298,226 @@ static void TestReadAbortAndSubsequentValidUpload() {
     Require(validSource.frees == 1);
 }
 
+struct HeaderAllocationTracker {
+    std::mutex mutex;
+    std::set<const void*> livePointers;
+
+    void Record(const void* pointer) {
+        if (!pointer) return;
+        std::lock_guard lock(mutex);
+        Require(livePointers.insert(pointer).second);
+    }
+
+    void Forget(const void* pointer) {
+        if (!pointer) return;
+        std::lock_guard lock(mutex);
+        Require(livePointers.erase(pointer) == 1);
+    }
+
+    bool IsLive(const void* pointer) {
+        std::lock_guard lock(mutex);
+        return livePointers.contains(pointer);
+    }
+
+    std::set<const void*> Snapshot() {
+        std::lock_guard lock(mutex);
+        return livePointers;
+    }
+};
+
+static HeaderAllocationTracker headerTracker;
+
+static void* APS5_VABI TrackMalloc(size_t size) {
+    void* pointer = std::malloc(size == 0 ? 1 : size);
+    headerTracker.Record(pointer);
+    return pointer;
+}
+
+static void APS5_VABI TrackFree(void* pointer) {
+    headerTracker.Forget(pointer);
+    std::free(pointer);
+}
+
+static void* APS5_VABI TrackRealloc(void* pointer, size_t size) {
+    if (pointer == nullptr) {
+        void* allocated = std::malloc(size == 0 ? 1 : size);
+        headerTracker.Record(allocated);
+        return allocated;
+    }
+    if (size == 0) {
+        headerTracker.Forget(pointer);
+        std::free(pointer);
+        return nullptr;
+    }
+    headerTracker.Forget(pointer);
+    void* reallocated = std::realloc(pointer, size);
+    if (reallocated) {
+        headerTracker.Record(reallocated);
+    } else {
+        headerTracker.Record(pointer);
+    }
+    return reallocated;
+}
+
+static char* APS5_VABI TrackStrdup(const char* value) {
+    if (!value) return nullptr;
+    const size_t length = std::strlen(value) + 1;
+    char* copy = static_cast<char*>(std::malloc(length));
+    if (copy) {
+        std::memcpy(copy, value, length);
+        headerTracker.Record(copy);
+    }
+    return copy;
+}
+
+static void* APS5_VABI TrackCalloc(size_t count, size_t size) {
+    void* pointer = std::calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
+    headerTracker.Record(pointer);
+    return pointer;
+}
+
+static std::vector<const void*> CollectSlistAllocations(const CurlSlist* list) {
+    std::vector<const void*> pointers;
+    for (const CurlSlist* node = list; node != nullptr; node = node->next) {
+        pointers.push_back(node);
+        pointers.push_back(node->data);
+    }
+    return pointers;
+}
+
+static bool AllPointersLive(const std::vector<const void*>& pointers) {
+    for (const void* pointer : pointers) {
+        if (!headerTracker.IsLive(pointer)) return false;
+    }
+    return true;
+}
+
+static bool NoPointersLive(const std::vector<const void*>& pointers) {
+    for (const void* pointer : pointers) {
+        if (headerTracker.IsLive(pointer)) return false;
+    }
+    return true;
+}
+
+static CurlSlist* BuildGuestHeaderList(const std::vector<const char*>& entries) {
+    CurlSlist* list = nullptr;
+    for (const char* entry : entries) {
+        CurlSlist* next = curl_slist_append(list, entry);
+        Require(next != nullptr);
+        list = next;
+    }
+    return list;
+}
+
+static void ConfigureLoopbackMimeEasy(CURL* easy, curl_mime* mime) {
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_MIMEPOST, mime) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTP_VERSION, static_cast<std::int64_t>(CURL_HTTP_VERSION_1_0)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT, static_cast<std::int64_t>(10)) == CURLE_OK);
+}
+
+static std::string PerformLoopbackMimeUpload(CURL* easy) {
+    Server server;
+    const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
+    return server.Request();
+}
+
+static void TestMimeHeadersBorrowed() {
+    const auto baseline = headerTracker.Snapshot();
+
+    Source source;
+    source.bytes = "borrowed header body";
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    auto* mime = curl_mime_init_nid_postfix(easy);
+    Require(mime != nullptr);
+    auto* part = AddCallbackPart(mime, source);
+    ConfigureLoopbackMimeEasy(easy, mime);
+
+    CurlSlist* firstList = BuildGuestHeaderList({"X-Borrowed-One: first", "X-Borrowed-Two: alpha"});
+    const auto firstPointers = CollectSlistAllocations(firstList);
+    Require(AllPointersLive(firstPointers));
+
+    Require(curl_mime_headers_nid_postfix(part, firstList, 0) == CURLE_OK);
+    const std::string firstRequest = PerformLoopbackMimeUpload(easy);
+    Require(firstRequest.find("X-Borrowed-One: first\r\n") != std::string::npos);
+    Require(firstRequest.find("X-Borrowed-Two: alpha\r\n") != std::string::npos);
+    Require(firstRequest.find("\r\n\r\n" + source.bytes + "\r\n--") != std::string::npos);
+    Require(AllPointersLive(firstPointers));
+
+    CurlSlist* secondList = BuildGuestHeaderList({"X-Borrowed-One: second"});
+    const auto secondPointers = CollectSlistAllocations(secondList);
+    Require(AllPointersLive(secondPointers));
+
+    Require(curl_mime_headers_nid_postfix(part, secondList, 0) == CURLE_OK);
+    Require(AllPointersLive(firstPointers));
+    curl_slist_free_all(firstList);
+    Require(NoPointersLive(firstPointers));
+
+    const std::string secondRequest = PerformLoopbackMimeUpload(easy);
+    Require(secondRequest.find("X-Borrowed-One: second\r\n") != std::string::npos);
+    Require(secondRequest.find("X-Borrowed-One: first") == std::string::npos);
+    Require(secondRequest.find("X-Borrowed-Two: alpha") == std::string::npos);
+    Require(AllPointersLive(secondPointers));
+
+    curl_mime_free_nid_postfix(mime);
+    Require(source.frees == 1);
+    Require(AllPointersLive(secondPointers));
+
+    curl_slist_free_all(secondList);
+    Require(NoPointersLive(secondPointers));
+
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(headerTracker.Snapshot() == baseline);
+}
+
+static void TestMimeHeadersOwned() {
+    const auto baseline = headerTracker.Snapshot();
+
+    Source source;
+    source.bytes = "owned header body";
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    auto* mime = curl_mime_init_nid_postfix(easy);
+    Require(mime != nullptr);
+    auto* part = AddCallbackPart(mime, source);
+    ConfigureLoopbackMimeEasy(easy, mime);
+
+    CurlSlist* firstList = BuildGuestHeaderList({"X-Owned-One: first", "X-Owned-Two: gamma"});
+    const auto firstPointers = CollectSlistAllocations(firstList);
+    Require(AllPointersLive(firstPointers));
+
+    Require(curl_mime_headers_nid_postfix(part, firstList, 1) == CURLE_OK);
+    const std::string firstRequest = PerformLoopbackMimeUpload(easy);
+    Require(firstRequest.find("X-Owned-One: first\r\n") != std::string::npos);
+    Require(firstRequest.find("X-Owned-Two: gamma\r\n") != std::string::npos);
+    Require(firstRequest.find("\r\n\r\n" + source.bytes + "\r\n--") != std::string::npos);
+    Require(AllPointersLive(firstPointers));
+
+    CurlSlist* secondList = BuildGuestHeaderList({"X-Owned-One: second"});
+    const auto secondPointers = CollectSlistAllocations(secondList);
+    Require(AllPointersLive(secondPointers));
+
+    Require(curl_mime_headers_nid_postfix(part, secondList, 1) == CURLE_OK);
+    Require(NoPointersLive(firstPointers));
+    Require(AllPointersLive(secondPointers));
+
+    const std::string secondRequest = PerformLoopbackMimeUpload(easy);
+    Require(secondRequest.find("X-Owned-One: second\r\n") != std::string::npos);
+    Require(secondRequest.find("X-Owned-One: first") == std::string::npos);
+    Require(secondRequest.find("X-Owned-Two: gamma") == std::string::npos);
+    Require(AllPointersLive(secondPointers));
+
+    curl_mime_free_nid_postfix(mime);
+    Require(source.frees == 1);
+    Require(NoPointersLive(secondPointers));
+
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(headerTracker.Snapshot() == baseline);
+}
+
 int main() {
 #ifdef _WIN32
     WSADATA data;
@@ -308,6 +531,13 @@ int main() {
     TestNullReadFunctionKeepsNoCallbacks();
     TestReadAbortAndSubsequentValidUpload();
     curl_global_cleanup_nid_postfix();
+
+    Require(curl_global_init_mem_nid_postfix(
+        CURL_GLOBAL_DEFAULT, TrackMalloc, TrackFree, TrackRealloc, TrackStrdup, TrackCalloc) == CURLE_OK);
+    TestMimeHeadersBorrowed();
+    TestMimeHeadersOwned();
+    curl_global_cleanup_nid_postfix();
+    Require(headerTracker.Snapshot().empty());
 #ifdef _WIN32
     WSACleanup();
 #endif
