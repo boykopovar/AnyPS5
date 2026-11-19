@@ -661,5 +661,24 @@ class LibraryOfTests(unittest.TestCase):
         self.assertEqual(env_reference.library_of("README.md"), "README.md")
 
 
+class LiteralStartTests(unittest.TestCase):
+    def test_matches_assignments_of_prefixed_string_literals(self):
+        pattern = env_reference.literal_start()
+        for text in ('x = "APS5_FOO"', 'x="ANYPS5_BAR"', 'x = L"APS5_W"', 'x = u8"APS5_U"'):
+            with self.subTest(text=text):
+                self.assertIsNotNone(pattern.search(text))
+
+    def test_ignores_other_literals_and_non_assignments(self):
+        pattern = env_reference.literal_start()
+        for text in ('x = "OTHER_FOO"', 'f("APS5_FOO")', 'x = APS5_FOO'):
+            with self.subTest(text=text):
+                self.assertIsNone(pattern.search(text))
+
+    def test_custom_prefixes_are_escaped(self):
+        pattern = env_reference.literal_start(("A.B_",))
+        self.assertIsNotNone(pattern.search('x = "A.B_Z"'))
+        self.assertIsNone(pattern.search('x = "AxB_Z"'))
+
+
 if __name__ == "__main__":
     unittest.main()
