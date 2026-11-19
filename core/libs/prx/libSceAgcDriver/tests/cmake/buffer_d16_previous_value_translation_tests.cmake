@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(buffer_d16_previous_value_translation_tests ${LIBS_INCLUDE_DIR}/tests/BufferD16PreviousValueTranslation.cpp)
+    target_link_libraries(buffer_d16_previous_value_translation_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(buffer_d16_previous_value_translation_tests)
+    add_test(NAME buffer_d16_previous_value_translation COMMAND buffer_d16_previous_value_translation_tests)
+    if(WIN32)
+        set_tests_properties(buffer_d16_previous_value_translation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
