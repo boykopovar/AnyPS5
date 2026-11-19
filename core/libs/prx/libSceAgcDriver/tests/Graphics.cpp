@@ -10753,6 +10753,45 @@ std::set<std::uint32_t> depthModes(const ShaderRecompiler::RecompileRequest& req
     return modes;
 }
 
+ShaderRecompiler::RecompileRequest interpolatedAttributeRequest(std::uint32_t count, std::uint32_t secondSetting) {
+    alignas(256) static constexpr std::array<std::uint32_t, 7> code{0xc8120402u, 0xc8160502u, 0xc81a0602u, 0xc81e0702u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.interpolatorCount = count;
+    pixel.interpolatorSettings[0] = 0x400u;
+    pixel.interpolatorSettings[1] = secondSetting;
+    pixel.inputAddr = 2;
+    pixel.hasPerspectiveCenterVgpr = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderRecompiler::ShaderStage::Fragment, 0x31000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = pixel;
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 64;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    return request;
+}
+
+void interpolatorSettingsPastCountTests() {
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 5> cases{{{1u, 0x000u}, {1u, 0x300u}, {1u, 0x320u}, {2u, 0x401u}, {2u, 0x320u}}};
+    std::map<std::vector<std::uint64_t>, std::vector<std::uint32_t>> modules;
+    std::vector<std::vector<std::uint32_t>> programmed;
+    for (const auto& [count, setting] : cases) {
+        const auto request = interpolatedAttributeRequest(count, setting);
+        std::vector<std::uint64_t> key;
+        ShaderRecompiler::RecompileCacheKey::Build(request, key);
+        auto spirv = ShaderRecompiler::Recompile(request).spirv.Copy();
+        if (count == 2u) programmed.push_back(spirv);
+        const auto [found, inserted] = modules.emplace(std::move(key), spirv);
+        Require(inserted || found->second == spirv, "interpolator count " + std::to_string(count) + " with setting " + std::to_string(setting) + " past the count compiled differently under an equal cache key");
+    }
+    Require(modules.size() == 3u, "the recompile cache key does not separate the programmed interpolator settings");
+    Require(programmed.size() == 2u && programmed[0] != programmed[1], "a programmed default interpolator compiled like a flat parameter");
+}
+
 void conservativeZExportTests() {
     const std::array<std::pair<std::uint32_t, std::set<std::uint32_t>>, 4> cases{{
         {0x0021u, {spv::ExecutionModeDepthReplacing}},
@@ -15601,6 +15640,7 @@ int main(int argc, char** argv) {
         uintTargetTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
+        interpolatorSettingsPastCountTests();
         earlyFragmentTestsTests();
         orderedPixelShaderTests();
         stencilRefExportTests();
