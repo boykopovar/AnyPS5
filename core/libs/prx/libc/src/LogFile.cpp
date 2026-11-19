@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 #ifdef _WIN32
 #include <process.h>
@@ -20,6 +22,7 @@ namespace {
 constexpr const char VariableName[] = "ANYPS5_LOG_FILE";
 constexpr const char MaxBytesName[] = "ANYPS5_LOG_MAX_BYTES";
 constexpr const char KeepName[] = "ANYPS5_LOG_KEEP";
+constexpr const char RotationFailure[] = "[log] ANYPS5_LOG_FILE: the file could not be rotated; rotation is off for this run and the file keeps growing\n";
 constexpr const char WriteFailure[] = "[log] ANYPS5_LOG_FILE: the file can no longer be written; it stops here and the terminal output goes on\n";
 
 std::atomic<Session*> g_session{nullptr};
@@ -70,15 +73,23 @@ void Tee::failFile() {
     toTerminal(_streams[1], WriteFailure, sizeof(WriteFailure) - 1);
 }
 
+bool Tee::moveAside() {
+    if (_keep == 0) return RemoveFile(_path);
+    if (!RemoveFile(RotatedName(_path, _keep))) return false;
+    for (unsigned index = _keep; index > 1; --index) {
+        const std::string from = RotatedName(_path, index - 1);
+        std::error_code missing;
+        if (std::filesystem::exists(from, missing) && !RenameFile(from, RotatedName(_path, index))) return false;
+    }
+    return RenameFile(_path, RotatedName(_path, 1));
+}
+
 bool Tee::rotate() {
     Close(_file);
     _file = NoHandle;
-    if (_keep == 0) {
-        RemoveFile(_path);
-    } else {
-        RemoveFile(RotatedName(_path, _keep));
-        for (unsigned index = _keep; index > 1; --index) RenameFile(RotatedName(_path, index - 1), RotatedName(_path, index));
-        RenameFile(_path, RotatedName(_path, 1));
+    if (!moveAside()) {
+        _rotationOff = true;
+        toTerminal(_streams[1], RotationFailure, sizeof(RotationFailure) - 1);
     }
     Handle file = NoHandle;
     std::string error;
@@ -90,7 +101,7 @@ bool Tee::rotate() {
 
 void Tee::toFile(const char* data, std::size_t length) {
     if (length == 0 || _fileFailed.load(std::memory_order_relaxed)) return;
-    if (RotationNeeded(_fileBytes, length, _maxBytes) && !rotate()) {
+    if (!_rotationOff && RotationNeeded(_fileBytes, length, _maxBytes) && !rotate()) {
         failFile();
         return;
     }

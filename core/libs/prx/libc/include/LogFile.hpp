@@ -76,6 +76,7 @@ private:
     void pump(Stream& stream);
     void toFile(const char* data, std::size_t length);
     void flushCarry(Stream& stream);
+    bool moveAside();
     bool rotate();
     void failFile();
     void toTerminal(Stream& stream, const char* data, std::size_t length);
@@ -92,6 +93,7 @@ private:
     std::atomic<bool> _stop{false};
     std::atomic<bool> _fileFailed{false};
     bool _started = false;
+    bool _rotationOff = false;
 };
 
 class Session {
