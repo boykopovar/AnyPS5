@@ -1,10 +1,14 @@
 import argparse
+import io
 import os
 from pathlib import Path
 import re
 import stat
 import tempfile
 import time
+
+
+COMMAND_FILE_BYTES = 64 * 1024
 
 
 BUTTONS = {
@@ -57,14 +61,18 @@ def timeline_sequence(command, header):
 
 def previous_sequence(path):
     try:
-        with path.open("rb") as command:
-            line = command.readline(129)
-            if os.name == "nt" and line.endswith(b"\r\n"):
-                line = line[:-2] + b"\n"
-            if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
-                return timeline_sequence(command, line)
+        with path.open("rb") as source:
+            contents = source.read(COMMAND_FILE_BYTES + 1)
     except FileNotFoundError:
         return 0
+    if len(contents) > COMMAND_FILE_BYTES:
+        return 0
+    command = io.BytesIO(contents)
+    line = command.readline(129)
+    if os.name == "nt" and line.endswith(b"\r\n"):
+        line = line[:-2] + b"\n"
+    if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
+        return timeline_sequence(command, line)
     if os.name == "nt":
         line = line.split(b"\x1a", 1)[0]
     if len(line.rstrip(b"\n")) > 127:

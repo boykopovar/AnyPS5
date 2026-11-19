@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
@@ -24,6 +25,8 @@
 #include <sys/mman.h>
 #endif
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -37,9 +40,9 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
-#ifndef _WIN32
 namespace AgcDriver {
 
 struct VulkanDeviceTestAccess {
@@ -47,7 +50,6 @@ struct VulkanDeviceTestAccess {
 };
 
 }
-#endif
 
 namespace {
 
@@ -766,14 +768,17 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                     }
                     if (code == 0xc0u && alphaOnMsb && cmaskMode == 0) {
                         AgcDriver::GuestMemory::Unwatch(metadata.Address(), 4096);
+                        device.ColorMetadataPass(pass);
+                        Require(ReadBack(device, resolved) == stored, "unchanged metadata leaving the watch changed the multisampled target");
+                        static_cast<volatile std::uint8_t*>(metadata.data)[0] = 0xffu;
                         bool refused = false;
                         try {
                             device.ColorMetadataPass(pass);
                         } catch (const std::runtime_error& error) {
-                            refused = std::string_view(error.what()).find("reuse requires watched guest memory") != std::string_view::npos;
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
                             if (refused) expectRange(error.what(), "DCC", metadata.Address(), AgcDriver::Graphics::MultisampledDccBytes(target), samples);
                         }
-                        Require(refused, "an unwatched metadata range remained eligible for multisampled DCC reuse");
+                        Require(refused, "a changed unwatched metadata range remained eligible for multisampled DCC reuse");
                     }
                     if (code == 0x80u && alphaOnMsb && cmaskMode == 0) {
                         {
@@ -1101,6 +1106,205 @@ void DccImportWindowTests(AgcDriver::VulkanDevice& device, std::uint32_t selecte
     }
 }
 
+struct DccUnwatchCleanup {
+    AgcDriver::VulkanDevice& device;
+    bool finished = false;
+    ~DccUnwatchCleanup() {
+        if (finished) return;
+        try {
+            Finish();
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "multisample test cleanup: %s\n", error.what());
+        }
+    }
+    void Finish() {
+        AgcDriver::Graphics::SetMultisampleDccPublishHookForTest(nullptr);
+        AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(nullptr);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+        AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        programCount = 0;
+        finished = true;
+    }
+};
+
+volatile std::uint8_t* dccCopyMutation = nullptr;
+
+void MutateDccDuringCopy() {
+    AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(nullptr);
+    *dccCopyMutation = *dccCopyMutation;
+}
+
+void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::GuestMemory::WriteWatched(), "color unwatch test requires the guest write watch");
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+        const auto samples = mode == 7u ? 8u : 4u;
+        Block source(layout.Bytes() * samples);
+        Block metadata(BlockBytes);
+        Block resolved(layout.Bytes());
+        std::unique_ptr<Block> cmask;
+        std::unique_ptr<Block> fmask;
+        DccUnwatchCleanup cleanup{device};
+        std::memset(source.data, 0, source.bytes);
+        std::memset(metadata.data, 0xc0, metadata.bytes);
+        std::memset(resolved.data, 0, resolved.bytes);
+        auto target = DecodeTarget(source, samples);
+        target.dccAddress = metadata.Address();
+        target.dccPipeAligned = true;
+        if (mode >= 6u) {
+            cmask = std::make_unique<Block>(BlockBytes);
+            std::memset(cmask->data, 0xcc, cmask->bytes);
+            target.cmaskAddress = cmask->Address();
+            target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
+            target.cmaskFastClear = true;
+            if (mode == 7u) {
+                fmask = std::make_unique<Block>(2u * BlockBytes);
+                std::memset(fmask->data, 0x11, fmask->bytes);
+                target.fmaskAddress = fmask->Address();
+            }
+        }
+        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+        if (mode >= 6u) device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
+        const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+        Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        AgcDriver::Graphics::ColorMetadataPass pass{};
+        pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+        pass.source = target;
+        pass.targets = {DecodeTarget(resolved)};
+        device.ColorMetadataPass(pass);
+        const auto before = ReadBack(device, resolved);
+        if (mode == 1u) static_cast<volatile std::uint8_t*>(source.data)[0] = 0;
+        if (mode == 5u) {
+            dccCopyMutation = source.data;
+            AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(&MutateDccDuringCopy);
+        }
+        if (mode == 7u) {
+            AgcDriver::GuestMemory::Unwatch(fmask->Address(), 4096u);
+        } else if (mode == 6u) {
+            AgcDriver::GuestMemory::Unwatch(cmask->Address(), 4096u);
+        } else if (mode == 4u) {
+            AgcDriver::GuestMemory::Unwatch(metadata.Address(), 4096u);
+        } else {
+            AgcDriver::GuestMemory::Unwatch(source.Address() + 4096u, 4096u);
+            if (mode == 2u || mode == 3u) source.data[source.bytes - 1u] = 0x55u;
+            if (mode == 3u) AgcDriver::GuestMemory::Unwatch(source.Address() + 65536u, 4096u);
+        }
+        bool refused = false;
+        try {
+            device.ColorMetadataPass(pass);
+        } catch (const std::runtime_error& error) {
+            const std::string_view reason(error.what());
+            refused = reason.find("writes to a resident multisampled DCC") != std::string_view::npos || reason.find("requires watched guest memory") != std::string_view::npos;
+            if (!refused) throw;
+        }
+        Require(refused == (mode == 1u || mode == 2u || mode == 3u || mode == 5u), "DCC unwatch did not preserve unchanged data or refused a real write incorrectly");
+        if (!refused) Require(ReadBack(device, resolved) == before, "color unwatch changed a rendered sample");
+        if (mode == 4u || mode >= 6u) {
+            if (mode == 7u) fmask->data[0] = 0x55u;
+            else if (mode == 6u) cmask->data[0] = 0xffu;
+            else metadata.data[0] = 0xffu;
+            bool changedRefused = false;
+            try {
+                device.ColorMetadataPass(pass);
+            } catch (const std::runtime_error& error) {
+                changedRefused = std::string_view(error.what()).find("writes to a resident") != std::string_view::npos;
+            }
+            Require(changedRefused, "a DCC metadata write after unwatch was accepted");
+        }
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+        }
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{source.Address(), source.Address() + source.bytes}}};
+        Require(!AgcDriver::Graphics::MultisampleDccUnwatchLocksGpu(span), "a retired multisample color target still defers imports");
+        gpu.unlock();
+        cleanup.Finish();
+    }
+    std::puts("multisample DCC unwatch: partial range, writes before/during/after, repeated unwatch and metadata mutation controls passed");
+}
+
+std::atomic<int> dccGateStage{0};
+std::atomic<int> dccGateImport{-1};
+std::atomic<bool> dccGateWaited{false};
+
+void ColorPublishGateHook() {
+    AgcDriver::Graphics::SetMultisampleDccPublishHookForTest(nullptr);
+    dccGateStage.store(1, std::memory_order_release);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (AgcDriver::Graphics::MapImportGate::DrainingImportsForTest() != 0) {
+            dccGateWaited.store(true, std::memory_order_release);
+            return;
+        }
+        if (dccGateImport.load(std::memory_order_acquire) != -1) return;
+        std::this_thread::yield();
+    }
+}
+
+void DccPublishGateTests(AgcDriver::VulkanDevice& device) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    Block source(layout.Bytes() * 4u);
+    Block metadata(BlockBytes);
+    DccUnwatchCleanup cleanup{device};
+    std::memset(source.data, 0, source.bytes);
+    std::memset(metadata.data, 0xc0, metadata.bytes);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (context.hostImportAlignment == 0) throw std::runtime_error("color publication gate test requires host imports");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(AgcDriver::Graphics::ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "cannot adopt the device for the color publication test");
+    }
+    GuestAllocations::Mapped mapped;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix()) {
+        if (range->address == source.Address()) mapped.push_back(range);
+    }
+    Require(!mapped.empty(), "the color publication test has no registered color range");
+    dccGateStage.store(0);
+    dccGateImport.store(-1);
+    dccGateWaited.store(false);
+    const auto before = AgcDriver::Graphics::MapImportGate::CountersForTest();
+    AgcDriver::Graphics::SetMultisampleDccPublishHookForTest(&ColorPublishGateHook);
+    std::exception_ptr failure;
+    std::jthread mapping([&] {
+        try {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (dccGateStage.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+            if (dccGateStage.load(std::memory_order_acquire) == 0) {
+                dccGateImport.store(-2, std::memory_order_release);
+                return;
+            }
+            const auto imported = AgcDriver::Graphics::ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false);
+            dccGateImport.store(imported ? 0 : 1, std::memory_order_release);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    auto target = DecodeTarget(source, 4u);
+    target.dccAddress = metadata.Address();
+    target.dccPipeAligned = true;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Draw(device, target, false, Float32Export, Program({0.25f, 0.25f, 0.25f, 0.25f}, Float32Export, 1u), false, true);
+    }
+    mapping.join();
+    if (failure) std::rethrow_exception(failure);
+    const auto after = AgcDriver::Graphics::MapImportGate::CountersForTest();
+    Require(dccGateWaited.load() && after.drainWaits > before.drainWaits, "the map-time import did not wait for color publication");
+    Require(dccGateImport.load() == 1, "the map-time import did not defer after the color target was published");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(AgcDriver::Graphics::ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "the color import failed when retried under the GPU lock");
+        Draw(device, target, false, Float32Export, Program({0.25f, 0.25f, 0.25f, 0.25f}, Float32Export, 1u), false, true);
+    }
+    std::puts("multisample color publication: no-GPU import waited, deferred and retried under the GPU lock");
+    cleanup.Finish();
+}
+
 #ifndef _WIN32
 const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -1267,8 +1471,36 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
 
 int main(int argc, char** argv) {
     try {
+        std::unique_lock setup(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
+        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate")) setup.lock();
         const auto device = OpenVulkanTestDevice();
+        if (setup.owns_lock()) setup.unlock();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate")) {
+            if (!AgcDriver::GuestMemory::WriteWatched()) {
+                std::puts("skipped, multisample DCC unwatch tests require the guest write watch");
+                return VulkanTestSkipped;
+            }
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            const bool unwatch = std::string_view(argv[1]) == "--dcc-unwatch";
+            if (!unwatch && context.hostImportAlignment == 0) {
+                std::puts("skipped, host imports are unavailable for the multisample DCC publication gate test");
+                return VulkanTestSkipped;
+            }
+            const VkSampleCountFlags requiredSamples = unwatch ? VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT : VK_SAMPLE_COUNT_4_BIT;
+            if ((context.limits.framebufferColorSampleCounts & requiredSamples) != requiredSamples) {
+                std::puts("skipped, the device lacks the requested multisample color attachments");
+                return VulkanTestSkipped;
+            }
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-unwatch") {
+            DccUnwatchTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-publish-gate") {
+            DccPublishGateTests(*device);
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--dcc-srgb-clear") {
             const auto samples = std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
             Require(samples != 0, "unknown sRGB DCC test sample count");

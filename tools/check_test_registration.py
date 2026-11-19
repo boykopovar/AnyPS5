@@ -189,8 +189,7 @@ def commands(content):
             raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
-def registered(build):
-    names = set()
+def testfile_commands(build):
     pending = [Path(build)]
     visited = set()
     while pending:
@@ -202,11 +201,19 @@ def registered(build):
         if directory in visited or not file.is_file():
             continue
         visited.add(directory)
-        tests, latest = [], {}
-        for command, arguments in commands(file.read_text(encoding="utf-8", errors="replace")):
+        entries = list(commands(file.read_text(encoding="utf-8", errors="replace")))
+        for command, arguments in entries:
             if command == "subdirs":
                 pending.extend(directory / argument for argument in arguments)
-            elif command == "add_test" and arguments:
+        yield entries
+
+
+def registered(build):
+    names = set()
+    for entries in testfile_commands(build):
+        tests, latest = [], {}
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
                 test = [arguments[1:], False]
                 tests.append(test)
                 latest[arguments[0]] = test
