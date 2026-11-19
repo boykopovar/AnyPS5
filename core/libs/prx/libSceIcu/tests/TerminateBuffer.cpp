@@ -93,6 +93,8 @@ void Check() {
 
 int main() {
     Check<char, u_terminateChars_nid_postfix>();
+    Check<char16_t, u_terminateUChars_nid_postfix>();
     Check<std::int32_t, u_terminateUChar32s_nid_postfix>();
+    Check<std::uint16_t, u_terminateWChars_nid_postfix>();
     return 0;
 }
