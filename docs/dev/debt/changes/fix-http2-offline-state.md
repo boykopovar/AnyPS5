@@ -8,7 +8,7 @@
 
 ## change [sceHttp2WaitAsync]
 
-- [sceHttp2WaitAsync](../../../core/libs/prx/libSceHttp2/Export.cpp) - result validation and copy-out still access guest pointers directly, so an unmapped result pointer can fault the host.
+- [sceHttp2WaitAsync](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - reads `result->reserved` and `*timeout`, and writes `*timeout` and the completion to `result`, through `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` while preserving `errno`, returning `0x817B1225` (`ERROR_NULL_POINTER`) when a copy fails; a completion leaves the queue only after it is stored. Whether the console returns an error or faults on unmapped memory is unmeasured.
 
 ## add Functional
 
