@@ -291,11 +291,6 @@ int APS5_VABI pthread_get_user_context_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_getstack_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_multi_np_nid_postfix(void) {
     pthread_resume_all_np_nid_postfix();
     return 0;
@@ -1769,41 +1764,6 @@ int APS5_VABI sceKernelSlvNotifyError(void) {
 }
 
 int APS5_VABI sceKernelSpawn(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteActivate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteCreate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteDeactivate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteDelete(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteRead(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteStat(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteWrite(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

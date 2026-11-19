@@ -736,7 +736,12 @@ int APS5_VABI sceHttpSetEpollId(std::int32_t id, std::int32_t epollId, void* use
 }
 
 int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** userArg) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!epollId) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(id);
+    if (!options) return ERROR_INVALID_ID;
+    if (!HttpGuest::Store(epollId, options->epollId)) return ERROR_INVALID_VALUE;
+    (void)userArg;
     return 0;
 }
 
