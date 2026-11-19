@@ -1337,6 +1337,16 @@ void RetainedImagesReleasedBeforeHostPlacement() {
     const auto placed = context.DeviceMemoryType(0b11u, 16 * MiB, "test buffer");
     Expect(mock.frees == 3 && context.bufferPool->RetainedImages() == 0, "an allocation over the device-local budget was placed in host memory while retained image memory was kept");
     Expect(placed == 1u, "an allocation that still does not fit after the release was not placed in the host memory type");
+    const auto fourth = AllocateImageMemory(context, allocation, 1u, "test image", &type);
+    const auto fifth = AllocateImageMemory(context, allocation, 1u, "test image", &type);
+    reportedUsage = 500 * MiB;
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ReleaseImageMemory(context, fourth, 4 * MiB, 0);
+    ReleaseImageMemory(context, fifth, 4 * MiB, 0);
+    Expect(context.bufferPool->RetainedImages() == 2, "two released images under the budget were not retained");
+    reportedUsage = 1000 * MiB;
+    const auto device = context.DeviceMemoryType(0b11u, 6 * MiB, "test buffer");
+    Expect(device == 0u && mock.frees == 5 && context.bufferPool->RetainedImages() == 0, "an allocation covered by released retained image memory was placed in host memory while the reported usage had not caught up");
 }
 
 void ImageMemoryReuse() {

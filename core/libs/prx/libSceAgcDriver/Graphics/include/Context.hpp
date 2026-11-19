@@ -454,7 +454,9 @@ struct Context {
         if (retainedImageReclaim != nullptr) {
             const auto now = ReportedHeap(heap);
             const auto wanted = bytes + (now.usage > now.budget ? now.usage - now.budget : 0u);
-            if (retainedImageReclaim(*this, wanted) != 0 && ReportedHeap(heap).Fits(bytes)) return type;
+            const auto released = retainedImageReclaim(*this, wanted);
+            if (released >= wanted) return type;
+            if (released != 0 && ReportedHeap(heap).Fits(bytes)) return type;
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
