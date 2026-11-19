@@ -1311,7 +1311,6 @@ int APS5_VABI _ZN7WebCore20SharedBufferDataViewC2ERKS0_();
 int APS5_VABI _ZN3WTF12refIfNotNullI14_cairo_surfaceEEvPT_();
 int APS5_VABI _ZN7WebCore14FrameSelection6moveToERKNS_15VisiblePositionES3_NS_14EUserTriggeredE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_bf9DmWEMjZg_nid_no_patch();
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS0_9OptionSetINS_13ActivityState4FlagEEE();
 int APS5_VABI _ZN7WebCore4Page16stopMediaCaptureEv();
 int APS5_VABI _ZN7WebCore20ResourceResponseBase14setHTTPVersionERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore21wordRangeFromPositionERKNS_15VisiblePositionE();
