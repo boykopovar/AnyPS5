@@ -143,7 +143,7 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))

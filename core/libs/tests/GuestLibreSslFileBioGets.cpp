@@ -3,16 +3,20 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -132,6 +136,115 @@ void CheckNullArguments() {
     Require(std::fclose(native) == 0, "close null-buffer fixture");
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "guarded page allocation");
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page mapping");
+        data = static_cast<char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    char* Tail(const char* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return data + bytes - size;
+    }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only page protection");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only page protection");
+#endif
+    }
+
+private:
+    char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template<class TFunction>
+void RequireRejected(TFunction function, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, message);
+}
+
+void CheckGuestPointers() {
+    auto* unmapped = reinterpret_cast<char*>(0x10);
+    GuardedPage page;
+    auto* native = std::tmpfile();
+    Require(native && std::fwrite("AB\nCD\n", 1, 6, native) == 6, "write guest pointer fixture");
+    std::rewind(native);
+    FileStream stream(native);
+    auto* bio = BIO_new_fp_nid_postfix(&stream, 0);
+    Require(bio != nullptr, "create guest pointer file BIO");
+    RequireRejected([&] { bio->method->gets(bio, unmapped, 4); }, "unmapped gets destination");
+    RequireRejected([&] { bio->method->gets(bio, page.Tail("...", 3), 4); }, "gets destination running into an unmapped page");
+    Require(std::ftell(native) == 0, "rejected gets destinations consume nothing");
+    char* line = page.Tail("!!!!", 4);
+    Require(bio->method->gets(bio, line, 4) == 3 && std::memcmp(line, "AB\n", 4) == 0, "gets destination ending at a page boundary");
+    RequireRejected([&] { BIO_ctrl_nid_postfix(bio, 107, 0, unmapped); }, "unmapped stream output");
+    FileStream* queried = nullptr;
+    Require(BIO_ctrl_nid_postfix(bio, 107, 0, &queried) == 1 && queried == &stream, "stream output after a rejected destination");
+
+    auto* written = std::tmpfile();
+    Require(written != nullptr, "create puts fixture");
+    FileStream writtenStream(written);
+    auto* writer = BIO_new_fp_nid_postfix(&writtenStream, 0);
+    Require(writer != nullptr, "create puts file BIO");
+    RequireRejected([&] { BIO_puts_nid_postfix(writer, unmapped); }, "unmapped file puts string");
+    RequireRejected([&] { BIO_puts_nid_postfix(writer, page.Tail("zz", 2)); }, "unterminated file puts string running into an unmapped page");
+    Require(BIO_puts_nid_postfix(writer, page.Tail("xy", 3)) == 2, "file puts string ending at a page boundary");
+    Require(BIO_ctrl_nid_postfix(writer, 11, 0, nullptr) == 1, "flush puts file BIO");
+    std::rewind(written);
+    char contents[8]{};
+    Require(std::fread(contents, 1, sizeof(contents), written) == 2 && std::string(contents) == "xy", "file puts writes only the accepted string");
+    Require(BIO_free_nid_postfix(writer) == 1, "free puts file BIO");
+    Require(std::fclose(written) == 0, "close puts fixture");
+
+    auto* socket = BIO_new_socket_nid_postfix(42, 0);
+    Require(socket != nullptr, "create guest pointer socket BIO");
+    RequireRejected([&] { BIO_puts_nid_postfix(socket, unmapped); }, "unmapped socket puts string");
+    RequireRejected([&] { BIO_puts_nid_postfix(socket, page.Tail("zz", 2)); }, "unterminated socket puts string running into an unmapped page");
+    Require(BIO_free_nid_postfix(socket) == 1, "free guest pointer socket BIO");
+
+    line = page.Tail("!!!!", 4);
+    page.ReadOnly();
+    RequireRejected([&] { bio->method->gets(bio, line, 4); }, "read-only gets destination");
+    Require(std::ftell(native) == 3 && std::memcmp(line, "!!!!", 4) == 0, "rejected read-only destination consumes nothing");
+    Require(BIO_free_nid_postfix(bio) == 1, "free guest pointer file BIO");
+    Require(std::fclose(native) == 0, "close guest pointer fixture");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -155,5 +268,6 @@ int main(int argc, char** argv) {
         Check("ABC", -1, 0, 0, true);
     } else if (name == "read_error") CheckReadError();
     else if (name == "null_arguments") CheckNullArguments();
+    else if (name == "guest_pointers") CheckGuestPointers();
     else Require(false, "unknown file gets case");
 }
