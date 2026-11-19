@@ -52,6 +52,14 @@ alignas(256) constexpr std::array<std::uint32_t, 17> LineArrayStoreCode{
     0x7e3e02c1, 0xf0201520, 0x0001141e, 0x7e3e0281, 0xf0201520, 0x0001141e, 0xbf810000, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 15> ArrayAtomicCode{
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0x7e400315, 0xf0443128,
+    0x0001141e, 0xbf8c3f70, 0xe070100c, 0x80001401, 0xbf8c3f70, 0xbf810000, 0xbf810000,
+};
+
+constexpr std::uint32_t Format32UInt = 20u;
+constexpr std::array<std::uint32_t, 4> AtomicLayers{0u, 1u, 2u, 0xffffffffu};
+
 class GuestBlock {
 public:
     GuestBlock() {
@@ -193,6 +201,48 @@ void CheckTexels(const std::uint8_t* texels, const Format& format, const Case& t
     Require(std::equal(texels + end, texels + TexelBytes, initial.begin() + static_cast<std::ptrdiff_t>(end)), what + ": bytes past the texture changed");
 }
 
+void CheckAtomics(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const Case test{"image_atomic_add 2d_array through a 2D T#", ArrayAtomicCode, Type2D, 1u};
+    const Format format{"32_UINT", Format32UInt, 1u};
+    std::vector<std::uint32_t> initial(Width);
+    for (std::uint32_t x = 0; x < Width; ++x) initial[x] = 1000u + x;
+    std::copy(reinterpret_cast<const std::uint8_t*>(initial.data()), reinterpret_cast<const std::uint8_t*>(initial.data() + Width), texels + TexelOffset(format, test, 0u, 0u));
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Input[tid * 4u + 0u] = 5u + tid;
+        Input[tid * 4u + 1u] = AtomicLayers[tid % AtomicLayers.size()];
+        Input[tid * 4u + 2u] = 0u;
+        Input[tid * 4u + 3u] = 0xdeadbeefu;
+    }
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto buffer = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto texture = TextureDescriptor(texels, format.format, test);
+    std::copy(buffer.begin(), buffer.end(), userData.begin());
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(test.code.data()), std::as_bytes(test.code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(test.code.data()), test.code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(test.code.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto layer = AtomicLayers[tid % AtomicLayers.size()];
+        std::uint32_t stored = 0;
+        std::memcpy(&stored, texels + TexelOffset(format, test, tid, 0u), 4u);
+        const auto wantedStored = layer == 0u ? initial[tid] + 5u + tid : initial[tid];
+        const auto wantedReturned = layer == 0u ? initial[tid] : 0u;
+        Require(stored == wantedStored, std::string(test.name) + ": texel " + std::to_string(tid) + " at layer " + Hex(layer) + " is " + Hex(stored) + ", expected " + Hex(wantedStored));
+        Require(Input[tid * 4u + 3u] == wantedReturned, std::string(test.name) + ": lane " + std::to_string(tid) + " at layer " + Hex(layer) + " returned " + Hex(Input[tid * 4u + 3u]) + ", expected " + Hex(wantedReturned));
+    }
+}
+
 }
 
 int main() {
@@ -212,6 +262,7 @@ int main() {
                 CheckTexels(texels, format, test);
             }
         }
+        CheckAtomics(*device, texels);
         std::puts("image store layer through single layer tests passed");
         return 0;
     } catch (const std::exception& error) {
