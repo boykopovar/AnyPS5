@@ -152,13 +152,17 @@ def fold(root, write):
         texts[operation.library] = apply(texts[operation.library], operation)
     if write:
         for library, text in texts.items():
-            (root / debt_file(library)).write_text(text, encoding="utf-8", newline="\n")
+            with (root / debt_file(library)).open("w", encoding="utf-8", newline="\n") as output:
+                output.write(text)
         for path in fragments:
             path.unlink()
     return texts, fragments
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="apply the debt fragments in docs/dev/debt/changes/ to the debt files")
     parser.add_argument("--check", action="store_true", help="check that every fragment applies, change nothing")
     parser.add_argument("--show", metavar="LIBRARY", help="print LIBRARY's debt file with the pending fragments applied")

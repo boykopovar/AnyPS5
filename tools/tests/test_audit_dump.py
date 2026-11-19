@@ -14,7 +14,8 @@ import audit_dump
 import unwrap_self
 
 SELF = b"\x4f\x15\x3d\x1d" + b"\0" * 60
-ELF = b"\x7fELF" + b"\0" * 60
+ELF = b"\x7fELF" + b"\0" * 12 + b"\x18\xfe" + b"\0" * 46
+EXECUTABLE = b"\x7fELF" + b"\0" * 12 + b"\x10\xfe" + b"\0" * 46
 
 
 def fake_unwrap(source, destination, verbose=False):
@@ -129,6 +130,28 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(extra, [])
         self.assertEqual(messages, ["staged eboot.bin and 0 modules"])
 
+    def test_executables_found_by_magic_are_skipped_with_a_message(self):
+        self.module("eboot.bin.esbak", EXECUTABLE)
+        self.module("sce_module/libc.prx")
+        self.module("sce_module/launcher.bin", EXECUTABLE)
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / "eboot.bin.esbak").exists())
+        self.assertFalse((source / "sce_module" / "launcher.bin").exists())
+        self.assertTrue((source / "sce_module" / "libc.prx").is_file())
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["skipped launcher.bin: not a shared module (ELF type 0xfe10)",
+                                    "skipped eboot.bin.esbak: not a shared module (ELF type 0xfe10)",
+                                    "staged eboot.bin and 1 modules"])
+
+    def test_an_executable_with_a_module_suffix_still_reaches_the_relinker(self):
+        self.module("sce_module/odd.prx", EXECUTABLE)
+        source = self.root / "source"
+        audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "sce_module" / "odd.prx").read_bytes(), EXECUTABLE)
+
     def test_a_module_that_is_neither_a_self_nor_an_elf_is_refused(self):
         self.module("sce_module/broken.prx", b"MZ" + b"\0" * 62)
         with self.assertRaises(unwrap_self.Refused):
@@ -234,6 +257,49 @@ class AuditDumpTests(unittest.TestCase):
         output = work / "output"
         self.assertEqual(argv[:2], [str(output / "app.libc.prx.guest.prx.registry.json"), str(output / "app.registry.json")])
         self.assertEqual(argv[2:], ["--libs", "libs-a", "--libs", "libs-b", "--modules", str(work / "source" / "sce_module"), "--json", "report.json"])
+
+    def test_the_modules_beside_eboot_are_audited_without_the_executable(self):
+        self.module("sce_module/libc.prx")
+        self.module("libfmod.prx")
+        self.module("guest.bin", ELF)
+        work = self.root / "work"
+        commands = []
+
+        def relink(command, **options):
+            commands.append(command)
+            (Path(command[-1]).parent / "app.registry.json").write_text("[]")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(subprocess, "run", side_effect=relink), mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit:
+            code, _ = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+        self.assertEqual(code, 0)
+        source = work / "source"
+        self.assertEqual(commands[0][-4:], ["--module-dir", ".", str(source / "eboot.elf"), str(work / "output" / "app.elf")])
+        argv = audit.call_args.args[0]
+        modules = [Path(argv[index + 1]) for index, option in enumerate(argv) if option == "--modules"]
+        self.assertEqual(len(modules), 2)
+        self.assertEqual(modules[0], source / "sce_module")
+        self.assertEqual(modules[1].parent, source)
+        self.assertEqual(sorted(path.name for path in modules[1].iterdir()), ["guest.bin", "libfmod.prx"])
+        for name in ("guest.bin", "libfmod.prx"):
+            self.assertEqual((modules[1] / name).read_bytes(), (source / name).read_bytes())
+        self.assertTrue((source / "eboot.elf").is_file())
+
+    def test_modules_beside_eboot_that_cannot_be_gathered_stop_before_the_audit(self):
+        self.module("libfmod.prx")
+
+        def relink(command, **options):
+            (Path(command[-1]).parent / "app.registry.json").write_text("[]")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(subprocess, "run", side_effect=relink), \
+                mock.patch.object(audit_dump.os, "link", side_effect=OSError("no links")), \
+                mock.patch.object(audit_dump.shutil, "copyfile", side_effect=OSError("no copies")), \
+                mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", self.root / "work")
+        self.assertEqual(code, 2)
+        self.assertIn("cannot gather the modules beside eboot.bin: no copies", errors)
+        audit.assert_not_called()
 
     def test_a_reused_work_directory_does_not_audit_registries_left_by_an_earlier_run(self):
         work = self.root / "work"
@@ -845,6 +911,92 @@ class AuditDumpTests(unittest.TestCase):
                                  "--relinker", str(self.relinker), "--libs", "libs"], env=env, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
+
+
+class ModuleListTests(unittest.TestCase):
+    def test_modules_of_keeps_regular_module_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            (root / 'notes.txt').write_text('x', encoding='utf-8')
+            (root / 'folder.prx').mkdir()
+            self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+
+    def test_report_overlaps_dump_flags_paths_inside_or_aliasing_the_dump(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dump = root / 'dump'
+            (dump / 'sce_module').mkdir(parents=True)
+            (dump / 'eboot.bin').write_bytes(b'x')
+            outside = root / 'report.json'
+            self.assertFalse(audit_dump.report_overlaps_dump(outside, dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'report.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module' / 'r.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'eboot.bin', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module', dump))
+class StageRefusalTests(unittest.TestCase):
+    def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
+        import unwrap_self
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'junk.prx'
+            source.write_bytes(b'nope' * 100)
+            destination = root / 'out' / 'junk.prx'
+            with self.assertRaises(unwrap_self.Refused):
+                audit_dump.stage(source, destination)
+            self.assertFalse(destination.exists())
+
+class ElfTypeTests(unittest.TestCase):
+    def test_reads_the_little_endian_type_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "m.elf"
+            path.write_bytes(b"\x7fELF" + bytes(12) + (3).to_bytes(2, "little") + bytes(4))
+            self.assertEqual(audit_dump.elf_type(path), 3)
+
+    def test_file_shorter_than_the_type_field_has_no_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for size in (0, 17):
+                path = Path(directory) / f"short{size}"
+                path.write_bytes(bytes(size))
+                self.assertIsNone(audit_dump.elf_type(path))
+
+
+class AuditDirectoriesTests(unittest.TestCase):
+    def test_other_directories_pass_through_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            self.assertEqual(audit_dump.audit_directories([other], source), [other])
+            self.assertEqual(list(source.iterdir()), [])
+
+    def test_source_directory_is_replaced_by_a_copy_without_the_eboot_or_subdirectories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            (source / "b.sprx").write_bytes(b"b")
+            (source / "eboot.elf").write_bytes(b"e")
+            (source / "nested").mkdir()
+            audited = audit_dump.audit_directories([other, source], source)
+            self.assertEqual(audited[0], other)
+            self.assertNotEqual(audited[1], source)
+            self.assertEqual(audited[1].parent, source)
+            self.assertTrue(audited[1].name.startswith("modules-"))
+            self.assertEqual(sorted(path.name for path in audited[1].iterdir()), ["a.prx", "b.sprx"])
+            self.assertEqual((audited[1] / "a.prx").read_bytes(), b"a")
+
+    def test_copies_when_hard_links_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            with mock.patch.object(audit_dump.os, "link", side_effect=OSError("no links")):
+                audited = audit_dump.audit_directories([source], source)
+            self.assertEqual((audited[0] / "a.prx").read_bytes(), b"a")
 
 
 if __name__ == "__main__":

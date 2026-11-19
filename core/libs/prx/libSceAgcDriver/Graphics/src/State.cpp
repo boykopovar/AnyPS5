@@ -26,9 +26,33 @@ namespace AgcDriver::Graphics {
 
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     if (state.depth || pixel.posZ) return;
+    for (auto& extra : state.extraViewports) {
+        if (!std::isfinite(extra.minDepth) || !std::isfinite(extra.maxDepth)) continue;
+        extra.minDepth = std::clamp(extra.minDepth, 0.0f, 1.0f);
+        extra.maxDepth = std::clamp(extra.maxDepth, 0.0f, 1.0f);
+    }
     if (!std::isfinite(state.viewport.minDepth) || !std::isfinite(state.viewport.maxDepth)) return;
     state.viewport.minDepth = std::clamp(state.viewport.minDepth, 0.0f, 1.0f);
     state.viewport.maxDepth = std::clamp(state.viewport.maxDepth, 0.0f, 1.0f);
+}
+
+void ApplyViewportIndex(const Context& context, State& state) {
+    if (state.viewportExports == 0u) return;
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.rectList && !state.stages.mesh.has_value();
+    const bool direct = (vertex && context.viewportIndexLayer) || state.stages.mesh.has_value();
+    if (context.multiViewport && direct) {
+        Require(ViewportCount(state) == MaxViewports && state.viewportScissors.size() == MaxViewports, "a viewport index draw must declare all 16 viewports, since the 4-bit index can name any of them");
+        return;
+    }
+    static bool reported = false;
+    if (!reported) {
+        reported = true;
+        std::fprintf(stderr, "[gpu] viewport index vertex exports are ignored: %s\n", !context.multiViewport ? "the device has no multiViewport with 16 viewports" : vertex ? "the device has no VK_EXT_shader_viewport_index_layer for vertex draws" : "only vertex and mesh draws select a viewport");
+    }
+    if (!state.viewportScissors.empty()) state.scissor = state.viewportScissors.front();
+    state.viewportExports = 0u;
+    state.extraViewports.clear();
+    state.viewportScissors.clear();
 }
 
 namespace {
@@ -120,6 +144,13 @@ std::string tessellationMessage(std::uint32_t config, std::uint32_t parameters, 
 void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, const char* name, RegisterBank bank = RegisterBank::Context) {
     const auto value = read(registers, offset, bank);
     if ((value & mask) != 0) throw std::runtime_error(zeroMessage(offset, value, name));
+}
+
+bool viewportProgrammed(const Registers& registers) {
+    for (std::uint32_t word = 0; word < 6; ++word) {
+        if (read(registers, 0x10f + word) != (word % 2 == 0 ? 0x3f800000u : 0u)) return true;
+    }
+    return false;
 }
 
 std::string vteMessage(std::uint32_t viewportControl) {
@@ -1110,6 +1141,36 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
     }
 }
 
+bool intersectViewportScissor(VkRect2D& result, const Registers& registers, std::uint32_t offset) {
+    const auto tl = read(registers, offset);
+    const auto br = read(registers, offset + 1);
+    if ((tl & 0x8000u) != 0 || (br & 0x80008000u) != 0) return false;
+    const auto x = tl & 0xffffu;
+    const auto y = (tl >> 16u) & 0x7fffu;
+    const auto right = br & 0xffffu;
+    const auto bottom = br >> 16u;
+    const auto oldRight = static_cast<std::uint32_t>(result.offset.x) + result.extent.width;
+    const auto oldBottom = static_cast<std::uint32_t>(result.offset.y) + result.extent.height;
+    const auto left = std::max(static_cast<std::uint32_t>(result.offset.x), x);
+    const auto top = std::max(static_cast<std::uint32_t>(result.offset.y), y);
+    result.offset = {static_cast<std::int32_t>(left), static_cast<std::int32_t>(top)};
+    result.extent = {std::min(oldRight, right) > left ? std::min(oldRight, right) - left : 0, std::min(oldBottom, bottom) > top ? std::min(oldBottom, bottom) - top : 0};
+    return true;
+}
+
+void unite(VkRect2D& bounds, const VkRect2D& rect) {
+    if (rect.extent.width == 0 || rect.extent.height == 0) return;
+    if (bounds.extent.width == 0 || bounds.extent.height == 0) {
+        bounds = rect;
+        return;
+    }
+    const auto left = std::min(bounds.offset.x, rect.offset.x);
+    const auto top = std::min(bounds.offset.y, rect.offset.y);
+    const auto right = std::max(static_cast<std::int64_t>(bounds.offset.x) + bounds.extent.width, static_cast<std::int64_t>(rect.offset.x) + rect.extent.width);
+    const auto bottom = std::max(static_cast<std::int64_t>(bounds.offset.y) + bounds.extent.height, static_cast<std::int64_t>(rect.offset.y) + rect.extent.height);
+    bounds = {{left, top}, {static_cast<std::uint32_t>(right - left), static_cast<std::uint32_t>(bottom - top)}};
+}
+
 void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offset, bool screen) {
     const auto tl = read(registers, offset);
     const auto br = read(registers, offset + 1);
@@ -1408,7 +1469,10 @@ std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& que
     return DepthRenderControl{address & ~std::uint64_t{65535u}, 1u << ((zInfo->second >> 2u) & 3u), control->second};
 }
 
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants) {
+namespace {
+
+template <typename TReadConstant>
+ReversedBlend translateReversedBlendWith(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, TReadConstant&& readConstant) {
     const auto refuse = [&](const char* reason) {
         char text[320];
         std::snprintf(text, sizeof(text), "AGC graphics: blending into a color target with a reversed component order %s (CB_BLEND_CONTROL 0x%08x, component mapping 0x%02x, VkFormat %d)", reason, blendControl, componentMapping, static_cast<int>(format));
@@ -1443,7 +1507,10 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     for (const auto factor : color) {
         if (factor == VK_BLEND_FACTOR_DST_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA || factor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE) refuse("with a factor of the destination alpha in the color equation, which the target keeps in its first channel, is not implemented");
     }
-    const auto guestConstant = [&](std::uint32_t component) { return format == VK_FORMAT_R16G16B16A16_SFLOAT ? constants[component] : std::clamp(constants[component], 0.0f, 1.0f); };
+    const auto guestConstant = [&](std::uint32_t component) {
+        const float value = readConstant(component);
+        return format == VK_FORMAT_R16G16B16A16_SFLOAT ? value : std::clamp(value, 0.0f, 1.0f);
+    };
     const auto fixedValue = [&](VkBlendFactor factor, std::uint32_t component) -> std::optional<float> {
         switch (factor) {
             case VK_BLEND_FACTOR_ZERO: return 0.0f;
@@ -1506,6 +1573,12 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     return result;
 }
 
+}
+
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants) {
+    return translateReversedBlendWith(blendControl, componentMapping, format, forceDestinationAlphaOne, [&](std::uint32_t component) { return constants[component]; });
+}
+
 void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled) {
     if (!enabled || !state.depthBoundsTest || !state.depth || state.depth->format != VK_FORMAT_D32_SFLOAT_S8_UINT) return;
     if (state.depthTest || state.depthWrite || state.stencilTest || state.depthBias || state.depthBiasPerFace || state.depthRemap.mode != 0) return;
@@ -1539,12 +1612,17 @@ void ApplyDepthBoundsEmulation(const Context& context, State& state, const Shade
     state.depthBiasPerFace = false;
     state.viewport.minDepth = bound;
     state.viewport.maxDepth = bound;
+    for (auto& extra : state.extraViewports) {
+        extra.minDepth = bound;
+        extra.maxDepth = bound;
+    }
 }
 
 void ApplyDepthRemap(const Context& context, State& state) {
-    const auto& viewport = state.viewport;
-    const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
+    const auto withinUnitRange = [](const VkViewport& viewport) { return viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1; };
+    const bool inRange = withinUnitRange(state.viewport) && std::ranges::all_of(state.extraViewports, withinUnitRange);
     if (context.depthRangeUnrestricted || inRange) return;
+    Require(state.extraViewports.empty(), "viewport depth outside [0, 1] is remapped for a single viewport only");
     const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
     Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
@@ -1849,15 +1927,17 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     result.quadSampleMask = decodeQuadSampleMask(cx, result.samples);
     result.pixelEarlyZ = !PixelProgramSkipped(queue) && PixelEarlyZ(read(cx, 0x203));
     result.pixelKill = !PixelProgramSkipped(queue) && (read(cx, 0x203) & 0x40u) != 0;
-    if ((read(cx, 0x207) & LayerExports & ~result.layerExports & ~(1u << 21u)) != 0) {
+    result.viewportExports = read(cx, 0x207) & ViewportIndexExport;
+    if ((read(cx, 0x207) & LayerExports & ~result.layerExports & ~result.viewportExports & ~(1u << 21u)) != 0) {
         static bool reported = false;
         if (!reported) {
             reported = true;
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
+    const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
     bool collapsed = false;
-    if (viewportControl == 0u) {
+    if (viewportControl == 0u && !viewportProgrammed(cx)) {
         result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
     } else {
         const auto xs = readFloat(cx, 0x10f);
@@ -1869,7 +1949,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
         const auto maxDepth = zo + zs;
         APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
-        const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
         collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
         if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
             std::ostringstream message;
@@ -1896,6 +1975,46 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if ((read(cx, 0x292) & 2u) != 0) intersect(result.scissor, cx, 0x94, false);
     if (collapsed) result.scissor.extent = {0, 0};
     APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
+    if (result.viewportExports != 0u) {
+        const auto clearControl = find(cx, 0x000);
+        const bool depthClear = result.depth && clearControl != cx.end() && (clearControl->second & 1u) != 0;
+        result.viewportScissors.assign(1, result.scissor);
+        auto bounds = result.scissor;
+        for (std::uint32_t index = 1; index < MaxViewports; ++index) {
+            const auto base = 0x10fu + 6u * index;
+            const auto optionalFloat = [&](std::uint32_t offset) {
+                const auto it = find(cx, offset);
+                return it == cx.end() ? std::numeric_limits<float>::quiet_NaN() : std::bit_cast<float>(it->second);
+            };
+            const auto vxs = optionalFloat(base);
+            const auto vxo = optionalFloat(base + 1u);
+            const auto vys = optionalFloat(base + 2u);
+            const auto vyo = optionalFloat(base + 3u);
+            const auto vzs = optionalFloat(base + 4u);
+            const auto vzo = optionalFloat(base + 5u);
+            const auto vMinDepth = result.negativeOneToOne ? vzo - vzs : vzo;
+            const auto vMaxDepth = vzo + vzs;
+            const bool vCollapsed = (vxs == 0 || vys == 0) && vxs >= 0 && areaFree && std::isfinite(vxo) && std::isfinite(vyo) && std::isfinite(vMinDepth) && std::isfinite(vMaxDepth);
+            bool usable = vCollapsed || (vxs > 0 && std::isfinite(vxs) && vys != 0 && std::isfinite(vys) && std::isfinite(vxo) && std::isfinite(vyo) && std::isfinite(vMinDepth) && std::isfinite(vMaxDepth));
+            auto viewport = vCollapsed ? VkViewport{vxo, vyo, 1, 1, vMinDepth, vMaxDepth} : VkViewport{vxo - vxs, vyo - vys, 2 * vxs, 2 * vys, vMinDepth, vMaxDepth};
+            if (depthClear) {
+                viewport.minDepth = result.depth->clearDepth;
+                viewport.maxDepth = result.depth->clearDepth;
+            }
+            VkRect2D scissor{{0, 0}, result.renderExtent};
+            intersect(scissor, cx, 0xc, true);
+            intersect(scissor, cx, 0x81, false);
+            intersect(scissor, cx, 0x90, false);
+            const auto vportScissor = 0x94u + 2u * index;
+            if ((read(cx, 0x292) & 2u) != 0 && (find(cx, vportScissor) == cx.end() || find(cx, vportScissor + 1u) == cx.end() || !intersectViewportScissor(scissor, cx, vportScissor))) usable = false;
+            if (!usable) viewport = VkViewport{0, 0, 1, 1, 0, 1};
+            if (!usable || vCollapsed) scissor.extent = {0, 0};
+            result.extraViewports.push_back(viewport);
+            result.viewportScissors.push_back(scissor);
+            unite(bounds, scissor);
+        }
+        result.scissor = bounds;
+    }
     result.blends.assign(exportCount, VkPipelineColorBlendAttachmentState{});
     std::array<float, 4> requiredBlendConstants{};
     std::uint32_t requiredBlendMask = 0;
@@ -1915,9 +2034,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
             const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
-            for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
+            const auto recordBlendConstant = [&](std::uint32_t channel, float value) {
+                Require((requiredBlendMask & (1u << channel)) == 0 || requiredBlendConstants[channel] == value, "color targets require conflicting blend constants after component swap");
+                requiredBlendConstants[channel] = value;
+                requiredBlendMask |= 1u << channel;
+            };
             if (reversed) {
-                const auto translated = TranslateReversedBlend(blend, mapping, color.format, opaqueDestination, result.blendConstants);
+                const auto translated = translateReversedBlendWith(blend, mapping, color.format, opaqueDestination, [&](std::uint32_t component) { return readFloat(cx, 0x105 + component); });
                 state.srcColorBlendFactor = translated.blend.srcColorBlendFactor;
                 state.dstColorBlendFactor = translated.blend.dstColorBlendFactor;
                 state.colorBlendOp = translated.blend.colorBlendOp;
@@ -1927,9 +2050,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if (translated.shaderCode != 0u) result.reversedBlend = translated.shaderCode;
                 for (std::uint32_t i = 0; i < 4; ++i) {
                     if ((translated.constantMask & (1u << i)) == 0u || (state.colorWriteMask & (1u << i)) == 0u) continue;
-                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == translated.constants[i], "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[i] = translated.constants[i];
-                    requiredBlendMask |= 1u << i;
+                    recordBlendConstant(i, translated.constants[i]);
                 }
             } else {
                 state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
@@ -1955,21 +2076,14 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 const auto factorsCount = [](VkBlendOp op) { return op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX; };
                 const bool colorReadsAlpha = (state.colorWriteMask & 7u) != 0 && factorsCount(state.colorBlendOp) && (constantAlpha(state.srcColorBlendFactor) || constantAlpha(state.dstColorBlendFactor));
                 const bool alphaReadsAlpha = (state.colorWriteMask & 8u) != 0 && factorsCount(state.alphaBlendOp) && (anyConstant(state.srcAlphaBlendFactor) || anyConstant(state.dstAlphaBlendFactor));
-                if (colorReadsAlpha || alphaReadsAlpha) {
-                    const auto value = result.blendConstants[3];
-                    Require((requiredBlendMask & 8u) == 0 || requiredBlendConstants[3] == value, "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[3] = value;
-                    requiredBlendMask |= 8u;
-                }
+                if (colorReadsAlpha || alphaReadsAlpha) recordBlendConstant(3u, readFloat(cx, 0x105 + 3u));
             }
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
-            if ((mapping == 0xe4u || mapping == 0xc6u) && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
+            if (!reversed && mapping != 0xecu && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
                 for (std::uint32_t i = 0; i < 3; ++i) {
                     if ((state.colorWriteMask & (1u << i)) == 0) continue;
-                    const auto value = result.blendConstants[(mapping >> (2u * i)) & 3u];
-                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == value, "color targets require conflicting blend constants after component swap");
-                    requiredBlendConstants[i] = value;
-                    requiredBlendMask |= 1u << i;
+                    const std::uint32_t sourceChannel = (mapping == 0xe4u || mapping == 0xc6u) ? ((mapping >> (2u * i)) & 3u) : i;
+                    recordBlendConstant(i, readFloat(cx, 0x105 + sourceChannel));
                 }
             }
             if (mapping == 0xecu) {
@@ -2607,7 +2721,7 @@ bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTa
     }
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
-    const bool viewportCovers = viewportControl == 0u || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
+    const bool viewportCovers = (viewportControl == 0u && !viewportProgrammed(cx)) || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
     const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= extent.width && covered.extent.height >= extent.height;
     return viewportCovers && scissorCovers;
 }
@@ -2859,7 +2973,7 @@ bool PixelProgramSkipped(const QueueState& queue) {
     if (targetMask == cx.end() || shaderMask == cx.end() || shaderControl == cx.end()) return false;
     const auto alphaToMask = find(cx, 0x2dc);
     if (alphaToMask != cx.end() && (alphaToMask->second & 1u) != 0) return false;
-    return (targetMask->second & shaderMask->second) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
+    return ColorWriteMask(cx) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
 }
 
 std::string NullPixelProgramRejection(const QueueState& queue) {
