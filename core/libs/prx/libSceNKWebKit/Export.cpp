@@ -25978,10 +25978,6 @@ int APS5_VABI _ZNK3JSC18BasicBlockLocation8dumpDataEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC18BytecodeCacheError7isValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC18BytecodeCacheError7messageEv() {
     NotImplemented_nid_no_patch(__func__);
 }

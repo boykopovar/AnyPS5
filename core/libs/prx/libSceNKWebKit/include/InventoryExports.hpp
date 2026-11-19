@@ -4713,7 +4713,6 @@ int APS5_VABI _ZNK3JSC16ScriptExecutable9endColumnEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame8sourceIDEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame9thisValueERNS_2VME();
 int APS5_VABI _ZNK3JSC18BasicBlockLocation8dumpDataEv();
-int APS5_VABI _ZNK3JSC18BytecodeCacheError7isValidEv();
 int APS5_VABI _ZNK3JSC18BytecodeCacheError7messageEv();
 int APS5_VABI _ZNK3JSC18GCActivityCallback9isEnabledEv();
 int APS5_VABI _ZNK3JSC19CacheableIdentifier4dumpERN3WTF11PrintStreamE();
