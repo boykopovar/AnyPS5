@@ -79,22 +79,6 @@ int APS5_VABI udtitvfmt_resultAsValue_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uldn_keyValueDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_localeDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_regionDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uldn_scriptDisplayName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ulistfmt_resultAsValue_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

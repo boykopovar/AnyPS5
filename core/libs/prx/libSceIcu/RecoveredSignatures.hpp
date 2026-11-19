@@ -159,7 +159,11 @@ std::int32_t APS5_VABI uidna_nameToUnicode_nid_postfix(const UIDNA* idna, const 
 UIDNA* APS5_VABI uidna_openUTS46_nid_postfix(std::uint32_t options, std::int32_t* pErrorCode);
 
 void APS5_VABI uldn_close_nid_postfix(ULocaleDisplayNames* names);
+std::int32_t APS5_VABI uldn_keyValueDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* key, const char* value, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
+std::int32_t APS5_VABI uldn_localeDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* locale, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
 ULocaleDisplayNames* APS5_VABI uldn_openForContext_nid_postfix(const char* locale, std::int32_t* contexts, std::int32_t length, std::int32_t* status);
+std::int32_t APS5_VABI uldn_regionDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* region, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
+std::int32_t APS5_VABI uldn_scriptDisplayName_nid_postfix(const ULocaleDisplayNames* names, const char* script, char16_t* result, std::int32_t maxResultSize, std::int32_t* status);
 
 void APS5_VABI ulistfmt_close_nid_postfix(UListFormatter* listfmt);
 void APS5_VABI ulistfmt_closeResult_nid_postfix(UFormattedList* result);
