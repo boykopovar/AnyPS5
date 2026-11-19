@@ -99,6 +99,15 @@ bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& desc
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
+bool gcnUnboundSampledImage(const ImageResource& image, const DescriptorValue& descriptor) {
+    if (image.resourceClass != ImageResourceClass::Sampled || !image.read || image.written || image.atomic) return false;
+    if (((descriptor.dwords[1] >> 20u) & 0x3fu) != 0u) return false;
+    for (std::uint32_t shift = 0u; shift < 12u; shift += 3u) {
+        if (((descriptor.dwords[3] >> shift) & 7u) == 1u) return false;
+    }
+    return true;
+}
+
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
     return static_cast<IrBufferFormat>((descriptor.dwords[1] >> 20u) & 0x1ffu);
 }
@@ -1619,7 +1628,10 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         if (descriptor.dwordCount != 8u) {
             throw std::runtime_error("image descriptor has an invalid width");
         }
-        if (GcnGuestShaders()) {
+        if (GcnGuestShaders() && gcnUnboundSampledImage(image, descriptor)) {
+            descriptor = DescriptorValue{};
+            descriptor.dwordCount = 8u;
+        } else if (GcnGuestShaders()) {
             const auto words = GcnImageWords(std::span<const std::uint32_t, 8>(descriptor.dwords.data(), 8u));
             std::copy(words.begin(), words.end(), descriptor.dwords.begin());
         }

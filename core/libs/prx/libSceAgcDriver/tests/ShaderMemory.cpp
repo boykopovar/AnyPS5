@@ -1197,6 +1197,14 @@ void verifyWaterfallRuntimeValues() {
         std::uint32_t result = 0;
         require(evaluator.Evaluate(Detail::IrNode(&nestedFirst), result) && result == (word == 4u ? word : word + 1u), "waterfall: a nested select ignored its uniform condition");
     }
+    auto& copiedCondition = make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane});
+    auto& copiedMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&copiedCondition, &uniform});
+    auto& copiedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &copiedMask});
+    require(SrtWalker().ValidateRuntimeValue(plan, &copiedFirst), "waterfall: a mask whose conjunct is a structural copy of the select condition was rejected");
+    auto& negatedCondition = make(IrOpcode::INotEqual32, IrType::Bool, {&input, &lane});
+    auto& negatedMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&negatedCondition, &uniform});
+    auto& negatedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &negatedMask});
+    require(!SrtWalker().ValidateRuntimeValue(plan, &negatedFirst), "waterfall: a mask whose conjunct is the negation of the select condition was accepted");
 }
 
 void verifyUniformVectorComponents() {
@@ -1873,6 +1881,24 @@ void verifyTypeZeroImageMaterialization() {
         require(!flushed && waits == 0u && std::ranges::any_of(knownCapture->snapshot.images, [&](const DescriptorValue& value) {
             return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
         }), "raw-to-known descriptor transition: cached Raw descriptor was not invalidated and replaced by KnownValue");
+    }
+
+    phase = 4u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory forcedSpanMemory({}, multiPending, nullptr, hookWaits);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorForceSync));
+        const auto forcedCapture = forcedSpanMemory.Capture(request);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorEndForceSync));
+        require(std::ranges::any_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }) && std::ranges::none_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
+        }), "force-sync descriptor span: a T# span read under SrtDescriptorForceSync took the KnownValue bytes instead of reading through the flush hook");
     }
 
     for (std::uint32_t record = 0; record < 128u; ++record) {
