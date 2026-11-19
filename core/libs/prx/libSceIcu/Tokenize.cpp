@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -71,7 +72,8 @@ char16_t* APS5_VABI u_strpbrk_nid_postfix(const char16_t* text, const char16_t* 
 
 char16_t* APS5_VABI u_strtok_r_nid_postfix(char16_t* source, const char16_t* delimiters, char16_t** state) {
     if (!state) NotImplemented_nid_no_patch(__func__);
-    auto* text = source ? source : *state;
+    auto* text = source;
+    if (!text && !GuestPtr<char16_t*>(state).CopyIn(text)) NotImplemented_nid_no_patch(__func__);
     if (!text) return nullptr;
     if (!delimiters) NotImplemented_nid_no_patch(__func__);
     GuestArena::HostWrite stateAccess(state, sizeof(*state));

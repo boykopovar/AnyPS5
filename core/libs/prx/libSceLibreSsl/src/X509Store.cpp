@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -38,6 +41,10 @@ static_assert(offsetof(LibreSslX509Lookup, storeContext) == 24);
 namespace {
 
 constexpr int MinimumNodes = 4;
+constexpr int X509Library = 11;
+constexpr int AnyFunction = 0xfff;
+constexpr int MallocFailure = 65;
+constexpr int CertAlreadyInHashTable = 101;
 constexpr std::uint64_t PolicyCheck = 0x80;
 constexpr std::uint64_t PolicyMask = 0x80 | 0x100 | 0x200 | 0x400;
 
@@ -56,9 +63,70 @@ static_assert(offsetof(Stack, data) == 8);
 static_assert(offsetof(Stack, numAlloc) == 20);
 static_assert(offsetof(Stack, comp) == 24);
 
-int APS5_VABI CompareObjects(const void*, const void*) {
-    NotImplemented_nid_no_patch("X509_STORE object comparison");
-    return 0;
+char** Elements(const Stack* stack, const char* function);
+
+const LibreSslX509* ObjectCertificate(const LibreSslX509Object* object, const char* function) {
+    if (!object) throw std::invalid_argument(std::string(function) + ": null store object");
+    const auto* certificate = static_cast<const LibreSslX509*>(object->data);
+    if (!certificate) throw std::invalid_argument(std::string(function) + ": null object certificate");
+    return certificate;
+}
+
+const LibreSslX509CertInfo& ObjectCertificateInfo(const LibreSslX509Object* object, const char* function) {
+    const auto* info = static_cast<const LibreSslX509CertInfo*>(ObjectCertificate(object, function)->certificateInfo);
+    if (!info) throw std::invalid_argument(std::string(function) + ": null object certificate info");
+    return *info;
+}
+
+const LibreSslX509Name& ObjectSubject(const LibreSslX509Object* object, const char* function) {
+    const auto* name = static_cast<const LibreSslX509Name*>(ObjectCertificateInfo(object, function).subject);
+    if (!name) throw std::invalid_argument(std::string(function) + ": null object subject name");
+    if (name->canonEnclen < 0)
+        throw std::invalid_argument(std::string(function) + ": negative canonical encoding length");
+    if (!name->canonEnc && name->canonEnclen != 0)
+        throw std::invalid_argument(std::string(function) + ": subject name without a canonical encoding");
+    return *name;
+}
+
+int CompareObjectsImpl(const LibreSslX509Object* first, const LibreSslX509Object* second, const char* function) {
+    if (first->type != second->type) return first->type < second->type ? -1 : 1;
+    if (first->type != LibreSslX509LookupX509)
+        throw std::invalid_argument(std::string(function) + ": unsupported object type");
+    const auto& firstSubject = ObjectSubject(first, function);
+    const auto& secondSubject = ObjectSubject(second, function);
+    if (firstSubject.canonEnclen != secondSubject.canonEnclen)
+        return firstSubject.canonEnclen < secondSubject.canonEnclen ? -1 : 1;
+    if (firstSubject.canonEnclen == 0) return 0;
+    return std::memcmp(firstSubject.canonEnc, secondSubject.canonEnc, static_cast<std::size_t>(firstSubject.canonEnclen));
+}
+
+bool SameCertificate(const LibreSslX509Object* first, const LibreSslX509Object* second, const char* function) {
+    const auto& firstEncoding = ObjectCertificateInfo(first, function).enc;
+    const auto& secondEncoding = ObjectCertificateInfo(second, function).enc;
+    if (firstEncoding.modified != 0 || secondEncoding.modified != 0)
+        throw std::invalid_argument(std::string(function) + ": modified certificate info");
+    if (firstEncoding.len < 0) throw std::invalid_argument(std::string(function) + ": negative certificate info length");
+    if (firstEncoding.len != secondEncoding.len) return false;
+    if (firstEncoding.len == 0) return true;
+    if (!firstEncoding.enc || !secondEncoding.enc)
+        throw std::invalid_argument(std::string(function) + ": certificate info without an encoding");
+    return std::memcmp(firstEncoding.enc, secondEncoding.enc, static_cast<std::size_t>(firstEncoding.len)) == 0;
+}
+
+int APS5_VABI CompareObjects(const void* first, const void* second) {
+    return CompareObjectsImpl(*static_cast<const LibreSslX509Object* const*>(first),
+        *static_cast<const LibreSslX509Object* const*>(second), "X509_STORE object comparison");
+}
+
+bool FindObject(Stack* stack, const LibreSslX509Object* object) {
+    if (!stack || stack->num <= 0) return false;
+    char** const elements = Elements(stack, __func__);
+    for (int index = 0; index < stack->num; ++index) {
+        const auto* element = reinterpret_cast<const LibreSslX509Object*>(elements[index]);
+        if (CompareObjectsImpl(element, object, __func__) != 0) continue;
+        if (SameCertificate(element, object, __func__)) return true;
+    }
+    return false;
 }
 
 int APS5_VABI LoadFile(LibreSslX509Lookup*, int, const char*, std::int64_t, char**) {
@@ -165,9 +233,37 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
     free_nid_postfix(param);
 }
 
+bool ReadHostName(const char* name, std::size_t length, std::string& host) {
+    constexpr std::uintptr_t Page = 4096;
+    const bool counted = length != 0;
+    auto address = reinterpret_cast<std::uintptr_t>(name);
+    char chunk[Page];
+    while (!counted || host.size() < length) {
+        std::size_t size = Page - address % Page;
+        if (counted) size = std::min<std::size_t>(size, length - host.size());
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host: unreadable host name");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return !counted;
+        address += size;
+    }
+    return true;
+}
+
 } // namespace
 
 extern "C" {
+
+LibreSslX509VerifyParam* LibreSslNewVerifyParam_nid_no_patch() {
+    return NewVerifyParam();
+}
+
+void LibreSslFreeVerifyParam_nid_no_patch(LibreSslX509VerifyParam* param, const char* function) {
+    FreeVerifyParam(param, function);
+}
 
 LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void) {
     auto* store = static_cast<LibreSslX509Store*>(malloc_nid_postfix(sizeof(LibreSslX509Store)));
@@ -256,14 +352,14 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
 int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length) {
     if (!param || !param->id) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host requires verify parameters");
     auto* id = param->id;
-    if (name && length == 0) length = std::strlen(name);
-    if (name && std::memchr(name, '\0', length)) return 0;
+    std::string host;
+    if (name && !ReadHostName(name, length, host)) return 0;
     if (id->hosts) {
         FreeStrings(static_cast<Stack*>(id->hosts), __func__);
         id->hosts = nullptr;
     }
-    if (!name || length == 0) return 1;
-    char* copy = strndup_nid_postfix(name, length);
+    if (host.empty()) return 1;
+    char* copy = strndup_nid_postfix(host.data(), host.size());
     if (!copy) return 0;
     if (!id->hosts && !(id->hosts = NewStack(nullptr))) {
         free_nid_postfix(copy);
@@ -276,6 +372,42 @@ int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* p
             FreeStack(hosts);
             id->hosts = nullptr;
         }
+        return 0;
+    }
+    return 1;
+}
+
+int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate) {
+    if (!certificate) return 0;
+    if (!store) throw std::invalid_argument("X509_STORE_add_cert: null store");
+    auto* objects = static_cast<Stack*>(store->objects);
+    if (!objects) throw std::invalid_argument("X509_STORE_add_cert: null store objects");
+    auto* object = static_cast<LibreSslX509Object*>(malloc_nid_postfix(sizeof(LibreSslX509Object)));
+    if (!object) {
+        LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+        return 0;
+    }
+    object->type = LibreSslX509LookupX509;
+    object->padding = 0;
+    object->data = certificate;
+    std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1, std::memory_order_relaxed);
+    bool stored = false;
+    try {
+        if (FindObject(objects, object)) {
+            LibreSslPutError_nid_no_patch(X509Library, AnyFunction, CertAlreadyInHashTable);
+        } else if (Push(objects, object, __func__)) {
+            stored = true;
+        } else {
+            LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+        }
+    } catch (...) {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
+        free_nid_postfix(object);
+        throw;
+    }
+    if (!stored) {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1, std::memory_order_relaxed);
+        free_nid_postfix(object);
         return 0;
     }
     return 1;

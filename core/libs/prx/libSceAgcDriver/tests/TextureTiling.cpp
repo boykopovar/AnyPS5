@@ -146,7 +146,7 @@ void requireSliceAddresses(const GuestTextureResource& resource, std::uint32_t b
     }
 }
 
-std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std::uint32_t pitch, std::uint32_t height, std::uint32_t x, std::uint32_t y, std::uint32_t slice = 0u) {
+std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std::uint32_t pitch, std::uint32_t height, std::uint32_t x, std::uint32_t y, std::uint32_t slice = 0u, std::uint32_t samples = 1u, std::uint32_t sample = 0u) {
     const auto bit = [](std::uint32_t value, std::uint32_t index) { return (value >> index) & 1u; };
     const std::uint32_t x0 = bit(x, 0), x1 = bit(x, 1), x2 = bit(x, 2), y0 = bit(y, 0), y1 = bit(y, 1), y2 = bit(y, 2);
     std::array<std::uint32_t, 6> pixel{x0, y0, x1, y1, x2, y2};
@@ -161,8 +161,8 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     }
     std::uint32_t pixelIndex = 0;
     for (std::uint32_t index = 0; index < 6u; ++index) pixelIndex |= pixel[index] << index;
-    std::uint64_t microBytes = 64u * bytes;
-    std::uint64_t elementOffset = static_cast<std::uint64_t>(pixelIndex) * bytes;
+    std::uint64_t microBytes = 64u * bytes * samples;
+    std::uint64_t elementOffset = (static_cast<std::uint64_t>(pixelIndex) * samples + sample) * bytes;
     if (mode == TextureTileMode::kGcnThin1D || mode == TextureTileMode::kGcnDisplay1D) {
         return (static_cast<std::uint64_t>(y / 8u) * (pitch / 8u) + x / 8u) * microBytes + elementOffset;
     }
@@ -426,6 +426,25 @@ void gcnTilingTests() {
         Require(ColorTargetLayout(100u, 4u, ColorTileMode::GcnLinear, 16u).Bytes() == 104u * 4u * 16u, "a PS4 linear-aligned 128-bit target row is not padded to 8 elements");
         Require(ColorTargetLayout(100u, 4u, ColorTileMode::Linear, 4u).Bytes() == 128u * 4u * 4u, "a PS5 linear target row is not padded to 256 bytes");
     }
+    for (const auto mode : {ColorTileMode::GcnDisplay2D, ColorTileMode::GcnThin2D}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytes);
+            const auto width = geometry.blockWidth * 2u;
+            const auto height = geometry.blockHeight;
+            for (std::uint32_t slice = 0; slice < 6u; ++slice) {
+                const ColorTargetLayout layout(width, height, mode, bytes, GcnLayerBankXor(geometry, slice));
+                for (std::uint32_t y = 0; y < height; ++y) {
+                    for (std::uint32_t x = 0; x < width; ++x) {
+                        const auto expected = referenceGcnAddress(ColorTextureTileMode(mode), bytes, width, height, x, y, slice);
+                        if (layout.Offset(x, y) != expected) Require(false, "PS4 color tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes places element " + std::to_string(x) + "," + std::to_string(y) + " of array slice " + std::to_string(slice) + " at " + std::to_string(layout.Offset(x, y)) + ", addrlib places it at " + std::to_string(expected));
+                    }
+                }
+            }
+        }
+    }
+    reject([] { ColorTargetLayout(64u, 64u, ColorTileMode::GcnThin1D, 4u, 1u << 11u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(128u, 64u, ColorTileMode::GcnThin2D, 4u, 1u << 8u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(64u, 4u, ColorTileMode::GcnLinear, 4u, 1u << 11u); }, "whole 256-byte units of XOR swizzle blocks");
 }
 
 bool sameMip(const TileMipLayout& a, const TileMipLayout& b) {
@@ -596,11 +615,84 @@ void sizeOnlySurfaceTests() {
     reject([&] { DescribeSurfaceGuestBytes(array); }, "texture mip count is out of range");
 }
 
+void gcnMultisampleTilingTests() {
+    using enum TextureTileMode;
+    std::uint32_t compared = 0;
+    for (const auto mode : {kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K}) {
+        for (std::uint32_t bytes = 1u; bytes <= 8u; bytes <<= 1u) {
+            for (std::uint32_t samples = 2u; samples <= 8u; samples <<= 1u) {
+                const auto what = "PS4 depth tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes and " + std::to_string(samples) + " samples";
+                const auto split = mode == kGcnDepthPrt256 ? 256u : mode == kGcnDepthPrt1K ? 1024u : 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(kGcnDepth2D64));
+                const auto microBytes = 64u * bytes * samples;
+                if (microBytes / std::min(split, microBytes) > 16u) {
+                    reject([&] { GcnTiling(mode, bytes, samples); }, "split into more than 16 slices");
+                    continue;
+                }
+                const auto geometry = GcnTiling(mode, bytes, samples);
+                Require(geometry.splitSlices == microBytes / std::min(split, microBytes), what + ": split slice count differs from addrlib");
+                Require(geometry.blockBytes * geometry.splitSlices == geometry.blockWidth * geometry.blockHeight * bytes * samples, what + ": a block holds its samples exactly");
+                const auto splitStride = 16u * geometry.blockBytes;
+                const auto pitch = geometry.blockWidth * 4u;
+                const auto height = geometry.blockHeight * 4u;
+                const auto parity = [](std::uint32_t x, std::uint32_t y, std::uint32_t sample, std::uint32_t mask) { return static_cast<std::uint32_t>(std::popcount((x & mask & 0xfffu) ^ ((y << 12u) & mask & 0xfff000u) ^ ((sample << GcnSampleShift) & mask)) & 1); };
+                std::vector<std::uint8_t> seen(static_cast<std::size_t>(pitch) * height * samples, 0u);
+                for (std::uint32_t y = 0; y < height; ++y) {
+                    for (std::uint32_t x = 0; x < pitch; ++x) {
+                        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+                            std::uint32_t inBlock = 0, slice = 0;
+                            for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= parity(x, y, sample, geometry.equation[bit]) << bit;
+                            for (std::uint32_t bit = 0; bit < geometry.splitMasks.size(); ++bit) slice |= parity(x, y, sample, geometry.splitMasks[bit]) << bit;
+                            const auto block = static_cast<std::uint64_t>(y / geometry.blockHeight) * (pitch / geometry.blockWidth) + x / geometry.blockWidth;
+                            const auto address = block * geometry.blockBytes + inBlock + static_cast<std::uint64_t>(slice) * splitStride;
+                            const auto expected = referenceGcnAddress(mode, bytes, pitch, height, x, y, 0u, samples, sample);
+                            if (address != expected) Require(false, what + ": sample " + std::to_string(sample) + " of element " + std::to_string(x) + "," + std::to_string(y) + " is at " + std::to_string(address) + ", addrlib places it at " + std::to_string(expected));
+                            Require(address % bytes == 0 && address / bytes < seen.size() && seen[address / bytes]++ == 0, what + ": two samples share an address or one leaves the surface");
+                        }
+                    }
+                }
+                ++compared;
+            }
+        }
+    }
+    Require(compared == 80u, "the PS4 multisampled depth tiling sweep compared " + std::to_string(compared) + " layouts, not 80");
+
+    GuestTextureResource depth{};
+    depth.width = 1600u;
+    depth.height = 1800u;
+    depth.gcnPitch = 1792u;
+    depth.mipCount = 1u;
+    depth.allocatedMipCount = 1u;
+    depth.samples = 2u;
+    depth.tileMode = kGcnDepth2D64;
+    depth.dimension = TextureDimension::k2DMsaa;
+    depth.format = 20u;
+    const auto described = DescribeSurface(depth);
+    Require(described.guestBytes == 1792u * 1920u * 4u * 2u && DescribeSurfaceGuestBytes(depth) == described.guestBytes && described.layerBytes == described.guestBytes, "a 2-sample 32-bit PS4 depth texture of pitch 1792 and height 1800 holds 1792 x 1920 x 4 bytes x 2 samples");
+    Require(described.mips.size() == 1u && described.mips[0].gcnSplitStride == 1792u * 1920u * 4u * 2u / 8u && described.sliceLinearBytes == 1792u * 1800u * 4u * 2u, "a 2-sample 32-bit PS4 depth texture splits into eight 64-byte slices");
+    Require(described.mips[0].pitchBytes == 1792u * 2u * 4u && described.mips[0].linearSize == static_cast<std::uint64_t>(described.mips[0].pitchBytes) * 1800u, "a 2-sample 32-bit PS4 depth row holds both samples of its 1792 elements, as a PS5 multisampled row does");
+    auto splitBy128 = depth;
+    splitBy128.tileMode = kGcnDepth2D128;
+    const auto described128 = DescribeSurface(splitBy128);
+    Require(described128.guestBytes == 1792u * 1920u * 4u * 2u && described128.mips[0].gcnSplitStride == 1792u * 1920u * 4u * 2u / 4u && GcnTiling(kGcnDepth2D128, 4u, 2u).blockWidth == 128u && GcnTiling(kGcnDepth2D128, 4u, 2u).blockHeight == 128u, "a 2-sample 32-bit PS4 depth texture in the 128-byte split mode pads 1800 rows to 1920 in 128x128 macro tiles and splits into four slices");
+    auto stencil = depth;
+    stencil.format = 1u;
+    Require(DescribeSurface(stencil).guestBytes == 1792u * 1920u * 2u, "a 2-sample 8-bit PS4 depth texture of pitch 1792 and height 1800 holds 1792 x 1920 x 2 bytes");
+    auto color = depth;
+    color.tileMode = kGcnThin2D;
+    reject([&] { DescribeSurface(color); }, "PS4 multisampled textures outside the depth tile modes are not implemented");
+    reject([&] { GcnTiling(kGcnThin2D, 4u, 2u); }, "only modeled for 2, 4 or 8 samples in a depth tile mode");
+    auto mipped = depth;
+    mipped.mipCount = 2u;
+    reject([&] { DescribeSurface(mipped); }, "mip levels or array layers are not implemented");
+    reject([&] { ComputeGcnMipLayout(kGcnDepth2D64, 20u, 1792u, 1800u, 1792u, false, 2u, false, 1u, false, 2u); }, "one level and one slice in a depth tile mode");
+}
+
 }
 
 void RunTextureTilingTests() {
     gcnTilingTests();
     gcnThickTilingTests();
+    gcnMultisampleTilingTests();
     sizeOnlySurfaceTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);

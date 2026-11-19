@@ -71,6 +71,7 @@ public:
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
+    void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
     void SetDepthBias(const Context& context, float constant, float clamp, float slope);
     void SetDepthBounds(const Context& context, float minimum, float maximum);
     void SetCullMode(const Context& context, VkCullModeFlags mode);
@@ -258,6 +259,7 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
@@ -371,7 +373,7 @@ public:
     };
     bool RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords result, BoundWords snapshot, BoundWords target, std::uint32_t dwords, VkBuffer counter = VK_NULL_HANDLE);
     std::uint64_t SamplesTotal();
-    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
+    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0, std::uint32_t blocks = 0xffffu);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
     void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
@@ -425,10 +427,13 @@ public:
     // not, before recording): the run is then recorded in place, with a trailing barrier toward
     // the later work, and the next store starts a new run. Within a run a store contiguous with
     // the last queued one joins its vkCmdUpdateBuffer, one inside it replaces its bytes (the
-    // later store wins, as in program order), and one overlapping a store queued earlier gets a
-    // transfer-to-transfer barrier first (WAW). Debug aids: APS5_LABEL_RUNS_INLINE=1 records the
-    // stores at once and closes the run at the next command (Commands()) or at Submit, as
-    // before; APS5_NO_LABEL_RUNS=1 gives every store barriers of its own.
+    // later store wins, as in program order), and every store after the first of its group gets a
+    // transfer-to-transfer barrier first (WAW for one overlapping a store queued earlier, program
+    // order otherwise), so the run's stores land for a polling host in program order too and each
+    // earlier one is available to it. Debug
+    // aids: APS5_LABEL_RUNS_INLINE=1 records the stores at once and closes the run at the next
+    // command (Commands()) or at Submit, as before; APS5_NO_LABEL_RUNS=1 gives every store
+    // barriers of its own.
     void RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address);
     bool HasQueuedStores() const { return open != nullptr && !open->run.queued.empty(); }
     bool QueuedStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
@@ -520,6 +525,7 @@ public:
     // After the calling worker recorded (or dropped) its queued labels: its ranges are cleared and
     // the entries of its dwords still without a batch (stored by the CPU, or dropped) leave the table.
     static void ForgetQueuedLabels();
+    static std::uint64_t ThreadClearAccesses();
     static bool QueuedLabelsPending();
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
@@ -655,7 +661,7 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, InputMirror, Count };
+    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, InputMirror, MirrorPublish, Count };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -828,6 +834,7 @@ private:
                 std::uint64_t address;
                 VkDeviceAddress dumpTarget = 0;
                 std::uint32_t dumpSegments = 0;
+                std::uint32_t dumpBlocks = 0;
                 std::uint64_t End() const;
             };
             std::vector<Queued> queued;
@@ -897,7 +904,7 @@ private:
     void readSamples(Batch& batch);
     bool gpuSampleCounter();
     void endSamples(Batch& batch);
-    void foldSamples(Batch& batch, VkDeviceAddress target);
+    void foldSamples(Batch& batch, VkDeviceAddress target, std::uint32_t blocks = 0xffffu);
     bool segmentMode() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
@@ -946,6 +953,7 @@ private:
     // them null and resolves per call as before; vkWaitSemaphoresKHR stays a lazy lookup (timeline
     // semaphores are optional).
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
+    PFN_vkGetSemaphoreCounterValueKHR getSemaphoreCounterValue = nullptr;
     PFN_vkResetFences resetFences = nullptr;
     PFN_vkWaitForFences waitForFences = nullptr;
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
@@ -964,6 +972,8 @@ private:
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
+    bool gpuDone(const Batch& batch) const;
+    std::uint64_t readTimeline() const;
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
@@ -1027,6 +1037,8 @@ private:
 
     Context context;
     VkSemaphore timeline = VK_NULL_HANDLE;
+    bool fenceless = false;
+    mutable std::uint64_t reachedSerial = 0;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
     struct ProgressWatcher;

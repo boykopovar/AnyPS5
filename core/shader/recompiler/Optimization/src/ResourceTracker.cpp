@@ -566,12 +566,12 @@ private:
         return true;
     }
 
-    static bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) {
+    bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) const {
         value = value->Resolve();
         if (value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
             const auto* activeMask = value->Argument(1)->Resolve();
             value = value->Argument(0)->Resolve();
-            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(activeMask, value->Argument(0))) {
+            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), activeMask, value->Argument(0))) {
                 value = value->Argument(1)->Resolve();
             }
         }
@@ -604,15 +604,15 @@ private:
         return MatchScale(scaled, key, stride) && std::has_single_bit(stride) && stride >= 4u && (mask & ~(stride - 1u)) != 0u && key->Type() == IrType::U32;
     }
 
-    static IrValue* ActiveLaneValue(IrValue* value, const IrValue* mask) {
+    IrValue* ActiveLaneValue(IrValue* value, const IrValue* mask) const {
         value = value->Resolve();
-        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), mask, value->Argument(0))) {
             value = value->Argument(1)->Resolve();
         }
         return value;
     }
 
-    static std::uint32_t ScaledBase(IrValue* value, const IrValue* mask, IrValue*& base) {
+    std::uint32_t ScaledBase(IrValue* value, const IrValue* mask, IrValue*& base) const {
         value = ActiveLaneValue(value, mask);
         std::uint32_t immediate = 0;
         std::uint32_t scale = 1u;
@@ -780,10 +780,10 @@ private:
         std::uint32_t addend = 0;
     };
 
-    static bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) {
+    bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) const {
         std::uint32_t addend = 0;
         value = SplitImmediateAddend(value, addend);
-        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), mask, value->Argument(0))) {
             value = SplitImmediateAddend(value->Argument(1), addend);
         }
         std::uint32_t shift = 0;
@@ -1667,7 +1667,11 @@ private:
             }
             for (IrValue* value : tuple) {
                 if (Rematerialize(value, position, false, phiSearchDepth) == nullptr) {
-                    return GiveUp(web, "a descriptor dword is not rebuilt from user data, the SRT and uniform operations before the read (" + RebuildBlocker(value, phiSearchDepth) + ")");
+                    if (StrictDescriptorWebs()) {
+                        return GiveUp(web, "a descriptor dword is not rebuilt from user data, the SRT and uniform operations before the read (" + RebuildBlocker(value, phiSearchDepth) + ")");
+                    }
+                    web.foldedValue = true;
+                    return &m_builder.Constant(DescriptorWeb::foldedArm);
                 }
             }
             const auto same = std::ranges::find_if(web.arms, [&](const std::vector<IrValue*>& arm) {
@@ -1836,7 +1840,7 @@ private:
             }
         }
         if (selector == nullptr || web.arms.empty()) {
-            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("every path's descriptor depends on the program counter, EXEC, a lane mask, the lane index or texels") : std::string("no descriptor was found on any path");
+            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("no path's descriptor can be rebuilt from supported runtime values") : std::string("no descriptor was found on any path");
             for (std::uint32_t slot = 0; slot < handleCount; slot++) {
                 if (split[slot]) {
                     m_splitFailures.try_emplace(handles[slot], reason);
