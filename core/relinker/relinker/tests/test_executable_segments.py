@@ -133,7 +133,7 @@ def main():
                 assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
                 assert not output.exists(), (name, options)
 
-        for header, flags, message in ((64, 6, "FAIL: Unsupported PT_LOAD permission flags\n"),
+        for header, flags, message in ((64, 6, "FAIL: Unsupported PT_LOAD permission flags (offset 0x0)\n"),
                                        (176, 5, "FAIL: Unsupported PT_LOAD permission flags (offset 0x200)\n")):
             for extra_flags in (0x8, 0x100000, 0x80000000):
                 image = fixture(b"\x90\xc3")
