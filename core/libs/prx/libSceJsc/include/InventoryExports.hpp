@@ -290,7 +290,6 @@ int APS5_VABI _ZNK3WTF10StackTrace4dumpERNS_11PrintStreamEPKc();
 int APS5_VABI _ZNK3WTF10StringImpl10tryGetUtf8ENS_14ConversionModeE();
 int APS5_VABI _ZNK3WTF10StringImpl18tryGetUtf8ForRangeEjjNS_14ConversionModeE();
 int APS5_VABI _ZNK3WTF10StringView10tryGetUtf8ENS_14ConversionModeE();
-int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratorneERKS2_();
 int APS5_VABI _ZNK3WTF6String10tryGetUtf8ENS_14ConversionModeE();
 int APS5_VABI _ZNK3WTF6String10tryGetUtf8Ev();
 int APS5_VABI _ZNK3WTF6String15stripWhiteSpaceEv();
