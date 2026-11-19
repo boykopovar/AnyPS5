@@ -117,12 +117,12 @@ void CreateExponentialRepresentation(std::string& result, const std::string& dig
 
 namespace NKWebKit::WtfAbi {
 
-template<typename Number> std::string ShortestString(Number number) {
+std::string NumberToString(float number) {
     if (!std::isfinite(number)) return SpecialValue(number);
     if (number == 0) return "0";
     char buffer[64];
     auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(number), std::chars_format::scientific);
-    if (converted.ec != std::errc{}) throw std::runtime_error("WTF shortest number formatting failed");
+    if (converted.ec != std::errc{}) throw std::runtime_error("WTF float formatting failed");
     std::string digits;
     const char* cursor = buffer;
     for (; cursor != converted.ptr && *cursor != 'e'; ++cursor) {
@@ -130,7 +130,7 @@ template<typename Number> std::string ShortestString(Number number) {
     }
     int exponent = 0;
     if (cursor == converted.ptr || std::from_chars(cursor + (cursor[1] == '+' ? 2 : 1), converted.ptr, exponent).ec != std::errc{})
-        throw std::runtime_error("WTF shortest number exponent formatting failed");
+        throw std::runtime_error("WTF float exponent formatting failed");
     std::string result = number < 0 ? "-" : "";
     int decimalPoint = exponent + 1;
     int length = static_cast<int>(digits.size());
@@ -141,12 +141,28 @@ template<typename Number> std::string ShortestString(Number number) {
     return result;
 }
 
-std::string NumberToString(float number) {
-    return ShortestString(number);
-}
-
 std::string NumberToString(double number) {
-    return ShortestString(number);
+    if (!std::isfinite(number)) return SpecialValue(number);
+    if (number == 0) return "0";
+    char buffer[128];
+    auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(number), std::chars_format::scientific);
+    if (converted.ec != std::errc{}) throw std::runtime_error("WTF double formatting failed");
+    std::string digits;
+    const char* cursor = buffer;
+    for (; cursor != converted.ptr && *cursor != 'e'; ++cursor) {
+        if (*cursor != '.') digits += *cursor;
+    }
+    int exponent = 0;
+    if (cursor == converted.ptr || std::from_chars(cursor + (cursor[1] == '+' ? 2 : 1), converted.ptr, exponent).ec != std::errc{})
+        throw std::runtime_error("WTF double exponent formatting failed");
+    std::string result = number < 0 ? "-" : "";
+    int decimalPoint = exponent + 1;
+    int length = static_cast<int>(digits.size());
+    if (DecimalInShortestLow <= exponent && exponent < DecimalInShortestHigh)
+        CreateDecimalRepresentation(result, digits, decimalPoint, length > decimalPoint ? length - decimalPoint : 0);
+    else
+        CreateExponentialRepresentation(result, digits, exponent);
+    return result;
 }
 
 std::string NumberToFixedWidthString(double number, unsigned decimalPlaces) {
