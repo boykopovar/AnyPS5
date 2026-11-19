@@ -4472,7 +4472,7 @@ void CheckOtherIdentity(Context context, std::uint32_t samples, OtherIdentity mo
     std::printf("Native depth other identity samples=%u mode=%u: the owner of another identity retired, the new identity imported, drawn and published\n", samples, static_cast<std::uint32_t>(mode));
 }
 
-enum class ColourOver { DepthPlane, StencilPlane, Written, Unwritten, HeldView, StoredOver, PendingStorage, ColourOwner, Unpublishable };
+enum class ColourOver { DepthPlane, StencilPlane, Written, Unwritten, HeldView, StoredOver, PendingStorage, ColourOwner, Unpublishable, UnmappedTail };
 
 void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mode) {
     constexpr VkExtent2D extent{120u, 68u};
@@ -4487,6 +4487,10 @@ void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mod
     color.samples = samples;
     color.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
     color.bytes = static_cast<std::size_t>(extent.width) * extent.height * color.elementBytes;
+    if (mode == ColourOver::UnmappedTail) {
+        color.extent = color.surfaceExtent = VkExtent2D{extent.width, extent.height * 2u};
+        color.bytes *= 2u;
+    }
     const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(color));
     const auto colorOffset = overStencil ? depthBytes : std::size_t{0u};
     const auto bytes = std::max(depthBytes + stencilBytes, colorOffset + colorBytes);
@@ -4590,7 +4594,7 @@ void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mod
         std::printf("Native depth under an initial colour import samples=%u mode=%u: the owner's publication was refused and it stays resident\n", samples, static_cast<std::uint32_t>(mode));
         return;
     }
-    if (mode == ColourOver::DepthPlane || mode == ColourOver::StencilPlane || mode == ColourOver::HeldView || mode == ColourOver::ColourOwner) {
+    if (mode == ColourOver::DepthPlane || mode == ColourOver::StencilPlane || mode == ColourOver::HeldView || mode == ColourOver::ColourOwner || mode == ColourOver::UnmappedTail) {
         std::array<std::byte, 1> probe;
         AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
         guestHolds("a CPU read did not publish the owner's samples");
@@ -4608,6 +4612,42 @@ void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mod
         Require(DepthSurfaceAt(target.address) && ResidentDepthGuardOverlaps_nid_no_patch(target.address, depthBytes) && DepthSurfacesSerial() == serial, "a colour import refused over another colour owner retired the depth owner");
         guestHolds("a colour import refused over another colour owner changed guest memory");
         std::printf("Native depth under an initial colour import samples=%u mode=%u: another colour owner refuses the import before the depth owner is touched\n", samples, static_cast<std::uint32_t>(mode));
+        return;
+    }
+    if (mode == ColourOver::UnmappedTail) {
+        const auto mapped = (depthBytes + stencilBytes + 65535u) & ~std::size_t{65535u};
+        Require(mapped < colorBytes, "the colour footprint does not run past the owner's planes");
+        struct ProtectedTail {
+            std::vector<std::pair<void*, std::size_t>> ranges;
+            ~ProtectedTail() {
+                for (const auto& [pointer, size] : ranges) {
+#ifdef _WIN32
+                    DWORD previous = 0u;
+                    Require(VirtualProtect(pointer, size, PAGE_READWRITE, &previous) != 0, "cannot restore the colour footprint's tail");
+#else
+                    Require(mprotect(pointer, size, PROT_READ | PROT_WRITE) == 0, "cannot restore the colour footprint's tail");
+#endif
+                }
+            }
+        } tail;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Unmap(memory.Data() + mapped, colorBytes - mapped, [&](const void* pointer, std::size_t size, const void*, bool) {
+#ifdef _WIN32
+                DWORD previous = 0u;
+                Require(VirtualProtect(const_cast<void*>(pointer), size, PAGE_NOACCESS, &previous) != 0, "cannot protect the colour footprint's tail");
+#else
+                Require(mprotect(const_cast<void*>(pointer), size, PROT_NONE) == 0, "cannot protect the colour footprint's tail");
+#endif
+                tail.ranges.emplace_back(const_cast<void*>(pointer), size);
+            });
+            Require(!mutation.Overlaps(memory.Data() + mapped, colorBytes - mapped), "the colour footprint's tail is still mapped");
+        }
+        Require(DepthSurfaceAt(target.address), "unmapping the colour footprint's tail retired the depth owner");
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, color); }, "initial multisample color contents are not fully mapped");
+        Require(DepthSurfaceAt(target.address) && ResidentDepthGuardOverlaps_nid_no_patch(target.address, depthBytes) && DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial && !MultisampleColorTargetOver(color.address, colorBytes), "a colour import refused over an unmapped tail retired the kept depth owner or imported");
+        Require(std::equal(expected.begin(), expected.begin() + static_cast<std::ptrdiff_t>(mapped), memory.Data()), "a colour import refused over an unmapped tail changed guest memory");
+        std::printf("Native depth under an initial colour import samples=%u mode=%u: a footprint running into unmapped memory refuses the import before the kept depth owner is touched\n", samples, static_cast<std::uint32_t>(mode));
         return;
     }
     const auto released = DepthSurfacesReleased();
@@ -5276,7 +5316,7 @@ int main(int argc, char** argv) {
             std::uint32_t checked = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
-                for (const auto mode : {ColourOver::DepthPlane, ColourOver::StencilPlane, ColourOver::Written, ColourOver::Unwritten, ColourOver::HeldView, ColourOver::StoredOver, ColourOver::PendingStorage, ColourOver::ColourOwner, ColourOver::Unpublishable}) CheckColourOverOwner(publishing, samples, mode);
+                for (const auto mode : {ColourOver::DepthPlane, ColourOver::StencilPlane, ColourOver::Written, ColourOver::Unwritten, ColourOver::HeldView, ColourOver::StoredOver, ColourOver::PendingStorage, ColourOver::ColourOwner, ColourOver::Unpublishable, ColourOver::UnmappedTail}) CheckColourOverOwner(publishing, samples, mode);
                 ++checked;
             }
             return checked != 0u ? 0 : VulkanTestSkipped;

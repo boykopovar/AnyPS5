@@ -1785,9 +1785,9 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
         requireNoColorOwner();
     };
     requireNoColorOwner();
+    Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
     RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes), std::nullopt, true, DepthReadCause::Attachment);
     requireUnowned();
-    Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
     GuestMemory::Read(target.address, snapshot);
     requireUnowned();
