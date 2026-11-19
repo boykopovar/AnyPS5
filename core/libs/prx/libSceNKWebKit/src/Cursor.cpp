@@ -30,6 +30,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <new>
 #include <stdexcept>
@@ -68,7 +69,13 @@ namespace {
 
 constexpr unsigned ImageSizeSlot = 19;
 constexpr unsigned ImageHotSpotSlot = 22;
-constexpr std::size_t ImageRefCountOffset = 8;
+
+struct GuestImageHeader {
+    const void* vtable;
+    std::atomic<std::uint32_t> refCount;
+};
+static_assert(offsetof(GuestImageHeader, refCount) == 8, "guest Image m_refCount sits right after the vtable pointer");
+static_assert(sizeof(std::atomic<std::uint32_t>) == sizeof(std::uint32_t) && std::atomic<std::uint32_t>::is_always_lock_free);
 
 using ImageSizeFunction = WebCore::FloatSize (APS5_VABI*)(const void* self, ImageOrientation orientation);
 using ImageHotSpotFunction = OptionalIntPoint (APS5_VABI*)(const void* self);
@@ -113,7 +120,7 @@ void ConstructCursor(Cursor* self, void* image, const WebCore::IntPoint* hotSpot
     if (!self) throw std::invalid_argument(std::string(caller) + ": null this");
     if (!image) throw std::invalid_argument(std::string(caller) + ": null image");
     if (!hotSpot) throw std::invalid_argument(std::string(caller) + ": null hot spot");
-    std::atomic_ref<std::uint32_t> refCount(*reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(image) + ImageRefCountOffset));
+    std::atomic<std::uint32_t>& refCount = static_cast<GuestImageHeader*>(image)->refCount;
     refCount.fetch_add(1, std::memory_order_relaxed);
     WebCore::IntPoint determined;
     try {

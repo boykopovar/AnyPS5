@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -71,7 +72,7 @@ static void TestOutOfRange() {
 
 struct FakeImage {
     const void* vtable;
-    std::uint32_t refCount;
+    std::atomic<std::uint32_t> refCount;
 };
 
 struct FakeImageState {
@@ -106,17 +107,14 @@ static const void* const* BuildVtable(const void* sizeEntry, const void* hotSpot
     return slots;
 }
 
-static FakeImage MakeImage(const void* sizeEntry, const void* hotSpotEntry) {
-    FakeImage image{};
+static void MakeImage(FakeImage& image, const void* sizeEntry, const void* hotSpotEntry) {
     image.vtable = BuildVtable(sizeEntry, hotSpotEntry);
     image.refCount = 1;
-    return image;
 }
 
-static FakeImage MakeImageWithoutVtable() {
-    FakeImage image{};
+static void MakeImageWithoutVtable(FakeImage& image) {
+    image.vtable = nullptr;
     image.refCount = 1;
-    return image;
 }
 
 template<typename Function>
@@ -134,7 +132,8 @@ static bool Throws(Function function) {
 static void TestConstructorWithInsideHotSpot() {
     FakeImageState state;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{3, 4};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -151,7 +150,8 @@ static void TestConstructorWithInsideHotSpot() {
 static void TestSecondConstructorSameBehaviour() {
     FakeImageState state;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{9, 19};
     _ZN7WebCore6CursorC2EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -167,7 +167,8 @@ static void TestIntrinsicHotSpotUsedWhenSpecifiedOutside() {
     state.hotSpotHasValue = true;
     state.hotSpotValue = {2, 3};
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{50, 50};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -180,7 +181,8 @@ static void TestDefaultHotSpotWhenNothingContained() {
     state.hotSpotHasValue = true;
     state.hotSpotValue = {20, 20};
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{50, 50};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -196,7 +198,8 @@ static void TestZeroSizeHasDefaultHotSpotAndSkipsIntrinsic() {
     state.size = {0.0f, 20.0f};
     state.hotSpotHasValue = true;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{3, 4};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -217,7 +220,8 @@ static void TestHotSpotRectangleBoundary() {
     state.hotSpotHasValue = true;
     state.hotSpotValue = {10, 5};
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint onEdge{10, 5};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &onEdge);
@@ -231,7 +235,8 @@ static void TestLargeSizeClampedToIntMax() {
     FakeImageState state;
     state.size = {5.0e9f, 1.0f};
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{2000000000, 0};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
@@ -241,7 +246,8 @@ static void TestLargeSizeClampedToIntMax() {
 static void TestNullSizeSlotThrows() {
     FakeImageState state;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(nullptr, reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, nullptr, reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{3, 4};
     Require(Throws([&] { _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified); }));
@@ -252,7 +258,8 @@ static void TestNullHotSpotSlotThrows() {
     FakeImageState state;
     state.hotSpotHasValue = true;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), nullptr);
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), nullptr);
     Cursor cursor{};
     WebCore::IntPoint specified{50, 50};
     Require(Throws([&] { _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified); }));
@@ -262,8 +269,10 @@ static void TestNullHotSpotSlotThrows() {
 static void TestInvalidArguments() {
     FakeImageState state;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
-    FakeImage badVtable = MakeImageWithoutVtable();
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage badVtable;
+    MakeImageWithoutVtable(badVtable);
     Cursor cursor{};
     WebCore::IntPoint specified{3, 4};
     Require(Throws([&] { _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(nullptr, &image, &specified); }));
@@ -279,7 +288,8 @@ static void TestInvalidArguments() {
 static void TestSetAsPlatformCursorDoesNothing() {
     FakeImageState state;
     CurrentImageState = &state;
-    FakeImage image = MakeImage(reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
+    FakeImage image;
+    MakeImage(image, reinterpret_cast<const void*>(&FakeSize), reinterpret_cast<const void*>(&FakeHotSpot));
     Cursor cursor{};
     WebCore::IntPoint specified{3, 4};
     _ZN7WebCore6CursorC1EPNS_5ImageERKNS_8IntPointE(&cursor, &image, &specified);
