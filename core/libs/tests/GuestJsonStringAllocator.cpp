@@ -116,6 +116,19 @@ int main() {
     _ZN3sce4Json6String5clearEv(&text); CheckText(text, "", 0, 0);
     const char binary[]{'a', 0, 'b', 0};
     _ZN3sce4Json6String6appendEPKcm(&text, binary, 3); CheckText(text, binary, 3, 20);
+    String slice{};
+    Require(_ZNK3sce4Json6String6substrEmm(&slice, &text, 1, _ZN3sce4Json6String4nposE) == &slice,
+            "Substring extraction must return the constructed result");
+    CheckText(slice, binary + 1, 2, 3);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    const char zeroByte[]{0, 0};
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 1);
+    CheckText(slice, zeroByte, 1, 2);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 0);
+    CheckText(slice, "", 0, 0);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    CheckText(text, binary, 3, 20);
     String copy{}; _ZN3sce4Json6StringC1ERKS1_(&copy, &text); CheckText(copy, binary, 3, 4);
     String appended{}; _ZN3sce4Json6StringC1EPKc(&appended, nullptr);
     _ZN3sce4Json6String6appendERKS1_(&appended, &text); CheckText(appended, "a", 1, 18);
