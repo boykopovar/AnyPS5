@@ -176,6 +176,19 @@ static_assert(offsetof(AudioPath, points) == 16);
 static_assert(offsetof(AudioPath, pointCount) == 208);
 static_assert(offsetof(AudioPath, flags) == 212);
 
+struct PathEntry {
+    AudioPropagationStructDescriptor desc;
+    AudioPropagationHandle path;
+    const AudioPath* data;
+    float gain;
+    std::uint32_t reserved;
+};
+
+static_assert(sizeof(PathEntry) == PathEntrySize);
+static_assert(offsetof(PathEntry, path) == 16);
+static_assert(offsetof(PathEntry, data) == 24);
+static_assert(offsetof(PathEntry, gain) == 32);
+
 struct RenderInfo {
     AudioPropagationStructDescriptor desc;
     AudioPropagationHandle source;

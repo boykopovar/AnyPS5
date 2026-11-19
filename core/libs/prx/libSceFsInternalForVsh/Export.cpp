@@ -18,6 +18,27 @@ int InitWorkspaceOpt(void* opt) {
     return copied ? 0 : static_cast<int>(0x80020016u);
 }
 
+struct OptStore {
+    std::uint32_t offset;
+    std::uint32_t size;
+    std::uint64_t value;
+};
+
+int InitOpt(void* opt, const OptStore* stores, std::size_t count) {
+    if (opt == nullptr) return static_cast<int>(0x80020016u);
+    const int savedErrno = errno;
+    bool copied = true;
+    for (std::size_t s = 0; copied && s < count; ++s) {
+        std::uint8_t bytes[32] = {};
+        for (std::uint32_t i = 0; i < stores[s].size && i < 8; ++i) {
+            bytes[i] = static_cast<std::uint8_t>(stores[s].value >> (8 * i));
+        }
+        copied = GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(opt) + stores[s].offset, bytes, stores[s].size);
+    }
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x80020016u);
+}
+
 }
 
 extern "C" {
@@ -365,14 +386,14 @@ int APS5_VABI sceFsISSchedUnmapStat() {
     return 0;
 }
 
-int APS5_VABI sceFsInitCreatePfsSaveDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitCreatePfsSaveDataOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x8000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
-int APS5_VABI sceFsInitCreatePfsTrophyDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitCreatePfsTrophyDataOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x8000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
 int APS5_VABI sceFsInitMountDownloadDataOpt() {
@@ -380,9 +401,9 @@ int APS5_VABI sceFsInitMountDownloadDataOpt() {
     return 0;
 }
 
-int APS5_VABI sceFsInitMountGamePkgOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitMountGamePkgOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x44, 4, 0x0}, {0x48, 8, 0x0}, {0x0, 32, 0x0}, {0x20, 4, 0x0}, {0x28, 16, 0x0}, {0x31, 16, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
 int APS5_VABI sceFsInitMountLwfsCompatOpt() {
@@ -410,39 +431,34 @@ int APS5_VABI sceFsInitMountTrophyDataOpt() {
     return 0;
 }
 
-int APS5_VABI sceFsInitUmountDownloadDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountDownloadDataOpt(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 
-int APS5_VABI sceFsInitUmountGamePkgOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountGamePkgOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x1}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
-int APS5_VABI sceFsInitUmountLwfsCompatOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountLwfsCompatOpt(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 
-int APS5_VABI sceFsInitUmountLwfsOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountLwfsOpt(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 
-int APS5_VABI sceFsInitUmountPprPkgOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountPprPkgOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 8, 0x0}, {0x8, 8, 0xffffffff00000000}, {0x10, 4, 0xffffffff}, {0x18, 8, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
-int APS5_VABI sceFsInitUmountSaveDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountSaveDataOpt(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 
-int APS5_VABI sceFsInitUmountTrophyDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsInitUmountTrophyDataOpt(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 
 int APS5_VABI sceFsInitWorkspaceFileMetadataParam() {
@@ -1107,8 +1123,9 @@ int APS5_VABI sceFsFetchWorkspaceFileMetadata() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsInitCreatePprPfsSaveDataOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitCreatePprPfsSaveDataOpt(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x10000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 
 int APS5_VABI sceFsInitCreateWorkspaceOpt(void* opt) {
@@ -1313,8 +1330,8 @@ int APS5_VABI libSceFsInternalForVshUnknown_68F1C7m2pO4_nid_no_patch() {
 }
 APS5_EXPORT("68F1C7m2pO4", libSceFsInternalForVshUnknown_68F1C7m2pO4_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_6Bku_plus_Im1Pew_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_6Bku_plus_Im1Pew_nid_no_patch(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 APS5_EXPORT("6Bku+Im1Pew", libSceFsInternalForVshUnknown_6Bku_plus_Im1Pew_nid_no_patch);
 
@@ -1358,8 +1375,8 @@ int APS5_VABI libSceFsInternalForVshUnknown_Elqj7jkJd5s_nid_no_patch() {
 }
 APS5_EXPORT("Elqj7jkJd5s", libSceFsInternalForVshUnknown_Elqj7jkJd5s_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_GNeCtmqY_minus_58_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_GNeCtmqY_minus_58_nid_no_patch(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 APS5_EXPORT("GNeCtmqY-58", libSceFsInternalForVshUnknown_GNeCtmqY_minus_58_nid_no_patch);
 
@@ -1373,8 +1390,8 @@ int APS5_VABI libSceFsInternalForVshUnknown_KesAmkrIb9Y_nid_no_patch() {
 }
 APS5_EXPORT("KesAmkrIb9Y", libSceFsInternalForVshUnknown_KesAmkrIb9Y_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_KrZEB_plus_TsZ5k_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_KrZEB_plus_TsZ5k_nid_no_patch(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 APS5_EXPORT("KrZEB+TsZ5k", libSceFsInternalForVshUnknown_KrZEB_plus_TsZ5k_nid_no_patch);
 
@@ -1383,8 +1400,9 @@ int APS5_VABI libSceFsInternalForVshUnknown_LGPQXeAAFdc_nid_no_patch() {
 }
 APS5_EXPORT("LGPQXeAAFdc", libSceFsInternalForVshUnknown_LGPQXeAAFdc_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_LrpsS5hGlyY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_LrpsS5hGlyY_nid_no_patch(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x10000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 APS5_EXPORT("LrpsS5hGlyY", libSceFsInternalForVshUnknown_LrpsS5hGlyY_nid_no_patch);
 
@@ -1393,8 +1411,8 @@ int APS5_VABI libSceFsInternalForVshUnknown_M9342PuS_plus_y0_nid_no_patch() {
 }
 APS5_EXPORT("M9342PuS+y0", libSceFsInternalForVshUnknown_M9342PuS_plus_y0_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_MQs7RB_minus_KfYM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_MQs7RB_minus_KfYM_nid_no_patch(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 APS5_EXPORT("MQs7RB-KfYM", libSceFsInternalForVshUnknown_MQs7RB_minus_KfYM_nid_no_patch);
 
@@ -1443,8 +1461,9 @@ int APS5_VABI libSceFsInternalForVshUnknown_SyNglOzKCV8_nid_no_patch() {
 }
 APS5_EXPORT("SyNglOzKCV8", libSceFsInternalForVshUnknown_SyNglOzKCV8_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_T3LiDkpiS7s_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_T3LiDkpiS7s_nid_no_patch(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x10000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 APS5_EXPORT("T3LiDkpiS7s", libSceFsInternalForVshUnknown_T3LiDkpiS7s_nid_no_patch);
 
@@ -1503,8 +1522,9 @@ int APS5_VABI libSceFsInternalForVshUnknown_cDZDkhZeK4o_nid_no_patch() {
 }
 APS5_EXPORT("cDZDkhZeK4o", libSceFsInternalForVshUnknown_cDZDkhZeK4o_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_cUyUz68FKBc_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_cUyUz68FKBc_nid_no_patch(void* opt) {
+    static constexpr OptStore stores[] = {{0x0, 4, 0x10000}, {0x4, 2, 0x0}};
+    return InitOpt(opt, stores, sizeof(stores) / sizeof(stores[0]));
 }
 APS5_EXPORT("cUyUz68FKBc", libSceFsInternalForVshUnknown_cUyUz68FKBc_nid_no_patch);
 
@@ -1563,8 +1583,8 @@ int APS5_VABI libSceFsInternalForVshUnknown_juY2ugdopus_nid_no_patch() {
 }
 APS5_EXPORT("juY2ugdopus", libSceFsInternalForVshUnknown_juY2ugdopus_nid_no_patch);
 
-int APS5_VABI libSceFsInternalForVshUnknown_k_minus_WaWvM74jI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceFsInternalForVshUnknown_k_minus_WaWvM74jI_nid_no_patch(void* opt) {
+    return InitOpt(opt, nullptr, 0);
 }
 APS5_EXPORT("k-WaWvM74jI", libSceFsInternalForVshUnknown_k_minus_WaWvM74jI_nid_no_patch);
 
