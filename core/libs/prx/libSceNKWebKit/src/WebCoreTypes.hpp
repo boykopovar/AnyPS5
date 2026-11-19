@@ -182,6 +182,17 @@ struct Color {
     std::uint64_t m_colorAndFlags{0};
 };
 
+struct ExtendedColor {
+    std::uint32_t m_refCount;
+    std::array<float, 4> m_components;
+    std::uint8_t m_colorSpace;
+};
+
+struct ColorSpaceAndComponents {
+    std::uint8_t colorSpace;
+    std::array<float, 4> components;
+};
+
 template<typename T> struct SRGBA {
     T red;
     T green;
@@ -391,6 +402,11 @@ static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(ExtendedColor) == 24);
+static_assert(offsetof(ExtendedColor, m_components) == 4);
+static_assert(offsetof(ExtendedColor, m_colorSpace) == 20);
+static_assert(sizeof(ColorSpaceAndComponents) == 20);
+static_assert(offsetof(ColorSpaceAndComponents, components) == 4);
 static_assert(sizeof(SRGBA<std::uint8_t>) == 4);
 static_assert(offsetof(SRGBA<std::uint8_t>, alpha) == 3);
 static_assert(sizeof(SRGBA<float>) == 16);
