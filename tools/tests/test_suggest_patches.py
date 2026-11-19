@@ -705,5 +705,36 @@ class ReadCatalogTests(unittest.TestCase):
                 suggest_patches.read_catalog(Path(directory))
 
 
+class LoadCatalogTests(unittest.TestCase):
+    def catalog(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_numbered_entries_for_the_title_and_version(self):
+        text = json.dumps({"format": 1, "entries": [
+            {"titleId": "PPSA00001", "contentVersion": "01.00"},
+            {"titleId": "PPSA00002", "contentVersion": "01.00"},
+            "not an entry",
+            {"titleId": "PPSA00001", "contentVersion": "01.01"},
+            {"titleId": "PPSA00001", "contentVersion": "01.00", "id": "second"},
+        ]})
+        with tempfile.TemporaryDirectory() as directory:
+            entries = suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+        self.assertEqual([number for number, _ in entries], [1, 5])
+        self.assertEqual(entries[1][1]["id"], "second")
+
+    def test_no_match_gives_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.catalog(directory, '{"format": 1, "entries": []}')
+            self.assertEqual(suggest_patches.load_catalog(root, "PPSA00001", "01.00"), [])
+
+    def test_duplicate_keys_and_non_finite_numbers_are_refused(self):
+        for text, message in (('{"format": 1, "entries": [{"a": 1, "a": 2}]}', "duplicate JSON key"),
+                              ('{"format": 1, "entries": [{"a": Infinity}]}', "non-finite JSON number")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+
+
 if __name__ == "__main__":
     unittest.main()
