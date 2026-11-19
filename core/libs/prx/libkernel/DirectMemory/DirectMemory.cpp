@@ -767,7 +767,80 @@ void WatchMapping(std::uintptr_t address, std::size_t len) {
 #endif
 
 #if defined(__linux__)
+struct FlexibleDescriptor {
+    explicit FlexibleDescriptor(int file) : file(file) {}
+    FlexibleDescriptor(const FlexibleDescriptor&) = delete;
+    FlexibleDescriptor& operator=(const FlexibleDescriptor&) = delete;
+    ~FlexibleDescriptor() { ::close(file); }
+    int file;
+};
+
+struct FlexibleFile {
+    std::uintptr_t end = 0;
+    std::uint64_t offset = 0;
+    std::shared_ptr<FlexibleDescriptor> descriptor;
+};
+
+std::mutex g_flexibleFilesLock;
+std::map<std::uintptr_t, FlexibleFile> g_flexibleFiles;
+thread_local bool t_mapFlexible = false;
+
+void ForgetFlexibleFiles(std::uintptr_t start, std::uintptr_t end) {
+    std::lock_guard lock(g_flexibleFilesLock);
+    auto it = g_flexibleFiles.upper_bound(start);
+    if (it != g_flexibleFiles.begin() && std::prev(it)->second.end > start) --it;
+    while (it != g_flexibleFiles.end() && it->first < end) {
+        const auto rangeStart = it->first;
+        const auto entry = it->second;
+        it = g_flexibleFiles.erase(it);
+        const auto cutStart = std::max(start, rangeStart);
+        const auto cutEnd = std::min(end, entry.end);
+        if (fallocate(entry.descriptor->file, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(entry.offset + (cutStart - rangeStart)), static_cast<off_t>(cutEnd - cutStart)) != 0)
+            throw std::system_error(errno, std::generic_category(), "release flexible memory backing pages");
+        if (rangeStart < cutStart) g_flexibleFiles[rangeStart] = FlexibleFile{cutStart, entry.offset, entry.descriptor};
+        if (cutEnd < entry.end) it = g_flexibleFiles.emplace(cutEnd, FlexibleFile{entry.end, entry.offset + (cutEnd - rangeStart), entry.descriptor}).first;
+    }
+}
+
+void BackFlexibleMapping(void* mapped, size_t len, int prot) {
+    constexpr std::size_t ChunkBytes = std::size_t{64} << 20u;
+    constexpr std::size_t HugePageBytes = std::size_t{2} << 20u;
+    const int file = memfd_create("flexible memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (file < 0) throw std::system_error(errno, std::generic_category(), "create a flexible memory backing");
+    const auto start = reinterpret_cast<std::uintptr_t>(mapped);
+    const std::uint64_t lead = start % HugePageBytes;
+    const auto fileBytes = (lead + len + ChunkBytes - 1) / ChunkBytes * ChunkBytes;
+    if (ftruncate(file, static_cast<off_t>(fileBytes)) != 0 || fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) != 0 || ::mmap(mapped, len, LinuxProtFromSce(prot), MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(lead)) == MAP_FAILED) {
+        const int error = errno;
+        ::close(file);
+        throw std::system_error(error, std::generic_category(), "map a flexible memory backing");
+    }
+    ::madvise(mapped, len, MADV_HUGEPAGE);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, len);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, len);
+    ForgetFlexibleFiles(start, start + len);
+    std::lock_guard lock(g_flexibleFilesLock);
+    g_flexibleFiles[start] = FlexibleFile{start + len, lead, std::make_shared<FlexibleDescriptor>(file)};
+    Trace("flexible backing %p+0x%zx", mapped, len);
+}
+
+bool FlexibleBacking(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    std::lock_guard lock(g_flexibleFilesLock);
+    auto it = g_flexibleFiles.upper_bound(address);
+    if (it == g_flexibleFiles.begin()) return false;
+    --it;
+    if (bytes > it->second.end - std::min(it->second.end, address) || address < it->first) return false;
+    const int duplicate = fcntl(it->second.descriptor->file, F_DUPFD_CLOEXEC, 0);
+    if (duplicate < 0) throw std::system_error(errno, std::generic_category(), "duplicate a flexible memory backing");
+    *file = duplicate;
+    *offset = it->second.offset + (address - it->first);
+    return true;
+}
+#endif
+
+#if defined(__linux__)
 bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    if (FlexibleBacking(address, bytes, file, offset)) return true;
     std::lock_guard lock(g_directLock);
     const auto next = g_directMappings.upper_bound(address);
     if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address || next == g_directMappings.begin()) return false;
@@ -792,8 +865,13 @@ bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::ui
 }
 
 bool SharedBackingRuns(std::uintptr_t address, std::size_t bytes, int* file, GuestArena::SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
-    std::lock_guard lock(g_directLock);
     *count = 0;
+    if (std::uint64_t flexibleOffset = 0; capacity != 0 && FlexibleBacking(address, bytes, file, &flexibleOffset)) {
+        runs[0] = GuestArena::SharedBackingRun{flexibleOffset, bytes};
+        *count = 1;
+        return true;
+    }
+    std::lock_guard lock(g_directLock);
     const auto next = g_directMappings.upper_bound(address);
     if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address || next == g_directMappings.begin()) return false;
     auto it = std::prev(next);
@@ -922,6 +1000,9 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     const auto nativeProtection = LinuxProtFromSce(prot);
     mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
         const auto address = reinterpret_cast<std::uintptr_t>(addr);
+#if defined(__linux__)
+        ForgetFlexibleFiles(address, address + len);
+#endif
         std::lock_guard lock(g_directLock);
         if (physStart >= 0) {
             const auto phys = static_cast<std::uint64_t>(physStart);
@@ -945,6 +1026,9 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
 #else
             if (::mmap(addr, len, nativeProtection, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "remap anonymous memory");
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(addr, len);
+#if defined(__linux__)
+            if (t_mapFlexible && !zero) BackFlexibleMapping(addr, len, prot);
+#endif
 #endif
         }
     });
@@ -971,6 +1055,9 @@ void ArenaForget(void* addr, size_t len) {
 #endif
 
 void Unmap(void* addr, size_t len) {
+#if defined(__linux__)
+    ForgetFlexibleFiles(reinterpret_cast<std::uintptr_t>(addr), reinterpret_cast<std::uintptr_t>(addr) + len);
+#endif
 #if defined(__linux__) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
     if (ArenaAvailable() && GuestArena::GuestArenaContains_nid_postfix(addr, len))
         GuestArena::GuestArenaReset_nid_postfix(addr, len);
@@ -1271,6 +1358,9 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
 #ifdef _WIN32
         if (zero) GuestArena::GuestArenaMapZero_nid_postfix(mapped, len);
 #endif
+#if defined(__linux__)
+        if (t_mapFlexible && !zero) BackFlexibleMapping(mapped, len, prot);
+#endif
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);
         if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
     } catch (...) {
@@ -1282,6 +1372,22 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
     RecordProtection(mapped, len, prot);
     Trace("map anon %p+0x%zx prot=0x%x flags=0x%x", mapped, len, prot, flags);
     return 0;
+}
+
+int DoMapFlexibleAnon(void** addr, size_t len, int prot, int flags) {
+#if defined(__linux__)
+    t_mapFlexible = true;
+    try {
+        const int result = DoMapAnon(addr, len, prot, flags);
+        t_mapFlexible = false;
+        return result;
+    } catch (...) {
+        t_mapFlexible = false;
+        throw;
+    }
+#else
+    return DoMapAnon(addr, len, prot, flags);
+#endif
 }
 
 int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, [[maybe_unused]] bool allowStackReplacement) {
