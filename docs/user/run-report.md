@@ -43,7 +43,7 @@ Every text value in the report goes through the same filter for user names, host
 | `starts` | The entry bridge reached the call to the game's main entry point. |
 | `first-draw` | A real game draw or dispatch was submitted to the GPU. |
 | `presents` | The GPU accepted a game frame for display. This does not prove the frame was visible or not black. |
-| `milestones` | Seconds since start. Milestones not reached are left out. |
+| `milestones` | Seconds since start for each observed milestone. |
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
@@ -72,7 +72,7 @@ Values pass through the same text filter as the report, so a path or a user name
 | Windows | recorded with a recent relinker and a runtime that supports the report hook | recorded | recorded |
 | macOS | recorded | recorded | recorded |
 
-`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. Check which milestones your conversion supports before interpreting a gap. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
+`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. A missing milestone can mean the run ended earlier or that the system or conversion lacks support for it. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
 
 ## What the runtime counts
 
