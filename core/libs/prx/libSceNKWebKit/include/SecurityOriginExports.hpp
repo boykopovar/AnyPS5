@@ -13,6 +13,9 @@ WebCore::Ref<NKWebKit::WebCoreAbi::SecurityOrigin> APS5_VABI _ZN7WebCore14Securi
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore14SecurityOrigin8toStringEv(const NKWebKit::WebCoreAbi::SecurityOrigin* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore14SecurityOrigin11toRawStringEv(const NKWebKit::WebCoreAbi::SecurityOrigin* self);
 WebCore::Ref<NKWebKit::WebCoreAbi::SecurityOrigin> APS5_VABI _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(const NKWebKit::WebCoreAbi::SecurityOrigin* self);
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin9canAccessERKS0_(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WebCoreAbi::SecurityOrigin* other);
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin10canRequestERKN3WTF3URLE(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WtfAbi::URL* url);
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin10canDisplayERKN3WTF3URLE(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WtfAbi::URL* url);
 bool APS5_VABI _ZNK7WebCore14SecurityOrigin5equalEPKS0_(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WebCoreAbi::SecurityOrigin* other);
 bool APS5_VABI _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WebCoreAbi::SecurityOrigin* other);
 bool APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(const NKWebKit::WebCoreAbi::SecurityOrigin* self, const NKWebKit::WebCoreAbi::SecurityOrigin* other);
