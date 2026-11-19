@@ -678,6 +678,13 @@ class PreparationTests(unittest.TestCase):
             title_run.main(common)
         self.assertFalse((self.root / "out").exists())
 
+    def test_games_without_a_title_package_are_refused(self):
+        games = self.root / "games"
+        games.mkdir()
+        with self.assertRaisesRegex(SystemExit, "no title package under --games: .*games$"):
+            title_run.main(["--games", str(games), "--out", str(self.root / "out")])
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -1663,6 +1670,27 @@ class DiffEntriesTests(unittest.TestCase):
 
     def test_empty_inputs_give_empty_lists(self):
         self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class CheckFilesTests(unittest.TestCase):
+    def test_valid_text_and_content_entries_pass(self):
+        title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
+        title_run.check_files({})
+
+    def test_destination_must_be_a_relative_path_under_a_file_root(self):
+        for destination in ("a.txt", "other/a.txt", "../app0/a.txt", "/app0/a.txt", "app0\\a.txt"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "must be a relative path under"):
+                title_run.check_files({destination: {"text": "x"}})
+
+    def test_source_must_be_a_single_text_or_content_string(self):
+        for source in ("text", {}, {"text": 1}, {"other": "x"}, {"text": "x", "content": "y"}):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "must be"):
+                title_run.check_files({"app0/a.txt": source})
+
+    def test_content_must_stay_inside_the_content_directory(self):
+        for content in ("../x", "/x", "a\\b", "c:x"):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
+                title_run.check_files({"app0/a.txt": {"content": content}})
 
 
 if __name__ == "__main__":
