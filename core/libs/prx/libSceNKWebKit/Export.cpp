@@ -26281,10 +26281,6 @@ int APS5_VABI _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv() {
     NotImplemented_nid_no_patch(__func__);
 }

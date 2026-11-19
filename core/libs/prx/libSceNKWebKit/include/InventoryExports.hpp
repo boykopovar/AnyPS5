@@ -4786,7 +4786,6 @@ int APS5_VABI _ZNK3WTF8JSONImpl5Value12toJSONStringEv();
 int APS5_VABI _ZNK3WTF8JSONImpl5Value9writeJSONERNS_13StringBuilderE();
 int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE();
 int APS5_VABI _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE();
-int APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv();
 int APS5_VABI _ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE();
