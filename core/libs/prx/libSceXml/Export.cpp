@@ -489,8 +489,8 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document11removeChildENS1_6NodeIdES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv(XmlHandle* self) {
+    XmlDom::DocumentResetStatus(self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document11setWritableEv() {
