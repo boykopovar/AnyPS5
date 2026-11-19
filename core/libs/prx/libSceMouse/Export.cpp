@@ -13,7 +13,13 @@ int APS5_VABI sceMouseInit() {
 }
 
 int APS5_VABI sceMouseOpen(int userId, std::int32_t type, std::int32_t index, const void* param) {
-    return Mouse::Open(userId, type, index, static_cast<const MouseOpenParam*>(param));
+    if (param == nullptr || !Mouse::IsInitialized() || userId < 0 || type != 0 || index != 0) return Mouse::Open(userId, type, index, nullptr);
+    MouseOpenParam local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return MOUSE_ERROR_INVALID_ARG;
+    return Mouse::Open(userId, type, index, &local);
 }
 
 int APS5_VABI sceMouseClose(std::int32_t handle) {
