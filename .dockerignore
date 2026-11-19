@@ -4,6 +4,7 @@
 !tools/launcher/web/
 !tools/launcher/web/Dockerfile
 !tools/launcher/web/server.py
+!tools/launcher/web/state.py
 !tools/launcher/web/static/
 !tools/launcher/web/static/index.html
 !tools/launcher/web/static/app.js

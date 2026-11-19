@@ -122,6 +122,13 @@ class EngineCatalogue:
 
     def read_status(self):
         try:
+            expected = json.loads((self.root / 'expected.json').read_bytes())
+            if expected.get('status') == 'exporting':
+                self.cached = None
+                return {'status': 'exporting', 'message': 'The engine container is exporting the Windows engine. This page updates when it is ready.'}
+            if expected.get('status') == 'failed':
+                self.cached = None
+                return {'status': 'failed', 'message': 'The Windows engine export failed: ' + str(expected.get('message', 'no reason recorded')) + '. Run docker compose logs engine for details.'}
             pointers = tuple((self.root / name).read_bytes() for name in ('expected.json', 'current.json'))
             expected, current = (json.loads(value) for value in pointers)
             if expected.get('status') != 'ready' or current['id'] != expected['id']:
@@ -145,7 +152,7 @@ class EngineCatalogue:
             return dict(self.cached)
         except FileNotFoundError:
             self.cached = None
-            return {'status': 'missing', 'message': 'Windows engine bundle is missing. Complete docker compose up first.'}
+            return {'status': 'missing', 'message': 'Waiting for the engine container to export the Windows engine. If this does not change, run docker compose logs engine.'}
         except (ValueError, KeyError, TypeError, OSError, struct.error) as error:
             self.cached = None
             return {'status': 'incompatible', 'message': str(error)}

@@ -7,11 +7,15 @@ import threading
 import unittest
 import time
 import hashlib
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'engine'))
 
+spec = importlib.util.spec_from_file_location('launcher_web_state', Path(__file__).parent / 'web/state.py')
+web_state = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(web_state)
 spec = importlib.util.spec_from_file_location('launcher_web', Path(__file__).parent / 'web/server.py')
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
@@ -186,6 +190,24 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/engine/status')[0], 200)
         with self.assertRaisesRegex(ValueError, 'protocol'):
             self.server.store.report({'games': [], 'folders': [], 'helper_protocol': 2})
+
+
+    def test_state_setup_creates_and_keeps_a_private_credential(self):
+        if not hasattr(os, 'getuid'):
+            self.skipTest('Ownership is applied inside the Linux container')
+        root = Path(self.temp.name) / 'state'
+        owner = (os.getuid(), os.getgid())
+        web_state.prepare(root, owner)
+        credential = (root / 'auth.token').read_text()
+        self.assertGreaterEqual(len(credential), 64)
+        self.assertTrue((root / 'backend').is_dir())
+        self.assertEqual((root / 'auth.token').stat().st_mode & 0o777, 0o600)
+        web_state.prepare(root, owner)
+        self.assertEqual((root / 'auth.token').read_text(), credential)
+        (root / 'auth.token').write_text('short')
+        with self.assertRaisesRegex(ValueError, 'invalid'):
+            web_state.prepare(root, owner)
+        self.assertEqual((root / 'auth.token').read_text(), 'short')
 
 
 if __name__ == '__main__':

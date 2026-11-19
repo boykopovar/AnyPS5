@@ -17,7 +17,7 @@ The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` f
 ## First run
 
 1. Extract the source ZIP or clone this fork. Open PowerShell in the source folder.
-2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. The web service starts after successful export. An exited engine service is normal.
+2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. An exited engine service is normal. A short `setup` service creates the web app's state and pairing credential, then also exits. The web service starts without waiting for the engine export and shows its progress; if the export fails, the page shows the reason.
 3. Open [http://127.0.0.1:8766](http://127.0.0.1:8766). The public **About** tab explains capabilities, limitations and the build's exact upstream revision.
 4. Download the engine/helper ZIP from the setup panel, extract it completely and run **Install-Helper.cmd**. Choose the source folder containing `compose.yaml` if asked. Alternatively, run `Install-Helper.cmd` directly from the source folder after export.
 5. Enter the helper's eight-digit desktop pairing code in the browser. It expires in two minutes and works once. Run **Pair-Browser.cmd** to generate another code. The permanent credential remains in local storage and is not shown in the browser.
@@ -39,7 +39,7 @@ docker compose down
 
 Default `down` removes the stack's containers and network. It retains images, compiler/download caches, exported engine bundles, pairing state, library entries, settings, saves and game folders. Ctrl+C stops an attached `up`; `down` removes its containers afterward. No global Docker prune is needed.
 
-When Compose replaces the engine service, it also restarts the web service after successful export. This resets readiness checks against the newly published bundle.
+When Compose replaces the engine service, the running web service picks up the newly published bundle on its own. `/healthz` reports only that the web server is up; `/ready` also checks the engine bundle.
 
 Windows helper, game and preparation processes have a separate lifecycle. The helper stays installed and reconnects after the backend returns. Cancel preparation and close games normally before shutdown if you want those Windows processes to stop. Docker cannot stop or restart an interactive Windows desktop process by itself.
 

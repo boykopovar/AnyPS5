@@ -203,20 +203,18 @@ class BundleTests(unittest.TestCase):
         module = importlib.util.spec_from_file_location('engine_export', Path(__file__).with_name('export.py'))
         exporter = importlib.util.module_from_spec(module)
         module.loader.exec_module(exporter)
-        with tempfile.TemporaryDirectory() as temporary, patch.object(exporter.os, 'chown'):
+        with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            payload, artifacts, state = root / 'payload', root / 'artifacts', root / 'state'
+            payload, artifacts = root / 'payload', root / 'artifacts'
             manifest = self.make_bundle(payload)
-            exporter.export(payload, artifacts, state)
+            exporter.export(payload, artifacts)
             current = (artifacts / 'current.json').read_bytes()
-            credential = (state / 'auth.token').read_bytes()
             (artifacts / '.pending-interrupted-process').mkdir()
             (artifacts / 'interrupted.zip.pending').write_bytes(b'partial download')
             with ThreadPoolExecutor(max_workers=2) as pool:
-                list(pool.map(lambda _: exporter.export(payload, artifacts, state), range(2)))
+                list(pool.map(lambda _: exporter.export(payload, artifacts), range(2)))
             self.assertFalse((artifacts / 'interrupted.zip.pending').exists())
             self.assertFalse((artifacts / '.pending-interrupted-process').exists())
-            self.assertEqual((state / 'auth.token').read_bytes(), credential)
             self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'ready')
             helper = payload / 'helper/AnyPS5DesktopHelper.exe'
             data = bytearray(helper.read_bytes())
@@ -228,15 +226,19 @@ class BundleTests(unittest.TestCase):
             (payload / 'manifest.json').write_text(json.dumps(manifest))
             with patch.object(exporter.shutil, 'copytree', side_effect=OSError('Interrupted export')):
                 with self.assertRaisesRegex(OSError, 'Interrupted export'):
-                    exporter.export(payload, artifacts, state)
+                    exporter.export(payload, artifacts)
             self.assertEqual((artifacts / 'current.json').read_bytes(), current)
             self.assertFalse(list(artifacts.glob('.pending-*')))
             (payload / 'libs/libstdc++-6.dll').write_bytes(b'interrupted download')
             with self.assertRaises(ValueError):
-                exporter.export(payload, artifacts, state)
+                exporter.export(payload, artifacts)
             self.assertEqual((artifacts / 'current.json').read_bytes(), current)
-            self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'incompatible')
+            failure = EngineCatalogue(artifacts).status()
+            self.assertEqual(failure['status'], 'failed')
+            self.assertIn('docker compose logs engine', failure['message'])
             self.assertTrue((artifacts / 'bundles' / json.loads(current)['id'] / 'relinker.exe').exists())
+            (artifacts / 'expected.json').write_text(json.dumps({'status': 'exporting'}))
+            self.assertEqual(EngineCatalogue(artifacts).status()['status'], 'exporting')
 
     def make_bundle(self, directory):
         image = bytearray(1024)

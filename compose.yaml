@@ -10,13 +10,33 @@ services:
         ANYPS5_CACHE_SCOPE: ${ANYPS5_CACHE_SCOPE:-default}
     volumes:
       - ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}:/artifacts
-      - ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}:/web-state
+    restart: "no"
+  setup:
+    build:
+      context: .
+      dockerfile: tools/launcher/web/Dockerfile
+    command: ["python", "/app/state.py"]
+    user: "0:0"
+    volumes:
+      - type: bind
+        source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}
+        target: /state
+        bind:
+          create_host_path: true
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
     restart: "no"
   web:
     depends_on:
-      engine:
+      setup:
         condition: service_completed_successfully
-        restart: true
     build:
       context: .
       dockerfile: tools/launcher/web/Dockerfile
@@ -31,10 +51,14 @@ services:
       - type: bind
         source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}
         target: /state
+        bind:
+          create_host_path: true
       - type: bind
         source: ${ANYPS5_ENGINE_DIR:-./.local/engine-artifacts}
         target: /engine
         read_only: true
+        bind:
+          create_host_path: true
     read_only: true
     tmpfs:
       - /tmp

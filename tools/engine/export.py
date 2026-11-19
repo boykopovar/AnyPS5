@@ -1,7 +1,6 @@
 import fcntl
 import json
 import os
-import secrets
 import shutil
 import tempfile
 import zipfile
@@ -18,9 +17,8 @@ def atomic(path, value):
     pending.replace(path)
 
 
-def export(payload, root, state):
+def export(payload, root):
     root.mkdir(parents=True, exist_ok=True)
-    state.mkdir(parents=True, exist_ok=True)
     with (root / '.export.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         for pending in root.iterdir():
@@ -70,18 +68,6 @@ def export(payload, root, state):
                 for name, record in manifest['files'].items():
                     if hashlib.sha256(zipped.read(name)).hexdigest() != record['sha256']:
                         raise ValueError('Engine archive checksum mismatch: ' + name)
-            backend = state / 'backend'
-            backend.mkdir(exist_ok=True)
-            token = state / 'auth.token'
-            try:
-                with token.open('x') as stream:
-                    stream.write(secrets.token_hex(32))
-            except FileExistsError:
-                if len(token.read_text().strip()) < 32:
-                    raise ValueError('Existing pairing credential is invalid; retained without modification')
-            for path in (state, backend, token):
-                os.chown(path, 10001, 10001)
-            os.chmod(token, 0o600)
             atomic(root / 'current.json', {'id': identifier, 'archive_sha256': sha256(archive)})
             atomic(root / 'expected.json', {'status': 'ready', 'id': identifier})
             print('Windows engine ready: ' + identifier, flush=True)
@@ -94,4 +80,4 @@ def export(payload, root, state):
 
 
 if __name__ == '__main__':
-    export(Path('/payload'), Path('/artifacts'), Path('/web-state'))
+    export(Path('/payload'), Path('/artifacts'))
