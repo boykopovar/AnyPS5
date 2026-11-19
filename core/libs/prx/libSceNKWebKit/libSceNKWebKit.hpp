@@ -88,3 +88,4 @@
 #include "prx/libSceNKWebKit/include/LiftedLeafFunctionsExports.hpp"
 #include "prx/libSceNKWebKit/include/LiftedWrappersExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
+#include "prx/libSceNKWebKit/include/LiftedJumpOutsExports.hpp"

@@ -930,7 +930,6 @@ void APS5_VABI _ZN7WebCore24DeprecatedGlobalSettings32setResourceLoadStatisticsE
 int APS5_VABI _ZN7WebCore11DisplayList23FillRectWithRoundedHoleD2Ev();
 int APS5_VABI _ZN7WebCore11DisplayList8FillPathD1Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_Qq1NluKTwJA_nid_no_patch();
-int APS5_VABI _ZNK7WebCore9DOMWindow5frameEv();
 int APS5_VABI _ZN7WebCore27startObservingCookieChangesERKNS_21NetworkStorageSessionEON3WTF8FunctionIFvvEEE();
 int APS5_VABI _ZN7WebCore10JSDocument14finishCreationERN3JSC2VME();
 int APS5_VABI _ZN7WebCore16VisibleSelectionC2ERKNS_11SimpleRangeENS_9EAffinityEb();
@@ -1524,7 +1523,6 @@ int APS5_VABI _ZNK7WebCore21NetworkStorageSession12deleteCookieERKN3WTF3URLERKNS
 int APS5_VABI _ZN7WebCore15GraphicsContext9clearRectERKNS_9FloatRectE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_iUTIYD3h6IE_nid_no_patch();
 int APS5_VABI WKBundleSetPopupBlockingEnabled();
-int APS5_VABI _ZNK7WebCore8Document4pageEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_ie3xVSGOmXs_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_ifT85lHYbyo_nid_no_patch();
 int APS5_VABI _ZN7WebCore24RotateTransformOperation6createEdNS_18TransformOperation13OperationTypeE();
