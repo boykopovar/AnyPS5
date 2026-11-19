@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <new>
+#include <stdexcept>
 
 namespace {
 
@@ -53,16 +54,16 @@ bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
 Position* Validate(const UConstrainedFieldPosition* handle, std::int32_t* error, const char* caller) {
     if (!error) APS5_INVALID_ARG_EX;
     std::int32_t currentError = 0;
-    if (!GuestCopyInPreservingErrno(currentError, error)) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyInPreservingErrno(currentError, error)) throw std::runtime_error(caller);
     if (currentError > 0) return nullptr;
     if (!handle) {
-        if (!GuestCopyOutPreservingErrno(error, IllegalArgumentError)) NotImplemented_nid_no_patch(caller);
+        if (!GuestCopyOutPreservingErrno(error, IllegalArgumentError)) throw std::runtime_error(caller);
         return nullptr;
     }
     std::int32_t magic = 0;
-    if (!GuestCopyInPreservingErrno(magic, handle)) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyInPreservingErrno(magic, handle)) throw std::runtime_error(caller);
     if (magic != Magic) {
-        if (!GuestCopyOutPreservingErrno(error, InvalidFormatError)) NotImplemented_nid_no_patch(caller);
+        if (!GuestCopyOutPreservingErrno(error, InvalidFormatError)) throw std::runtime_error(caller);
         return nullptr;
     }
     return reinterpret_cast<Position*>(const_cast<UConstrainedFieldPosition*>(handle));
@@ -74,13 +75,13 @@ extern "C" {
 
 UConstrainedFieldPosition* APS5_VABI ucfpos_open_nid_postfix(std::int32_t* error) {
     if (error && !GuestWritablePreservingErrno(error, sizeof(*error))) {
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     }
     auto* position = new (std::nothrow) Position();
     if (!position) {
         if (!error) APS5_INVALID_ARG_EX;
         if (!GuestCopyOutPreservingErrno(error, MemoryAllocationError)) {
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(__func__);
         }
         return nullptr;
     }
@@ -126,11 +127,11 @@ void APS5_VABI ucfpos_getIndexes_nid_postfix(const UConstrainedFieldPosition* ha
     if (!start || !limit) APS5_INVALID_ARG_EX;
     if (!GuestWritablePreservingErrno(start, sizeof(*start)) ||
         !GuestWritablePreservingErrno(limit, sizeof(*limit))) {
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     }
     if (!GuestCopyOutPreservingErrno(start, position->start) ||
         !GuestCopyOutPreservingErrno(limit, position->limit)) {
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     }
 }
 

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <algorithm>
@@ -135,8 +136,10 @@ void Characters() {
     Require(u_memrchr_nid_postfix(nullptr, 0xdfff, 7) == nullptr);
     Require(u_strchr_nid_postfix(nullptr, 0xd800) == nullptr);
     Require(u_strrchr_nid_postfix(nullptr, 0xdfff) == nullptr);
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     Throws([&] { u_memchr_nid_postfix(nullptr, 'a', 1); });
     Throws([&] { u_memrchr_nid_postfix(nullptr, 'a', 1); });
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
     Throws([&] { u_strchr_nid_postfix(nullptr, 'a'); });
     Throws([&] { u_strrchr_nid_postfix(nullptr, 'a'); });
     Require(text == original);

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -206,6 +208,30 @@ void CheckSamples() {
     Require(std::all_of(sample.begin(), sample.end(), [](auto value) { return value == sentinel; }));
 }
 
+bool RejectsGuestPointer(auto call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckGuestPointers() {
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* unmappedScripts = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* unmappedSample = reinterpret_cast<char16_t*>(std::uintptr_t{0x10});
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    std::int32_t status = 0;
+    Require(RejectsGuestPointer([&] { uscript_getScript_nid_postfix('A', unmappedStatus); }));
+    Require(RejectsGuestPointer([&] { uscript_getScriptExtensions_nid_postfix('A', nullptr, 0, unmappedStatus); }));
+    Require(RejectsGuestPointer([&] { uscript_getScriptExtensions_nid_postfix('A', unmappedScripts, 4, &status); }));
+    Require(RejectsGuestPointer([&] { uscript_getSampleString_nid_postfix(25, nullptr, 0, unmappedStatus); }));
+    Require(RejectsGuestPointer([&] { uscript_getSampleString_nid_postfix(25, nullptr, 0, nullptr); }));
+    Require(RejectsGuestPointer([&] { uscript_getSampleString_nid_postfix(25, unmappedSample, 4, &status); }));
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
+}
+
 }
 
 int main() {
@@ -213,4 +239,5 @@ int main() {
     CheckExtensions();
     CheckMetadata();
     CheckSamples();
+    CheckGuestPointers();
 }

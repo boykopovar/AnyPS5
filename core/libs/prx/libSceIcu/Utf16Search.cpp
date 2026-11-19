@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -135,13 +136,13 @@ char16_t* APS5_VABI u_memset_nid_postfix(char16_t* destination, char16_t value, 
 
 char16_t* APS5_VABI u_memchr_nid_postfix(const char16_t* text, char16_t value, std::int32_t count) {
     if (count <= 0 || (!text && Surrogate(value))) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::runtime_error(__func__);
     return FindCharacter(text, value, count, false);
 }
 
 char16_t* APS5_VABI u_memrchr_nid_postfix(const char16_t* text, char16_t value, std::int32_t count) {
     if (count <= 0 || (!text && Surrogate(value))) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::runtime_error(__func__);
     return FindCharacter(text, value, count, true);
 }
 

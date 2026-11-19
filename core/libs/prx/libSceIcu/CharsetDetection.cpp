@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
@@ -33,16 +34,16 @@ bool WritablePreservingErrno(void* dst, std::size_t bytes) {
 
 bool EnterStatus(std::int32_t* error, UErrorCode& status, std::int32_t& previous, const char* caller) {
     if (!error) APS5_INVALID_ARG_EX;
-    if (!CopyInPreservingErrno(&previous, error, sizeof(previous))) NotImplemented_nid_no_patch(caller);
+    if (!CopyInPreservingErrno(&previous, error, sizeof(previous))) throw std::runtime_error(caller);
     status = static_cast<UErrorCode>(previous);
     if (U_FAILURE(status)) return false;
-    if (!WritablePreservingErrno(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
+    if (!WritablePreservingErrno(error, sizeof(*error))) throw std::runtime_error(caller);
     return true;
 }
 
 void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, const char* caller) {
     const auto updated = static_cast<std::int32_t>(status);
-    if (updated != previous && !CopyOutPreservingErrno(error, &updated, sizeof(updated))) NotImplemented_nid_no_patch(caller);
+    if (updated != previous && !CopyOutPreservingErrno(error, &updated, sizeof(updated))) throw std::runtime_error(caller);
 }
 
 UCharsetDetector* Native(Icu::CharsetDetector* detector) {
@@ -89,11 +90,11 @@ const Icu::CharsetMatch** APS5_VABI ucsdet_detectAll_nid_postfix(Icu::CharsetDet
     std::int32_t hostFound = 0;
     if (!CopyInPreservingErrno(&hostFound, found, sizeof(hostFound)) ||
         !WritablePreservingErrno(found, sizeof(*found))) {
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     }
     const auto** matches =
         reinterpret_cast<const Icu::CharsetMatch**>(ucsdet_detectAll(Native(detector), &hostFound, &status));
-    if (!CopyOutPreservingErrno(found, &hostFound, sizeof(hostFound))) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOutPreservingErrno(found, &hostFound, sizeof(hostFound))) throw std::runtime_error(__func__);
     LeaveStatus(error, status, previous, __func__);
     return matches;
 }

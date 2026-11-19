@@ -5,6 +5,7 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <stdexcept>
 
 extern "C" {
 
@@ -26,7 +27,7 @@ void APS5_VABI ucnv_fixFileSeparator_nid_postfix(const Icu::Converter* converter
         const auto bytes = count * sizeof(char16_t);
         if (!GuestCopyIn_nid_no_patch(buffer.data(), source + offset, bytes)) {
             errno = savedErrno;
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(__func__);
         }
         const auto initial = buffer;
         ucnv_fixFileSeparator(native, buffer.data(), static_cast<std::int32_t>(count));
@@ -40,7 +41,7 @@ void APS5_VABI ucnv_fixFileSeparator_nid_postfix(const Icu::Converter* converter
             if (!GuestCopyOut_nid_no_patch(source + offset + first, buffer.data() + first,
                                            (last - first) * sizeof(char16_t))) {
                 errno = savedErrno;
-                NotImplemented_nid_no_patch(__func__);
+                throw std::runtime_error(__func__);
             }
             first = last;
         }

@@ -77,7 +77,7 @@ std::int32_t APS5_VABI u_countChar32_nid_postfix(const std::uint16_t* guestText,
     for (std::size_t offset = 0; length < 0 || offset < static_cast<std::size_t>(length); ++count) {
         const auto unit = text[offset];
         if (length < 0 && unit == 0) break;
-        if (count == std::numeric_limits<std::int32_t>::max()) NotImplemented_nid_no_patch(__func__);
+        if (count == std::numeric_limits<std::int32_t>::max()) throw std::runtime_error(__func__);
         ++offset;
         if (IsLead_nid_no_patch(unit) && (length < 0 || offset < static_cast<std::size_t>(length)) && IsTrail_nid_no_patch(text[offset])) ++offset;
     }
@@ -106,14 +106,14 @@ std::int8_t APS5_VABI u_strHasMoreChar32Than_nid_postfix(const std::uint16_t* gu
 std::uint16_t* APS5_VABI u_strchr32_nid_postfix(const std::uint16_t* text, std::int32_t scalar) {
     if (static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::runtime_error(__func__);
     return FindScalar_nid_no_patch(text, scalar, -1, false);
 }
 
 std::uint16_t* APS5_VABI u_strrchr32_nid_postfix(const std::uint16_t* text, std::int32_t scalar) {
     if (static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::runtime_error(__func__);
     return FindScalar_nid_no_patch(text, scalar, -1, true);
 }
 
@@ -121,7 +121,7 @@ std::uint16_t* APS5_VABI u_memchr32_nid_postfix(const std::uint16_t* text, std::
     if (count <= 0 || static_cast<std::uint32_t>(scalar) > 0x10ffff) return nullptr;
     if (scalar >= 0x10000 && count < 2) return nullptr;
     if (!text && scalar >= 0xd800 && scalar <= 0xdfff) return nullptr;
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::runtime_error(__func__);
     return FindScalar_nid_no_patch(text, scalar, count, false);
 }
 

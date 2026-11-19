@@ -9,6 +9,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -76,7 +77,7 @@ void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(error, &value, sizeof(value));
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 }
@@ -172,7 +173,7 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
     const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
     errno = savedErrno;
-    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (!readable) throw std::runtime_error(__func__);
     if (incoming > 0) return 0;
     if (itemIndex < 0) {
         WriteError(error, IllegalArgumentError, __func__);

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -153,6 +154,7 @@ private:
 template <typename TCall>
 void RejectsFaulted(TCall call, const char* what) {
     errno = EINVAL;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     bool threw = false;
     try {
         call();
@@ -161,6 +163,7 @@ void RejectsFaulted(TCall call, const char* what) {
     }
     Expect(threw, what);
     ExpectInt(errno, EINVAL, "errno preserved");
+    Expect(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unusable guest pointer was reported as an unimplemented export");
 }
 
 void TestGuestPointers() {

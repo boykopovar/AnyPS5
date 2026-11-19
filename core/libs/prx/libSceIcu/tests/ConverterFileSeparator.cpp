@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "ucnv_bld.h"
@@ -162,6 +163,7 @@ void NoAccess(Mapping& mapping) {
 void RejectedDestinations(Mapping& mapping) {
     Converter converter("ibm-943_P130-1999");
     auto* invalid = reinterpret_cast<char16_t*>(std::uintptr_t{0x10});
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool rejected = false;
     try {
@@ -183,6 +185,7 @@ void RejectedDestinations(Mapping& mapping) {
     }
     Require(rejected && errno == 72);
     Require(source[0] == 0x00a5 && source[1] == 0x00a5);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 
     mapping.Fill(0x1234);
     source = mapping.data + 23;

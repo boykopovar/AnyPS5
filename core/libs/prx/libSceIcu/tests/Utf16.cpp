@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -111,6 +112,7 @@ void Domains() {
         for (const auto count : {1, 2, std::numeric_limits<std::int32_t>::max()}) Require(u_memchr32_nid_postfix(nullptr, scalar, count) == nullptr);
     }
     for (const auto scalar : {0x10000, 0x10ffff}) Require(u_memchr32_nid_postfix(nullptr, scalar, 1) == nullptr);
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     for (unsigned operation = 0; operation < 3; ++operation) {
         bool rejected = false;
         try {
@@ -120,6 +122,7 @@ void Domains() {
         } catch (const std::runtime_error&) { rejected = true; }
         Require(rejected);
     }
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 class GuardedPage {

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -40,17 +41,17 @@ std::string ReadAlias(const char* alias, const char* caller) {
     for (;;) {
         char value = 0;
         if (!CopyIn(&value, reinterpret_cast<const void*>(address), sizeof(value)))
-            NotImplemented_nid_no_patch(caller);
+            throw std::runtime_error(caller);
         if (value == 0) return copy;
         if (copy.size() < UCNV_MAX_CONVERTER_NAME_LENGTH) copy.push_back(value);
-        if (address == std::numeric_limits<std::uintptr_t>::max()) NotImplemented_nid_no_patch(caller);
+        if (address == std::numeric_limits<std::uintptr_t>::max()) throw std::runtime_error(caller);
         ++address;
     }
 }
 
 void WriteStatus(std::int32_t* error, UErrorCode status, std::int32_t initial, const char* caller) {
     const auto result = static_cast<std::int32_t>(status);
-    if (result != initial && !CopyOut(error, &result, sizeof(result))) NotImplemented_nid_no_patch(caller);
+    if (result != initial && !CopyOut(error, &result, sizeof(result))) throw std::runtime_error(caller);
 }
 
 }
@@ -59,10 +60,10 @@ extern "C" void APS5_VABI ucnv_getAliases_nid_postfix(const char* alias, const c
                                                        std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
     std::int32_t initial = 0;
-    if (!CopyIn(&initial, error, sizeof(initial))) NotImplemented_nid_no_patch(__func__);
+    if (!CopyIn(&initial, error, sizeof(initial))) throw std::runtime_error(__func__);
     UErrorCode status = static_cast<UErrorCode>(initial);
     if (U_FAILURE(status)) return;
-    if (!Writable(error, sizeof(*error))) NotImplemented_nid_no_patch(__func__);
+    if (!Writable(error, sizeof(*error))) throw std::runtime_error(__func__);
 
     ucnv_countAliases("", &status);
     if (U_FAILURE(status)) {
@@ -82,9 +83,9 @@ extern "C" void APS5_VABI ucnv_getAliases_nid_postfix(const char* alias, const c
         return;
     }
     const std::size_t bytes = static_cast<std::size_t>(count) * sizeof(*aliases);
-    if (!aliases || !Writable(aliases, bytes)) NotImplemented_nid_no_patch(__func__);
+    if (!aliases || !Writable(aliases, bytes)) throw std::runtime_error(__func__);
     std::vector<const char*> nativeAliases(count);
     ucnv_getAliases(nativeAlias, nativeAliases.data(), &status);
-    if (!CopyOut(aliases, nativeAliases.data(), bytes)) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOut(aliases, nativeAliases.data(), bytes)) throw std::runtime_error(__func__);
     WriteStatus(error, status, initial, __func__);
 }

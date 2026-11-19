@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -214,6 +215,7 @@ void Signatures() {
 template<class TCall>
 void RequiresRuntimeErrorKeepingErrno(TCall call, const char* message) {
     errno = 71;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     bool threw = false;
     try {
         call();
@@ -221,6 +223,7 @@ void RequiresRuntimeErrorKeepingErrno(TCall call, const char* message) {
         threw = true;
     }
     Require(threw && errno == 71, message);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "guest pointer failure reported as an unimplemented export");
 }
 
 void SignatureGuestPointers() {
@@ -265,6 +268,8 @@ void SignatureGuestPointers() {
                                      "unreadable terminated source throws and keeps errno");
     RequiresRuntimeErrorKeepingErrno([&] { ucnv_detectUnicodeSignature_nid_postfix(bom, 3, readOnlyZero, &status); },
                                      "unwritable signature length throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { u_getDefaultConverter_nid_postfix(unmappedStatus); },
+                                     "unreadable default converter status throws and keeps errno");
     Require(status == 0, "guest pointer failures leave the status unchanged");
     std::int32_t length = 123;
     Require(!ucnv_detectUnicodeSignature_nid_postfix(pages + pageSize - 3, -1, &length, &status), "terminated source stops before the guard page");

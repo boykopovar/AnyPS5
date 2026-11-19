@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -158,6 +159,17 @@ void BinaryPropertySetGuestPointers() {
                                      "unwritable error throws and keeps errno");
     Require(u_getBinaryPropertySet_nid_postfix(-1, readOnlyFailing) == nullptr, "read-only incoming error returns immediately");
     Require(u_getBinaryPropertySet_nid_postfix(alphabetic, readOnlyZero) != nullptr, "success does not write the error");
+    USet* set = uset_openEmpty_nid_postfix();
+    uset_add_nid_postfix(set, 0x61);
+    std::int32_t start = 0;
+    std::int32_t end = 0;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    RequiresRuntimeErrorKeepingErrno([&] { uset_getItem_nid_postfix(set, 0, &start, &end, nullptr, 0, unmapped); },
+                                     "unreadable item error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { uset_getItem_nid_postfix(set, -1, &start, &end, nullptr, 0, readOnlyZero); },
+                                     "unwritable item error throws and keeps errno");
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unusable item error was reported as an unimplemented export");
+    uset_close_nid_postfix(set);
 
 #ifdef _WIN32
     VirtualFree(page, 0, MEM_RELEASE);

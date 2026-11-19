@@ -33,10 +33,12 @@ void Require(bool condition, const char* message) {
 template<class TCall>
 void RequireRuntimeError(TCall call, const char* message) {
     errno = 71;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     try {
         call();
     } catch (const std::runtime_error&) {
         Require(errno == 71, "guest pointer failure preserves errno");
+        Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "guest pointer failure reported as an unimplemented export");
         return;
     }
     Require(false, message);

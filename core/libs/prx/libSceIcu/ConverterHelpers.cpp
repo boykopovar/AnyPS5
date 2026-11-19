@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace {
@@ -18,14 +19,14 @@ void CopyIn(void* destination, const void* source, std::size_t bytes, const char
     const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!ok) throw std::runtime_error(caller);
 }
 
 bool IsDigit(unsigned char value, bool ebcdic) {

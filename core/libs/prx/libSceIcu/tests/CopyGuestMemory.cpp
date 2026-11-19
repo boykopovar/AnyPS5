@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -12,6 +13,7 @@
 #include <limits>
 #include <set>
 #include <source_location>
+#include <stdexcept>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -186,10 +188,33 @@ void ReadOnly(Mapping& mapping, Watch& watch) {
         catch (const std::exception&) { rejected = true; }
         Require(rejected);
     }
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    for (std::size_t index = 0; index + 1 < Writers.size(); ++index) {
+        bool rejected = false;
+        try { Writers[index].call(destination, u"ABC", Writers[index].count); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected);
+    }
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 #endif
     Require(std::equal(before.begin(), before.end(), mapping.data));
     Require(watch.Collect().empty());
     Require(sceKernelMprotect(mapping.data, MappingBytes, 3) == 0);
+}
+
+void NullBuffers() {
+    std::array<char16_t, 4> destination{u'P', 0, 0, 0};
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    for (std::size_t index = 0; index + 1 < Writers.size(); ++index) {
+        for (const bool nullDestination : {true, false}) {
+            bool rejected = false;
+            try { Writers[index].call(nullDestination ? nullptr : destination.data(), nullDestination ? u"A" : nullptr, Writers[index].count); }
+            catch (const std::runtime_error&) { rejected = true; }
+            Require(rejected);
+        }
+    }
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
+    Require(destination[0] == u'P' && destination[1] == 0);
 }
 
 } // namespace
@@ -200,5 +225,6 @@ int main() {
     WritableOutputs(mapping, watch);
     PreciseRanges(mapping, watch);
     ReadOnly(mapping, watch);
+    NullBuffers();
     std::printf("guest-mapped copy and readonly no-op checks passed; write-watch %s\n", watch.enabled ? "verified" : "unavailable on this host");
 }

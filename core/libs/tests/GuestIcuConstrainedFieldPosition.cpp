@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -104,10 +105,12 @@ void Handles() {
 void GuestPointers() {
     auto rejectsRuntime = [](auto&& call) {
         errno = 71;
+        const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
         try {
             call();
         } catch (const std::runtime_error&) {
             Require(errno == 71, "errno preserved across rejected guest pointer");
+            Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "rejected guest pointer reported as an unimplemented export");
             return;
         }
         Require(false, "faulted guest pointer did not throw runtime_error");
