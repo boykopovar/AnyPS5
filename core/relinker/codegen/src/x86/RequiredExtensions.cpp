@@ -140,7 +140,8 @@ bool _avx1(const Encoding& encoding) {
             if (opcode >= 0x28 && opcode <= 0x2F) return true;
             if (opcode >= 0x50 && opcode <= 0x5F) return true;
             if (opcode == 0x6E || opcode == 0x6F || opcode == 0x7E || opcode == 0x7F) return true;
-            if (opcode == 0xC2 || opcode == 0xC6 || opcode == 0xD6 || opcode == 0xE6 || opcode == 0xE7) return true;
+            if (opcode == 0x7C || opcode == 0x7D || opcode == 0xC2 || opcode == 0xC6) return true;
+            if (opcode == 0xD0 || opcode == 0xD6 || opcode == 0xE6 || opcode == 0xE7) return true;
             return false;
         }
         if (prefix == kRepPrefix || prefix == kRepnePrefix) {
@@ -148,13 +149,14 @@ bool _avx1(const Encoding& encoding) {
             if (opcode == 0x16 || opcode == 0x17) return true;
             if (opcode == 0x2A || opcode == 0x2C || opcode == 0x2D || opcode == 0x2E || opcode == 0x2F) return true;
             if (opcode >= 0x51 && opcode <= 0x5F && opcode != 0x54 && opcode != 0x55) return true;
-            if (opcode == 0x7E || opcode == 0x7F || opcode == 0xD6 || opcode == 0xE6) return true;
+            if (opcode == 0x6F || opcode == 0x7C || opcode == 0x7D || opcode == 0x7E || opcode == 0x7F) return true;
+            if (opcode == 0xD0 || opcode == 0xD6 || opcode == 0xE6 || opcode == 0xF0) return true;
             return false;
         }
         return false;
     }
     if (map == kMap0F38 && prefix == kOperandSizePrefix) {
-        if (opcode == 0x0E || opcode == 0x0F || opcode == 0x17) return true;
+        if (opcode == 0x0C || opcode == 0x0D || opcode == 0x0E || opcode == 0x0F || opcode == 0x17) return true;
         if (opcode == 0x18 || opcode == 0x19 || opcode == 0x1A) return true;
         if (opcode == 0x2C || opcode == 0x2E) return true;
         return false;
@@ -162,7 +164,7 @@ bool _avx1(const Encoding& encoding) {
     if (map == kMap0F3A && prefix == kOperandSizePrefix) {
         if (opcode == 0x06) return true;
         if (opcode >= 0x08 && opcode <= 0x0D) return true;
-        if (opcode == 0x18 || opcode == 0x19) return true;
+        if (opcode == 0x18 || opcode == 0x19 || opcode == 0x40) return true;
         if (opcode == 0x4A || opcode == 0x4B) return true;
         return false;
     }
@@ -206,6 +208,17 @@ std::uint32_t _classify(const Encoding& encoding) {
         }
     }
     if (map == kMap0F3A && prefix == kOperandSizePrefix && opcode == 0x1D) return f16c;
+    if (map == kMap0F3A && prefix == kRepnePrefix && opcode == 0xF0) return bmi2;
+    if (!encoding.Vector256) {
+        if (map == kMap0F38 && prefix == kOperandSizePrefix) {
+            if (opcode == 0x58 || opcode == 0x59 || opcode == 0x78 || opcode == 0x79) return avx2;
+            if (opcode == 0x45 || opcode == 0x46 || opcode == 0x47) return avx2;
+            if (opcode == 0x8C || opcode == 0x8E) return avx2;
+            if (opcode >= 0x90 && opcode <= 0x93) return avx2;
+        }
+        if (map == kMap0F3A && prefix == kOperandSizePrefix && opcode == 0x02) return avx2;
+        return 0;
+    }
     return _avx1(encoding) ? 0 : avx2;
 }
 
