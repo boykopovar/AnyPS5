@@ -2,22 +2,25 @@ set(commit "")
 set(release "")
 set(modified -1)
 if(GIT)
-    execute_process(COMMAND "${GIT}" -C "${SOURCE}" rev-parse HEAD
-            OUTPUT_VARIABLE head RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(failed EQUAL 0 AND head MATCHES "^[0-9a-f]+$")
-        set(commit ${head})
-        execute_process(COMMAND "${GIT}" -C "${SOURCE}" describe --tags --exact-match HEAD
-                OUTPUT_VARIABLE tag RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(failed EQUAL 0 AND tag MATCHES "^v[0-9A-Za-z][0-9A-Za-z._-]*$")
-            set(release ${tag})
-        endif()
-        # Untracked files that are not ignored and any change inside a submodule count as modified: a build with them is not the commit.
-        execute_process(COMMAND "${GIT}" -C "${SOURCE}" status --porcelain --untracked-files=normal --ignore-submodules=none
-                OUTPUT_VARIABLE changes RESULT_VARIABLE failed ERROR_QUIET)
-        if(failed EQUAL 0 AND changes STREQUAL "")
-            set(modified 0)
-        elseif(failed EQUAL 0)
-            set(modified 1)
+    execute_process(COMMAND "${GIT}" -C "${SOURCE}" rev-parse --show-prefix
+            OUTPUT_VARIABLE prefix RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(failed EQUAL 0 AND prefix STREQUAL "")
+        execute_process(COMMAND "${GIT}" -C "${SOURCE}" rev-parse HEAD
+                OUTPUT_VARIABLE head RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(failed EQUAL 0 AND head MATCHES "^[0-9a-f]+$")
+            set(commit ${head})
+            execute_process(COMMAND "${GIT}" -C "${SOURCE}" describe --tags --exact-match HEAD
+                    OUTPUT_VARIABLE tag RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(failed EQUAL 0 AND tag MATCHES "^v[0-9A-Za-z][0-9A-Za-z._-]*$")
+                set(release ${tag})
+            endif()
+            execute_process(COMMAND "${GIT}" -C "${SOURCE}" status --porcelain --untracked-files=normal --ignore-submodules=none
+                    OUTPUT_VARIABLE changes RESULT_VARIABLE failed ERROR_QUIET)
+            if(failed EQUAL 0 AND changes STREQUAL "")
+                set(modified 0)
+            elseif(failed EQUAL 0)
+                set(modified 1)
+            endif()
         endif()
     endif()
 endif()
