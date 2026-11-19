@@ -82,6 +82,40 @@ private:
     std::size_t bytes = 0;
 };
 
+class FencedPage {
+public:
+    FencedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "fenced page allocation failed");
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "fence protection failed");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size query failed");
+        bytes = static_cast<std::size_t>(page);
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "fenced page allocation failed");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "fence protection failed");
+#endif
+    }
+
+    ~FencedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
 template <typename TCall>
 void Rejects(TCall call, const char* message, std::source_location location = std::source_location::current()) {
     errno = EINVAL;
@@ -531,6 +565,108 @@ void CheckKeylogCallback() {
     Require(threw, "null context");
 }
 
+void CheckGuestPointers() {
+    const auto* unmappedSsl = reinterpret_cast<LibreSsl3Ssl*>(0x10);
+    auto* unmappedContext = reinterpret_cast<LibreSsl3SslCtx*>(0x10);
+    const auto* unmappedBytes = reinterpret_cast<std::uint8_t*>(0x10);
+    const std::uint8_t one[] = {2, 'h', '2'};
+    const LibreSsl3SslMethod tls{0, 0, 0x0304, 0x0301, 0x0304};
+    const int quic = 1;
+
+    Rejects([&] { SSL_set_alpn_protos_nid_postfix(const_cast<LibreSsl3Ssl*>(unmappedSsl), one, sizeof(one)); },
+            "ALPN on an unmapped SSL");
+    Rejects([&] { SSL_get_version_nid_postfix(unmappedSsl); }, "version of an unmapped SSL");
+    Rejects([&] { SSL_get_client_random_nid_postfix(unmappedSsl, std::array<unsigned char, 32>{}.data(), 32); },
+            "client random of an unmapped SSL");
+    Rejects([&] { SSL_CTX_set_min_proto_version_nid_postfix(unmappedContext, 0x0303); }, "minimum on an unmapped context");
+    Rejects([&] { SSL_CTX_set_max_proto_version_nid_postfix(unmappedContext, 0x0303); }, "maximum on an unmapped context");
+    Rejects([&] { SSL_CTX_set_timeout_nid_postfix(unmappedContext, 300); }, "timeout on an unmapped context");
+    Rejects([&] { SSL_CTX_set_quic_method_nid_postfix(unmappedContext, &quic); }, "QUIC method on an unmapped context");
+    Rejects([&] { SSL_CTX_set_keylog_callback_nid_postfix(unmappedContext, KeylogLine); }, "keylog on an unmapped context");
+
+    LibreSsl3SslCtx context;
+    std::memset(&context, 0x5A, sizeof(context));
+    context.method = reinterpret_cast<const LibreSsl3SslMethod*>(0x10);
+    std::array<unsigned char, sizeof(context)> contextBytes;
+    std::memcpy(contextBytes.data(), &context, sizeof(context));
+    Rejects([&] { SSL_CTX_set_min_proto_version_nid_postfix(&context, 0x0303); }, "minimum with an unmapped method");
+    Rejects([&] { SSL_CTX_set_max_proto_version_nid_postfix(&context, 0x0303); }, "maximum with an unmapped method");
+    Rejects([&] { SSL_CTX_set_quic_method_nid_postfix(&context, &quic); }, "QUIC method with an unmapped method");
+    Require(std::memcmp(&context, contextBytes.data(), sizeof(context)) == 0, "rejected context call changed the context");
+
+    std::memset(&context, 0x5A, sizeof(context));
+    context.method = &tls;
+    context.minTlsVersion = 0x0301;
+    context.maxTlsVersion = 0x0304;
+    context.minProtoVersion = 0;
+    context.maxProtoVersion = 0;
+    context.quicMethod = nullptr;
+    {
+        ReadOnlyPage page;
+        LibreSsl3SslCtx* readOnly = page.Set(context);
+        page.Protect();
+        Rejects([&] { SSL_CTX_set_min_proto_version_nid_postfix(readOnly, 0x0303); }, "minimum on a read-only context");
+        Rejects([&] { SSL_CTX_set_max_proto_version_nid_postfix(readOnly, 0x0303); }, "maximum on a read-only context");
+        Rejects([&] { SSL_CTX_set_timeout_nid_postfix(readOnly, 300); }, "timeout on a read-only context");
+        Rejects([&] { SSL_CTX_set_quic_method_nid_postfix(readOnly, &quic); }, "QUIC method on a read-only context");
+        Rejects([&] { SSL_CTX_set_keylog_callback_nid_postfix(readOnly, KeylogLine); }, "keylog on a read-only context");
+        Require(std::memcmp(readOnly, &context, sizeof(context)) == 0, "rejected call changed a read-only context");
+        Require(SSL_CTX_set_min_proto_version_nid_postfix(readOnly, 0x0305) == 0, "refused minimum needs no write");
+    }
+
+    LibreSsl3Ssl ssl;
+    std::memset(&ssl, 0x5A, sizeof(ssl));
+    ssl.alpnClientProtoList = nullptr;
+    ssl.alpnClientProtoListLength = 0;
+    ssl.s3 = reinterpret_cast<LibreSsl3Ssl3State*>(0x10);
+    std::array<unsigned char, sizeof(ssl)> sslBytes;
+    std::memcpy(sslBytes.data(), &ssl, sizeof(ssl));
+    std::array<unsigned char, 32> out;
+    out.fill(0xEE);
+    Rejects([&] { SSL_get_client_random_nid_postfix(&ssl, out.data(), out.size()); }, "client random with unmapped SSL3 state");
+    Require(std::all_of(out.begin(), out.end(), [](unsigned char value) { return value == 0xEE; }), "rejected random wrote output");
+    Rejects([&] { SSL_set_alpn_protos_nid_postfix(&ssl, unmappedBytes, 3); }, "unmapped ALPN list");
+    Require(std::memcmp(&ssl, sslBytes.data(), sizeof(ssl)) == 0, "rejected SSL call changed the SSL");
+
+    LibreSsl3Ssl3State state{};
+    std::memset(state.clientRandom, 0x77, sizeof(state.clientRandom));
+    ssl.s3 = &state;
+    Rejects([&] { SSL_get_client_random_nid_postfix(&ssl, reinterpret_cast<unsigned char*>(0x10), 32); },
+            "client random into unmapped output");
+    {
+        ReadOnlyPage page;
+        auto* readOnlyOut = page.Set(out);
+        page.Protect();
+        Rejects([&] { SSL_get_client_random_nid_postfix(&ssl, readOnlyOut->data(), 32); }, "client random into read-only output");
+        Require(*readOnlyOut == out, "rejected random changed read-only output");
+    }
+    {
+        ReadOnlyPage page;
+        LibreSsl3Ssl* readOnly = page.Set(ssl);
+        page.Protect();
+        Rejects([&] { SSL_set_alpn_protos_nid_postfix(readOnly, one, sizeof(one)); }, "ALPN on a read-only SSL");
+        Require(std::memcmp(readOnly, &ssl, sizeof(ssl)) == 0, "rejected ALPN changed a read-only SSL");
+    }
+
+    FencedPage fenced;
+    std::memset(fenced.data, 1, fenced.bytes);
+    const auto pageLength = static_cast<std::uint32_t>(fenced.bytes);
+    for (std::uint32_t length : {pageLength + 1, pageLength * 3, std::numeric_limits<std::uint32_t>::max()}) {
+        std::array<unsigned char, sizeof(ssl)> before;
+        std::memcpy(before.data(), &ssl, sizeof(ssl));
+        Rejects([&] { SSL_set_alpn_protos_nid_postfix(&ssl, fenced.data, length); }, "ALPN list running into a fence");
+        Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0, "rejected oversized ALPN changed the SSL");
+    }
+    fenced.data[fenced.bytes - 2] = 0;
+    Require(SSL_set_alpn_protos_nid_postfix(&ssl, fenced.data, std::numeric_limits<std::uint32_t>::max()) == 1,
+            "malformed oversized ALPN is refused before the fence");
+    fenced.data[fenced.bytes - 2] = 1;
+    Require(SSL_set_alpn_protos_nid_postfix(&ssl, fenced.data, pageLength) == 0, "ALPN list ending at a fence");
+    Require(ssl.alpnClientProtoListLength == pageLength && std::memcmp(ssl.alpnClientProtoList, fenced.data, pageLength) == 0,
+            "ALPN list ending at a fence copied");
+    Require(SSL_set_alpn_protos_nid_postfix(&ssl, nullptr, 0) == 0, "ALPN list cleared");
+}
+
 } // namespace
 
 int main() {
@@ -549,5 +685,6 @@ int main() {
     CheckTlsMethod();
     CheckX509Version();
     CheckKeylogCallback();
+    CheckGuestPointers();
     return 0;
 }
