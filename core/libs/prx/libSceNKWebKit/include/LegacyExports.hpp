@@ -1395,7 +1395,6 @@ int APS5_VABI _ZN7WebCore12SettingsBase23setPictographFontFamilyERKN3WTF10AtomSt
 int APS5_VABI _ZN7WebCore4Page19setVisitedLinkStoreEON3WTF3RefINS_16VisitedLinkStoreENS1_13DumbPtrTraitsIS3_EEEE();
 int APS5_VABI _ZN7WebCore16HTMLTableElement8setTHeadEON3WTF6RefPtrINS_23HTMLTableSectionElementENS1_13DumbPtrTraitsIS3_EEEE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_eFGLtTGFSzE_nid_no_patch();
-int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient6pageIDEv();
 int APS5_VABI _ZN7WebCore17FrameLoaderClient30completePageTransitionIfNeededEv();
 int APS5_VABI _ZN7WebCore13createWrapperERNS_17JSDOMGlobalObjectEON3WTF3RefINS_8NodeListENS2_13DumbPtrTraitsIS4_EEEE();
 int APS5_VABI WKPageDumpAdClickAttribution();
@@ -1423,7 +1422,6 @@ int APS5_VABI _ZN7WebCore17LibWebRTCProviderD2Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_eyRMFoPEX_plus_8_nid_no_patch();
 int APS5_VABI _ZN7WebCore23ScaleTransformOperationD1Ev();
 int APS5_VABI _ZNK7WebCore9FrameView21maximumScrollPositionEv();
-int APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient7frameIDEv();
 int APS5_VABI _ZN7WebCore11DisplayList9ClearRectC1ERKNS_9FloatRectE();
 int APS5_VABI _ZN7WebCore11DisplayList8DrawRectC1ERKNS_9FloatRectEf();
 int APS5_VABI _ZN7WebCore11DisplayList22BeginTransparencyLayerD1Ev();

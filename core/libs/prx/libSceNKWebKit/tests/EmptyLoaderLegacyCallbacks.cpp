@@ -8,6 +8,7 @@
 
 namespace {
 
+using NKWebKit::WebCoreAbi::OptionalIdentifier;
 using NKWebKit::WebCoreAbi::WidgetRefPtr;
 using NKWebKit::WtfAbi::String;
 
@@ -52,11 +53,26 @@ void TestNullResults() {
     Require(widget.ptr == nullptr);
 }
 
+void TestIdentifiers() {
+    int client = 0;
+    OptionalIdentifier page;
+    std::memset(&page, 0xa5, sizeof(page));
+    page = _ZNK7WebCore22EmptyFrameLoaderClient6pageIDEv(&client);
+    Require(!page.engaged);
+    OptionalIdentifier frame;
+    std::memset(&frame, 0xa5, sizeof(frame));
+    frame = _ZNK7WebCore22EmptyFrameLoaderClient7frameIDEv(&client);
+    Require(!frame.engaged);
+    Require(!_ZNK7WebCore22EmptyFrameLoaderClient6pageIDEv(nullptr).engaged);
+    Require(!_ZNK7WebCore22EmptyFrameLoaderClient7frameIDEv(nullptr).engaged);
+}
+
 }
 
 int main() {
     TestMimeType();
     TestNoOps();
     TestNullResults();
+    TestIdentifiers();
     return 0;
 }
