@@ -1649,7 +1649,7 @@ void CommandState::applyFaces(Slot first, VkStencilFaceFlags faces, std::array<T
 
 void CommandState::BindPipeline(const Context& context, VkPipeline bound, std::uint32_t slots) {
     if (pipelineKnown && pipeline == bound && dynamicSlots == slots && (overwritten & ~slots) == 0) return;
-    context.ForBatch(functions, &CommandFunctions::CmdBindPipeline, &DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+    context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdBindPipeline, &DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
     pipeline = bound;
     pipelineKnown = trackable != 0 && bound != VK_NULL_HANDLE;
     dynamicSlots = slots;
@@ -1658,18 +1658,18 @@ void CommandState::BindPipeline(const Context& context, VkPipeline bound, std::u
 }
 
 void CommandState::SetViewport(const Context& context, const VkViewport& value) {
-    apply(Viewport, &CommandState::viewport, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &value); });
+    apply(Viewport, &CommandState::viewport, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &value); });
 }
 
 void CommandState::SetScissor(const Context& context, const VkRect2D& value) {
-    apply(Scissor, &CommandState::scissor, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &value); });
+    apply(Scissor, &CommandState::scissor, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &value); });
 }
 
 void CommandState::SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors) {
     Require(!viewports.empty() && viewports.size() == scissors.size(), "every viewport needs a scissor");
     const auto count = static_cast<std::uint32_t>(viewports.size());
-    context.ForBatch(functions, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, count, viewports.data());
-    context.ForBatch(functions, &CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, count, scissors.data());
+    context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, count, viewports.data());
+    context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, count, scissors.data());
     viewport = viewports.front();
     scissor = scissors.front();
     wrote(Mask(Viewport) | Mask(Scissor));
@@ -1677,56 +1677,56 @@ void CommandState::SetViewports(const Context& context, std::span<const VkViewpo
 
 void CommandState::SetDepthBias(const Context& context, float constant, float clamp, float slope) {
     const std::array<float, 3> bias{constant, clamp, slope};
-    apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthBias, &DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
+    apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthBias, &DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
 }
 
 void CommandState::SetDepthBounds(const Context& context, float minimum, float maximum) {
     const std::array<float, 2> bounds{minimum, maximum};
-    apply(DepthBounds, &CommandState::depthBounds, bounds, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthBounds, &DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minimum, maximum); });
+    apply(DepthBounds, &CommandState::depthBounds, bounds, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthBounds, &DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minimum, maximum); });
 }
 
 void CommandState::SetCullMode(const Context& context, VkCullModeFlags mode) {
-    apply(CullMode, &CommandState::cullMode, mode, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetCullModeEXT, &DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, mode); });
+    apply(CullMode, &CommandState::cullMode, mode, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetCullModeEXT, &DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, mode); });
 }
 
 void CommandState::SetFrontFace(const Context& context, VkFrontFace face) {
-    apply(FrontFace, &CommandState::frontFace, face, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetFrontFaceEXT, &DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, face); });
+    apply(FrontFace, &CommandState::frontFace, face, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetFrontFaceEXT, &DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, face); });
 }
 
 void CommandState::SetDepthTestEnable(const Context& context, VkBool32 enable) {
-    apply(DepthTest, &CommandState::depthTest, enable, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthTestEnableEXT, &DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, enable); });
+    apply(DepthTest, &CommandState::depthTest, enable, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthTestEnableEXT, &DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetDepthWriteEnable(const Context& context, VkBool32 enable) {
-    apply(DepthWrite, &CommandState::depthWrite, enable, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthWriteEnableEXT, &DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, enable); });
+    apply(DepthWrite, &CommandState::depthWrite, enable, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthWriteEnableEXT, &DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetDepthCompareOp(const Context& context, VkCompareOp compare) {
-    apply(DepthCompare, &CommandState::depthCompare, compare, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthCompareOpEXT, &DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, compare); });
+    apply(DepthCompare, &CommandState::depthCompare, compare, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthCompareOpEXT, &DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, compare); });
 }
 
 void CommandState::SetDepthBoundsTestEnable(const Context& context, VkBool32 enable) {
-    apply(DepthBoundsTest, &CommandState::depthBoundsTest, enable, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetDepthBoundsTestEnableEXT, &DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, enable); });
+    apply(DepthBoundsTest, &CommandState::depthBoundsTest, enable, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthBoundsTestEnableEXT, &DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetStencilTestEnable(const Context& context, VkBool32 enable) {
-    apply(StencilTest, &CommandState::stencilTest, enable, std::equal_to<>{}, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetStencilTestEnableEXT, &DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, enable); });
+    apply(StencilTest, &CommandState::stencilTest, enable, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetStencilTestEnableEXT, &DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetStencilOp(const Context& context, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) {
-    applyFaces(StencilOpFront, faces, &CommandState::stencilOps, StencilOps{failOp, passOp, depthFailOp, compareOp}, [&](VkStencilFaceFlags needed) { context.ForBatch(functions, &CommandFunctions::CmdSetStencilOpEXT, &DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, needed, failOp, passOp, depthFailOp, compareOp); });
+    applyFaces(StencilOpFront, faces, &CommandState::stencilOps, StencilOps{failOp, passOp, depthFailOp, compareOp}, [&](VkStencilFaceFlags needed) { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetStencilOpEXT, &DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, needed, failOp, passOp, depthFailOp, compareOp); });
 }
 
 void CommandState::SetStencilCompareMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask) {
-    applyFaces(CompareMaskFront, faces, &CommandState::compareMasks, mask, [&](VkStencilFaceFlags needed) { context.ForBatch(functions, &CommandFunctions::CmdSetStencilCompareMask, &DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, needed, mask); });
+    applyFaces(CompareMaskFront, faces, &CommandState::compareMasks, mask, [&](VkStencilFaceFlags needed) { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetStencilCompareMask, &DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, needed, mask); });
 }
 
 void CommandState::SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask) {
-    applyFaces(WriteMaskFront, faces, &CommandState::writeMasks, mask, [&](VkStencilFaceFlags needed) { context.ForBatch(functions, &CommandFunctions::CmdSetStencilWriteMask, &DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, needed, mask); });
+    applyFaces(WriteMaskFront, faces, &CommandState::writeMasks, mask, [&](VkStencilFaceFlags needed) { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetStencilWriteMask, &DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, needed, mask); });
 }
 
 void CommandState::SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference) {
-    applyFaces(ReferenceFront, faces, &CommandState::references, reference, [&](VkStencilFaceFlags needed) { context.ForBatch(functions, &CommandFunctions::CmdSetStencilReference, &DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, needed, reference); });
+    applyFaces(ReferenceFront, faces, &CommandState::references, reference, [&](VkStencilFaceFlags needed) { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetStencilReference, &DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, needed, reference); });
 }
 
 void CommandState::SetColorWriteMasks(const Context& context, std::span<const VkColorComponentFlags> masks) {
@@ -1735,7 +1735,7 @@ void CommandState::SetColorWriteMasks(const Context& context, std::span<const Vk
     value.count = static_cast<std::uint32_t>(masks.size());
     std::ranges::copy(masks, value.masks.begin());
     const auto covered = [](const ColorWriteMasks& known, const ColorWriteMasks& wanted) { return wanted.count <= known.count && std::equal(wanted.masks.begin(), wanted.masks.begin() + wanted.count, known.masks.begin()); };
-    apply(ColorWriteMask, &CommandState::colorWriteMasks, value, covered, [&] { context.ForBatch(functions, &CommandFunctions::CmdSetColorWriteMaskEXT, &DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT")(commands, 0, value.count, masks.data()); });
+    apply(ColorWriteMask, &CommandState::colorWriteMasks, value, covered, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetColorWriteMaskEXT, &DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT")(commands, 0, value.count, masks.data()); });
 }
 
 CommandState& Recorder::GraphicsState() {

@@ -70,7 +70,7 @@ public:
     void Begin(VkCommandBuffer commands, bool suppress = true, const CommandFunctions* functions = nullptr);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
-    const CommandFunctions* FunctionsFor(VkCommandBuffer recording) const noexcept { return recording == commands ? functions : nullptr; }
+    const CommandFunctions* FunctionsFor(VkCommandBuffer recording, const Context& context) const noexcept { return recording == commands ? context.BatchFor(functions) : nullptr; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);

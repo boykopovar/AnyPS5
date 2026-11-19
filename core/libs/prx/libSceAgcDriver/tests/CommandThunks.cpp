@@ -1490,11 +1490,11 @@ void BatchTablesDeferToTheContextsOwnEntryPoints() {
     AgcDriver::Graphics::Context context{};
     context.functions = &table;
     const auto record = [&](const AgcDriver::Graphics::Context& through, const CommandFunctions* commands) {
-        through.ForBatch(commands, &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw")(target, 3, 1, 0, 0);
-        through.ForBatch(commands, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(target, 0, 1, &viewport);
+        through.ForBatch(through.BatchFor(commands), &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw")(target, 3, 1, 0, 0);
+        through.ForBatch(through.BatchFor(commands), &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(target, 0, 1, &viewport);
     };
     const auto counts = [&] { return std::array{batchDraws, hookDraws, batchViewports, hookViewports}; };
-    Require(context.ForBatch(&batch, &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw") == &batchDraw, "a batch built against the context's table did not use its own entry point");
+    Require(context.ForBatch(context.BatchFor(&batch), &CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw") == &batchDraw, "a batch built against the context's table did not use its own entry point");
     record(context, &batch);
     Require((counts() == std::array{1, 0, 1, 0}), "a batch built against the context's table did not reach its entry points");
     DeviceFunctions traced = table;

@@ -2796,7 +2796,7 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             std::memcpy(block.data() + referenceOffset, &reference, sizeof(reference));
             pipeline->PushConstants(commands, stages, block);
-            recordDrawCommands(context, commands, recording.FunctionsFor(commands), selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
+            recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
         }
     };
     if (replay.size() == 1u) {
@@ -3116,8 +3116,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (drawBindings != nullptr) {
         const auto set = drawBindings->allocation.set;
         const auto fragmentSet = drawBindings->fragmentAllocation.set;
-        if (set != VK_NULL_HANDLE) context.ForBatch(recording.FunctionsFor(commands), &CommandFunctions::CmdBindDescriptorSets, &DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
-        if (fragmentSet != VK_NULL_HANDLE) context.ForBatch(recording.FunctionsFor(commands), &CommandFunctions::CmdBindDescriptorSets, &DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
+        if (set != VK_NULL_HANDLE) context.ForBatch(recording.FunctionsFor(commands, context), &CommandFunctions::CmdBindDescriptorSets, &DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
+        if (fragmentSet != VK_NULL_HANDLE) context.ForBatch(recording.FunctionsFor(commands, context), &CommandFunctions::CmdBindDescriptorSets, &DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
     } else {
         resources.BindDrawUse(commands, record.pipeline->Layout(), drawUse.get());
     }
@@ -3147,18 +3147,18 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
-    if (record.stencilReplay.empty()) recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+    if (record.stencilReplay.empty()) recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
         record.pipeline->ContinueBackFaces(recording, state, record.masked);
-        recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
     if (record.pipeline->SplitsSecondChannel()) {
         record.pipeline->ContinueSecondChannel(recording, state, record.masked);
-        recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
@@ -4665,18 +4665,18 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
     if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
-    if (stencilReplay.empty()) recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
+    if (stencilReplay.empty()) recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, recording, state, draw, inputs, stencilReplay, shaders, *resources);
         if (recorded) for (const auto& [reference, selectedPipeline] : stencilReplay) recorder->Keep(selectedPipeline);
     }
     if (pipeline->SplitsFaces()) {
         pipeline->ContinueBackFaces(recording, state, masked.has_value() ? &*masked : nullptr);
-        recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
+        recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (pipeline->SplitsSecondChannel()) {
         pipeline->ContinueSecondChannel(recording, state, masked.has_value() ? &*masked : nullptr);
-        recordDrawCommands(context, commands, recording.FunctionsFor(commands), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
+        recordDrawCommands(context, commands, recording.FunctionsFor(commands, context), state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (meshArguments != nullptr && recorded) recorder->Keep(meshArguments);
     if (argumentSnapshot != nullptr && recorded) recorder->Keep(argumentSnapshot);
