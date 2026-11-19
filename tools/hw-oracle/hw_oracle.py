@@ -125,7 +125,7 @@ def hsa_identity(binary, visible_devices):
         environment.pop("ROCR_VISIBLE_DEVICES", None)
     else:
         environment["ROCR_VISIBLE_DEVICES"] = visible_devices
-    output = subprocess.run([binary, "--identity"], capture_output=True, text=True, check=True,
+    output = subprocess.run([binary, "--identity"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
                             env=environment).stdout
     fields = {}
     for line in output.splitlines():
