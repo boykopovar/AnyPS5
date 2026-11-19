@@ -108,7 +108,7 @@ Back up collection/state and complete game folders, including their saves, setti
 
 ## Maintainer checks
 
-The fork's **Sync upstream into fork** GitHub Actions workflow checks `boykopovar/AnyPS5` daily at 09:23 UTC and can be started manually. It prepares a merge into `sync/upstream`, refreshes the overlay base and recursive dependency metadata, runs integration tests, then opens a pull request against this fork's `main`. It does not replace `main` or merge the pull request automatically. An existing open sync pull request is retained for review. Merge conflicts or failed tests stop publication and appear as a failed workflow run.
+The fork's **Sync upstream into fork** GitHub Actions workflow checks `boykopovar/AnyPS5` daily at 09:23 UTC and can be started manually. It prepares a merge into `sync/upstream`, refreshes the overlay base and recursive dependency metadata, runs integration tests, then opens a pull request against this fork's `main`. It does not replace `main` or merge the pull request automatically. An existing open sync pull request is retained for review, including a manual candidate whose title starts with `chore(sync): merge upstream `. Merge conflicts or failed tests stop publication and appear as a failed workflow run.
 
 Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Docker builds continue checking upstream independently of source-sync pull requests.
 
