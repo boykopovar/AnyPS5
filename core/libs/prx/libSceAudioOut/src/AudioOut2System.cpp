@@ -58,11 +58,16 @@ int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStatePar
     constexpr std::size_t UnmodelledParamSize = 4;
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return ErrorInvalidPointer;
-    if (param->debug_state_id == DebugStateIdUnmodelled && param->param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
-    if ((param->debug_state_id == DebugStateIdLoudness || param->debug_state_id == DebugStateIdTwo) && param->param == nullptr) return ErrorInvalidPointer;
-    if (param->debug_state_id == DebugStateIdTwo && param->param_size == LoudnessParamSize) return ErrorDebugStateTwo;
-    if (param->debug_state_id != DebugStateIdLoudness || param->param_size != LoudnessParamSize) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
-    AUDIOOUT2_TRACE("t=%.3f SetSystemDebugState: debug state %u recorded; the host has no system mix to apply it to\n", AudioOut2TraceSeconds(), param->debug_state_id);
+    AudioOut2SystemDebugStateParam guestParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestParam, param, sizeof(guestParam));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidPointer;
+    if (guestParam.debug_state_id == DebugStateIdUnmodelled && guestParam.param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
+    if ((guestParam.debug_state_id == DebugStateIdLoudness || guestParam.debug_state_id == DebugStateIdTwo) && guestParam.param == nullptr) return ErrorInvalidPointer;
+    if (guestParam.debug_state_id == DebugStateIdTwo && guestParam.param_size == LoudnessParamSize) return ErrorDebugStateTwo;
+    if (guestParam.debug_state_id != DebugStateIdLoudness || guestParam.param_size != LoudnessParamSize) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
+    AUDIOOUT2_TRACE("t=%.3f SetSystemDebugState: debug state %u recorded; the host has no system mix to apply it to\n", AudioOut2TraceSeconds(), guestParam.debug_state_id);
     return 0;
 }
 

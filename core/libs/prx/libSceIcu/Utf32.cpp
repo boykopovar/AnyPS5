@@ -5,6 +5,8 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -74,14 +76,30 @@ bool ValidArguments(const void* source, std::int32_t sourceLength, const void* d
              substitution > 0x10ffff || Icu::Surrogate(substitution));
 }
 
+std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
+    Icu::RequireStatus(status);
+    std::int32_t value = 0;
+    if (!CopyIn(&value, status, sizeof(value))) throw std::invalid_argument(std::string(caller) + ": unreadable status");
+    return value;
 }
 
-extern "C" {
+void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
+    if (outgoing == incoming) return;
+    if (!CopyOut(status, &outgoing, sizeof(outgoing))) throw std::invalid_argument(std::string(caller) + ": unwritable status");
+}
 
-char16_t* APS5_VABI u_strFromUTF32WithSub_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
-                                                      const std::int32_t* source, std::int32_t sourceLength, std::int32_t substitution,
-                                                      std::int32_t* substitutions, std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
+template <typename Unit, typename TConvert>
+Unit* WithStatus(std::int32_t* status, const char* caller, TConvert convert) {
+    const auto incoming = ReadStatus(status, caller);
+    if (incoming > 0) return nullptr;
+    auto local = incoming;
+    Unit* const result = convert(&local);
+    WriteStatus(status, incoming, local, caller);
+    return result;
+}
+
+char16_t* FromUtf32(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength, const std::int32_t* source,
+                    std::int32_t sourceLength, std::int32_t substitution, std::int32_t* substitutions, std::int32_t* status) {
     if (!ValidArguments(source, sourceLength, destination, capacity, substitution)) {
         *status = Icu::IllegalArgument;
         return nullptr;
@@ -130,16 +148,8 @@ char16_t* APS5_VABI u_strFromUTF32WithSub_nid_postfix(char16_t* destination, std
     return destination;
 }
 
-char16_t* APS5_VABI u_strFromUTF32_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
-                                               const std::int32_t* source, std::int32_t sourceLength, std::int32_t* status) {
-    return u_strFromUTF32WithSub_nid_postfix(destination, capacity, destinationLength, source, sourceLength, NoSubstitution, nullptr, status);
-}
-
-
-std::int32_t* APS5_VABI u_strToUTF32WithSub_nid_postfix(std::int32_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
-                                                        const char16_t* source, std::int32_t sourceLength, std::int32_t substitution,
-                                                        std::int32_t* substitutions, std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
+std::int32_t* ToUtf32(std::int32_t* destination, std::int32_t capacity, std::int32_t* destinationLength, const char16_t* source,
+                      std::int32_t sourceLength, std::int32_t substitution, std::int32_t* substitutions, std::int32_t* status) {
     if (!ValidArguments(source, sourceLength, destination, capacity, substitution)) {
         *status = Icu::IllegalArgument;
         return nullptr;
@@ -177,6 +187,31 @@ std::int32_t* APS5_VABI u_strToUTF32WithSub_nid_postfix(std::int32_t* destinatio
         return nullptr;
     }
     return destination;
+}
+
+}
+
+extern "C" {
+
+char16_t* APS5_VABI u_strFromUTF32WithSub_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
+                                                      const std::int32_t* source, std::int32_t sourceLength, std::int32_t substitution,
+                                                      std::int32_t* substitutions, std::int32_t* status) {
+    return WithStatus<char16_t>(status, __func__, [&](std::int32_t* local) {
+        return FromUtf32(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, local);
+    });
+}
+
+char16_t* APS5_VABI u_strFromUTF32_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
+                                               const std::int32_t* source, std::int32_t sourceLength, std::int32_t* status) {
+    return u_strFromUTF32WithSub_nid_postfix(destination, capacity, destinationLength, source, sourceLength, NoSubstitution, nullptr, status);
+}
+
+std::int32_t* APS5_VABI u_strToUTF32WithSub_nid_postfix(std::int32_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
+                                                        const char16_t* source, std::int32_t sourceLength, std::int32_t substitution,
+                                                        std::int32_t* substitutions, std::int32_t* status) {
+    return WithStatus<std::int32_t>(status, __func__, [&](std::int32_t* local) {
+        return ToUtf32(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, local);
+    });
 }
 
 std::int32_t* APS5_VABI u_strToUTF32_nid_postfix(std::int32_t* destination, std::int32_t capacity, std::int32_t* destinationLength,

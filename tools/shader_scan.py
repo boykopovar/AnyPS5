@@ -9,6 +9,7 @@ TEXTURE_FORMATS = f"{AGC_DRIVER}Graphics/src/TextureFormat.cpp"
 SCANNED_DIRECTORIES = (RECOMPILER.rstrip("/"), AGC_DRIVER.rstrip("/"))
 FORMS = ("base", "vop3", "dpp16", "dpp8")
 TEST_PATH = re.compile(r"/tests?/")
+COMMENT_OR_LITERAL = re.compile(r"[/\"']")
 
 
 class ScanError(Exception):
@@ -44,8 +45,10 @@ def strip_comments(source):
             out.append(source[i:j + 1])
             i = j + 1
         else:
-            out.append(c)
-            i += 1
+            match = COMMENT_OR_LITERAL.search(source, i + 1)
+            stop = match.start() if match else n
+            out.append(source[i:stop])
+            i = stop
     return "".join(out)
 
 
