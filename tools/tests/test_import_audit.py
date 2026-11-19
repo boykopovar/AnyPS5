@@ -3990,6 +3990,52 @@ class LocateAndNamesTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
 
+class DynamicSymbolEntriesTests(unittest.TestCase):
+    @staticmethod
+    def image(symbols, strings):
+        table = b"\0"
+        offsets = {}
+        for text in strings:
+            offsets[text] = len(table)
+            table += text.encode() + b"\0"
+        entries = b"".join(struct.pack("<IBBHQQ", offsets.get(name, 0), info, other, shndx, 0, 0)
+                           for name, info, other, shndx in symbols)
+        return entries + table, offsets, len(entries)
+
+    def test_imports_exports_and_needed_libraries_are_separated(self):
+        symbols = [
+            ("weak_import", 0x20, 0, 0),
+            ("strong_import", 0x10, 0, 0),
+            ("exported_func", 0x12, 0, 1),
+            ("exported_object", 0x11, 3, 1),
+            ("local_symbol", 0x02, 0, 1),
+            ("hidden_symbol", 0x12, 2, 1),
+            ("exported_func", 0x12, 0, 1),
+        ]
+        strings = ["weak_import", "strong_import", "exported_func", "exported_object", "local_symbol", "hidden_symbol", "libNeeded.prx"]
+        data, offsets, symbol_size = self.image(symbols, strings)
+        imports, exports, needed = import_audit.dynamic_symbol_entries(
+            "m.elf", data, symbol_size, len(data) - symbol_size, 0, len(symbols), [offsets["libNeeded.prx"]])
+        self.assertEqual(imports, {"weak_import": True, "strong_import": False})
+        self.assertEqual(exports, {"exported_func", "exported_object"})
+        self.assertEqual(needed, {"libNeeded.prx"})
+
+    def test_a_strong_reference_overrides_an_earlier_weak_one(self):
+        symbols = [("name", 0x20, 0, 0), ("name", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["name"])
+        imports, _, _ = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual(imports, {"name": False})
+
+    def test_nameless_symbols_and_module_suffixes(self):
+        symbols = [("", 0x10, 0, 0), ("sceFoo#libSceX", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["sceFoo#libSceX"])
+        imports, exports, needed = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual((imports, exports, needed), ({"sceFoo": False}, set(), set()))
+
+    def test_truncated_symbol_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.dynamic_symbol_entries("m.elf", bytes(10), 0, 0, 0, 1, [])
+
 
 if __name__ == "__main__":
     unittest.main()
