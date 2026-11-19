@@ -120,7 +120,6 @@ int APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyEPNS_13UnicodeSt
 int APS5_VABI uprv_toupper_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch();
 int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix();
-int APS5_VABI ucnv_fixFileSeparator_nid_postfix();
 int APS5_VABI _ZN6icu_6812ResourceSinkD0Ev_nid_postfix();
 int APS5_VABI _ZN6icu_686UStackC2EiR10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_1Zjsilgzlps_nid_no_patch();
@@ -1931,7 +1930,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSet10setToBogusEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch();
 int APS5_VABI ures_initStackObject_nid_postfix();
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix();
-int APS5_VABI udata_getInfo_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qsrqpMOCXYE_nid_no_patch();
 int APS5_VABI uhash_iremovei_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_r_minus_f6QCLZd44_nid_no_patch();

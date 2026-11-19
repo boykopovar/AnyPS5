@@ -205,6 +205,24 @@ std::int64_t RoundToInt64(TFloat value) {
     return static_cast<std::int64_t>(rounded);
 }
 
+template<typename TFloat, typename TBits, int FractionBits>
+std::int64_t NudgedToInt64(TFloat x, TFloat nudge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    const volatile TFloat sum = x < 0 ? x - nudge : x + nudge;
+    TBits bits = std::bit_cast<TBits>(static_cast<TFloat>(sum));
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits);
+    if (exponent < Bias) bits &= Sign;
+    else if (exponent < Bias + FractionBits) bits &= ~((TBits{1} << (Bias + FractionBits - exponent)) - 1);
+    const TFloat whole = std::bit_cast<TFloat>(bits);
+    if (!(whole >= static_cast<TFloat>(INT64_MIN) && whole < -static_cast<TFloat>(INT64_MIN))) {
+        std::feraiseexcept(FE_INVALID);
+        return INT64_MIN;
+    }
+    return static_cast<std::int64_t>(whole);
+}
+
 float SinhfExpm1(float x) {
     constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f, InverseLn2 = 1.4426950216e+00f;
     constexpr float Q1 = -3.3333212137e-2f, Q2 = 1.5807170421e-3f;
@@ -1184,10 +1202,10 @@ float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
     return std::bit_cast<float>((bits & 0x807fffffu) | 0x3f000000u);
 }
 // Guest long is 64-bit, including on Windows where native long is 32-bit.
-std::int64_t APS5_VABI lround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llround_nid_postfix(double x) { return RoundToInt64(x); }
-std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return RoundToInt64(x); }
+std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI lroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
+std::int64_t APS5_VABI llround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
+std::int64_t APS5_VABI llroundf_nid_postfix(float x) { return NudgedToInt64<float, std::uint32_t, 23>(x, 0x1.fffffep-2f); }
 std::int64_t APS5_VABI llroundl_nid_postfix(long double x) { return RoundToInt64(x); }
 int APS5_VABI __isfinitef_nid_postfix(float x) {
     const auto exponent = std::bit_cast<std::uint32_t>(x) & 0x7f800000u;
@@ -1360,10 +1378,31 @@ float APS5_VABI copysignf_nid_postfix(float x, float y) {
     return std::copysign(x, y);
 }
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
+extern "C++" {
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_floor.c, s_ceil.c, s_floorf.c and s_ceilf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_floor.c */
+template<typename TFloat, typename TBits, int FractionBits>
+static TFloat RoundToward(TFloat x, bool up, TFloat huge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    TBits bits = std::bit_cast<TBits>(x);
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits) - Bias;
+    if (exponent >= FractionBits) return x;
+    const bool away = ((bits & Sign) != 0) != up;
+    const TBits mask = exponent < 0 ? ~Sign : (TBits{1} << (FractionBits - exponent)) - 1;
+    if ((bits & mask) == 0) return x;
+    [[maybe_unused]] const volatile TFloat inexact = huge + x;
+    if (exponent < 0) return std::bit_cast<TFloat>((bits & Sign) | (away ? static_cast<TBits>(Bias) << FractionBits : TBits{0}));
+    if (away) bits += mask + 1;
+    return std::bit_cast<TFloat>(bits & ~mask);
+}
+}
 double APS5_VABI trunc_nid_postfix(double x) { return std::isnan(x) ? x + x : std::trunc(x); }
-double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : std::ceil(x); }
+double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, true, 1.0e300); }
 float APS5_VABI truncf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::trunc(x); }
-float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::ceil(x); }
+float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, true, 1.0e30f); }
+double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, false, 1.0e300); }
+float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, false, 1.0e30f); }
 double APS5_VABI fma_nid_postfix(double x, double y, double z) { return std::fma(x, y, z); }
 float APS5_VABI fmaf_nid_postfix(float x, float y, float z) { return std::fma(x, y, z); }
 double APS5_VABI fmin_nid_postfix(double x, double y) { return GuestFmin(x, y); }
@@ -5803,16 +5842,20 @@ double APS5_VABI logb_nid_postfix(double x) {
     }
     return static_cast<double>(static_cast<int>(bits >> 52) - 1023);
 }
-int APS5_VABI ilogb_nid_postfix(double x) {
-    if (x == 0.0) {
-        return INT_MIN;
-    }
-    if (!std::isfinite(x)) {
-        return INT_MAX;
-    }
-    return std::ilogb(x);
+extern "C++" {
+template<typename TBits, int FractionBits>
+static int BinaryExponent(TBits bits) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    const TBits magnitude = bits & ~(TBits{1} << (sizeof(TBits) * 8 - 1));
+    const int field = static_cast<int>(magnitude >> FractionBits);
+    if (magnitude == 0) return INT_MIN;
+    if (field == (1 << ExponentBits) - 1) return INT_MAX;
+    return field != 0 ? field - Bias : static_cast<int>(std::bit_width(magnitude)) - FractionBits - Bias;
 }
-int APS5_VABI ilogbf_nid_postfix(float x) { return ilogb_nid_postfix(static_cast<double>(x)); }
+}
+int APS5_VABI ilogb_nid_postfix(double x) { return BinaryExponent<std::uint64_t, 52>(std::bit_cast<std::uint64_t>(x)); }
+int APS5_VABI ilogbf_nid_postfix(float x) { return BinaryExponent<std::uint32_t, 23>(std::bit_cast<std::uint32_t>(x)); }
 double APS5_VABI remainder_nid_postfix(double x, double y) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
