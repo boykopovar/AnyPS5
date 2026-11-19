@@ -57,7 +57,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8"))
+    data = json.loads(report.read_text(encoding="utf-8-sig"))
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
     if log is not None and Path(log).is_file():

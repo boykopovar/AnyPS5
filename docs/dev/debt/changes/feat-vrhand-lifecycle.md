@@ -2,7 +2,7 @@
 
 ## change sceVrHandFinalize
 
-- [sceVrHandGetMesh, sceVrHandGetMeshSize and sceVrHandGetResult](../../../core/libs/prx/libSceVrHand/Export.cpp) (libSceVrHand) - uninitialized checks validate module state returning `0x8a870001` before delegating to unimplemented service body via `NotImplemented_nid_no_patch(__func__)`. Output layout and console behavior remain unmeasured.
+- [sceVrHandGetMesh and sceVrHandGetResult](../../../core/libs/prx/libSceVrHand/Export.cpp) (libSceVrHand) - uninitialized checks validate module state returning `0x8a870001` before delegating to unimplemented service body via `NotImplemented_nid_no_patch(__func__)`. Output layout and console behavior remain unmeasured.
 
 ## add Functional
 

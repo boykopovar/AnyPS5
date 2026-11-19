@@ -980,6 +980,38 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("[library not named]", out)
         self.assertIn("EEEEEEEEEEE  (imported by main.prx)", out)
 
+    def test_a_passed_module_registry_replaces_the_module_file_imports(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "main.prx").write_bytes(build_elf([
+            ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("EEEEEEEEEEE", 0, GLOBAL_FUNCTION), ("MMMMMMMMMMM", 1, GLOBAL_FUNCTION)],
+            ["libSceA.prx", "libSceMissing.prx"]))
+        files = {"linux.prx.guest.prx": "GGGGGGGGGGG", "lib.c.prx": "LLLLLLLLLLL", "c.prx": "CCCCCCCCCCC", "n.prx": "NNNNNNNNNNN",
+                 "d.prx": "DDDDDDDDDDD", "game.d.prx": "KKKKKKKKKKK", "f.prx": "FFFFFFFFFFF"}
+        for name, nid in files.items():
+            (work.modules / name).write_bytes(build_elf([(nid, 0, GLOBAL_FUNCTION)]))
+        executable = work.root / "my.game.registry.json"
+        write_registry(executable, [("MMMMMMMMMMM", "main.prx")])
+        covered = ("main.prx", "linux.prx", "lib.c.prx", "bin.prx", "d.prx", "x.f.prx")
+        registries = [work.root / f"my.game.{name}.guest.prx.registry.json" for name in covered]
+        write_registry(registries[0], [("AAAAAAAAAAA", "libSceA.prx"), ("AAAAAAAAAAA", "libSceA.prx")])
+        for registry in registries[1:]:
+            write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(executable, "--json", str(result), registries=registries)
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        records = {(record["nid"], record["library"], record.get("module")): record for record in data["imports"]}
+        self.assertEqual(sorted(records, key=str), sorted([
+            ("MMMMMMMMMMM", "main.prx", None), ("AAAAAAAAAAA", "libSceA.prx", None), ("CCCCCCCCCCC", None, "c.prx"),
+            ("NNNNNNNNNNN", None, "n.prx"), ("KKKKKKKKKKK", None, "game.d.prx"), ("FFFFFFFFFFF", None, "f.prx")], key=str))
+        self.assertEqual(data["references"], 7)
+        self.assertEqual(records[("AAAAAAAAAAA", "libSceA.prx", None)]["references"], 2)
+        self.assertEqual(records[("MMMMMMMMMMM", "main.prx", None)]["providers"], ["main.prx"])
+        self.assertEqual(data["missing_libraries"], {"libSceMissing.prx": 1})
+        code, out, err = work.run(registries[0], "--json", str(result), registries=registries[1:])
+        self.assertEqual(json.loads(result.read_text())["references"], 2 + 2 + len(files))
+
     def test_guest_provider_origin_survives_host_stub_collision(self):
         work = self.work
         name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
@@ -3830,6 +3862,11 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(import_audit.origin_name("$ORIGIN/lib/libfoo.prx"), "libfoo.prx")
         self.assertEqual(import_audit.origin_name("${ORIGIN}/a/../libbar.sprx"), "libbar.sprx")
 
+    def test_hashed_nid_hashes_symbols_and_passes_unencodable_ones_through(self):
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), "1jfXLRVzisc")
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), nid_names.compute_nid("sceKernelUsleep"))
+        self.assertEqual(import_audit.hashed_nid("\udcff"), "\udcff")
+
     def test_origin_name_leaves_other_names_unchanged(self):
         self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
         self.assertIsNone(import_audit.origin_name(None))
@@ -3952,6 +3989,52 @@ class LocateAndNamesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
+
+class DynamicSymbolEntriesTests(unittest.TestCase):
+    @staticmethod
+    def image(symbols, strings):
+        table = b"\0"
+        offsets = {}
+        for text in strings:
+            offsets[text] = len(table)
+            table += text.encode() + b"\0"
+        entries = b"".join(struct.pack("<IBBHQQ", offsets.get(name, 0), info, other, shndx, 0, 0)
+                           for name, info, other, shndx in symbols)
+        return entries + table, offsets, len(entries)
+
+    def test_imports_exports_and_needed_libraries_are_separated(self):
+        symbols = [
+            ("weak_import", 0x20, 0, 0),
+            ("strong_import", 0x10, 0, 0),
+            ("exported_func", 0x12, 0, 1),
+            ("exported_object", 0x11, 3, 1),
+            ("local_symbol", 0x02, 0, 1),
+            ("hidden_symbol", 0x12, 2, 1),
+            ("exported_func", 0x12, 0, 1),
+        ]
+        strings = ["weak_import", "strong_import", "exported_func", "exported_object", "local_symbol", "hidden_symbol", "libNeeded.prx"]
+        data, offsets, symbol_size = self.image(symbols, strings)
+        imports, exports, needed = import_audit.dynamic_symbol_entries(
+            "m.elf", data, symbol_size, len(data) - symbol_size, 0, len(symbols), [offsets["libNeeded.prx"]])
+        self.assertEqual(imports, {"weak_import": True, "strong_import": False})
+        self.assertEqual(exports, {"exported_func", "exported_object"})
+        self.assertEqual(needed, {"libNeeded.prx"})
+
+    def test_a_strong_reference_overrides_an_earlier_weak_one(self):
+        symbols = [("name", 0x20, 0, 0), ("name", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["name"])
+        imports, _, _ = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual(imports, {"name": False})
+
+    def test_nameless_symbols_and_module_suffixes(self):
+        symbols = [("", 0x10, 0, 0), ("sceFoo#libSceX", 0x10, 0, 0)]
+        data, _, symbol_size = self.image(symbols, ["sceFoo#libSceX"])
+        imports, exports, needed = import_audit.dynamic_symbol_entries("m.elf", data, symbol_size, len(data) - symbol_size, 0, 2, [])
+        self.assertEqual((imports, exports, needed), ({"sceFoo": False}, set(), set()))
+
+    def test_truncated_symbol_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.dynamic_symbol_entries("m.elf", bytes(10), 0, 0, 0, 1, [])
 
 
 if __name__ == "__main__":

@@ -24,7 +24,6 @@ int APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix();
 int APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix();
 int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE5imbueERKSt6locale_nid_postfix();
-int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix();
 int APS5_VABI sceLibcPafMspaceGetFooterValue_nid_postfix();
 int APS5_VABI sceLibcInternalMemoryGetWakeAddr_nid_postfix();
 int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix();
