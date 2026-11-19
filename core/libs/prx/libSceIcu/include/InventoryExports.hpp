@@ -23,7 +23,7 @@ int APS5_VABI ucnv_cbFromUWriteBytes();
 int APS5_VABI ucnv_close();
 int APS5_VABI ucnv_convertEx();
 int APS5_VABI ucnv_fromUnicode();
-int APS5_VABI ucnv_getCanonicalName();
+const char* APS5_VABI ucnv_getCanonicalName(const char* alias, const char* standard, std::int32_t* status);
 int APS5_VABI ucnv_getName();
 int APS5_VABI ucnv_open();
 int APS5_VABI ucnv_reset();
