@@ -110,6 +110,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Inspector controls and state](../../../core/libs/prx/libSceNKWebKit/src/Inspector.cpp) (libSceNKWebKit) - WKPageGetInspector lazily creates and returns the page's host `WKInspector` instance, while WKInspectorAttach, WKInspectorClose, WKInspectorConnect, WKInspectorDetach, WKInspectorHide, WKInspectorShow, WKInspectorShowConsole, WKInspectorShowResources, WKInspectorToggleElementSelection, WKInspectorTogglePageProfiling and the WKInspectorIs* queries update and read it in memory; frontend window rendering, profiler integration and page creation exports remain unmodeled.
 - [Connection message posting and client configuration](../../../core/libs/prx/libSceNKWebKit/src/Connection.cpp) (libSceNKWebKit) - `WKConnectionPostMessage` and `WKConnectionSetConnectionClient` deliver message payloads and configure connection clients on host connection instances in memory; process IPC transmission is unmodeled.
 - [Mock media device testing](../../../core/libs/prx/libSceNKWebKit/src/MockMediaDevices.cpp) (libSceNKWebKit) - `WKClearMockMediaDevices`, `WKRemoveMockMediaDevice` and `WKResetMockMediaDevices` manage test mock media device state in host memory; hardware media capture pipeline integration is unmodeled.
+- [View scale factors, drawing and fullscreen state](../../../core/libs/prx/libSceNKWebKit/src/View.cpp) (libSceNKWebKit) - WKViewGetPageScaleFactor, WKViewSetPageScaleFactor, WKViewGetViewScaleFactor, WKViewSetViewScaleFactor, WKViewSetDrawsBackground, WKViewIsFullScreen, WKViewRequestExitFullScreen, WKViewWillEnterFullScreen, WKViewDidEnterFullScreen, WKViewWillExitFullScreen and WKViewDidExitFullScreen manage view scale factors, background drawing and fullscreen transitions in host memory; compositor integration is unmodeled.
 - [Process pools](../../../core/libs/prx/libSceNKWebKit/src/Context.cpp) (libSceNKWebKit) - `WKContextCreate`, `WKContextCreateWithConfiguration` and `WKContextCreateWithInjectedBundlePath` create a `ProcessPool` and retain its configuration; `WKContextGetUsesSingleWebProcess` and `WKContextSetUsesSingleWebProcess` inspect and store the single-process flag. Subprocess spawning and IPC are unmodeled; console execution and ABI are unverified.
 - [Process pool context settings and maintenance](../../../core/libs/prx/libSceNKWebKit/src/ContextSettings.cpp) (libSceNKWebKit) - WKContextGetCacheModel, WKContextSetCacheModel, WKContextGetAccessibilityEnabled, WKContextSetAccessibilityEnabled, WKContextSetAlwaysUsesComplexTextCodePath, WKContextSetMemoryCacheDisabled, WKContextSetHTTPPipeliningEnabled, WKContextSetShouldUseFontSmoothing, WKContextJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptGarbageCollectorTimerEnabled, WKContextGarbageCollectJavaScriptObjects and WKContextSetStorageAccessAPIEnabled inspect and configure process pool settings and maintenance in host memory. Subprocess IPC and console execution are unmodeled.
 - [Process pool process termination and visited links](../../../core/libs/prx/libSceNKWebKit/src/ContextTermination.cpp) (libSceNKWebKit) - `WKContextDisableProcessTermination`, `WKContextEnableProcessTermination`, `WKContextAddVisitedLink` and `WKContextClearVisitedLinks` control process termination policy and visited link cache on the process pool in host memory.
@@ -657,11 +658,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewAccessibilityHitTest` | `9XouNrl+xF0` |
 | `WKViewAccessibilityRootObject` | `7R83-mIE4ik` |
 | `WKViewCreate` | `HvpAPSloiLA` |
-| `WKViewDidEnterFullScreen` | `8Ji9q7l-y1I` |
-| `WKViewDidExitFullScreen` | `5mppAJEHox0` |
 | `WKViewGetPunchHoles` | `3MWI7gn4dfY` |
-| `WKViewIsFullScreen` | `NsRv+sKcZ6Y` |
-| `WKViewRequestExitFullScreen` | `CPpDO+iVEQY` |
 | `WKViewSetActive` | `mZQNSovP058` |
 | `WKViewSetFocus` | `eYcl-oTV7Ng` |
 | `WKViewSetSize` | `1DkPR0np8Xc` |
@@ -670,8 +667,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewSetViewPopupMenuClient` | `T-iLbWI4WfU` |
 | `WKViewSetVisible` | `8j9ZB-vGetc` |
 | `WKViewValueChangedForPopupMenu` | `rr8g0GkA+GE` |
-| `WKViewWillEnterFullScreen` | `Qv917g7goow` |
-| `WKViewWillExitFullScreen` | `6o4itIbqsY8` |
 | `WKWebsiteDataStoreClearAppBoundSession` | `YujMtLJPOok` |
 | `WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess` | `Mrp3OVQ9jI4` |
 | `WKWebsiteDataStoreCreateNonPersistentDataStore` | `hzBAQGt4hMw` |
