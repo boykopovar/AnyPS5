@@ -81,7 +81,9 @@ const LibreSslX509CertInfo& ObjectCertificateInfo(const LibreSslX509Object* obje
 const LibreSslX509Name& ObjectSubject(const LibreSslX509Object* object, const char* function) {
     const auto* name = static_cast<const LibreSslX509Name*>(ObjectCertificateInfo(object, function).subject);
     if (!name) throw std::invalid_argument(std::string(function) + ": null object subject name");
-    if (!name->canonEnc || name->canonEnclen < 0)
+    if (name->canonEnclen < 0)
+        throw std::invalid_argument(std::string(function) + ": negative canonical encoding length");
+    if (!name->canonEnc && name->canonEnclen != 0)
         throw std::invalid_argument(std::string(function) + ": subject name without a canonical encoding");
     return *name;
 }

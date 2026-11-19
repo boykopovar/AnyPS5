@@ -826,9 +826,7 @@ std::vector<unsigned char> CanonicalName(const LibreSslX509Name* name, const cha
         AppendElement(content, SetTag, set);
     }
     if (content.empty()) return {};
-    std::vector<unsigned char> encoding;
-    AppendElement(encoding, SequenceTag, content);
-    return encoding;
+    return content;
 }
 
 std::vector<unsigned char> SubjectEncoding(const LibreSslX509Name* name, const char* function) {
@@ -1160,8 +1158,14 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
         std::span<const unsigned char> input(bytes);
         CertificateObject* certificate = DecodeCertificate(input);
         if (!certificate) return 0;
-        const int added = X509_STORE_add_cert_nid_postfix(
-            store, reinterpret_cast<LibreSslX509*>(reinterpret_cast<LibreSsl3X509*>(certificate)));
+        int added = 0;
+        try {
+            added = X509_STORE_add_cert_nid_postfix(
+                store, reinterpret_cast<LibreSslX509*>(reinterpret_cast<LibreSsl3X509*>(certificate)));
+        } catch (...) {
+            FreeCertificate(certificate);
+            throw;
+        }
         if (!added) {
             FreeCertificate(certificate);
         } else {
