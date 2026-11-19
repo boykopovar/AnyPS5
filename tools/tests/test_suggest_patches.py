@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from types import SimpleNamespace
 import unittest
 import errno
 from pathlib import Path
@@ -659,6 +660,18 @@ class PathErrorTests(unittest.TestCase):
         original = OSError(errno.EINVAL, "loop")
         original.winerror = 1921
         self.assertTrue(str(suggest_patches.path_error("p", original)).startswith("Symlink loop from 'p'"))
+
+
+class ConversionArgumentsTests(unittest.TestCase):
+    def test_minimal_arguments_only_name_the_patch_file(self):
+        args = SimpleNamespace(skip_sce_module=False, sce_module_path=None, module_dir=[], executable=[])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), ["--patches", "p.toml"])
+
+    def test_every_option_is_forwarded_in_order(self):
+        args = SimpleNamespace(skip_sce_module=True, sce_module_path=Path("sce"), module_dir=["m1", "m2"], executable=["e1"])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), [
+            "--patches", "p.toml", "--skip-sce-module", "--sce-module-path", "sce",
+            "--module-dir", "m1", "--module-dir", "m2", "--executable", "e1"])
 
 
 if __name__ == "__main__":
