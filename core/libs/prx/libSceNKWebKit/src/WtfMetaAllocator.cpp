@@ -76,13 +76,13 @@ class GuestLocker {
 public:
     explicit GuestLocker(std::uint8_t* lock) : m_lock(lock) {
         std::uint8_t expected = 0;
-        if (std::atomic_ref<std::uint8_t>(*m_lock).compare_exchange_weak(expected, LockIsHeldBit)) return;
+        if (std::atomic_ref<std::uint8_t>(*m_lock).compare_exchange_strong(expected, LockIsHeldBit)) return;
         reinterpret_cast<void (APS5_VABI*)(void*)>(&_ZN3WTF4Lock8lockSlowEv)(m_lock);
     }
 
     ~GuestLocker() {
         std::uint8_t expected = LockIsHeldBit;
-        if (std::atomic_ref<std::uint8_t>(*m_lock).compare_exchange_weak(expected, 0)) return;
+        if (std::atomic_ref<std::uint8_t>(*m_lock).compare_exchange_strong(expected, 0)) return;
         reinterpret_cast<void (APS5_VABI*)(void*)>(&_ZN3WTF4Lock10unlockSlowEv)(m_lock);
     }
 
