@@ -48,6 +48,7 @@ R_X86_64_TLSDESC = 36
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+R_X86_64_COPY = 5
 R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
@@ -242,7 +243,10 @@ class Module:
         slots = {}
         for offset, info, _ in self.relocations():
             if info >> 32:
-                slots[offset] = self.symbol(info >> 32)[0]
+                name, section, _, _, binding, visibility = self.symbol(info >> 32)
+                if section and (binding == 0 or visibility != 0) and (info & 0xffffffff) != R_X86_64_COPY:
+                    continue
+                slots[offset] = name
         return slots
 
     def exported_symbols(self):
