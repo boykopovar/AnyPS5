@@ -10,6 +10,18 @@
 
 namespace NKWebKit {
 
+class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
+public:
+    Retained<Object> context;
+    Retained<Object> pageGroup;
+    Retained<Object> userContentController;
+    Retained<Object> preferences;
+    Retained<Object> relatedPage;
+    Retained<Object> websiteDataStore;
+    bool initialCapitalizationEnabled = false;
+    double cpuLimit = 0.0;
+};
+
 class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
@@ -51,6 +63,9 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    bool allowsRemoteInspection = false;
+    Retained<URL> pendingAPIRequestURL;
+    Retained<PageConfiguration> configuration;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
@@ -132,18 +147,6 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
-};
-
-class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
-public:
-    Retained<Object> context;
-    Retained<Object> pageGroup;
-    Retained<Object> userContentController;
-    Retained<Object> preferences;
-    Retained<Object> relatedPage;
-    Retained<Object> websiteDataStore;
-    bool initialCapitalizationEnabled = false;
-    double cpuLimit = 0.0;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
