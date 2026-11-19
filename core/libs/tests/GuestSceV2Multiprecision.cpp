@@ -5,6 +5,13 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 struct Case {
@@ -84,6 +91,45 @@ void CheckSingleWordDivisors() {
     }
 }
 
+void CheckInvalidGuestPointers() {
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(nullptr) == 0, "null get", "value");
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(nullptr, 0x123456789abcdef);
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(nullptr, 0x123456789abcdef, 0xfedcba9876543210);
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(nullptr, 0x123456789);
+
+#ifdef _WIN32
+    const std::size_t pageSize = static_cast<std::size_t>([] { SYSTEM_INFO info{}; GetSystemInfo(&info); return static_cast<long long>(info.dwPageSize); }());
+    auto* page = static_cast<std::uint64_t*>(VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* raw = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* page = static_cast<std::uint64_t*>(raw == MAP_FAILED ? nullptr : raw);
+#endif
+    Require(page != nullptr, "unmapped page", "allocation");
+    const std::uint64_t digit = 0x5a5a5a5a;
+    for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
+
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(page) == ((digit ^ 1u) << 32) + (digit ^ 0u), "unmapped get", "value");
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(page, 0x5);
+    Require(page[0] == digit + 5 && page[1] == digit ^ 1u && page[2] == digit ^ 2u && page[3] == digit ^ 3u && page[4] == digit ^ 4u, "unmapped add", "words");
+    for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(page, 3, 4);
+    Require(page[0] == 12 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "unmapped mul", "words");
+    page[0] = 0xffffffff;
+    page[1] = 0xffffffff;
+    page[2] = 0xffffffff;
+    page[3] = 0xffffffff;
+    page[4] = 0x0;
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(page, 0x8000000000000001);
+    Require(page[0] == 3 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "unmapped rem", "words");
+
+#ifdef _WIN32
+    Require(VirtualFree(page, MEM_RELEASE) != 0, "unmapped page", "release");
+#else
+    Require(munmap(page, pageSize) == 0, "unmapped page", "release");
+#endif
+}
+
 }
 
 int main() {
@@ -112,5 +158,6 @@ int main() {
         Check(entry, words);
     }
     CheckSingleWordDivisors();
+    CheckInvalidGuestPointers();
     return 0;
 }
