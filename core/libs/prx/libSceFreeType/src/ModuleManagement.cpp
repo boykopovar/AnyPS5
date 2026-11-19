@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 using namespace FreeType;
@@ -26,7 +27,7 @@ bool CopyInPreservingErrno(void* destination, const void* source, std::size_t by
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) throw std::invalid_argument(std::string(func) + ": unreadable library handle");
     return host;
 }
 
@@ -35,13 +36,13 @@ std::string CopyGuestCString(const char* source, const char* func) {
     const auto base = reinterpret_cast<std::uintptr_t>(source);
     std::size_t offset = 0;
     for (;;) {
-        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) NotImplemented_nid_no_patch(func);
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) throw std::runtime_error(func);
         const auto current = base + offset;
         const std::size_t toPageEnd = 4096 - (current % 4096);
         const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
         char buffer[256];
         if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
-            NotImplemented_nid_no_patch(func);
+            throw std::runtime_error(func);
         }
         if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
             result.append(buffer, static_cast<std::size_t>(end - buffer));

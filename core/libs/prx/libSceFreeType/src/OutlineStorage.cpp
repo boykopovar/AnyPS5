@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 using namespace FreeType;
 
@@ -24,7 +26,7 @@ bool CopyInPreservingErrno(void* destination, const void* source, std::size_t by
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) throw std::invalid_argument(std::string(func) + ": unreadable library handle");
     return host;
 }
 

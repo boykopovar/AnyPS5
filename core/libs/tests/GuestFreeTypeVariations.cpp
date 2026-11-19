@@ -2,6 +2,7 @@
 #include "Type1Fixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include FT_MULTIPLE_MASTERS_H
@@ -158,10 +159,12 @@ static void TestDoneMMVar() {
     Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, nullptr) == FT_Done_MM_Var(Shared().native, nullptr));
     Require(FT_Done_MM_Var_nid_postfix(nullptr, nullptr) == FT_Done_MM_Var(nullptr, nullptr));
     auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
-    Require(ThrowsWith([&] { FT_Done_MM_Var_nid_postfix(unreadableLibrary, nullptr); }, "FT_Done_MM_Var_nid_postfix not implemented"));
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    Require(ThrowsWith([&] { FT_Done_MM_Var_nid_postfix(unreadableLibrary, nullptr); }, "FT_Done_MM_Var_nid_postfix: unreadable library handle"));
     alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
     auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
-    Require(ThrowsWith([&] { FT_Done_MM_Var_nid_postfix(misaligned, nullptr); }, "FT_Done_MM_Var_nid_postfix not implemented"));
+    Require(ThrowsWith([&] { FT_Done_MM_Var_nid_postfix(misaligned, nullptr); }, "FT_Done_MM_Var_nid_postfix: unreadable library handle"));
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 static void TestSetDesign() {

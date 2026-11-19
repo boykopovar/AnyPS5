@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include FT_MODULE_H
@@ -98,7 +99,7 @@ static bool Rejects(F call) {
     errno = 71;
     try {
         call();
-    } catch (const std::runtime_error&) {
+    } catch (const std::exception&) {
         return errno == 71;
     }
     return false;
@@ -108,6 +109,7 @@ static void TestInvalidGuestPointers() {
     auto* badLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10});
     auto* badName = reinterpret_cast<const char*>(std::uintptr_t{0x10});
     Libraries libraries;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     Require(Rejects([&] { FT_Get_Module_nid_postfix(badLibrary, "truetype"); }));
     Require(Rejects([&] { FT_Get_Module_nid_postfix(&libraries.guest, badName); }));
     Require(Rejects([&] { FT_Get_Renderer_nid_postfix(badLibrary, FT_GLYPH_FORMAT_OUTLINE); }));
@@ -119,6 +121,7 @@ static void TestInvalidGuestPointers() {
     Require(Rejects([&] { FT_Get_Renderer_nid_postfix(misaligned, FT_GLYPH_FORMAT_OUTLINE); }));
     Require(Rejects([&] { FT_Remove_Module_nid_postfix(misaligned, nullptr); }));
     Require(Rejects([&] { FT_Add_Default_Modules_nid_postfix(misaligned); }));
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
     Require(FT_Get_Module_nid_postfix(&libraries.guest, nullptr) == nullptr);
     Require(FT_Get_Module_nid_postfix(nullptr, badName) == nullptr);
 }
