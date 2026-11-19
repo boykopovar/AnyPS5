@@ -204,7 +204,6 @@ int APS5_VABI _ZN3WTF10nullStringEv();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6decodeERNS0_7DecoderE();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE();
-int APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE();
 int APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_();
 int APS5_VABI _ZN3WTF11emptyStringEv();
 int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDs();
