@@ -645,7 +645,7 @@ TFloat LanczosLogGamma(TFloat x, TLogarithm logarithm, TCoefficient series, TCoe
     return logarithm(sum * root / x) - rest;
 }
 
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_fmal.c */
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/s_fmal.c */
 struct ExtendedPair {
     long double hi;
     long double lo;
@@ -657,24 +657,6 @@ ExtendedPair AddExact(long double a, long double b) {
     const long double shift = result.hi - a;
     result.lo = (a - (result.hi - shift)) + (b - shift);
     return result;
-}
-
-long double AddAdjusted(long double a, long double b) {
-    ExtendedPair sum = AddExact(a, b);
-    if (sum.lo != 0 && (Bits(sum.hi).mantissa & 1) == 0)
-        sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
-    return sum.hi;
-}
-
-long double AddAndDenormalize(long double a, long double b, int scale) {
-    ExtendedPair sum = AddExact(a, b);
-    if (sum.lo != 0) {
-        const ExtendedBits bits = Bits(sum.hi);
-        const int bitsLost = -(bits.signExponent & 0x7fff) - scale + 1;
-        if ((bitsLost != 1) != ((bits.mantissa & 1) != 0))
-            sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
-    }
-    return std::ldexp(sum.hi, scale);
 }
 
 ExtendedPair MultiplyExact(long double a, long double b) {
@@ -693,6 +675,30 @@ ExtendedPair MultiplyExact(long double a, long double b) {
     result.hi = p + q;
     result.lo = p - result.hi + q + la * lb;
     return result;
+}
+
+long double FmaProductDominates(long double x, long double y, long double z, int rounding) {
+    std::feraiseexcept(FE_INEXACT);
+    constexpr long double Infinity = std::numeric_limits<long double>::infinity();
+    const auto stepped = [&](long double toward) {
+        std::fenv_t environment;
+        std::feholdexcept(&environment);
+        volatile long double product = x * y;
+        long double result = product;
+        if (!std::fetestexcept(FE_INEXACT)) result = std::nextafter(result, toward);
+        std::feupdateenv(&environment);
+        return result;
+    };
+    switch (rounding) {
+    case FE_TONEAREST:
+        return x * y;
+    case FE_TOWARDZERO:
+        return ((x > 0.0L) != (y < 0.0L)) != (z < 0.0L) ? x * y : stepped(0.0L);
+    case FE_DOWNWARD:
+        return z > 0.0L ? x * y : stepped(-Infinity);
+    default:
+        return z < 0.0L ? x * y : stepped(Infinity);
+    }
 }
 
 long double FmaFarApart(long double x, long double y, long double z, int rounding) {
@@ -716,21 +722,22 @@ long double FmaScaled(long double xs, long double ys, long double zs, int spread
     std::fesetround(FE_TONEAREST);
     volatile long double vxs = xs;
     const ExtendedPair xy = MultiplyExact(vxs, ys);
-    const ExtendedPair r = AddExact(xy.hi, zs);
-    if (r.hi == 0.0L) {
+    const ExtendedPair sum = AddExact(xy.hi, zs);
+    volatile long double rest = sum.lo + xy.lo;
+    const ExtendedBits bits = Bits(sum.hi);
+    const unsigned exponent = sum.hi == 0.0L ? 0x80000000u : static_cast<unsigned>((bits.signExponent & 0x7fff) - 16383);
+    if (static_cast<int>(static_cast<unsigned>(spread) + exponent) > -16383) {
+        volatile long double high = sum.hi;
         std::fesetround(rounding);
-        volatile long double vzs = zs;
-        return xy.hi + vzs + std::ldexp(xy.lo, spread);
+        return std::ldexp(high + rest, spread);
     }
-    if (rounding != FE_TONEAREST) {
-        std::fesetround(rounding);
-        volatile long double vrlo = r.lo;
-        const long double adj = vrlo + xy.lo;
-        return std::ldexp(r.hi + adj, spread);
-    }
-    const long double adj = AddAdjusted(r.lo, xy.lo);
-    if (spread + std::ilogb(r.hi) > -16383) return std::ldexp(r.hi + adj, spread);
-    return AddAndDenormalize(r.hi, adj, spread);
+    const long double floor = std::ldexp(std::copysign(0x1p-16382L, sum.hi), -spread);
+    const ExtendedPair lifted = AddExact(sum.hi, floor);
+    volatile long double high = lifted.hi;
+    volatile long double low = lifted.lo + rest;
+    volatile long double anchor = floor;
+    std::fesetround(rounding);
+    return std::ldexp((high + low) - anchor, spread);
 }
 
 }
@@ -840,13 +847,12 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     int xExponent = 0, yExponent = 0, zExponent = 0;
     const long double xs = std::frexp(x, &xExponent);
     const long double ys = std::frexp(y, &yExponent);
-    long double zs = std::frexp(z, &zExponent);
+    const long double zs = std::frexp(z, &zExponent);
     const int rounding = std::fegetround();
     const int spread = xExponent + yExponent - zExponent;
+    if (spread > std::numeric_limits<long double>::digits * 2) return FmaProductDominates(x, y, z, rounding);
     if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
-    if (spread <= std::numeric_limits<long double>::digits * 2) zs = std::ldexp(zs, -spread);
-    else zs = std::copysign(std::numeric_limits<long double>::min(), zs);
-    return FmaScaled(xs, ys, zs, xExponent + yExponent, rounding);
+    return FmaScaled(xs, ys, std::ldexp(zs, -spread), xExponent + yExponent, rounding);
 }
 
 double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }

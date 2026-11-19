@@ -171,7 +171,7 @@ static void CheckConsoleQuirks() {
         Require(lrintf_nid_postfix(static_cast<float>(outside)) == INT64_MIN && llrintf_nid_postfix(static_cast<float>(outside)) == LLONG_MIN);
     }
     Require(lrint_nid_postfix(-0x1p63) == INT64_MIN && lrintf_nid_postfix(0x1.fffffep62f) == INT64_C(0x7fffff8000000000));
-    Require(SameBits(fmal_nid_postfix(Extended(0x4000, 0xe000000000000000ull), Extended(0x4001, 0xda76b022816f6a94ull), Extended(0x9b45, 0xd3b49eac84283c95ull)), Extended(0x4003, 0xbf27da1e31417d41ull)));
+    Require(SameBits(fmal_nid_postfix(Extended(0x4000, 0xe000000000000000ull), Extended(0x4001, 0xda76b022816f6a94ull), Extended(0x9b45, 0xd3b49eac84283c95ull)), Extended(0x4003, 0xbf27da1e31417d42ull)));
     Require(finite_nid_postfix(1.0) == 1 && finite_nid_postfix(INFINITY) == 0);
 }
 
@@ -655,6 +655,12 @@ static void CheckFmalExactResults() {
     {FE_TONEAREST, Extended(0x3fff, 0x8000000000000000ull), Extended(0xbfff, 0x8000000000000000ull), Extended(0x3fff, 0x8000000000000000ull), Extended(0x0000, 0x0000000000000000ull)},
     {FE_TONEAREST, Extended(0xbfb1, 0xdf4eea570fbb004full), Extended(0x3fb5, 0x954162b3576a5f0cull), Extended(0x3e3b, 0x803f345c6deb3fd7ull), Extended(0xbf68, 0x8231f786d2669fc8ull)},
     {FE_TONEAREST, Extended(0x3fc4, 0xedc5e19f483b20e9ull), Extended(0x3fc6, 0xe69ba0de43a76befull), Extended(0x8005, 0x9ef493447e8b2cc5ull), Extended(0x3f8c, 0xd63054eed3c95b06ull)},
+    {FE_TONEAREST, Extended(0x4001, 0xa000000000000000ull), Extended(0xc00f, 0x940b8339b0374b5eull), Extended(0x11d5, 0xc3310884883d31c9ull), Extended(0xc011, 0xb90e64081c451e36ull)},
+    {FE_TONEAREST, Extended(0xc00e, 0xf67c8eccdb368c5eull), Extended(0xc001, 0xc000000000000000ull), Extended(0x0ea2, 0xa5902861e58540b6ull), Extended(0x4011, 0xb8dd6b19a468e946ull)},
+    {FE_TONEAREST, Extended(0x3ff7, 0xb0b56f28093c07deull), Extended(0xc002, 0xa000000000000000ull), Extended(0x1724, 0xa5a5a080e113cf53ull), Extended(0xbffa, 0xdce2caf20b8b09d6ull)},
+    {FE_DOWNWARD, Extended(0x3fff, 0xf8288e1a506478daull), Extended(0xbfff, 0x9d0d14add9e6799bull), Extended(0x4000, 0x983d8d410c5f940dull), Extended(0xbfbf, 0xcfd523eb0fa06bfdull)},
+    {FE_UPWARD, Extended(0x3fff, 0xf8288e1a506478daull), Extended(0xbfff, 0x9d0d14add9e6799bull), Extended(0x4000, 0x983d8d410c5f940dull), Extended(0xbfbf, 0xcfd523eb0fa06bfbull)},
+    {FE_TOWARDZERO, Extended(0xbfff, 0xc8ff1e2cd147296aull), Extended(0x3fff, 0xd70eff42427ca905ull), Extended(0x4000, 0xa8da08b56f3e47bfull), Extended(0x3fbf, 0xb813b0fd17da6ddbull)},
     };
     const int saved = std::fegetround();
     for (const auto& item : cases) {
