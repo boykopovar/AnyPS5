@@ -1,0 +1,16 @@
+option(ANYPS5_PIPELINE_BINARY_ABI_PROBES "Register unsafe real-device pipeline binary key ABI probes" OFF)
+
+if(BUILD_TESTING AND (MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux") AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    enable_language(ASM)
+    if(ANYPS5_PIPELINE_BINARY_ABI_PROBES)
+        add_test_executable(agc_pipeline_binary_key_abi_tests
+            tests/PipelineKeyAbiVulkan.cpp tests/PipelineKeyAbi.cpp tests/PipelineKeyAbi.S)
+        target_include_directories(agc_pipeline_binary_key_abi_tests PRIVATE ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+        target_link_libraries(agc_pipeline_binary_key_abi_tests PRIVATE SDL2-static)
+        configure_host_test_executable(agc_pipeline_binary_key_abi_tests)
+        foreach(case global pipeline)
+            add_test(NAME agc_pipeline_binary_key_abi_${case} COMMAND agc_pipeline_binary_key_abi_tests ${case})
+            set_tests_properties(agc_pipeline_binary_key_abi_${case} PROPERTIES TIMEOUT 25 SKIP_RETURN_CODE 77)
+        endforeach()
+    endif()
+endif()

@@ -1,4 +1,5 @@
 #include "VulkanTestDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineBinaryStore.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -6,7 +7,9 @@
 #include <windows.h>
 #endif
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -96,13 +99,43 @@ int NoDriverTests() {
     return 0;
 }
 
+int PipelineBinaryStartupTests() {
+    std::filesystem::path root;
+    bool created = false;
+    for (unsigned attempt = 0; attempt < 8 && !created; ++attempt) {
+        root = std::filesystem::temp_directory_path() / ("aps5-binary-startup-" + std::to_string(std::random_device{}()));
+        created = std::filesystem::create_directory(root);
+    }
+    Require(created, "cannot create an exclusive pipeline binary startup cache directory after 8 attempts");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } cleanup{root};
+    SetVariable("ANYPS5_SHADER_CACHE_DIR", root.string().c_str());
+    SetVariable("ANYPS5_NO_SHADER_CACHE", "0");
+    SetVariable("APS5_NO_PIPELINE_BINARIES", "");
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return VulkanTestSkipped;
+    const auto status = device->PipelineBinariesStatus();
+    if (status == AgcDriver::VulkanDevice::PipelineBinaryStatus::Unavailable) {
+        std::cout << "skipped, the device lacks VK_KHR_pipeline_binary\n";
+        return VulkanTestSkipped;
+    }
+    const auto policy = AgcDriver::Graphics::PipelineBinaryStore::PolicyForDriver(device->DriverId());
+    const bool gated = policy == AgcDriver::Graphics::PipelineBinaryPolicy::DisabledByDriver;
+    const auto expected = gated ? AgcDriver::VulkanDevice::PipelineBinaryStatus::DisabledByDriver : AgcDriver::VulkanDevice::PipelineBinaryStatus::Ready;
+    Require(status == expected, "VK_KHR_pipeline_binary is present but the store has an unexpected disable reason");
+    std::cout << "pipeline binary startup: " << (gated ? "DisabledByDriver; device started successfully" : "global-key query completed successfully; store ready") << "; device=" << device->DeviceName() << "; driver=" << device->DriverInfo() << '\n';
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const std::string_view mode = argc > 1 ? argv[1] : "";
-        Require(mode.empty() || mode == "--no-driver", "unknown mode " + std::string(mode));
-        const int result = mode.empty() ? DevicePresentTests() : NoDriverTests();
+        Require(mode.empty() || mode == "--no-driver" || mode == "--pipeline-binary-startup", "unknown mode " + std::string(mode));
+        const int result = mode == "--pipeline-binary-startup" ? PipelineBinaryStartupTests() : mode.empty() ? DevicePresentTests() : NoDriverTests();
         if (result == 0) std::cout << "Vulkan test device tests passed\n";
         return result;
     } catch (const std::exception& error) {
