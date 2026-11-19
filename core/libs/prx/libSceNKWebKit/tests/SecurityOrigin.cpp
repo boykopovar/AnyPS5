@@ -332,6 +332,96 @@ static void TestComparisons() {
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(nullptr, a.get()); }));
 }
 
+static bool SameSchemeHostPort(const OriginRef& a, const OriginRef& b) {
+    return _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), b.get());
+}
+
+static bool CanAccess(const OriginRef& a, const OriginRef& b) {
+    return _ZNK7WebCore14SecurityOrigin9canAccessERKS0_(a.get(), b.get());
+}
+
+static void TestSameSchemeHostPort() {
+    auto a = Create("https", "example.com");
+    auto b = Create("https", "example.com", "443", "/other");
+    Require(SameSchemeHostPort(a, b));
+    Require(SameSchemeHostPort(a, a));
+    Require(!SameSchemeHostPort(a, Create("http", "example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "www.example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "example.com", "8443")));
+    b->domainWasSetInDOM = true;
+    b->domain = Make("other.com");
+    Require(SameSchemeHostPort(a, b));
+
+    auto file = Create("file", "", "", "/a");
+    auto other = Create("file", "", "", "/b");
+    Require(SameSchemeHostPort(file, other));
+    other->enforcesFilePathSeparation = true;
+    Require(!SameSchemeHostPort(file, other));
+    Require(!SameSchemeHostPort(other, other));
+
+    auto data = Create(MakeURL("data", "", "", "text/plain,x", false));
+    auto data2 = Create(MakeURL("data", "", "", "text/plain,x", false));
+    Require(SameSchemeHostPort(data, data));
+    Require(!SameSchemeHostPort(data, data2));
+    Require(!SameSchemeHostPort(data, a));
+    Require(!SameSchemeHostPort(a, data));
+
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), nullptr); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(nullptr, a.get()); }));
+}
+
+static void TestCanAccess() {
+    auto a = Create("https", "example.com");
+    auto b = Create("https", "example.com", "443", "/other");
+    Require(CanAccess(a, b));
+    Require(CanAccess(a, a));
+    Require(!CanAccess(a, Create("http", "example.com")));
+    Require(!CanAccess(a, Create("https", "www.example.com")));
+    Require(!CanAccess(a, Create("https", "example.com", "8443")));
+
+    auto sub = Create("https", "www.example.com", "8443");
+    sub->domainWasSetInDOM = true;
+    sub->domain = Make("example.com");
+    Require(!CanAccess(a, sub));
+    Require(!CanAccess(sub, a));
+    a->domainWasSetInDOM = true;
+    a->domain = Make("example.com");
+    Require(CanAccess(a, sub));
+    Require(CanAccess(sub, a));
+    sub->domain = Make("other.com");
+    Require(!CanAccess(a, sub));
+    auto plain = Create("http", "www.example.com");
+    plain->domainWasSetInDOM = true;
+    plain->domain = Make("example.com");
+    Require(!CanAccess(a, plain));
+
+    auto universal = Create("https", "example.org");
+    Require(!CanAccess(universal, b));
+    universal->universalAccess = true;
+    Require(CanAccess(universal, b));
+    Require(!CanAccess(b, universal));
+
+    auto file = Create("file", "", "", "/a");
+    auto other = Create("file", "", "", "/b");
+    Require(CanAccess(file, other));
+    other->enforcesFilePathSeparation = true;
+    Require(!CanAccess(file, other));
+    Require(!CanAccess(other, file));
+    Require(CanAccess(other, other));
+
+    auto data = Create(MakeURL("data", "", "", "text/plain,x", false));
+    auto data2 = Create(MakeURL("data", "", "", "text/plain,x", false));
+    Require(CanAccess(data, data));
+    Require(!CanAccess(data, data2));
+    Require(!CanAccess(data, b));
+    Require(!CanAccess(b, data));
+    data->universalAccess = true;
+    Require(CanAccess(data, b));
+
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin9canAccessERKS0_(a.get(), nullptr); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin9canAccessERKS0_(nullptr, a.get()); }));
+}
+
 static void TestIsolatedCopy() {
     auto origin = Create("https", "example.com", "8443");
     origin->filePath = Make("/path");
@@ -496,6 +586,8 @@ int main() {
     TestOpaqueOrigins();
     TestFileOrigins();
     TestComparisons();
+    TestSameSchemeHostPort();
+    TestCanAccess();
     TestIsolatedCopy();
     TestCachePartition();
     TestRegistrableDomainSuffix();

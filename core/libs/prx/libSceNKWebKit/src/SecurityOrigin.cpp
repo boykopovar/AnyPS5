@@ -597,6 +597,28 @@ bool APS5_VABI _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(const Security
     return IsSameSchemeHostPort(origin, second);
 }
 
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(const SecurityOrigin* self, const SecurityOrigin* other) {
+    return IsSameSchemeHostPort(Checked(self), Checked(other));
+}
+
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin9canAccessERKS0_(const SecurityOrigin* self, const SecurityOrigin* other) {
+    const auto& origin = Checked(self);
+    const auto& second = Checked(other);
+    if (origin.universalAccess) return true;
+    if (&origin == &second) return true;
+    if (IsOpaque(origin.data) || IsOpaque(second.data)) return SameOpaqueOriginIdentifier(origin.data, second.data);
+    bool canAccess = false;
+    if (Equal(Protocol(origin.data), Protocol(second.data))) {
+        if (!origin.domainWasSetInDOM && !second.domainWasSetInDOM) {
+            canAccess = Equal(Host(origin.data), Host(second.data)) && EqualPorts(Port(origin.data), Port(second.data));
+        } else if (origin.domainWasSetInDOM && second.domainWasSetInDOM) {
+            canAccess = Equal(origin.domain, second.domain);
+        }
+    }
+    if (canAccess && origin.isLocal) canAccess = PassesFileCheck(origin, second);
+    return canAccess;
+}
+
 String APS5_VABI _ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(const SecurityOrigin* self) {
     const auto& origin = Checked(self);
     const auto& protocol = Protocol(origin.data);
