@@ -482,10 +482,18 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(result["log_limit"])
         for name in ("stdout.txt", "stderr.txt"):
             self.assertLessEqual((self.root / "quota" / name).stat().st_size, 1024)
+        ready = self.root / "descendant-spawned"
+        release = self.root / "descendant-release"
         marker = self.root / "descendant-survived"
-        child = "import pathlib,time;time.sleep(0.8);pathlib.Path(" + repr(str(marker)) + ").write_text('survived')"
-        parent = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);print('spawned',flush=True);time.sleep(10)"
-        result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 0.25, 1024)
+        child = ("import pathlib,time\nend=time.monotonic()+30\n"
+                 "while time.monotonic()<end and not pathlib.Path(" + repr(str(release)) + ").exists():\n    time.sleep(0.01)\n"
+                 "pathlib.Path(" + repr(str(marker)) + ").write_text('survived')")
+        parent = ("import pathlib,subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);"
+                  "print('spawned',flush=True);pathlib.Path(" + repr(str(ready)) + ").touch();time.sleep(30)")
+        monotonic = time.monotonic
+        with mock.patch.object(runner.time, "monotonic", side_effect=lambda: monotonic() + (30 if ready.exists() else 0)):
+            result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 20, 1024)
+        release.touch()
         self.assertTrue(result["timed_out"])
         self.assertIn("spawned", (self.root / "descendants" / "stdout.txt").read_text())
         time.sleep(0.9)
