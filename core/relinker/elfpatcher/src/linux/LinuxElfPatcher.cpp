@@ -127,17 +127,26 @@ void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::Progra
 }
 
 void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std::uint64_t address, const std::uint64_t size, const std::uint32_t flags, const std::string& what) {
-    const auto loaded = [&](const std::uint64_t vaddr) {
+    const auto reject = [&]() {
+        const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
+        throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+    };
+    const auto containing = [&](const std::uint64_t vaddr) -> const Domain::ProgramHeader* {
         for (const auto& header : headers)
             if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && vaddr >= header.MappedAddress && vaddr - header.MappedAddress < header.MemorySize)
-                return true;
-        return false;
+                return &header;
+        return nullptr;
     };
-    for (std::uint64_t offset = 0; offset < size; ++offset)
-        if (!loaded(address + offset)) {
-            const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
-            throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
-        }
+    if (size == 0) {
+        if (!containing(address)) reject();
+        return;
+    }
+    if (address > std::numeric_limits<std::uint64_t>::max() - size) reject();
+    for (std::uint64_t covered = address; covered < address + size;) {
+        const auto* segment = containing(covered);
+        if (!segment) reject();
+        covered = segment->MappedAddress + segment->MemorySize;
+    }
 }
 
 std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry) {
