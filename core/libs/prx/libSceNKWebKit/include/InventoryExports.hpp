@@ -1142,7 +1142,6 @@ int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorD2Ev();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorppEv();
 int APS5_VABI _ZN3WTF10SymbolImpl16createNullSymbolEv();
 int APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE();
-int APS5_VABI _ZN3WTF10URLHelpers14userVisibleURLERKNS_7CStringE();
 int APS5_VABI _ZN3WTF10WorkerPool8postTaskEONS_8FunctionIFvvEEE();
 int APS5_VABI _ZN3WTF10WorkerPoolC1ENS_12ASCIILiteralEjNS_7SecondsE();
 int APS5_VABI _ZN3WTF10WorkerPoolC2ENS_12ASCIILiteralEjNS_7SecondsE();

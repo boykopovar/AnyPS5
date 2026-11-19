@@ -13113,10 +13113,6 @@ int APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10URLHelpers14userVisibleURLERKNS_7CStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10WorkerPool8postTaskEONS_8FunctionIFvvEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
