@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -68,6 +69,19 @@ static void TestNullObject() {
     Require(guestFrees == freesBefore, "a null object frees nothing");
 }
 
+static void TestGetPredictionReturnsOriginal() {
+    const std::uint64_t values[] = {0, 1, 0x20, 0x8000000000000000ull, 0x0000ffffffffffffull, ~0ull};
+    unsigned char codeBlock[16] = {};
+    unsigned char codeOrigin[8] = {};
+    unsigned char agent[8] = {};
+    for (std::uint64_t value : values) {
+        Require(_ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOriginEm(agent, codeBlock, codeOrigin, value) == value,
+            "prediction with objects");
+        Require(_ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOriginEm(agent, nullptr, codeOrigin, value) == value,
+            "prediction without a code block");
+    }
+}
+
 int main() {
     void* api[10] = {reinterpret_cast<void*>(&Allocate_nid_no_patch), reinterpret_cast<void*>(&Free_nid_no_patch),
         reinterpret_cast<void*>(&Calloc_nid_no_patch), reinterpret_cast<void*>(&Reallocate_nid_no_patch),
@@ -75,6 +89,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api);
     TestDeletingDestructorFreesThroughOperatorDelete();
     TestNullObject();
+    TestGetPredictionReturnsOriginal();
     std::puts("JSC::FuzzerAgent tests passed");
     return 0;
 }

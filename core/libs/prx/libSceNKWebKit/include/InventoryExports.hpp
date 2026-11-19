@@ -573,7 +573,6 @@ int APS5_VABI _ZN3JSC11ArrayBuffer6createEONS_19ArrayBufferContentsE();
 int APS5_VABI _ZN3JSC11ArrayBuffer6createERS0_();
 int APS5_VABI _ZN3JSC11ArrayBuffer9shareWithERNS_19ArrayBufferContentsE();
 int APS5_VABI _ZN3JSC11ArrayBuffer9tryCreateERS0_();
-int APS5_VABI _ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOriginEm();
 int APS5_VABI _ZN3JSC11IsoSubspaceD0Ev();
 int APS5_VABI _ZN3JSC11IsoSubspaceD1Ev();
 int APS5_VABI _ZN3JSC11IsoSubspaceD2Ev();
