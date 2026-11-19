@@ -1,0 +1,10 @@
+#version 450
+
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform sampler2DArray source;
+layout(set = 0, binding = 1, std430) buffer Result { vec4 texel; };
+layout(push_constant) uniform Parameters { float lod; float layer; } parameters;
+
+void main() {
+    texel = texelFetch(source, ivec3(0, 0, int(parameters.layer)), int(parameters.lod));
+}

@@ -1,0 +1,8 @@
+# libSceAudioOut
+
+## change [sceAudioOutGetSimulatedHandleStatusInfo]
+- [sceAudioOutGetSimulatedHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature; the body returns the fixed value 0x809B00FF without throwing, which AnyPS5's test in `core/libs/prx/libSceAudioOut/tests/AudioOutInfo.cpp` expects as "not supported". A PS5 (firmware 11.60, payload process; a title process may differ) returned the same `0x809B00FF` for a call with four zero arguments, without a fault; what it returns for valid arguments is not measured.
+## change [sceAudioDeviceControlGet]
+- [sceAudioDeviceControlGet](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - NID `tKumjQSzhys` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only. A PS5 (firmware 11.60, payload process; a title process may differ) did not find this name with `dlsym` in `libSceAudioOut.sprx`, where the control `sceAudioOutInit` was found; that is a lookup result only, not a statement that the module does not export it.
+## change [sceAudioDeviceControlSet]
+- [sceAudioDeviceControlSet](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - NID `5ChfcHOf3SM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only. A PS5 (firmware 11.60, payload process; a title process may differ) did not find this name with `dlsym` in `libSceAudioOut.sprx`, where the control `sceAudioOutInit` was found; that is a lookup result only, not a statement that the module does not export it.

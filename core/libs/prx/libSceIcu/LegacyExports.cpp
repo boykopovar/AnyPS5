@@ -1,15 +1,28 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libc/include/General.hpp"
+#include "cmemory.h"
 #include "unicode/ucnv.h"
+#include <putilimp.h>
+#include "unicode/uenum.h"
+#include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 extern "C" {
+
+static std::atomic<std::int32_t> openStandardNamesStatusForTest{std::numeric_limits<std::int32_t>::min()};
+
+void APS5_VABI SetOpenStandardNamesStatusForTest_nid_no_patch(std::int32_t status) {
+    openStandardNamesStatusForTest.store(status, std::memory_order_release);
+}
 
 int APS5_VABI sceIcuLegacyUnknown__plus__plus_DD8eRY6mw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -480,10 +493,6 @@ int APS5_VABI sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch() {
 APS5_EXPORT("1LicYZSc3Q8", sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch);
 
 int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_fixFileSeparator_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1202,10 +1211,6 @@ int APS5_VABI sceIcuLegacyUnknown_68uKzUhNGcw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("68uKzUhNGcw", sceIcuLegacyUnknown_68uKzUhNGcw_nid_no_patch);
-
-int APS5_VABI ucnv_openAllNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator18handleSafePreviousEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -7080,8 +7085,107 @@ int APS5_VABI _ZN6icu_6810ICUService21reInitializeFactoriesEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_openStandardNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+UEnumeration* APS5_VABI ucnv_openStandardNames_nid_postfix(const char* converter, const char* standard,
+                                                           std::int32_t* error) {
+    const char* caller = __func__;
+    if (!error) throw std::invalid_argument(std::string(caller) + ": invalid status");
+    const int savedErrno = errno;
+    std::int32_t incoming = 0;
+    const bool statusReadable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!statusReadable) throw std::invalid_argument(std::string(caller) + ": unreadable status");
+    if (incoming > 0) return nullptr;
+
+    auto writeStatus = [&](std::int32_t outgoing) {
+        if (outgoing == incoming) return;
+        const int currentErrno = errno;
+        const bool statusWritable = GuestCopyOut_nid_no_patch(error, &outgoing, sizeof(outgoing));
+        errno = currentErrno;
+        if (!statusWritable) throw std::invalid_argument(std::string(caller) + ": unwritable status");
+    };
+    auto readText = [&](const char* source, const char* name) {
+        std::string text;
+        for (;;) {
+            char chunk[0x1000];
+            const auto address = reinterpret_cast<std::uintptr_t>(source) + text.size();
+            const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+            const int currentErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk, source + text.size(), count);
+            errno = currentErrno;
+            if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable " + name);
+            const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
+            text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
+            if (end) return text;
+        }
+    };
+
+    UErrorCode status = static_cast<UErrorCode>(incoming);
+    if (ucnv_countStandards() == 0) {
+        UEnumeration* unavailable = ucnv_openStandardNames("", "", &status);
+        if (unavailable) uenum_close(unavailable);
+        writeStatus(status);
+        return nullptr;
+    }
+    if (!converter || !standard) {
+        status = U_ILLEGAL_ARGUMENT_ERROR;
+        writeStatus(status);
+        return nullptr;
+    }
+    const std::string converterText = readText(converter, "converter");
+    const std::string standardText = readText(standard, "standard");
+    UEnumeration* host = ucnv_openStandardNames(converterText.c_str(), standardText.c_str(), &status);
+    if (!host) {
+        writeStatus(status);
+        return nullptr;
+    }
+
+    static const UEnumeration proxyTemplate = {
+        nullptr,
+        nullptr,
+        [](UEnumeration* enumeration) APS5_VABI {
+            uenum_close(static_cast<UEnumeration*>(enumeration->context));
+            uprv_free(enumeration);
+        },
+        [](UEnumeration* enumeration, std::int32_t* callbackStatus) APS5_VABI {
+            return uenum_count(static_cast<UEnumeration*>(enumeration->context),
+                               reinterpret_cast<UErrorCode*>(callbackStatus));
+        },
+        [](UEnumeration* enumeration, std::int32_t* resultLength,
+           std::int32_t* callbackStatus) APS5_VABI -> const char16_t* {
+            return reinterpret_cast<const char16_t*>(uenum_unext(
+                static_cast<UEnumeration*>(enumeration->context), resultLength,
+                reinterpret_cast<UErrorCode*>(callbackStatus)));
+        },
+        [](UEnumeration* enumeration, std::int32_t* resultLength,
+           std::int32_t* callbackStatus) APS5_VABI {
+            return uenum_next(static_cast<UEnumeration*>(enumeration->context), resultLength,
+                              reinterpret_cast<UErrorCode*>(callbackStatus));
+        },
+        [](UEnumeration* enumeration, std::int32_t* callbackStatus) APS5_VABI {
+            uenum_reset(static_cast<UEnumeration*>(enumeration->context),
+                        reinterpret_cast<UErrorCode*>(callbackStatus));
+        },
+    };
+    auto* proxy = static_cast<UEnumeration*>(uprv_malloc(sizeof(UEnumeration)));
+    if (!proxy) {
+        uenum_close(host);
+        status = U_MEMORY_ALLOCATION_ERROR;
+        writeStatus(status);
+        return nullptr;
+    }
+    std::memcpy(proxy, &proxyTemplate, sizeof(*proxy));
+    proxy->context = host;
+    const auto forcedStatus = openStandardNamesStatusForTest.exchange(std::numeric_limits<std::int32_t>::min(),
+                                                                      std::memory_order_acq_rel);
+    if (forcedStatus != std::numeric_limits<std::int32_t>::min()) status = static_cast<UErrorCode>(forcedStatus);
+    try {
+        writeStatus(status);
+    } catch (...) {
+        uenum_close(host);
+        uprv_free(proxy);
+        throw;
+    }
+    return proxy;
 }
 
 int APS5_VABI _ZN6icu_6810UnicodeSet13complementAllERKNS_13UnicodeStringE_nid_postfix() {
@@ -7801,10 +7905,6 @@ int APS5_VABI sceIcuLegacyUnknown_nlKvBmVpu_plus_4_nid_no_patch() {
 }
 APS5_EXPORT("nlKvBmVpu+4", sceIcuLegacyUnknown_nlKvBmVpu_plus_4_nid_no_patch);
 
-int APS5_VABI udata_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6817StringEnumerationeqERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7986,8 +8086,8 @@ int APS5_VABI sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch() {
 }
 APS5_EXPORT("p0Bb5fo1gx8", sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch);
 
-int APS5_VABI uprv_tzname_clear_cache_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI uprv_tzname_clear_cache_nid_postfix() {
+    uprv_tzname_clear_cache();
 }
 
 int APS5_VABI sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch() {
@@ -8250,15 +8350,7 @@ int APS5_VABI sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch() {
 }
 APS5_EXPORT("qisHypG+THA", sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch);
 
-int APS5_VABI ures_initStackObject_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_getInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9006,10 +9098,6 @@ int APS5_VABI _ZN6icu_6823UnicodeStringAppendable15getAppendBufferEiiPDsiPi_nid_
 }
 
 int APS5_VABI _ZN6icu_689UVector327setSizeEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_getAliases_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
