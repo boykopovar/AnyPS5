@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import shlex
@@ -1376,6 +1377,22 @@ class CheckCompileResponseQuotingTests(unittest.TestCase):
     def test_unknown_quoting_is_refused(self):
         with self.assertRaisesRegex(ValueError, "unsupported response-file quoting --rsp-quoting=shell"):
             check_compile.response_quoting(["--rsp-quoting=shell"])
+
+
+class CheckCompilePositiveIntegerTests(unittest.TestCase):
+    def test_returns_positive_integers(self):
+        self.assertEqual(check_compile.positive_integer("3"), 3)
+        self.assertEqual(check_compile.positive_integer(" 12 "), 12)
+
+    def test_zero_and_negative_values_are_argument_errors(self):
+        for value in ("0", "-4"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    check_compile.positive_integer(value)
+
+    def test_non_numbers_raise_value_error(self):
+        with self.assertRaises(ValueError):
+            check_compile.positive_integer("many")
 
 
 if __name__ == "__main__":
