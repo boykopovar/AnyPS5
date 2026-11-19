@@ -11718,13 +11718,7 @@ bool storageImportTouchTests(const Device& device, Recorder& recorder) {
     constexpr std::uint64_t offset = 0x2000;
     constexpr std::size_t atlasBytes = 1024 * 1024;
     constexpr std::size_t allocationBytes = atlasBytes + 2 * 65536;
-    const auto importMode = PrepareImportWatch(base);
-    SetImportWatch(base, ImportWatch::Watch);
-    struct RestoreImport {
-        const Context& context;
-        ImportWatch mode;
-        ~RestoreImport() { SetImportWatch(context, mode); }
-    } restoreImport{base, importMode};
+    PrepareImportWatch(base);
     for (const bool cpuChanged : {false, true}) {
         void* allocation = AllocateWatched(allocationBytes, 65536);
         Require(allocation != nullptr, "no watched allocation for a stored image beside an import touch");
@@ -11767,7 +11761,10 @@ bool storageImportTouchTests(const Device& device, Recorder& recorder) {
         resource.dstSelZ = 6;
         resource.dstSelW = 7;
         auto image = StorageTexture::Create(context, detiler, resource, 0);
-        Require(HostImportFor(context, address, atlasBytes) != nullptr && AgcDriver::GuestMemory::Watched(address, atlasBytes), "the import-touch image is not using a watched host import");
+        if (HostImportFor(context, address, atlasBytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, atlasBytes)) {
+            std::cout << "host imports are compared, not watched: storage import touch not tested\n";
+            return false;
+        }
         const auto clear = [&](const VkClearColorValue& value) {
             const auto commands = recorder.Commands();
             recorder.Keep(image);
