@@ -66,7 +66,8 @@ int APS5_VABI i2d_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_check_akid_nid_postfix() {
+int APS5_VABI X509_check_akid_nid_postfix(void*, void* authorityKeyId) {
+    if (!authorityKeyId) return 0;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -97,10 +98,6 @@ int APS5_VABI X509_new_nid_postfix() {
 }
 
 int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_sign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

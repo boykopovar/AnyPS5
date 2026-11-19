@@ -70,8 +70,8 @@ static void CheckRand48() {
     std::uint16_t custom[3] = {2, 0, 0};
     Require(nrand48_nid_postfix(custom) == 0 && SeedIs(custom, 11, 0, 0), "lcong48 parameters apply to nrand48");
     const std::uint16_t newSeed[3] = {0x330e, 0xabcd, 0x1234};
-    std::uint16_t* const echoed = seed48_nid_postfix(newSeed);
-    Require(SeedIs(echoed, 0x330e, 0xabcd, 0x1234), "seed48 returns a copy of the new seed");
+    std::uint16_t* const previous = seed48_nid_postfix(newSeed);
+    Require(SeedIs(previous, 29, 0, 0), "seed48 returns the previous seed");
     std::uint16_t again[3] = {0x330e, 0xabcd, 0x1234};
     Require(drand48_nid_postfix() == erand48_nid_postfix(again), "seed48 restores the default multiplier and addend");
     lcong48_nid_postfix(parameters);

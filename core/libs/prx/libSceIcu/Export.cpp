@@ -10,18 +10,6 @@
 extern "C" {
 
 
-int APS5_VABI UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813BreakIterator23createCharacterInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35,10 +23,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator18createLineInstanceERKNS_6LocaleER10UErr
 }
 
 int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -176,10 +160,6 @@ int APS5_VABI ucnv_convertEx() {
 }
 
 int APS5_VABI ucnv_fromUnicode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_getCanonicalName() {
     NotImplemented_nid_no_patch(__func__);
 }
 

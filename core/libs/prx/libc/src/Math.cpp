@@ -1373,14 +1373,16 @@ double APS5_VABI fmax_nid_postfix(double x, double y) { return GuestFmax(x, y); 
 float APS5_VABI fmaxf_nid_postfix(float x, float y) { return GuestFmax(x, y); }
 long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return GuestFmax(x, y); }
 double APS5_VABI fdim_nid_postfix(double x, double y) {
-    if (std::isnan(x) || std::isnan(y)) return std::fdim(x, y);
-    const double difference = x - y;
-    return difference > 0.0 ? difference : 0.0;
+    if ((std::bit_cast<std::uint64_t>(x) << 1) > 0xffe0000000000000ull) return x;
+    if ((std::bit_cast<std::uint64_t>(y) << 1) > 0xffe0000000000000ull) return y;
+    const volatile double difference = x - y;
+    return y < x ? difference : 0.0;
 }
 float APS5_VABI fdimf_nid_postfix(float x, float y) {
-    if (std::isnan(x) || std::isnan(y)) return std::fdim(x, y);
-    const float difference = x - y;
-    return difference > 0.0f ? difference : 0.0f;
+    if ((std::bit_cast<std::uint32_t>(x) << 1) > 0xff000000u) return x;
+    if ((std::bit_cast<std::uint32_t>(y) << 1) > 0xff000000u) return y;
+    const volatile float difference = x - y;
+    return y < x ? difference : 0.0f;
 }
 /*
  * ====================================================
@@ -5173,8 +5175,28 @@ double APS5_VABI fmod_nid_postfix(double x, double y) {
     errno = saved_errno;
     return result;
 }
-float APS5_VABI roundf_nid_postfix(float x) { return std::round(x); }
-double APS5_VABI round_nid_postfix(double x) { return std::round(x); }
+extern "C++" {
+template<typename TFloat, typename TBits, int FractionBits>
+static TFloat RoundHalfAway(TFloat x) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    const TBits bits = std::bit_cast<TBits>(x);
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits);
+    if (exponent == (1 << ExponentBits) - 1) return x;
+    const bool negative = !(x >= 0);
+    const TBits magnitudeBits = negative ? bits & ~Sign : bits;
+    TBits wholeBits = magnitudeBits;
+    if (exponent < Bias) wholeBits &= Sign;
+    else if (exponent < Bias + FractionBits) wholeBits &= ~((TBits{1} << (Bias + FractionBits - exponent)) - 1);
+    const TFloat whole = std::bit_cast<TFloat>(wholeBits);
+    const volatile TFloat above = whole + 1;
+    const TFloat rounded = whole - std::bit_cast<TFloat>(magnitudeBits) > static_cast<TFloat>(-0.5) ? whole : above;
+    return negative ? -rounded : rounded;
+}
+}
+float APS5_VABI roundf_nid_postfix(float x) { return RoundHalfAway<float, std::uint32_t, 23>(x); }
+double APS5_VABI round_nid_postfix(double x) { return RoundHalfAway<double, std::uint64_t, 52>(x); }
 float APS5_VABI cbrtf_nid_postfix(float x) {
     const std::uint32_t B1 = 709958130;
     const std::uint32_t B2 = 642849266;
@@ -5538,7 +5560,6 @@ long double APS5_VABI tanl_nid_postfix(long double x) { return TanlMsun(x); }
 long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
-long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return Expm1lMsun(x); }
 long double APS5_VABI erfl_nid_postfix(long double x) { return ErflMsun(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return ErfclMsun(x); }
@@ -5663,7 +5684,6 @@ long double APS5_VABI exp2l_nid_postfix(long double x) {
 }
 long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
-long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
