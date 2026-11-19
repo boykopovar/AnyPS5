@@ -225,7 +225,16 @@ int APS5_VABI FT_New_GlyphSlot_nid_postfix(GuestFaceRec* face, GuestGlyphSlotRec
         Free(memory, slot, function);
         return error;
     }
-    slot->next = guestFace.glyph;
+    GuestGlyphSlotRec* currentHead = guestFace.glyph;
+    const int headErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&currentHead, &face->glyph, sizeof(currentHead))) {
+        errno = headErrno;
+        SlotDone(slot, function);
+        Free(memory, slot, function);
+        return InvalidArgument;
+    }
+    errno = headErrno;
+    slot->next = currentHead;
     const int glyphErrno = errno;
     const bool glyphWritten = GuestCopyOut_nid_no_patch(&face->glyph, &slot, sizeof(slot));
     errno = glyphErrno;
@@ -239,10 +248,30 @@ int APS5_VABI FT_New_GlyphSlot_nid_postfix(GuestFaceRec* face, GuestGlyphSlotRec
         const bool outWritten = GuestCopyOut_nid_no_patch(aslot, &slot, sizeof(slot));
         errno = outErrno;
         if (!outWritten) {
-            GuestGlyphSlotRec* restoredGlyph = guestFace.glyph;
+            GuestGlyphSlotRec* slotNext = nullptr;
+            GuestGlyphSlotRec* listHead = nullptr;
             const int restoreErrno = errno;
-            GuestCopyOut_nid_no_patch(&face->glyph, &restoredGlyph, sizeof(restoredGlyph));
+            const bool readNext = GuestCopyIn_nid_no_patch(&slotNext, &slot->next, sizeof(slotNext));
+            const bool readHead = GuestCopyIn_nid_no_patch(&listHead, &face->glyph, sizeof(listHead));
             errno = restoreErrno;
+            if (readNext && readHead) {
+                if (listHead == slot) {
+                    GuestCopyOut_nid_no_patch(&face->glyph, &slotNext, sizeof(slotNext));
+                    errno = restoreErrno;
+                } else {
+                    GuestGlyphSlotRec* prev = listHead;
+                    while (prev) {
+                        GuestGlyphSlotRec* next = nullptr;
+                        if (!GuestCopyIn_nid_no_patch(&next, &prev->next, sizeof(next))) break;
+                        if (next == slot) {
+                            GuestCopyOut_nid_no_patch(&prev->next, &slotNext, sizeof(slotNext));
+                            break;
+                        }
+                        prev = next;
+                    }
+                    errno = restoreErrno;
+                }
+            }
             SlotDone(slot, function);
             Free(memory, slot, function);
             return InvalidArgument;

@@ -242,6 +242,18 @@ GuestGlyphSlotRec* gCorruptTargetSlot = nullptr;
 void* gSavedInternal = nullptr;
 void* gSavedLoader = nullptr;
 
+GuestGlyphSlotRec* gInsertedHead = nullptr;
+GuestGlyphSlotRec* gInsertedTail = nullptr;
+
+int APS5_VABI InsertHeadOnInit(GuestGlyphSlotRec* slot) {
+    if (gInsertedHead && slot && slot->face) {
+        auto* face = static_cast<GuestFaceRec*>(slot->face);
+        gInsertedHead->next = gInsertedTail;
+        face->glyph = gInsertedHead;
+    }
+    return 0;
+}
+
 int APS5_VABI CorruptFaceOnInit(GuestGlyphSlotRec* slot) {
     gCorruptTargetSlot = slot;
     gSavedInternal = slot->internal;
@@ -372,6 +384,20 @@ void GuestPointers() {
         "New_GlyphSlot refuses an unreadable face without changing errno or output");
     Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, reinterpret_cast<GuestGlyphSlotRec**>(0x10)) == 0x06 && errno == 71 && !fixture.face.glyph && fixture.recorder.allocs == fixture.recorder.frees,
         "New_GlyphSlot rolls back when the output slot pointer is unwritable");
+
+    DriverFixture listFixture;
+    GuestGlyphSlotRec existingTail{};
+    GuestGlyphSlotRec insertedHead{};
+    listFixture.clazz.init_slot = InsertHeadOnInit;
+    gInsertedHead = &insertedHead;
+    gInsertedTail = &existingTail;
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&listFixture.face, reinterpret_cast<GuestGlyphSlotRec**>(0x10)) == 0x06 && errno == 71,
+        "New_GlyphSlot rollback on unwritable aslot returns Invalid_Argument without changing errno");
+    Require(listFixture.face.glyph == &insertedHead && insertedHead.next == &existingTail && listFixture.recorder.allocs == listFixture.recorder.frees,
+        "New_GlyphSlot rollback preserves newer face->glyph head added during init_slot");
+    gInsertedHead = nullptr;
+    gInsertedTail = nullptr;
     Require(FT_New_GlyphSlot_nid_postfix(const_cast<GuestFaceRec*>(&readOnlyFace), &slot) == 0x06 && errno == 71 && !readOnlyFace.glyph && roRecorder.allocs == roRecorder.frees,
         "New_GlyphSlot refuses a read-only face without leaking or changing errno");
 
