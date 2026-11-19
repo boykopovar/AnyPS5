@@ -1875,6 +1875,24 @@ void verifyTypeZeroImageMaterialization() {
         }), "raw-to-known descriptor transition: cached Raw descriptor was not invalidated and replaced by KnownValue");
     }
 
+    phase = 4u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory forcedSpanMemory({}, multiPending, nullptr, hookWaits);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorForceSync));
+        const auto forcedCapture = forcedSpanMemory.Capture(request);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorEndForceSync));
+        require(std::ranges::any_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }) && std::ranges::none_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
+        }), "force-sync descriptor span: a T# span read under SrtDescriptorForceSync took the KnownValue bytes instead of reading through the flush hook");
+    }
+
     for (std::uint32_t record = 0; record < 128u; ++record) {
         std::copy(oldT.begin(), oldT.end(), srt.begin() + record * 8u);
     }
