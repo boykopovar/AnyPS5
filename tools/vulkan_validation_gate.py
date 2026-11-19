@@ -423,6 +423,8 @@ def main(argv=None):
                     if prop["name"] in ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION"):
                         for setting in prop["value"]:
                             key, _, value = setting.partition("=")
+                            if os.name == "nt":
+                                key = key.upper()
                             if key in (*FORCED, *PUBLIC_ENV) and (prop["name"] == "ENVIRONMENT_MODIFICATION" or value != environment.get(key)):
                                 raise GateError(f"{test['name']}: test property overrides required environment {key}")
             listings[side] = tests
