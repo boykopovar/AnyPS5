@@ -12,6 +12,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import unittest.mock
 from unittest.mock import patch
 
@@ -1652,6 +1653,18 @@ class ModuleFileTests(unittest.TestCase):
             text.write_text('hello', encoding='utf-8')
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
+
+class PadTextTests(unittest.TestCase):
+    def test_repeat_and_gap_default_when_the_pad_omits_them(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="timeline") as compile_timeline:
+            self.assertEqual(title_run.pad_text({"events": [1, 2]}, "seq"), "timeline")
+        compile_timeline.assert_called_once_with({"version": 1, "events": [1, 2]}, "seq", 1, 200)
+
+    def test_repeat_and_gap_are_forwarded_from_the_pad(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="t") as compile_timeline:
+            title_run.pad_text({"events": [], "repeat": 3, "gap_ms": 50, "ignored": True}, "seq")
+        compile_timeline.assert_called_once_with({"version": 1, "events": []}, "seq", 3, 50)
+
 
 class CheckFilesTests(unittest.TestCase):
     def test_valid_text_and_content_entries_pass(self):
