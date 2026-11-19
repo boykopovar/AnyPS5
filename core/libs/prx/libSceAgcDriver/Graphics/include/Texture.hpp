@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitFlags.hpp"
 #include <array>
 #include <atomic>
 #include <bit>
@@ -197,90 +198,7 @@ private:
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
 VkFormat SrgbTwinFormat(const Context& context, VkFormat format);
 
-class UnitFlags {
-public:
-    class Reference {
-    public:
-        Reference(std::uint64_t& word, std::uint64_t bit) : word(word), bit(bit) {}
-        operator bool() const { return (word & bit) != 0u; }
-        Reference& operator=(bool flag) {
-            word = flag ? word | bit : word & ~bit;
-            return *this;
-        }
 
-    private:
-        std::uint64_t& word;
-        std::uint64_t bit;
-    };
-
-    void assign(std::size_t size, bool flag) {
-        const auto wordCount = (size + WordBits - 1u) / WordBits;
-        const auto fill = flag ? ~std::uint64_t{0} : 0u;
-        if (wordCount > words.capacity()) {
-            std::vector<std::uint64_t> grown(wordCount, fill);
-            words.swap(grown);
-        } else {
-            words.assign(wordCount, fill);
-        }
-        if (flag && size % WordBits != 0u) words.back() &= (std::uint64_t{1} << (size % WordBits)) - 1u;
-        count = size;
-    }
-    void clear() {
-        words.clear();
-        count = 0;
-    }
-    std::size_t size() const { return count; }
-    bool empty() const { return count == 0; }
-    bool operator[](std::size_t index) const { return ((words[index / WordBits] >> (index % WordBits)) & 1u) != 0u; }
-    Reference operator[](std::size_t index) { return {words[index / WordBits], std::uint64_t{1} << (index % WordBits)}; }
-    bool Any() const {
-        for (const auto word : words) {
-            if (word != 0u) return true;
-        }
-        return false;
-    }
-    std::size_t Count() const {
-        std::size_t total = 0;
-        for (const auto word : words) total += static_cast<std::size_t>(std::popcount(word));
-        return total;
-    }
-    bool AnyIn(std::size_t first, std::size_t length) const {
-        return eachWord(first, length, [&](std::size_t word, std::uint64_t mask) { return (words[word] & mask) != 0u; });
-    }
-    bool AllIn(std::size_t first, std::size_t length) const {
-        return !eachWord(first, length, [&](std::size_t word, std::uint64_t mask) { return (words[word] & mask) != mask; });
-    }
-    void SetRange(std::size_t first, std::size_t length, bool flag) {
-        eachWord(first, length, [&](std::size_t word, std::uint64_t mask) {
-            words[word] = flag ? words[word] | mask : words[word] & ~mask;
-            return false;
-        });
-    }
-    std::vector<bool> Bools() const {
-        std::vector<bool> flags(count, false);
-        for (std::size_t index = 0; index < count; ++index) flags[index] = (*this)[index];
-        return flags;
-    }
-
-private:
-    static constexpr std::size_t WordBits = 64;
-
-    template <typename Visit>
-    static bool eachWord(std::size_t first, std::size_t length, Visit&& visit) {
-        if (length == 0) return false;
-        const auto last = first + length - 1u;
-        for (auto word = first / WordBits; word <= last / WordBits; ++word) {
-            const auto low = word == first / WordBits ? first % WordBits : 0u;
-            const auto high = word == last / WordBits ? last % WordBits : WordBits - 1u;
-            const auto mask = (~std::uint64_t{0} >> (WordBits - 1u - high)) & (~std::uint64_t{0} << low);
-            if (visit(word, mask)) return true;
-        }
-        return false;
-    }
-
-    std::vector<std::uint64_t> words;
-    std::size_t count = 0;
-};
 
 // A guest texture a shader writes through a storage image. It is uploaded like a sampled texture;
 // after the GPU work completes its results are stored to guest memory (retiled, changed bytes only),
@@ -916,7 +834,7 @@ private:
     std::vector<std::uint64_t> layerGeneration;
     std::vector<std::uint64_t> layerPendingSince;
     std::vector<std::uint64_t> completionKept;
-    UnitFlags layerPending;
+    PendingUnitFlags layerPending;
     std::vector<bool> layerBehind;
     bool blockUnits = false;
     // Write-back hysteresis (block units, see writeBack): partial stores in the current window of
