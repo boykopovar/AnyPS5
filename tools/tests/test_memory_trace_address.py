@@ -104,6 +104,22 @@ class SelectionTests(FeatureRequired):
         output = trace.render_events(self.events, "run.log", 0x4000, 1, 40)
         self.assertIn("No traced mapping operations overlap", output)
 
+    def test_overlaps_checks_boundary_conditions(self):
+        event = trace.MappingEvent(1, "map anon", 0x1000, 0x1000, "detail")
+        self.assertFalse(trace.overlaps(event, 0x0, 0x1000))
+        self.assertTrue(trace.overlaps(event, 0x0, 0x1001))
+        self.assertTrue(trace.overlaps(event, 0x1500, 0x100))
+        self.assertTrue(trace.overlaps(event, 0x500, 0x2000))
+        self.assertTrue(trace.overlaps(event, 0x1800, 0x1000))
+        self.assertFalse(trace.overlaps(event, 0x2000, 0x1000))
+
+    def test_render_without_limit_truncation(self):
+        output = trace.render_events(self.events, "run.log", 0x1800, 0x100, 10)
+        self.assertNotIn("Showing the last", output)
+        self.assertIn("APS5_TRACE_MEMORY events overlapping 0x1800+0x100 in run.log", output)
+        self.assertIn("line 1: map anon 0x1000+0x1000 prot=0x3 flags=0x0", output)
+        self.assertIn("line 2: protect 0x1800+0x100 prot=0x1", output)
+
 
 class CliTests(FeatureRequired):
     def test_cli_prints_only_operations_overlapping_the_requested_range(self):
