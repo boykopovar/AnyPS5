@@ -81,6 +81,7 @@
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
@@ -3835,6 +3836,24 @@ void ToAbi(const Port::URL& url, NKWebKit::WtfAbi::URL* result)
     result->queryEnd = url.m_queryEnd;
 }
 
+NKWebKit::WtfAbi::URL LoadUrl(const NKWebKit::WtfAbi::URL* url, const char* caller)
+{
+    NKWebKit::WtfAbi::URL result {};
+    if (!GuestCopyIn_nid_no_patch(&result, url, sizeof(result)))
+        throw std::invalid_argument(std::string("URL::") + caller + ": unreadable URL");
+    return result;
+}
+
+void StoreUrl(NKWebKit::WtfAbi::URL* destination, const Port::URL& url, const char* caller)
+{
+    NKWebKit::WtfAbi::URL result {};
+    ToAbi(url, &result);
+    if (!GuestCopyOut_nid_no_patch(destination, &result, sizeof(result))) {
+        NKWebKit::WtfAbi::Release(result.impl);
+        throw std::invalid_argument(std::string("URL::") + caller + ": unwritable URL");
+    }
+}
+
 Port::StringView ViewFromAbi(NKWebKit::WtfAbi::StringView view, const char* caller)
 {
     if (!view.data && view.length)
@@ -3850,15 +3869,16 @@ template<typename Function> auto Mutate(NKWebKit::WtfAbi::URL* self, const char*
 {
     if (!self)
         throw std::invalid_argument(std::string("URL::") + caller + " requires an object");
-    Port::URL url = FromAbi(*self);
+    const auto current = LoadUrl(self, caller);
+    Port::URL url = FromAbi(current);
     if constexpr (std::is_void_v<decltype(function(url))>) {
         function(url);
-        NKWebKit::WtfAbi::Release(self->impl);
-        ToAbi(url, self);
+        StoreUrl(self, url, caller);
+        NKWebKit::WtfAbi::Release(current.impl);
     } else {
         auto result = function(url);
-        NKWebKit::WtfAbi::Release(self->impl);
-        ToAbi(url, self);
+        StoreUrl(self, url, caller);
+        NKWebKit::WtfAbi::Release(current.impl);
         return result;
     }
 }
@@ -3925,7 +3945,7 @@ NKWebKit::WtfAbi::URL APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv(const NKWe
 {
     if (!self)
         throw std::invalid_argument("URL::truncatedForUseAsBase requires an object");
-    return ToAbiResult(FromAbi(*self).truncatedForUseAsBase());
+    return ToAbiResult(FromAbi(LoadUrl(self, "truncatedForUseAsBase")).truncatedForUseAsBase());
 }
 
 NKWebKit::WtfAbi::URL APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(NKWebKit::WtfAbi::StringView path)
@@ -3944,8 +3964,11 @@ void APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(NKWebKit:
     const auto* textEncoding = static_cast<const URLTextEncoding*>(encoding);
     if (textEncoding && !textEncoding->vtable)
         throw std::invalid_argument("URL::URL requires a text encoding with a vtable");
-    Port::String input(*relative);
-    ToAbi(URLParser(input, FromAbi(*base), textEncoding).result(), self);
+    NKWebKit::WtfAbi::StringImpl* relativeImpl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&relativeImpl, &relative->impl, sizeof(relativeImpl)))
+        throw std::invalid_argument("URL::URL: unreadable relative string");
+    Port::String input(NKWebKit::WtfAbi::String(relativeImpl ? (relativeImpl->refCount += 2, relativeImpl) : nullptr));
+    StoreUrl(self, URLParser(input, FromAbi(LoadUrl(base, "URL")), textEncoding).result(), "URL");
 }
 
 }
