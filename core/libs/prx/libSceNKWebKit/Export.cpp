@@ -9899,10 +9899,6 @@ int APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextSetFontAllowList() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI WKContextSetHistoryClient() {
     NotImplemented_nid_no_patch(__func__);
@@ -9922,10 +9918,6 @@ int APS5_VABI WKContextSetInvalidMessageFunction() {
 
 
 
-
-int APS5_VABI WKContextSetPrewarmsProcessesAutomatically() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKContextSetUseSeparateServiceWorkerProcess() {
     NotImplemented_nid_no_patch(__func__);
