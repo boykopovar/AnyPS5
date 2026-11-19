@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "unicode/uchar.h"
 #include "unicode/uscript.h"
 
@@ -95,7 +96,7 @@ Subtags LanguageAndScript(std::string_view locale) {
 extern "C" {
 
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
-    if (!locale) NotImplemented_nid_no_patch("uloc_isRightToLeft of the default locale");
+    if (!locale) locale = Icu::DefaultLocaleName();
     const Subtags subtags = LanguageAndScript(locale);
     if (subtags.failed || subtags.script.empty()) {
         const auto found = subtags.language.empty() ? std::string_view::npos : LanguageDirections.find(subtags.language);

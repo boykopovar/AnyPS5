@@ -911,6 +911,49 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
     Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
+void WritePs4ParamSfo() {
+    std::filesystem::create_directories("app0/sce_sys");
+    struct Entry { std::uint16_t key, format; std::uint32_t length, maximum, offset; };
+    const std::uint32_t header[5] = {0x46535000, 0x0101, 52, 72, 2};
+    const Entry entries[2] = {{0, 0x0204, 8, 8, 0}, {6, 0x0204, 10, 12, 8}};
+    std::ofstream file("app0/sce_sys/param.sfo", std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(entries), sizeof(entries));
+    file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
+    Check(static_cast<bool>(file), "cannot write the PS4 param.sfo");
+}
+
+void TestPs4StreamTypes() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "PS4 init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 add source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "PS4 ready event missing");
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        const std::uint32_t expected = index == VideoStream ? 0 : 1;
+        AvPlayerStreamInfo info{};
+        Check(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "PS4 stream info failed");
+        Check(info.type == expected, "a PS4 process reports video as type 0 and audio as type 1");
+        AvPlayerStreamInfoEx extended{};
+        extended.this_size = sizeof(extended);
+        Check(sceAvPlayerGetStreamInfoEx(player, index, &extended) == 0, "PS4 extended stream info failed");
+        Check(extended.type == expected, "a PS4 process reports extended video as type 0 and audio as type 1");
+    }
+    Check(sceAvPlayerClose(player) == 0, "PS4 close failed");
+
+    AvPlayerInitData autoInit = InitData(nullptr);
+    player = sceAvPlayerInit(&autoInit);
+    Check(player != nullptr, "PS4 auto start init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 auto start source failed");
+    AvPlayerFrameInfo frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "PS4 auto start never produced a video frame");
+    AvPlayerFrameInfo sound{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "PS4 auto start did not enable the audio stream");
+    CheckEnglishAudio(sound);
+    Check(sceAvPlayerClose(player) == 0, "PS4 auto start close failed");
+}
+
 void TestPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
@@ -981,7 +1024,7 @@ void TestPlayback() {
         return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED, "zero trick speed did not return NOT_SUPPORTED");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
 
     Check(sceAvPlayerPause(player) == 0, "pause failed");
@@ -1011,8 +1054,8 @@ void TestPlayback() {
 
     events.Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Check(sceAvPlayerSetTrickSpeed(player, -400) == 0, "reverse trick speed rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
     const auto rewound = sceAvPlayerCurrentTime(player);
     Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
@@ -2637,6 +2680,13 @@ int main(int argc, char** argv) {
             TestCloseFromEventCallback(EventStop);
             TestCloseFromEventCallback(EventWarning);
             std::puts("AvPlayer callback close tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--ps4-process") == 0) {
+            WritePs4ParamSfo();
+            WriteMovie();
+            TestPs4StreamTypes();
+            std::puts("AvPlayer PS4 process tests passed");
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--paused-first-video") == 0) {

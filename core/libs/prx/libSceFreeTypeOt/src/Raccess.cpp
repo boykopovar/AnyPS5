@@ -87,7 +87,7 @@ int GuessApple(GuestStreamRec* stream, std::int32_t magic, char** resultName, st
 char* MakeFileName(GuestMemoryRec* memory, const char* original, const char* insertion) {
     int error = 0;
     const std::size_t length = std::strlen(original) + std::strlen(insertion);
-    auto* name = static_cast<char*>(ft_mem_alloc_nid_postfix(memory, static_cast<std::int64_t>(length + 1), &error));
+    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(length + 1), &error));
     if (error) return nullptr;
     const char* slash = std::strrchr(original, '/');
     const char* tail = original;
@@ -130,13 +130,13 @@ int GuessInsertedDouble(GuestRaccessLibrary* library, const char* base, const ch
     try {
         error = GuessDoubleFromFileName(library, name, resultOffset);
     } catch (...) {
-        ft_mem_free_nid_postfix(memory, name);
+        OtMemFree(memory, name);
         throw;
     }
     if (!error) {
         *resultName = name;
     } else {
-        ft_mem_free_nid_postfix(memory, name);
+        OtMemFree(memory, name);
     }
     return error;
 }
@@ -154,7 +154,7 @@ int GuessAppended(GuestRaccessLibrary* library, const char* base, const char* su
     const auto suffixLength = static_cast<std::int64_t>(std::strlen(suffix)) + 1;
     if (length + suffixLength > IntMax) return ArrayTooLarge;
     int error = 0;
-    auto* name = static_cast<char*>(ft_mem_alloc_nid_postfix(library->memory, length + suffixLength, &error));
+    auto* name = static_cast<char*>(OtMemAlloc(library->memory, length + suffixLength, &error));
     if (error) return error;
     std::memcpy(name, base, static_cast<std::size_t>(length));
     std::memcpy(name + length, suffix, static_cast<std::size_t>(suffixLength));
@@ -241,7 +241,7 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
         error = FT_Stream_Seek_nid_postfix(stream, static_cast<std::uint64_t>(Add(refList, mapOffset, function)));
         if (error) return error;
         if (!memory) NotImplemented_nid_no_patch(function);
-        auto* ref = static_cast<GuestRForkRef*>(ft_mem_realloc_nid_postfix(memory, RefSize, 0, refs, nullptr, &error));
+        auto* ref = static_cast<GuestRForkRef*>(OtMemRealloc(memory, RefSize, 0, refs, nullptr, &error));
         if (error) return error;
         for (std::int64_t index = 0; index < refs; ++index) {
             ref[index].resId = FT_Stream_ReadUShort_nid_postfix(stream, &error);
@@ -250,7 +250,7 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
             if (!error) value = FT_Stream_ReadLong_nid_postfix(stream, &error);
             if (!error) error = FT_Stream_Skip_nid_postfix(stream, 4);
             if (error) {
-                ft_mem_free_nid_postfix(memory, ref);
+                OtMemFree(memory, ref);
                 return error;
             }
             ref[index].offset = static_cast<std::uint64_t>(value) & 0xFFFFFF;
@@ -258,11 +258,11 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
         std::stable_sort(ref, ref + refs, [](const GuestRForkRef& a, const GuestRForkRef& b) { return a.resId < b.resId; });
         for (std::int64_t index = 1; index < refs; ++index) {
             if (ref[index].resId == ref[index - 1].resId && ref[index].offset != ref[index - 1].offset) {
-                ft_mem_free_nid_postfix(memory, ref);
+                OtMemFree(memory, ref);
                 NotImplemented_nid_no_patch(function);
             }
         }
-        auto* result = static_cast<std::int64_t*>(ft_mem_realloc_nid_postfix(memory, sizeof(std::int64_t), 0, refs, nullptr, &error));
+        auto* result = static_cast<std::int64_t*>(OtMemRealloc(memory, sizeof(std::int64_t), 0, refs, nullptr, &error));
         if (!error) {
             for (std::int64_t index = 0; index < refs; ++index) {
                 result[index] = Add(rdataPos, static_cast<std::int64_t>(ref[index].offset), function);
@@ -270,7 +270,7 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
             if (!offsets) NotImplemented_nid_no_patch(function);
             *offsets = result;
         }
-        ft_mem_free_nid_postfix(memory, ref);
+        OtMemFree(memory, ref);
         return error;
     }
     return CannotOpenResource;
