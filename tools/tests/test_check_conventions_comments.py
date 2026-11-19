@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output, python_comments
+from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output, python_comments, cmake_comments
 
 CONVENTIONS_TEST_SHARDS = 12
 
@@ -1084,6 +1084,15 @@ class PythonCommentsTests(unittest.TestCase):
 
     def test_untokenizable_text_gives_none(self):
         self.assertIsNone(python_comments("x = (\n"))
+
+
+class CmakeCommentsTests(unittest.TestCase):
+    def test_line_and_bracket_comments_cover_every_line_they_span(self):
+        text = 'set(A 1) # c\nmessage("# no")\n#[[ multi\nline ]]\nset(B 2)\n'
+        self.assertEqual(cmake_comments(text), {1, 3, 4})
+
+    def test_text_without_comments_has_none(self):
+        self.assertEqual(cmake_comments('message("# a")\n'), set())
 
 
 if __name__ == "__main__":
