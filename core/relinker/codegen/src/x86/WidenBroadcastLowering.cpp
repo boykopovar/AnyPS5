@@ -10,7 +10,9 @@ using namespace VexEncoding;
 
 namespace {
 
-constexpr std::int32_t kFrame = 128 + 3 * 32;
+constexpr std::int32_t kSpillBytes = 3 * 32;
+constexpr std::int32_t kFrame = 128 + kSpillBytes;
+constexpr std::int64_t kLargestOperandBytes = 16;
 constexpr Form kLoad128{Map0F, PrefixF3, false, false, 0x6F};
 constexpr Form kLoad64{Map0F, PrefixF3, false, false, 0x7E};
 constexpr Form kLoad32{Map0F, Prefix66, false, false, 0x6E};
@@ -83,7 +85,8 @@ void EmitWidenBroadcast(StubBodyBuilder& body, const WidenBroadcastOperands& ope
     const auto loaded = scratch[0];
     const auto work = scratch[1];
     const auto zero = scratch[2];
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrameForBytes(operands.Memory, kLargestOperandBytes, kFrame, kSpillBytes);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     for (std::size_t index = 0; index < scratch.size(); ++index)
         StackOperand(body, MoveUnaligned256Store, scratch[index], 0, static_cast<std::int32_t>(index * 32));
     auto source = operands.Source;
@@ -91,15 +94,15 @@ void EmitWidenBroadcast(StubBodyBuilder& body, const WidenBroadcastOperands& ope
         source = loaded;
         switch (operands.Kind) {
         case WidenBroadcastKind::Widen:
-            Memory(body, operands.SourceBytes == 16 ? kLoad128 : operands.SourceBytes == 8 ? kLoad64 : kLoad32, loaded, 0, *operands.Memory, kFrame, operands.Name);
+            Memory(body, operands.SourceBytes == 16 ? kLoad128 : operands.SourceBytes == 8 ? kLoad64 : kLoad32, loaded, 0, *operands.Memory, frame, operands.Name);
             break;
         case WidenBroadcastKind::BroadcastByte:
             Register(body, kExclusiveOr, loaded, loaded, loaded);
-            Memory(body, kInsertByte, loaded, loaded, *operands.Memory, kFrame, operands.Name, std::uint8_t{0});
+            Memory(body, kInsertByte, loaded, loaded, *operands.Memory, frame, operands.Name, std::uint8_t{0});
             break;
         case WidenBroadcastKind::BroadcastWord:
             Register(body, kExclusiveOr, loaded, loaded, loaded);
-            Memory(body, kInsertWord, loaded, loaded, *operands.Memory, kFrame, operands.Name, std::uint8_t{0});
+            Memory(body, kInsertWord, loaded, loaded, *operands.Memory, frame, operands.Name, std::uint8_t{0});
             break;
         default:
             break;
@@ -131,7 +134,7 @@ void EmitWidenBroadcast(StubBodyBuilder& body, const WidenBroadcastOperands& ope
     }
     for (std::size_t index = 0; index < scratch.size(); ++index)
         StackOperand(body, MoveUnaligned256Load, scratch[index], 0, static_cast<std::int32_t>(index * 32));
-    StackSlot(body, 0x8D, true, Stack, kFrame);
+    StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

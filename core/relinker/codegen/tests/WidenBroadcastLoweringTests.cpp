@@ -179,9 +179,42 @@ void pageEndMemory() {
     LoweringExecution::FreePages(area, pageSize * 2);
 }
 
+void stackOperands() {
+    constexpr std::uint8_t kFilled = 5;
+    const auto append32 = [](Bytes& bytes, std::int32_t value) {
+        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
+    };
+    const auto stackSite = [&](std::uint8_t opcode, bool wide256, std::uint8_t dst, std::int32_t displacement) {
+        auto bytes = memorySite(opcode, wide256, dst);
+        bytes.back() = static_cast<std::uint8_t>(0x84 | ((dst & 7) << 3));
+        bytes.push_back(0x24);
+        append32(bytes, displacement);
+        return bytes;
+    };
+    for (const std::int32_t displacement : {-288, -256, -239, -232, -225, -224, -223, -200, -192, -161, -160}) {
+        Bytes fill{0xC5, 0xFE, 0x7F, static_cast<std::uint8_t>(0x84 | (kFilled << 3)), 0x24};
+        append32(fill, displacement);
+        const auto run = [&](const Bytes& site, std::uint8_t dst, const auto& wanted, const std::string& describe) {
+            auto code = fill;
+            const auto body = lowered(site);
+            code.insert(code.end(), body.begin(), body.end());
+            auto machine = VectorExecution::Initial();
+            const auto start = machine;
+            Runner(code).Run(machine);
+            verify(start, machine, dst, wanted(start.Ymm[kFilled]), describe + " from rsp" + std::to_string(displacement));
+        };
+        for (const auto opcode : kWidenOpcodes)
+            run(stackSite(opcode, true, 3, displacement), 3, [&](const Vector& source) { return widened(opcode, source); }, "widen " + std::to_string(opcode));
+        for (const auto opcode : std::array<std::uint8_t, 2>{0x78, 0x79})
+            for (const bool wide : {false, true})
+                run(stackSite(opcode, wide, 6, displacement), 6, [&](const Vector& source) { return broadcast(source, broadcastSize(opcode), wide); }, "broadcast " + std::to_string(opcode));
+    }
+}
+
 #else
 
 void execution() { std::cout << "widen/broadcast execution checks require an x86-64 Linux, macOS or Windows build\n"; }
+void stackOperands() {}
 void pageEndMemory() {}
 
 #endif
@@ -193,6 +226,7 @@ int main() {
         decoding();
         matching();
         execution();
+        stackOperands();
         pageEndMemory();
         std::cout << "widen/broadcast lowering checks passed\n";
     } catch (const std::exception& error) {

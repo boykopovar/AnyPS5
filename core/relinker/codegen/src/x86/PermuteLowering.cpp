@@ -20,6 +20,8 @@ constexpr Form kCompareDwords{Map0F, Prefix66, false, false, 0x76};
 constexpr Form kExclusiveOr{Map0F, Prefix66, false, false, 0xEF};
 constexpr Form kBlendBySign{Map0F3A, Prefix66, false, true, 0x4A};
 constexpr std::uint8_t kShiftLeftExtension = 6;
+constexpr std::int32_t kRedZone = 128;
+constexpr std::int64_t kOperandBytes = 32;
 
 template<std::size_t Count>
 std::array<std::uint8_t, Count> _scratch(const std::array<bool, 16>& used) {
@@ -46,15 +48,16 @@ void _restore(StubBodyBuilder& body, const std::array<std::uint8_t, Count>& scra
 
 void _immediate(StubBodyBuilder& body, const PermuteOperands& operands) {
     constexpr std::int32_t kSlot = 96;
-    constexpr std::int32_t kFrame = 128 + kSlot + 32;
+    constexpr std::int32_t kFrame = kRedZone + kSlot + 32;
     std::array<bool, 16> used{};
     used[operands.Destination] = true;
     if (!operands.Memory) used[operands.Source] = true;
     const auto scratch = _scratch<3>(used);
-    _save(body, scratch, kFrame);
+    const auto frame = SelectFrameForBytes(operands.Memory, kOperandBytes, kFrame, kFrame - kRedZone);
+    _save(body, scratch, frame);
     auto source = operands.Source;
     if (operands.Memory) {
-        Memory(body, MoveUnaligned256Load, scratch[0], 0, *operands.Memory, kFrame, operands.Name);
+        Memory(body, MoveUnaligned256Load, scratch[0], 0, *operands.Memory, frame, operands.Name);
         source = scratch[0];
     }
     StackOperand(body, MoveUnaligned256Store, source, 0, kSlot);
@@ -64,11 +67,11 @@ void _immediate(StubBodyBuilder& body, const PermuteOperands& operands) {
     StackOperand(body, kLoadLow, scratch[2], 0, element(2));
     StackOperand(body, kLoadHigh, scratch[2], scratch[2], element(3));
     InsertUpper(body, operands.Destination, scratch[1], scratch[2]);
-    _restore(body, scratch, kFrame);
+    _restore(body, scratch, frame);
 }
 
 void _variable(StubBodyBuilder& body, const PermuteOperands& operands) {
-    constexpr std::int32_t kFrame = 128 + 6 * 32;
+    constexpr std::int32_t kFrame = kRedZone + 6 * 32;
     std::array<bool, 16> used{};
     used[operands.Destination] = true;
     used[operands.Index] = true;
@@ -79,10 +82,11 @@ void _variable(StubBodyBuilder& body, const PermuteOperands& operands) {
     const auto mask = scratch[3];
     const auto upperMask = scratch[4];
     const auto signs = scratch[5];
-    _save(body, scratch, kFrame);
+    const auto frame = SelectFrameForBytes(operands.Memory, kOperandBytes, kFrame, kFrame - kRedZone);
+    _save(body, scratch, frame);
     auto source = operands.Source;
     if (operands.Memory) {
-        Memory(body, MoveUnaligned256Load, scratch[0], 0, *operands.Memory, kFrame, operands.Name);
+        Memory(body, MoveUnaligned256Load, scratch[0], 0, *operands.Memory, frame, operands.Name);
         source = scratch[0];
     }
     Register(body, kSwapLanes, swapped, source, source, std::uint8_t{1});
@@ -96,7 +100,7 @@ void _variable(StubBodyBuilder& body, const PermuteOperands& operands) {
     Register(body, kExclusiveOr, upperMask, upperMask, signs);
     InsertUpper(body, mask, mask, upperMask);
     Register(body, kBlendBySign, operands.Destination, own, swapped, static_cast<std::uint8_t>(mask << 4));
-    _restore(body, scratch, kFrame);
+    _restore(body, scratch, frame);
 }
 
 }

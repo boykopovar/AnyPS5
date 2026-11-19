@@ -135,9 +135,40 @@ void execution() {
     verify(start, machine, 3, permuteDwords(start.Memory, start.Ymm[2]), "VPERMD from memory");
 }
 
+void stackOperands() {
+    constexpr std::uint8_t kFilled = 5;
+    const auto append32 = [](Bytes& bytes, std::int32_t value) {
+        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
+    };
+    for (const std::int32_t displacement : {-384, -352, -351, -320, -289, -288, -256, -255, -224, -200, -192, -161, -160}) {
+        Bytes fill{0xC5, 0xFE, 0x7F, static_cast<std::uint8_t>(0x84 | (kFilled << 3)), 0x24};
+        append32(fill, displacement);
+        Bytes immediate{0xC4, 0xE3, 0xFD, 0x00, 0x8C, 0x24};
+        append32(immediate, displacement);
+        immediate.push_back(0x93);
+        Bytes variable{0xC4, 0xE2, 0x6D, 0x36, 0x9C, 0x24};
+        append32(variable, displacement);
+        for (const bool indexed : {false, true}) {
+            auto code = fill;
+            const auto body = lowered(indexed ? variable : immediate);
+            code.insert(code.end(), body.begin(), body.end());
+            auto machine = VectorExecution::Initial();
+            machine.Ymm[2] = {0x0000000300000006ull, 0x0000000100000004ull, 0x0000000700000000ull, 0x0000000200000005ull};
+            const auto start = machine;
+            Runner(code).Run(machine);
+            const auto describe = std::string(indexed ? "VPERMD" : "VPERMQ") + " from rsp" + std::to_string(displacement);
+            if (indexed)
+                verify(start, machine, 3, permuteDwords(start.Ymm[kFilled], start.Ymm[2]), describe);
+            else
+                verify(start, machine, 1, permuteQwords(start.Ymm[kFilled], 0x93), describe);
+        }
+    }
+}
+
 #else
 
 void execution() { std::cout << "permute execution checks require an x86-64 Linux, macOS or Windows build\n"; }
+void stackOperands() {}
 
 #endif
 
@@ -148,6 +179,7 @@ int main() {
         decoding();
         matching();
         execution();
+        stackOperands();
         std::cout << "permute lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

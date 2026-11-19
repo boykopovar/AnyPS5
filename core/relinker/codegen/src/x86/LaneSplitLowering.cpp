@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::int32_t kSaveSize = 96;
 constexpr std::int32_t kFrame = 128 + kSaveSize;
+constexpr std::int64_t kLargestOperandBytes = 32;
 constexpr const char* kName = "256-bit integer lowering";
 
 bool _in(const std::uint8_t value, const std::uint8_t low, const std::uint8_t high) {
@@ -123,12 +124,13 @@ void EmitLaneSplit(StubBodyBuilder& body, const LaneSplitOperands& operands) {
     const auto high = scratch[0];
     const auto secondHigh = scratch[1];
     const auto loaded = scratch[2];
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrameForBytes(operands.Memory, kLargestOperandBytes, kFrame, kSaveSize);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     for (std::size_t index = 0; index < scratch.size(); ++index)
         VexEncoding::StackOperand(body, MoveUnaligned256Store, scratch[index], 0, static_cast<std::int32_t>(index * 32));
     auto second = operands.Second;
     if (operands.Memory) {
-        VexEncoding::Memory(body, operands.Shape == LaneSplitShape::ShiftCount ? MoveUnaligned128Load : MoveUnaligned256Load, loaded, 0, *operands.Memory, kFrame, kName);
+        VexEncoding::Memory(body, operands.Shape == LaneSplitShape::ShiftCount ? MoveUnaligned128Load : MoveUnaligned256Load, loaded, 0, *operands.Memory, frame, kName);
         second = loaded;
     }
     switch (operands.Shape) {
@@ -156,7 +158,7 @@ void EmitLaneSplit(StubBodyBuilder& body, const LaneSplitOperands& operands) {
     InsertUpper(body, operands.Destination, operands.Destination, high);
     for (std::size_t index = 0; index < scratch.size(); ++index)
         VexEncoding::StackOperand(body, MoveUnaligned256Load, scratch[index], 0, static_cast<std::int32_t>(index * 32));
-    StackSlot(body, 0x8D, true, Stack, kFrame);
+    StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

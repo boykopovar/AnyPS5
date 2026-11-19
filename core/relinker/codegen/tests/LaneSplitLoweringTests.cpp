@@ -170,9 +170,37 @@ void execution() {
     }
 }
 
+void stackOperands() {
+    constexpr std::uint8_t kFilled = 5;
+    const auto append32 = [](Bytes& bytes, std::int32_t value) {
+        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
+    };
+    for (const std::int32_t displacement : {-288, -256, -255, -232, -225, -224, -223, -200, -192, -161, -160}) {
+        Bytes code{0xC5, 0xFE, 0x7F, static_cast<std::uint8_t>(0x84 | (kFilled << 3)), 0x24};
+        append32(code, displacement);
+        Bytes add{0xC5, 0xED, 0xFE, 0x8C, 0x24};
+        append32(add, displacement);
+        const auto body = lowered(add);
+        code.insert(code.end(), body.begin(), body.end());
+        auto machine = VectorExecution::Initial();
+        const auto start = machine;
+        Runner(code).Run(machine);
+        std::array<std::uint64_t, 4> wanted{};
+        for (unsigned q = 0; q < 4; ++q) {
+            const auto low = static_cast<std::uint32_t>(start.Ymm[2][q]) + static_cast<std::uint32_t>(start.Ymm[kFilled][q]);
+            const auto high = static_cast<std::uint32_t>(start.Ymm[2][q] >> 32) + static_cast<std::uint32_t>(start.Ymm[kFilled][q] >> 32);
+            wanted[q] = (static_cast<std::uint64_t>(high) << 32) | low;
+        }
+        for (std::uint8_t reg = 0; reg < 16; ++reg)
+            require(machine.Ymm[reg] == (reg == 1 ? wanted : start.Ymm[reg]), "VPADDD from rsp" + std::to_string(displacement) + ": ymm" + std::to_string(reg) + " is wrong");
+        for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split overwrote the red zone");
+    }
+}
+
 #else
 
 void execution() { std::cout << "lane split execution checks require an x86-64 Linux, macOS or Windows build\n"; }
+void stackOperands() {}
 
 #endif
 
@@ -183,6 +211,7 @@ int main() {
         decoding();
         matching();
         execution();
+        stackOperands();
         std::cout << "lane split lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
