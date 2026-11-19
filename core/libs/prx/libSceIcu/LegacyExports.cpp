@@ -1663,10 +1663,6 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11moveIndex32Eii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_stableBinarySearch_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810UnicodeSet13createFromAllERKNS_13UnicodeStringE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4442,10 +4438,6 @@ int APS5_VABI sceIcuLegacyUnknown_R1y2_minus__minus_hQVMY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("R1y2--hQVMY", sceIcuLegacyUnknown_R1y2_minus__minus_hQVMY_nid_no_patch);
-
-int APS5_VABI uprv_sortArray_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6817StringEnumerationC2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
