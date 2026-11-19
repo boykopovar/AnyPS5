@@ -1927,7 +1927,6 @@ int APS5_VABI _ZN6icu_6811ICUNotifierD1Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EE6resizeEii_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet10setToBogusEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch();
-int APS5_VABI ures_initStackObject_nid_postfix();
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qsrqpMOCXYE_nid_no_patch();
 int APS5_VABI uhash_iremovei_nid_postfix();
