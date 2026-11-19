@@ -6,7 +6,9 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -32,6 +34,15 @@ constexpr std::int32_t FirstPSButtonEventType = 0x20000001;
 constexpr std::int32_t LastPSButtonEventType = 0x20000002;
 
 std::atomic<std::intptr_t> nextActivationHandle{0x1000};
+
+bool EmptyPrivacyDefinitionKey(const char* key) {
+    if (key == nullptr) return false;
+    char first = 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&first, key, sizeof(first));
+    errno = savedErrno;
+    return copied && first == '\0';
+}
 
 }
 
@@ -372,8 +383,15 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 }
 
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
+    if (titleId == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string id;
+    const int savedErrno = errno;
+    const int error = CopyGuestString_nid_no_patch(titleId, 10, id);
+    errno = savedErrno;
+    if (error == 14) throw std::logic_error("sceLncUtilLaunchApp: reading a title id where it is not readable faults in firmware 13.60");
+    if (error != 0 && error != 63) throw std::bad_alloc();
+    if (error == 63 || id.size() != 9 || param == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceLncUtilNotifyCoredumpRequestEnd(std::int32_t appId, std::int32_t processId, std::int32_t result) {
@@ -1710,8 +1728,8 @@ int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
 }
 
 int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (status == nullptr) NotImplemented_nid_no_patch(__func__);
+    return LNC_UTIL_ERROR_GAME_PROCESS;
 }
 
 int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
@@ -1720,13 +1738,13 @@ int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
 }
 
 int APS5_VABI sceSystemServiceGetAppType(std::int32_t appId, std::int32_t* type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (type == nullptr || appId == SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch(__func__);
+    return LNC_UTIL_ERROR_GAME_PROCESS;
 }
 
-int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t selector) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t) {
+    if (path == nullptr) NotImplemented_nid_no_patch(__func__);
+    return SystemServiceRejected;
 }
 
 int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event) {
@@ -1778,13 +1796,13 @@ int APS5_VABI sceSystemServiceGetParentSocketForPsmKit() {
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacyDefinitionData(const char* key, SystemServicePrivacyDefinitionData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (data == nullptr || !EmptyPrivacyDefinitionKey(key)) NotImplemented_nid_no_patch(__func__);
+    return SYSTEM_SERVICE_ERROR_INTERNAL;
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacyDefinitionVersion(const char* key, SystemServicePrivacyDefinitionVersion* version) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (version == nullptr || !EmptyPrivacyDefinitionKey(key)) NotImplemented_nid_no_patch(__func__);
+    return SYSTEM_SERVICE_ERROR_INTERNAL;
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacySetting(std::uint32_t* setting) {
