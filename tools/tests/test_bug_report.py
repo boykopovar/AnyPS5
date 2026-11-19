@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -203,6 +204,24 @@ class MainTests(unittest.TestCase):
         self.assertNotIn(first, err)
         self.assertNotIn(second, err)
         self.assertFalse(target.exists())
+
+    def test_cli_prints_unicode_paths_with_a_legacy_stream_encoding(self):
+        target = self.root / "rapport-界.zip"
+        command = [sys.executable, bug_report.__file__, "--out", str(target), "--log", "", "--input-config", "", "--report"]
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
+        written = subprocess.run([*command, str(self.report)], capture_output=True, env=environment, timeout=5)
+        self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertEqual(written.stderr, b"")
+        self.assertIn(f"wrote {target}:".encode("utf-8"), written.stdout)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertIsNone(bundle.testzip())
+
+        missing = self.root / "rapport-界.json"
+        refused = subprocess.run([*command, str(missing)], capture_output=True, env=environment, timeout=5)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual(refused.stdout, b"")
+        self.assertIn(f"no run report at {missing}".encode("utf-8"), refused.stderr)
+        self.assertNotIn(b"Traceback", refused.stderr)
 
     def test_missing_report_is_an_error(self):
         code, _, err = self.run_main(["--report", str(self.root / "absent.json"), "--out", str(self.root / "b.zip")])
