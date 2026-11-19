@@ -420,17 +420,40 @@ int unassigned(uint32_t size, uint32_t& length) {
     return CES_ERROR_UNASSIGNED_CODE;
 }
 
+bool eucCnSingleByte(uint32_t value) {
+    return (value >= 0x80 && value <= 0x8D) || (value >= 0x90 && value <= 0x9F);
+}
+
+bool eucCnLeavesOut(uint8_t lead, uint8_t trail) {
+    switch (lead) {
+        case 0xA2:
+            return trail <= 0xB0 || trail == 0xE3 || trail == 0xE4 || trail == 0xEF || trail == 0xF0 || trail == 0xFD || trail == 0xFE;
+        case 0xA6:
+            return (trail >= 0xB9 && trail <= 0xC0) || trail >= 0xD9;
+        case 0xA8:
+            return (trail >= 0xBB && trail <= 0xC4) || trail >= 0xEA;
+        default:
+            return false;
+    }
+}
+
 int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
     const uint8_t lead = mbcs[0];
+    const bool gbk = isGbk(profile);
+    if (!gbk && lead == 0x0E) return rejectLead(length);
     if (lead < 0x80) {
         length = 1;
         code = lead;
         return 0;
     }
-    const bool gbk = isGbk(profile);
     if (gbk && lead == 0x80) {
         length = 1;
         code = 0x20AC;
+        return 0;
+    }
+    if (!gbk && eucCnSingleByte(lead)) {
+        length = 1;
+        code = lead;
         return 0;
     }
     if (lead == 0xFF || (!gbk && lead < 0xA1)) return rejectLead(length);
@@ -439,6 +462,7 @@ int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_
     if (trail == 0xFF || (gbk ? trail < 0x40 || trail == 0x7F : trail < 0xA1)) return rejectTrail(trail, 2, length);
     const uint32_t cell = (lead - 0x81) * 190 + (trail < 0x7F ? trail - 0x40 : trail - 0x41);
     code = Cp936::TO_UCS2[cell];
+    if (!gbk && eucCnLeavesOut(lead, trail)) code = 0;
     if (code == 0 && gbk && gbUdaMapped(profile)) code = gbkUserDefined(cell);
     if (code == 0) return unassigned(2, length);
     length = 2;
@@ -458,15 +482,21 @@ const std::vector<std::pair<uint16_t, uint16_t>>& cp936Reverse() {
 }
 
 int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    const bool gbk = isGbk(profile);
+    if (!gbk && code == 0x0E) return CES_ERROR_UNASSIGNED_CODE;
     if (code < 0x80) {
         length = 1;
         mbcs[0] = static_cast<uint8_t>(code);
         return 0;
     }
-    const bool gbk = isGbk(profile);
     if (gbk && code == 0x20AC) {
         length = 1;
         mbcs[0] = 0x80;
+        return 0;
+    }
+    if (!gbk && eucCnSingleByte(code)) {
+        length = 1;
+        mbcs[0] = static_cast<uint8_t>(code);
         return 0;
     }
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;

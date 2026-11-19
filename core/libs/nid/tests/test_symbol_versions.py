@@ -205,6 +205,23 @@ def sysv_only_image(entries):
     return image
 
 
+def test_version_table_must_link_to_dynsym(patcher):
+    entries = symbols(False)
+    image = sysv_only_image(entries)
+    for index in range(len(entries)):
+        struct.pack_into("<H", image, VERSYM_OFFSET + index * 2, 2)
+    struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64, 0, SHT_GNU_VERSYM, 2, 0,
+                     VERSYM_OFFSET, len(entries) * 2, 2, 0, 2, 2)
+    struct.pack_into("<H", image, 0x3c, 5)
+    image = bytes(image)
+
+    result, on_disk = patch(patcher, image, "invalid-version-symbol-link.so")
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    message = result.stderr.decode("utf-8", errors="replace")
+    assert "version symbol table link" in message, message
+    assert on_disk == image, "the rejected library was written back modified"
+
+
 def test_version_table_smaller_than_symbols_is_rejected(patcher):
     image = sysv_only_image(symbols(False))
     for index in range(len(symbols(False))):
@@ -217,7 +234,7 @@ def test_version_table_smaller_than_symbols_is_rejected(patcher):
     result, on_disk = patch(patcher, image, SONAME)
     assert result.returncode != 0, result.stdout
     message = result.stderr.decode("utf-8", errors="replace")
-    assert "version symbol table" in message, message
+    assert "version symbol table size" in message, message
     assert on_disk == image, "the rejected library was written back modified"
 
 
@@ -269,6 +286,7 @@ def main():
             sys.exit(0)
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
+    test_version_table_must_link_to_dynsym(patcher)
     test_version_table_smaller_than_symbols_is_rejected(patcher)
     test_two_dynsym_sections_are_rejected(patcher)
     print("NID patcher symbol version tests passed")
