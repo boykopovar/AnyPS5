@@ -1436,7 +1436,7 @@ void rewatchSettledImports(HostImports& state) {
             ++state.settlesKeptCompared;
             continue;
         }
-        if (DepthSurfacePendingResultsOverlap(first, stop)) {
+        if (DepthSurfacePendingResultsOverlap(first, stop - first)) {
             ++state.settlesKeptCompared;
             continue;
         }
