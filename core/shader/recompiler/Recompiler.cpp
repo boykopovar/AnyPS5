@@ -2145,6 +2145,9 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     }
     mix(static_cast<std::uint64_t>(snapshot.storeTables.fallback));
     mix(snapshot.storeTables.shader);
+    mix(snapshot.storeTables.wantedKeys);
+    mix(snapshot.storeTables.missPc);
+    mix(static_cast<std::uint64_t>(snapshot.storeTables.miss));
     mix(snapshot.storeTables.tables.size());
     for (const auto& table : snapshot.storeTables.tables) {
         mix(table.base);

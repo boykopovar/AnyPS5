@@ -231,7 +231,9 @@ public:
             const IrValue* inst = value->Resolve();
             return std::ranges::find(m_tablePlanningReads, inst) != m_tablePlanningReads.end();
         });
-        m_program.Resources().storesBounded = !m_unboundedStore && !m_storeTables.empty();
+        m_program.Resources().storesBounded = m_storeMiss == StoreTableMiss::None && !m_storeTables.empty();
+        m_program.Resources().storeMiss = m_storeMiss == StoreTableMiss::None && m_storeTables.empty() ? StoreTableMiss::NoStores : m_storeMiss;
+        m_program.Resources().storeMissPc = m_storeMissPc;
         m_program.Resources().storeTables = std::move(m_storeTables);
         m_program.Resources().descriptorSources = std::move(m_sources);
         m_program.Resources().info = std::move(m_info);
@@ -2267,11 +2269,18 @@ private:
         m_info.usesDma = true;
         m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
         if (access == BufferAccess::Write || access == BufferAccess::Atomic) {
-            auto table = MatchStoreTable(inst, memory);
+            StoreTableMiss miss = StoreTableMiss::None;
+            auto table = MatchStoreTable(inst, memory, miss);
             if (table.has_value()) AddStoreTable(*table);
-            else m_unboundedStore = true;
+            else NoteStoreMiss(miss, inst.Flags<MemoryFlags>().pc);
         }
         return true;
+    }
+
+    void NoteStoreMiss(StoreTableMiss miss, std::uint32_t pc) {
+        if (m_storeMiss != StoreTableMiss::None && m_storeMissPc <= pc) return;
+        m_storeMiss = miss;
+        m_storeMissPc = pc;
     }
 
     StoreTable StoreBounds(const IrValue& inst, const MemoryInfo& memory) const {
@@ -2395,9 +2404,13 @@ private:
         return LaneUpperBound(key->Argument(0), key->Argument(1)->Resolve(), visiting, 8u);
     }
 
-    std::optional<StoreTable> MatchStoreTable(const IrValue& inst, const MemoryInfo& storeMemory) {
+    std::optional<StoreTable> MatchStoreTable(const IrValue& inst, const MemoryInfo& storeMemory, StoreTableMiss& miss) {
+        const auto missed = [&miss](StoreTableMiss reason) {
+            miss = reason;
+            return std::optional<StoreTable>{};
+        };
         const IrValue* handle = inst.Argument(0)->Resolve();
-        if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return std::nullopt;
+        if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return missed(StoreTableMiss::NotHandle);
         IrValue* heapHandle = nullptr;
         IrValue* base = nullptr;
         IrValue* offsetValue = nullptr;
@@ -2405,17 +2418,17 @@ private:
         bool address = false;
         for (std::uint32_t dword = 0; dword < 4u; dword++) {
             IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle->Argument(dword));
-            if (read == nullptr) return std::nullopt;
+            if (read == nullptr) return missed(StoreTableMiss::NotTableRead);
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
-            if (memory == nullptr) return std::nullopt;
+            if (memory == nullptr) return missed(StoreTableMiss::NotTableRead);
             std::uint32_t readAddend = 0;
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
             const auto position = static_cast<std::uint64_t>(memory->offset) + readAddend;
             IrValue* currentHandle = read->Argument(0)->Resolve();
             if (dword == 0u) {
-                if (position > 0x7fffffffu) return std::nullopt;
+                if (position > 0x7fffffffu) return missed(StoreTableMiss::SplitRead);
                 heapHandle = currentHandle;
                 base = readBase;
                 offsetValue = readBase;
@@ -2423,16 +2436,16 @@ private:
                 address = addressRead;
                 continue;
             }
-            if (addressRead != address || position != static_cast<std::uint64_t>(first) + dword * sizeof(std::uint32_t)) return std::nullopt;
-            if (!SameValue(m_program.Resources(), base, readBase) || !SameValue(m_program.Resources(), heapHandle, currentHandle)) return std::nullopt;
+            if (addressRead != address || position != static_cast<std::uint64_t>(first) + dword * sizeof(std::uint32_t)) return missed(StoreTableMiss::SplitRead);
+            if (!SameValue(m_program.Resources(), base, readBase) || !SameValue(m_program.Resources(), heapHandle, currentHandle)) return missed(StoreTableMiss::SplitRead);
         }
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
-        if (!MatchAffineOffset(offsetValue, key, stride, addend) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return std::nullopt;
+        if (!MatchAffineOffset(offsetValue, key, stride, addend) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return missed(StoreTableMiss::NotAffine);
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
-        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) return std::nullopt;
+        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) return missed(StoreTableMiss::NoSource);
         StoreTable table = StoreBounds(inst, storeMemory);
         table.source = heapIndex;
         table.address = address;
@@ -2462,7 +2475,7 @@ private:
                 }
             }
         }
-        if (address && table.maxKey == StoreTableUnbounded && !table.bounded) return std::nullopt;
+        if (address && table.maxKey == StoreTableUnbounded && !table.bounded) return missed(StoreTableMiss::UnboundedKey);
         return table;
     }
 
@@ -2726,7 +2739,7 @@ private:
             }
             m_info.usesDma = true;
             m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
-            m_unboundedStore = m_unboundedStore || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
+            if (addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic) NoteStoreMiss(StoreTableMiss::AddressStore, flags.pc);
             return;
         }
 
@@ -2824,7 +2837,8 @@ private:
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
     bool m_foldedWeb = false;
     std::vector<StoreTable> m_storeTables;
-    bool m_unboundedStore = false;
+    StoreTableMiss m_storeMiss = StoreTableMiss::None;
+    std::uint32_t m_storeMissPc = 0;
 };
 
 }

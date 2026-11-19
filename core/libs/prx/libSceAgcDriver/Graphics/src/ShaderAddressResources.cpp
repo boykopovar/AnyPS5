@@ -242,7 +242,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) {
             bdaReadOnly = false;
             if (shader.program->storeTables.fallback == ShaderRecompiler::StoreTableFallback::None) storeWindows.push_back(shader.program->storeTables);
-            else storeWindowFallback = shader.program->storeTables.fallback;
+            else if (!storeWindowMissed.has_value()) storeWindowMissed = shader.program->storeTables;
         }
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
@@ -288,6 +288,10 @@ struct StoreWindowTotals {
     std::array<std::uint64_t, static_cast<std::size_t>(StoreWindowOutcome::Count)> outcomes{};
     std::uint64_t noted = 0;
     std::uint64_t whole = 0;
+    std::uint64_t wantedKeys = 0;
+    std::uint32_t missPc = 0;
+    ShaderRecompiler::StoreTableMiss miss = ShaderRecompiler::StoreTableMiss::None;
+    bool missed = false;
 };
 
 struct StoreWindowStats {
@@ -323,13 +327,19 @@ std::uint64_t rangeBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>
     return bytes;
 }
 
-void reportStoreWindows(std::uint64_t program, StoreWindowOutcome outcome, std::uint64_t noted, std::uint64_t whole) {
+void reportStoreWindows(std::uint64_t program, StoreWindowOutcome outcome, std::uint64_t noted, std::uint64_t whole, const ShaderRecompiler::StoreTablesSnapshot* missed) {
     auto& stats = storeWindowStats();
     const std::lock_guard guard(stats.lock);
     auto& totals = stats.programs[program];
     ++totals.outcomes[static_cast<std::size_t>(outcome)];
     totals.noted += noted;
     totals.whole += whole;
+    if (missed != nullptr) {
+        totals.missed = true;
+        totals.miss = missed->miss;
+        totals.missPc = missed->missPc;
+        totals.wantedKeys = std::max(totals.wantedKeys, missed->wantedKeys);
+    }
     const auto now = std::chrono::steady_clock::now();
     if (now - stats.last < std::chrono::seconds(10)) return;
     stats.last = now;
@@ -345,6 +355,13 @@ void reportStoreWindows(std::uint64_t program, StoreWindowOutcome outcome, std::
         for (std::size_t kind = 0; kind < entry.outcomes.size(); ++kind) {
             if (entry.outcomes[kind] == 0u) continue;
             text += " " + std::string(StoreWindowOutcomeNames[kind]) + " " + std::to_string(entry.outcomes[kind]);
+        }
+        if (entry.missed) {
+            char miss[128];
+            if (entry.wantedKeys != 0u) std::snprintf(miss, sizeof(miss), " (pc 0x%x, %llu keys)", entry.missPc, static_cast<unsigned long long>(entry.wantedKeys));
+            else if (entry.miss == ShaderRecompiler::StoreTableMiss::None) std::snprintf(miss, sizeof(miss), " (pc 0x%x)", entry.missPc);
+            else std::snprintf(miss, sizeof(miss), " (pc 0x%x %s)", entry.missPc, ShaderRecompiler::StoreTableMissName(entry.miss));
+            text += miss;
         }
         char bytes[96];
         std::snprintf(bytes, sizeof(bytes), "; noted %.1f of %.1f MiB]", static_cast<double>(entry.noted) / 1048576.0, static_cast<double>(entry.whole) / 1048576.0);
@@ -427,13 +444,14 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> storeExtent(const std::ar
 void ShaderResources::narrowToStoreWindows(Recorder& recorder, std::vector<std::pair<std::uint64_t, std::uint64_t>>& reachable) const {
     static const bool disabled = std::getenv("APS5_NO_STORE_WINDOWS") != nullptr;
     const bool profiled = storeWindowsProfiled();
-    const auto program = storeWindows.empty() ? std::uint64_t{0} : storeWindows.front().shader;
+    const auto program = storeWindowMissed.has_value() ? storeWindowMissed->shader : storeWindows.empty() ? std::uint64_t{0} : storeWindows.front().shader;
     const auto whole = profiled ? rangeBytes(reachable) : 0u;
     const auto keep = [&](StoreWindowOutcome outcome) {
-        if (profiled) reportStoreWindows(program, outcome, whole, whole);
+        if (profiled) reportStoreWindows(program, outcome, whole, whole, storeWindowMissed.has_value() ? &*storeWindowMissed : nullptr);
     };
     if (disabled) return keep(StoreWindowOutcome::Disabled);
-    if (storeWindowFallback != ShaderRecompiler::StoreTableFallback::None || storeWindows.empty()) return keep(storeWindows.empty() && storeWindowFallback == ShaderRecompiler::StoreTableFallback::None ? StoreWindowOutcome::Unmatched : outcomeOf(storeWindowFallback));
+    if (storeWindowMissed.has_value()) return keep(outcomeOf(storeWindowMissed->fallback));
+    if (storeWindows.empty()) return keep(StoreWindowOutcome::Unmatched);
     std::vector<std::pair<std::uint64_t, std::uint64_t>> windows;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> tableRanges;
     std::vector<std::byte> bytes;
@@ -486,7 +504,7 @@ void ShaderResources::narrowToStoreWindows(Recorder& recorder, std::vector<std::
         }
     }
     reachable = std::move(narrowed);
-    if (profiled) reportStoreWindows(program, StoreWindowOutcome::Bounded, rangeBytes(reachable), whole);
+    if (profiled) reportStoreWindows(program, StoreWindowOutcome::Bounded, rangeBytes(reachable), whole, nullptr);
 }
 
 }

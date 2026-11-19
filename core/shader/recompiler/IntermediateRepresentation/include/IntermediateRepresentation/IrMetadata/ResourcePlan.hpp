@@ -298,6 +298,8 @@ struct IrResourcePlan {
     // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.
     std::vector<std::uint8_t> pureFlatSlots;
     std::vector<StoreTable> storeTables;
+    StoreTableMiss storeMiss = StoreTableMiss::None;
+    std::uint32_t storeMissPc = 0;
     bool denseValueIds = false;
     CompactResourcePlan compact;
     bool requiresSpecializationMemory = false;

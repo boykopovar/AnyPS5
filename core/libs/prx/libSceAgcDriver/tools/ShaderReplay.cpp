@@ -239,6 +239,7 @@ bool Replay(const char* path) {
             }
             const auto& stores = result.storeTables;
             std::printf("  store tables: fallback %u, %zu tables\n", static_cast<unsigned>(stores.fallback), stores.tables.size());
+            if (stores.fallback != ShaderRecompiler::StoreTableFallback::None) std::printf("  store tables missed at pc 0x%x: %s, %llu keys wanted\n", stores.missPc, ShaderRecompiler::StoreTableMissName(stores.miss), static_cast<unsigned long long>(stores.wantedKeys));
             for (const auto& table : stores.tables) {
                 if (table.direct) {
                     std::printf("  store table pc 0x%x: direct V# %08x %08x %08x %08x, max index %u offset %u soffset %u\n", table.pc, table.descriptor[0], table.descriptor[1], table.descriptor[2], table.descriptor[3], table.maxIndex, table.maxOffset, table.maxSoffset);

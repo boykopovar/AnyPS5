@@ -311,6 +311,7 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeAbi::HeapCapacity
             RuntimeAbi::UintStorageImageBinding
             SampledTextureNumericClass
+            StoreTableMissName
             SetDebugProbeActive
             SrtEvaluatingBranch
             ShaderCacheDirectory

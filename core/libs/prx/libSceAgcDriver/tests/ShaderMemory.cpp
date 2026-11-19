@@ -6170,6 +6170,7 @@ void verifyStoreTables() {
     using namespace ShaderRecompiler;
     static std::array<std::uint32_t, 4> output{};
     static std::array<std::array<std::uint32_t, 4>, 4> holder{};
+    static std::array<std::array<std::uint32_t, 4>, StoreTableMaxKeys + 1u> wideHolder{};
     static std::array<std::uint32_t, 160> root{};
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
@@ -6224,6 +6225,14 @@ void verifyStoreTables() {
     require(holderStores.fallback == StoreTableFallback::None && holderStores.tables.size() == 1u && holderStores.tables[0].size == sizeof(holder) && holderStores.tables[0].keys == 4u, "store table holder buffer: the holder size did not bound the records");
 
     root.fill(0u);
+    const auto wideHolderV = TableV(wideHolder.data(), 0u, static_cast<std::uint32_t>(sizeof(wideHolder)));
+    std::copy(wideHolderV.begin(), wideHolderV.end(), root.begin());
+    for (auto& entry : wideHolder) std::copy(outputV.begin(), outputV.end(), entry.begin());
+    const auto wideCompiled = CompileTable(request(holderCode));
+    const auto& wideStores = wideCompiled.result->storeTables;
+    require(wideStores.fallback == StoreTableFallback::TooMany && wideStores.tables.empty() && wideStores.wantedKeys == StoreTableMaxKeys + 1u && wideStores.missPc == held.pc, "store table wide holder: the dispatch did not report the record count it would have read");
+
+    root.fill(0u);
     std::copy(outputV.begin(), outputV.end(), root.begin());
     const std::vector<std::uint32_t> atomicCode{0xf4080100u, 0xfa000000u, 0xbf8cc07fu, 0xe0c80000u, 0x80010000u, 0xbf810000u};
     const auto atomicPlan = GetResourcePlan(request(atomicCode));
@@ -6237,9 +6246,12 @@ void verifyStoreTables() {
     const std::vector<std::uint32_t> laneCode{0x7e080500u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
     const auto lanePlan = GetResourcePlan(request(laneCode));
     require(!lanePlan->storesBounded && lanePlan->storeTables.empty(), "store table lane key: a pointer table keyed by an unbounded lane value was bounded");
+    require(lanePlan->storeMiss == StoreTableMiss::UnboundedKey && lanePlan->storeMissPc == field.pc - 8u, "store table lane key: the plan did not name the unbounded key at the store");
     const auto laneCompiled = CompileTable(request(laneCode));
-    require(laneCompiled.result->storeTables.fallback == StoreTableFallback::Unmatched && laneCompiled.result->storeTables.tables.empty(), "store table lane key: the dispatch did not fall back to the whole reach");
-    std::cout << "store tables: bit field 32 records, selected key records 1 and 3, counted loop 3 records, holder 4 records, planned atomic direct, unbounded lane key falls back\n";
+    const auto& laneStores = laneCompiled.result->storeTables;
+    require(laneStores.fallback == StoreTableFallback::Unmatched && laneStores.tables.empty(), "store table lane key: the dispatch did not fall back to the whole reach");
+    require(laneStores.miss == StoreTableMiss::UnboundedKey && laneStores.missPc == lanePlan->storeMissPc && laneStores.shader != 0u, "store table lane key: the dispatch did not carry the miss and its program");
+    std::cout << "store tables: bit field 32 records, selected key records 1 and 3, counted loop 3 records, holder 4 records, wide holder too many, planned atomic direct, unbounded lane key falls back at its store\n";
 }
 
 void verifyPointerTableUnwrittenReuse() {

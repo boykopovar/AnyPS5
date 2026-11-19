@@ -720,7 +720,7 @@ private:
     bool usesBda = false;
     bool bdaReadOnly = true;
     std::vector<ShaderRecompiler::StoreTablesSnapshot> storeWindows;
-    ShaderRecompiler::StoreTableFallback storeWindowFallback = ShaderRecompiler::StoreTableFallback::None;
+    std::optional<ShaderRecompiler::StoreTablesSnapshot> storeWindowMissed;
     bool spaceReuse = false;
     bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
