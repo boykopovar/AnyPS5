@@ -23,6 +23,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <list>
 #include <map>
 #include <utility>
 #include <vector>
@@ -1058,24 +1059,42 @@ extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, FinalThreadR
     finalThreadReleaseTestTarget.store(static_cast<PthreadPrivate*>(thread), std::memory_order_release);
 }
 
+static constexpr std::size_t MAX_RETAINED_JOINED_THREADS = 100;
+
+struct RetainedJoinedThread {
+    PthreadPrivate* thread;
+    std::list<Pthread*>::iterator order;
+};
+
 static std::mutex joinedLock;
-static std::map<Pthread*, PthreadPrivate*> joinedThreads;
+static std::list<Pthread*> joinedOrder;
+static std::map<Pthread*, RetainedJoinedThread> joinedThreads;
+
+static PthreadPrivate* ForgetJoinedThread(std::map<Pthread*, RetainedJoinedThread>::iterator found) {
+    PthreadPrivate* const joined = found->second.thread;
+    joinedOrder.erase(found->second.order);
+    joinedThreads.erase(found);
+    return joined;
+}
 
 static void RetainJoinedThread(PthreadPrivate* thread) {
     std::lock_guard lock(joinedLock);
     Pthread* const storage = thread->_handleStorage;
-    const auto found = joinedThreads.find(storage);
-    if (found != joinedThreads.end() && found->second != thread) ReleaseThread(found->second);
-    joinedThreads[storage] = thread;
+    if (const auto found = joinedThreads.find(storage); found != joinedThreads.end()) {
+        PthreadPrivate* const previous = ForgetJoinedThread(found);
+        if (previous != thread) ReleaseThread(previous);
+    }
+    joinedOrder.push_back(storage);
+    joinedThreads.emplace(storage, RetainedJoinedThread{thread, std::prev(joinedOrder.end())});
+    if (joinedThreads.size() > MAX_RETAINED_JOINED_THREADS)
+        ReleaseThread(ForgetJoinedThread(joinedThreads.find(joinedOrder.front())));
 }
 
 static void RecycleJoinedThread(Pthread* storage) {
     std::lock_guard lock(joinedLock);
     const auto found = joinedThreads.find(storage);
     if (found == joinedThreads.end()) return;
-    PthreadPrivate* joined = found->second;
-    joinedThreads.erase(found);
-    ReleaseThread(joined);
+    ReleaseThread(ForgetJoinedThread(found));
 }
 
 #ifdef _WIN32
