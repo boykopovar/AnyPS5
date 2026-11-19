@@ -268,7 +268,6 @@ int APS5_VABI _ZN9Inspector21InspectorConsoleAgent19addMessageToConsoleESt10uniq
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent15didRunMicrotaskEv();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent16willRunMicrotaskEv();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent18didCancelAsyncCallENS0_13AsyncCallTypeEi();
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent19asyncCallIdentifierENS0_13AsyncCallTypeEi();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent20didDispatchAsyncCallEv();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent20didScheduleAsyncCallEPN3JSC14JSGlobalObjectENS0_13AsyncCallTypeEib();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent21willDispatchAsyncCallENS0_13AsyncCallTypeEi();
@@ -301,8 +300,6 @@ int APS5_VABI _ZNK3WTF6String5splitERKS0_();
 int APS5_VABI _ZNK3WTF6String9substringEjj();
 int APS5_VABI _ZNK9Inspector15RemoteInspector18clientCapabilitiesEv();
 int APS5_VABI _ZNK9Inspector18InjectedScriptBase27callFunctionWithEvalEnabledERN10Deprecated18ScriptFunctionCallE();
-int APS5_VABI _ZNK9Inspector18InjectedScriptHost16savedResultAliasEv();
-int APS5_VABI _ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv();
 
 int APS5_VABI libSceJscInventory_TYvNAgirhfM_nid_no_patch();
 
