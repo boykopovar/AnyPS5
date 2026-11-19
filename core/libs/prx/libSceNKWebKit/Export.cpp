@@ -13246,10 +13246,6 @@ int APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE() {
     NotImplemented_nid_no_patch(__func__);
 }
