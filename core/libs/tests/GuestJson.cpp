@@ -1054,6 +1054,36 @@ static void InitParameters() {
 
 }
 
+static bool RefusedUnmapped(void (*call)()) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+static void InitParameterGuestPointers() {
+    alignas(16) std::uint8_t parameter[40];
+    auto* typed = reinterpret_cast<InitParameter2*>(parameter);
+    JsonTest::Allocator allocator;
+    int userData = 0;
+    _ZN3sce4Json14InitParameter2C1Ev(typed);
+    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(typed, &allocator, &userData);
+    _ZN3sce4Json14InitParameter217setFileBufferSizeEm(typed, 4096);
+    Require(_ZNK3sce4Json14InitParameter212getAllocatorEv(typed) == &allocator && _ZNK3sce4Json14InitParameter211getUserDataEv(typed) == &userData &&
+            _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(typed) == 4096 && _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(typed) == 2);
+    Require(RefusedUnmapped([] { _ZN3sce4Json14InitParameter2C1Ev(reinterpret_cast<InitParameter2*>(0x10)); }));
+    Require(RefusedUnmapped([] { _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<InitParameter2*>(0x10), nullptr, nullptr); }));
+    Require(RefusedUnmapped([] { _ZN3sce4Json14InitParameter217setFileBufferSizeEm(reinterpret_cast<InitParameter2*>(0x10), 1); }));
+    Require(RefusedUnmapped([] { _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(reinterpret_cast<InitParameter2*>(0x10), 0); }));
+    Require(RefusedUnmapped([] { _ZNK3sce4Json14InitParameter212getAllocatorEv(reinterpret_cast<const InitParameter2*>(0x10)); }));
+    Require(RefusedUnmapped([] { _ZNK3sce4Json14InitParameter211getUserDataEv(reinterpret_cast<const InitParameter2*>(0x10)); }));
+    Require(RefusedUnmapped([] { _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(reinterpret_cast<const InitParameter2*>(0x10)); }));
+    Require(RefusedUnmapped([] { _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(reinterpret_cast<const InitParameter2*>(0x10)); }));
+    Require(_ZNK3sce4Json14InitParameter212getAllocatorEv(typed) == &allocator && _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(typed) == 4096);
+}
+
 static void ValueClear() {
     Value value{};
     _ZN3sce4Json5ValueC1Ev(&value);
@@ -1566,6 +1596,7 @@ int main(int argc, char** argv) {
     Require(_ZN3sce4Json11Initializer9terminateEv(&recoveryInitializer) == 0);
     InitParameter2BaseConstructor();
     InitParameters();
+    InitParameterGuestPointers();
     ValueAccessParameters();
     {
         ActiveModule module;
