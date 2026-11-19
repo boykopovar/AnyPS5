@@ -667,6 +667,7 @@ void CheckNatDiscovery(in_addr address) {
 #ifndef _WIN32
     rlimit limit{};
     Require(getrlimit(RLIMIT_NOFILE, &limit) == 0);
+    const rlimit originalLimit = limit;
     if (limit.rlim_cur < 2 * FD_SETSIZE) {
         limit.rlim_cur = limit.rlim_max < 2 * FD_SETSIZE ? limit.rlim_max : 2 * FD_SETSIZE;
         Require(setrlimit(RLIMIT_NOFILE, &limit) == 0);
@@ -687,6 +688,7 @@ void CheckNatDiscovery(in_addr address) {
     Require(sceNetCtlGetNatInfo(&natInfo) == 0);
     highWorker.join();
     for (const int descriptor : filler) close(descriptor);
+    Require(setrlimit(RLIMIT_NOFILE, &originalLimit) == 0);
     RecordUniqueTransactionId(seenIds, highTx);
     Require(natInfo.stun_status == 2);
     Require(natInfo.nat_type == 1);
