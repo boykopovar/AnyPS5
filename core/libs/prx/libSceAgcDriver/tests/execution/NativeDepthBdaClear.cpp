@@ -267,6 +267,16 @@ int main() {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+#ifdef __linux__
+        if (AgcDriver::VulkanDeviceTestAccess::Context(*device).dmaBufImport) {
+            const int udmabuf = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+            if (udmabuf < 0) {
+                std::printf("skipped, host imports are unavailable: /dev/udmabuf is not accessible\n");
+                return VulkanTestSkipped;
+            }
+            close(udmabuf);
+        }
+#endif
         for (const auto consumer : {ClearConsumer::Owner, ClearConsumer::Texture, ClearConsumer::Attachment}) {
             const auto result = RunNativeClear(*device, consumer);
             if (result != 0) return result;

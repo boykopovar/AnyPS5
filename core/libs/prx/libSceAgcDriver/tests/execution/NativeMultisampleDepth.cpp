@@ -4767,6 +4767,17 @@ int main(int argc, char** argv) {
             return checked == 0u ? VulkanTestSkipped : 0;
         }
         const auto context = device->GetContext();
+#ifdef __linux__
+        const auto hostImportMode = argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--clears" || std::string_view(argv[1]) == "--buffer-clear"));
+        if (hostImportMode && context.dmaBufImport) {
+            const int udmabuf = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+            if (udmabuf < 0) {
+                std::printf("skipped, host imports are unavailable: /dev/udmabuf is not accessible\n");
+                return VulkanTestSkipped;
+            }
+            close(udmabuf);
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--publication") {
             std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
             TextureDetiler detiler(context);
