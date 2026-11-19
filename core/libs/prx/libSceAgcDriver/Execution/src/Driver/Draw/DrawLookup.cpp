@@ -130,6 +130,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
         if (entry != nullptr) {
             const auto waitedBeforeValidate = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
             std::optional<DrawMiss> miss;
+            auto validationMiss = EntryOutcome::Differing;
             std::vector<std::size_t> ranks(programs.size(), 0);
             std::uint64_t stageValidations = 0, stageEqual = 0, compared = 0, imagesFlushed = 0, runsSynced = 0, dataStages = 0, dataWords = 0;
             std::vector<std::pair<std::uint32_t, std::uint32_t>> liveData;
@@ -187,7 +188,10 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     if (matched[i] != nullptr) continue;
                     if (!anyLayout) miss = DrawMiss::Layout;
                     else if (outcome == EntryOutcome::QueuedStores) miss = DrawMiss::QueuedStores;
-                    else if (outcome != EntryOutcome::Differing) miss = DrawMiss::Gate;
+                    else if (outcome != EntryOutcome::Differing) {
+                        miss = DrawMiss::Gate;
+                        validationMiss = outcome;
+                    }
                     else miss = roles[i] == Role::Fragment ? DrawMiss::FragmentDiffering : i == 0 ? DrawMiss::FrontDiffering : DrawMiss::OtherDiffering;
                 }
             }
@@ -243,6 +247,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 if (dataStages != 0 && verifyDrawDataHits()) drawHit = false;
             } else {
                 ++counters.misses[static_cast<std::size_t>(*miss)];
+                if (*miss == DrawMiss::Gate) ++counters.validationMisses[static_cast<std::size_t>(validationMiss)];
                 if (registerKey && entry->decode != nullptr) ++counters.decodePartial;
             }
             if (profile) {

@@ -38,6 +38,12 @@ void Driver::reportDrawCache(DrawEntryCounters& counters, bool profile) {
         text += line;
     }
     if (profile) text += profileDrawCacheLines(counters);
+    if (counters.misses[static_cast<std::size_t>(DrawMiss::Gate)] != 0) {
+        const auto validationMiss = [&](EntryOutcome outcome) { return count(counters.validationMisses[static_cast<std::size_t>(outcome)]); };
+        char line[512];
+        std::snprintf(line, sizeof(line), "[draw-cache] validation misses (10 s): inaccessible %llu, queued label %llu, flushing image %llu, publish moved %llu, pending moved %llu, forget moved %llu\n", validationMiss(EntryOutcome::Inaccessible), validationMiss(EntryOutcome::QueuedLabel), validationMiss(EntryOutcome::FlushingImage), validationMiss(EntryOutcome::PublishMoved), validationMiss(EntryOutcome::PendingMoved), validationMiss(EntryOutcome::ForgetMoved));
+        text += line;
+    }
     AgcDriver::ProfilePrint_nid_no_patch("%s", text.c_str());
     counters = DrawEntryCounters{};
 }

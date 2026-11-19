@@ -115,7 +115,7 @@ struct DataMask {
     std::vector<std::pair<std::uint32_t, std::uint32_t>>* live;
 };
 
-enum class EntryOutcome { Equal, EqualData, Differing, QueuedStores, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
+enum class EntryOutcome { Equal, EqualData, Differing, QueuedStores, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved, Count };
 
 bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled);
 
