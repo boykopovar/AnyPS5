@@ -5,21 +5,24 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int MoveTrackerNotInitialized = static_cast<int>(0x80ef0001);
+
+} // namespace
+
 extern "C" {
 
 int APS5_VABI sceMoveTrackerCalibrateReset() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 int APS5_VABI sceMoveTrackerCalibrateYaw(std::int32_t handle, const float* direction) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 int APS5_VABI sceMoveTrackerCameraUpdate(const MoveTrackerCameraFrame* frames) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 int APS5_VABI sceMoveTrackerCaptureInit(void* imageMemory, std::int32_t capacity, std::int32_t interval, const char* path, std::int32_t mode) {
@@ -33,13 +36,11 @@ int APS5_VABI sceMoveTrackerCaptureTerm() {
 }
 
 int APS5_VABI sceMoveTrackerControllersUpdate(const MoveTrackerControllerInput* controllers) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 int APS5_VABI sceMoveTrackerGetState(std::int32_t handle, std::uint64_t timestamp, MoveTrackerState* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 int APS5_VABI sceMoveTrackerGetVersion() {
@@ -106,8 +107,7 @@ int APS5_VABI sceMoveTrackerRecordStop() {
 }
 
 int APS5_VABI sceMoveTrackerTerm() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MoveTrackerNotInitialized;
 }
 
 }

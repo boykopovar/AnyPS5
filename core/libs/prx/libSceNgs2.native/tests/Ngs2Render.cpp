@@ -1671,7 +1671,7 @@ static void TestMasteringGain() {
             if (Ps4Library && channel == 3) continue;
             Require(outSurround[i * 6 + channel] == (i < 3 ? 0.0f : channel == 3 ? 0.125f : 0.25f));
         }
-        for (std::uint32_t channel = 0; channel < quadChannels; channel++) Require(outQuad[i * quadChannels + channel] == (i < 3 ? 0.0f : 0.25f));
+        for (std::uint32_t channel = 0; channel < quadChannels; channel++) Require(outQuad[i * quadChannels + channel] == (i < 3 ? 0.0f : channel == 3 ? 0.125f : 0.25f));
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 
@@ -2329,11 +2329,11 @@ static uintptr_t CustomMastering(uintptr_t system, std::uint32_t channels) {
 }
 
 static std::vector<float> MasterFrame(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, float fbw,
-                                      const std::vector<std::int16_t>* amplitudes = nullptr, bool custom = false) {
+                                      const std::vector<std::int16_t>* amplitudes = nullptr, bool custom = false, float lfe = 1.0f) {
     const auto firstBuffer = usedBuffers;
     const auto system = CreateSystem();
     const auto master = custom ? CustomMastering(system, channels) : Mastering(system, channels);
-    if (!custom) Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, 1.0f});
+    if (!custom) Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, lfe});
     const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
     Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, 48000, 0, 0, 0}});
     std::vector<std::int16_t> frames(Grain * channels, 0);
@@ -2712,6 +2712,21 @@ static void TestUnsetMatrix() {
     Require(sceNgs2SystemRender(stereoSystem, &info, 1) == SCE_NGS2_OK);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == (i < 3 ? 0.0f : 0.5f) && out[i * 2 + 1] == (i < 3 ? 0.0f : 0.25f));
     Require(sceNgs2SystemDestroy(stereoSystem, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestMasteringGainAfterRemap() {
+    const auto frame = [](std::uint32_t channels, std::uint32_t channel, std::uint32_t outputs) {
+        return MasterFrame(channels, channel, outputs, 2.0f, nullptr, false, 0.25f);
+    };
+    Require(frame(4, 3, 4) == (std::vector<float>{0, 0, 0, 0.125f}));
+    Require(frame(7, 3, 7) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0, 0}));
+    Require(frame(6, 3, 8) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0, 0, 0}));
+    Require(frame(8, 3, 6) == (std::vector<float>{0, 0, 0, 0.125f, 0, 0}));
+    Require(frame(2, 1, 6) == (std::vector<float>{0, 1.0f, 0, 0, 0, 0}));
+    const std::vector<std::int16_t> levels{1023, 2045, 4091, 0, 8191, 16381};
+    const float mapped = 1023.0f / 32768.0f * HalfPower + 2045.0f / 32768.0f * HalfPower +
+        4091.0f / 32768.0f + 8191.0f / 65536.0f + 16381.0f / 65536.0f;
+    Require(MasterFrame(6, 0, 1, 0.7f, &levels)[0] == mapped * 0.7f);
 }
 
 static void TestDefaultMapLikePs5() {
@@ -3654,7 +3669,10 @@ int main() {
 
     TestSystemOptionFlags();
 
-    if (!Ps4Library) TestDefaultMapLikePs5();
+    if (!Ps4Library) {
+        TestMasteringGainAfterRemap();
+        TestDefaultMapLikePs5();
+    }
     else {
         TestDefaultMapLikePs4();
         TestOddChannelCountsLikePs4();
