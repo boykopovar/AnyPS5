@@ -47,6 +47,15 @@ class EnvReferenceTests(unittest.TestCase):
                           'auto d = os.getenv("APS5_PYTHON");\n', encoding="utf-8")
         self.assertEqual(set(env_reference.reads([root / "core"])), {"APS5_REAL", "APS5_PYTHON"})
 
+    def test_tool_scripts_are_read_through_environ_get(self):
+        root = self.fixture()
+        (root / "tools").mkdir()
+        source = root / "tools" / "nid_names.py"
+        source.write_text('parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"))\n'
+                          'other = os.environ.get(NAME)\n', encoding="utf-8")
+        found = env_reference.reads([root / "tools"])
+        self.assertEqual(found, {"ANYPS5_NID_DB": [(source.as_posix(), 1, "string", "")]})
+
     def fixture(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
