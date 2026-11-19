@@ -67,37 +67,37 @@ alignas(256) constexpr std::array<std::uint32_t, 7> StoreGlobalCode{0x7e000208u,
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watched) : watched(watched) {
+    explicit GuestBlock(bool watched, std::size_t bytes = BlockBytes, std::size_t trim = 0) : watched(watched), bytes(bytes), trim(trim) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+            if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }
 #endif
         Require(block != nullptr, "storage flush ordering: cannot allocate the guest block");
-        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), BlockBytes), "storage flush ordering: the guest block is not write-watched");
-        std::fill(Words(), Words() + BlockBytes / 4u, Initial);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
-        AgcDriver::GuestMemory::CollectWritesUncached(Address(), BlockBytes);
+        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "storage flush ordering: the guest block is not write-watched");
+        std::fill(Words(), Words() + bytes / 4u, Initial);
+        GuestAllocations::Mutation().Add(block + trim, bytes - 2u * trim, true, true, true);
+        AgcDriver::GuestMemory::CollectWritesUncached(Address(), bytes);
     }
 
     ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
+        GuestAllocations::Mutation().Remove(block + trim);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 #else
-        munmap(block, BlockBytes);
-        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+        munmap(block, bytes);
+        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
 #endif
     }
 
@@ -106,9 +106,12 @@ public:
 
     std::uint32_t* Words() const { return reinterpret_cast<std::uint32_t*>(block); }
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
+    std::size_t Bytes() const { return bytes; }
 
 private:
     bool watched;
+    std::size_t bytes;
+    std::size_t trim;
     std::uint8_t* block = nullptr;
 };
 
@@ -220,11 +223,12 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
 void ShadowSpansAndPublish(const AgcDriver::Graphics::Context& context, std::uint64_t unit, std::span<const std::pair<std::size_t, std::size_t>> spans, std::uint32_t word, const std::string& what) {
     using namespace AgcDriver::Graphics;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    const auto* import = ExistingHostImportFor(context, unit, ShadowUnitBytes);
+    const auto* import = ExistingHostImportFor(context, unit + spans.front().first, spans.front().second - spans.front().first);
     Require(import != nullptr, what + "the guest block has no host import after the write-back");
     auto* recorder = Recorder::Active();
     Require(recorder != nullptr, what + "no active recorder");
-    AgcDriver::GuestMemory::CollectWritesUncached(unit, ShadowUnitBytes);
+    const auto inside = std::max(unit, import->base);
+    AgcDriver::GuestMemory::CollectWritesUncached(inside, static_cast<std::size_t>(std::min(unit + ShadowUnitBytes, import->base + import->bytes) - inside));
     const auto destination = ShadowDestinationFor(context, *import, unit + spans.front().first, unit + spans.front().second);
     Require(destination.has_value(), what + "the import has no unit shadow for the unit");
     const auto commands = recorder->Commands();
@@ -283,6 +287,41 @@ void RunPartlyShadowedUnitPublish(AgcDriver::VulkanDevice& device, const GuestBl
     ShadowSpansAndPublish(context, apart, againSpan, Overwritten, again);
     device.WaitIdle();
     RequireQuarters(apart, {SlabWord, Overwritten, Initial, SlabWord}, again);
+}
+
+void RunImportEdgeUnitPublish(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t trim) {
+    using namespace AgcDriver::Graphics;
+    const std::string what = "storage flush ordering, publish of the import's partly covered first unit: ";
+    if (!UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the import-edge unit case is skipped");
+        return;
+    }
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (context.hostImportAlignment == 0 || trim % context.hostImportAlignment != 0) {
+        std::puts("host imports cannot start inside a unit shadow unit: the import-edge unit case is skipped");
+        return;
+    }
+    const auto image = StoreImage(device, guest, 2u * ShadowUnitBytes, Standard256B);
+    Require(StorageTexture::FlushPending(image, ImageBytes, nullptr, "test", PublishScope::None), what + "the image's store left no results pending");
+    if (!AnyShadowedOverlaps(image, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the import-edge unit case is skipped");
+        return;
+    }
+    device.WaitIdle();
+    const auto* import = ExistingHostImportFor(context, image, ImageBytes);
+    Require(import != nullptr && import->base == guest.Address() + trim && import->base + import->bytes == guest.Address() + guest.Bytes() - trim, what + "the host import does not cover exactly the registered range");
+    constexpr std::size_t quarter = ShadowUnitBytes / 4u;
+    const auto first = guest.Address();
+    const std::array firstSpan{std::pair{trim, trim + quarter}};
+    ShadowSpansAndPublish(context, first, firstSpan, SlabWord, what);
+    device.WaitIdle();
+    RequireQuarters(first, {Initial, SlabWord, Initial, Initial}, what);
+    const auto last = guest.Address() + guest.Bytes() - ShadowUnitBytes;
+    const std::string end = "storage flush ordering, publish of the import's partly covered last unit: ";
+    const std::array lastSpan{std::pair{ShadowUnitBytes - trim - quarter, ShadowUnitBytes - trim}};
+    ShadowSpansAndPublish(context, last, lastSpan, SlabWord, end);
+    device.WaitIdle();
+    RequireQuarters(last, {Initial, Initial, SlabWord, Initial}, end);
 }
 
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
@@ -400,6 +439,8 @@ int main(int argc, char** argv) {
         RunShadowedUnitUnderWriter(*device, shadowed);
         GuestBlock partly(watched);
         RunPartlyShadowedUnitPublish(*device, partly);
+        GuestBlock edge(watched, 2u * BlockBytes, ShadowUnitBytes / 4u);
+        RunImportEdgeUnitPublish(*device, edge, ShadowUnitBytes / 4u);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
