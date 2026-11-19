@@ -1314,6 +1314,13 @@ void ImageMemoryOverBudget() {
     Expect(mock.frees == 2 && context.bufferPool->RetainedImages() == 1, "the pool retains image memory again once the heap is under its budget");
 }
 
+std::size_t cacheReclaimCalls = 0;
+
+VkDeviceSize CountingCacheReclaim(VkDeviceSize, bool) {
+    ++cacheReclaimCalls;
+    return 0;
+}
+
 void RetainedImagesReleasedBeforeHostPlacement() {
     mock = MockDevice{};
     auto context = budgetContext();
@@ -1345,8 +1352,13 @@ void RetainedImagesReleasedBeforeHostPlacement() {
     ReleaseImageMemory(context, fifth, 4 * MiB, 0);
     Expect(context.bufferPool->RetainedImages() == 2, "two released images under the budget were not retained");
     reportedUsage = 1000 * MiB;
+    context.cacheReclaim = CountingCacheReclaim;
+    cacheReclaimCalls = 0;
     const auto device = context.DeviceMemoryType(0b11u, 6 * MiB, "test buffer");
     Expect(device == 0u && mock.frees == 5 && context.bufferPool->RetainedImages() == 0, "an allocation covered by released retained image memory was placed in host memory while the reported usage had not caught up");
+    Expect(cacheReclaimCalls == 0, "the texture caches were asked to release memory although released retained image memory covered the allocation");
+    const auto uncovered = context.DeviceMemoryType(0b11u, 6 * MiB, "test buffer");
+    Expect(uncovered == 1u && cacheReclaimCalls == 1, "with no retained image memory left, the texture caches were not asked before host placement");
 }
 
 void ImageMemoryReuse() {
