@@ -113,16 +113,13 @@ void CreateExponentialRepresentation(std::string& result, const std::string& dig
     result += std::to_string(exponent);
 }
 
-}  // namespace
-
-namespace NKWebKit::WtfAbi {
-
-std::string NumberToString(float number) {
+template<typename TNumber>
+std::string NumberToShortestString(TNumber number) {
     if (!std::isfinite(number)) return SpecialValue(number);
     if (number == 0) return "0";
     char buffer[64];
     auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(number), std::chars_format::scientific);
-    if (converted.ec != std::errc{}) throw std::runtime_error("WTF float formatting failed");
+    if (converted.ec != std::errc{}) throw std::runtime_error("WTF number formatting failed");
     std::string digits;
     const char* cursor = buffer;
     for (; cursor != converted.ptr && *cursor != 'e'; ++cursor) {
@@ -130,7 +127,7 @@ std::string NumberToString(float number) {
     }
     int exponent = 0;
     if (cursor == converted.ptr || std::from_chars(cursor + (cursor[1] == '+' ? 2 : 1), converted.ptr, exponent).ec != std::errc{})
-        throw std::runtime_error("WTF float exponent formatting failed");
+        throw std::runtime_error("WTF number exponent formatting failed");
     std::string result = number < 0 ? "-" : "";
     int decimalPoint = exponent + 1;
     int length = static_cast<int>(digits.size());
@@ -139,6 +136,18 @@ std::string NumberToString(float number) {
     else
         CreateExponentialRepresentation(result, digits, exponent);
     return result;
+}
+
+}  // namespace
+
+namespace NKWebKit::WtfAbi {
+
+std::string NumberToString(float number) {
+    return NumberToShortestString(number);
+}
+
+std::string NumberToString(double number) {
+    return NumberToShortestString(number);
 }
 
 std::string NumberToFixedWidthString(double number, unsigned decimalPlaces) {
