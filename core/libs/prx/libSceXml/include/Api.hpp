@@ -126,7 +126,7 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document10importNodeENS1_6NodeIdES3_PKS2_S3_();
 int APS5_VABI _ZN3sce3Xml3Dom8Document10initializeEPKNS0_11InitializerE();
 int APS5_VABI _ZN3sce3Xml3Dom8Document10insertNodeENS1_6NodeIdES3_S3_();
 int APS5_VABI _ZN3sce3Xml3Dom8Document11removeChildENS1_6NodeIdES3_();
-int APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv();
+void APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv(XmlHandle* self);
 int APS5_VABI _ZN3sce3Xml3Dom8Document11setWritableEv();
 int APS5_VABI _ZN3sce3Xml3Dom8Document12importParentEPKS2_NS1_6NodeIdE();
 int APS5_VABI _ZN3sce3Xml3Dom8Document12setAttrValueENS1_6NodeIdEPKNS0_6StringES6_();
