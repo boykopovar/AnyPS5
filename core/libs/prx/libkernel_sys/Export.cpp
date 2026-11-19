@@ -470,8 +470,7 @@ int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
 }
 
 int APS5_VABI sceKernelSetCpumodeGame(int mode) {
-    if (mode < 0 || mode > 7) NotImplemented_nid_no_patch("sceKernelSetCpumodeGame with a mode outside 0 to 7");
-    if (mode > 1) return SCE_KERNEL_ERROR_EINVAL;
+    if (static_cast<unsigned int>(mode) > 1) return SCE_KERNEL_ERROR_EINVAL;
     g_gameCpumode.store(mode, std::memory_order_relaxed);
     return 0;
 }
@@ -734,7 +733,7 @@ static int LinkNative(const std::filesystem::path& source, const std::filesystem
 #endif
     if (!error) std::filesystem::create_hard_link(target, destination, error);
     if (error == std::errc::cross_device_link) return static_cast<int>(Fail(GuestExdev));
-    if (error) throw std::system_error(error, "link");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
     RecordWrittenPath_nid_no_patch(destination);
     return 0;
 }
@@ -747,12 +746,12 @@ static int LinkSymbolicLinkItself(const std::filesystem::path& source, const std
     if (!CreateHardLinkW(destination.c_str(), source.c_str(), nullptr)) {
         const DWORD error = GetLastError();
         if (error == ERROR_NOT_SAME_DEVICE) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(static_cast<int>(error), std::system_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({static_cast<int>(error), std::system_category()})));
     }
 #else
     if (::linkat(AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 0) != 0) {
         if (errno == EXDEV) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(errno, std::generic_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({errno, std::generic_category()})));
     }
 #endif
     RecordWrittenPath_nid_no_patch(destination);
@@ -944,14 +943,14 @@ static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
         if (code == ERROR_PRIVILEGE_NOT_HELD) return static_cast<int>(Fail(GuestEperm));
         if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) return static_cast<int>(Fail(GuestEexist));
         if (code == ERROR_PATH_NOT_FOUND) return static_cast<int>(Fail(GuestEnoent));
-        throw std::system_error(static_cast<int>(code), std::system_category(), "symlink");
+        return static_cast<int>(Fail(GuestError(std::error_code(static_cast<int>(code), std::system_category()))));
     }
 #else
     if (directory)
         std::filesystem::create_directory_symlink(contents, native, error);
     else
         std::filesystem::create_symlink(contents, native, error);
-    if (error) throw std::system_error(error, "symlink");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;

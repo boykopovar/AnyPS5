@@ -138,10 +138,62 @@ std::string LinkTarget(const std::string& path) {
     return std::string(buffer, static_cast<std::size_t>(length));
 }
 
+#ifndef _WIN32
+void LinkPermissionErrorTests(const std::filesystem::path& root, const std::string& file) {
+    if (geteuid() == 0) return;
+    const auto denied = root / "link-denied";
+    Require(std::filesystem::create_directory(denied));
+    const auto originalPermissions = std::filesystem::status(denied).permissions();
+    std::filesystem::permissions(denied, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+    if (::access(denied.c_str(), W_OK) == 0) {
+        std::filesystem::permissions(denied, originalPermissions);
+        Require(std::filesystem::remove(denied));
+        return;
+    }
+    const auto created = (denied / "new.txt").string();
+    const auto symbolic = (root / "link-permission-source").string();
+    Require(symlink_nid_postfix("owned.txt", symbolic.c_str()) == 0);
+    const int result = link_nid_postfix(file.c_str(), created.c_str());
+    const int error = Error();
+    const int nofollowResult = linkat_nid_postfix(-100, symbolic.c_str(), -100, created.c_str(), 0);
+    const int nofollowError = Error();
+    std::filesystem::permissions(denied, originalPermissions);
+    Require(result == -1 && error == 13);
+    Require(nofollowResult == -1 && nofollowError == 13);
+    Require(std::filesystem::remove(symbolic) && std::filesystem::remove(denied));
+}
+
+void SymlinkPermissionErrorTests(const std::filesystem::path& root) {
+    if (geteuid() == 0) return;
+    const auto denied = root / "symlink-denied";
+    Require(std::filesystem::create_directory(denied));
+    const auto originalPermissions = std::filesystem::status(denied).permissions();
+    std::filesystem::permissions(denied, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+    if (::access(denied.c_str(), W_OK) == 0) {
+        std::filesystem::permissions(denied, originalPermissions);
+        Require(std::filesystem::remove(denied));
+        return;
+    }
+    const auto created = (denied / "new.link").string();
+    const int result = symlink_nid_postfix("owned.txt", created.c_str());
+    const int error = Error();
+    const int atResult = symlinkat_nid_postfix("owned.txt", -100, created.c_str());
+    const int atError = Error();
+    std::filesystem::permissions(denied, originalPermissions);
+    Require(result == -1 && error == 13);
+    Require(atResult == -1 && atError == 13);
+    Require(std::filesystem::remove(denied));
+}
+#endif
+
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
     const auto file = (root / "owned.txt").string();
     std::ofstream(file).put('x');
+#ifndef _WIN32
+    LinkPermissionErrorTests(root, file);
+    SymlinkPermissionErrorTests(root);
+#endif
     const auto missing = (root / "missing.txt").string();
     const auto throughFile = file + "/inner";
     const auto linked = (root / "linked.txt").string();

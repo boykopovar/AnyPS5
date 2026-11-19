@@ -105,7 +105,7 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -843,7 +843,7 @@ def describe_failure(error):
 
 def resolve_branch(name):
     try:
-        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+        return git("rev-parse", "--verify", f"{name}^0").strip()
     except subprocess.CalledProcessError:
         raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
 

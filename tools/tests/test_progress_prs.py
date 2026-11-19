@@ -124,11 +124,67 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(order, [])
         self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle"})
 
+    def test_changed_heads_are_relisted_and_refetched_once(self):
+        old = {1: {"sha": "old", "depends": set()}}
+        current = {1: {"sha": "new", "depends": set()}}
+        ok = subprocess.CompletedProcess([], 0, "", "")
+
+        def fake_git(root, *args, **kwargs):
+            if args[0] == "rev-parse":
+                value = "new\n" if args[1].endswith("/1") else "base\n"
+                return subprocess.CompletedProcess([], 0, value, "")
+            return ok
+
+        with (patch.object(progress_prs.pr_overlap, "open_prs", side_effect=[old, current]) as open_prs,
+              patch.object(progress_prs, "git", side_effect=fake_git)):
+            pulls, base = progress_prs.collect_open_prs("fixture/repo", self.root)
+        self.assertEqual(pulls[1]["sha"], "new")
+        self.assertEqual(base, "base")
+        self.assertEqual(open_prs.call_count, 2)
+
+    def test_persistently_changing_heads_fail_after_one_retry(self):
+        stale = {1: {"sha": "old", "depends": set()}}
+        ok = subprocess.CompletedProcess([], 0, "", "")
+
+        def fake_git(root, *args, **kwargs):
+            if args[0] == "rev-parse":
+                value = "new\n" if args[1].endswith("/1") else "base\n"
+                return subprocess.CompletedProcess([], 0, value, "")
+            return ok
+
+        with (patch.object(progress_prs.pr_overlap, "open_prs", side_effect=[stale, stale]) as open_prs,
+              patch.object(progress_prs, "git", side_effect=fake_git)):
+            with self.assertRaisesRegex(RuntimeError, "pull request heads changed during fetch: 1"):
+                progress_prs.collect_open_prs("fixture/repo", self.root)
+        self.assertEqual(open_prs.call_count, 2)
+
     def test_unavailable_estimate_keeps_failure_reason(self):
         with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")):
             result = progress_prs.estimate("boykopovar/AnyPS5", self.root)
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "API unavailable")
+
+    def test_unavailable_estimate_survives_missing_checkout_cleanup(self):
+        missing = self.root / "missing-checkout"
+        self.assertFalse(missing.exists())
+        with patch.object(progress_prs, "collect_open_prs", side_effect=OSError("checkout missing")):
+            result = progress_prs.estimate("boykopovar/AnyPS5", missing)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "checkout missing")
+
+    def test_unavailable_estimate_survives_ref_cleanup_failure(self):
+        calls = []
+        def fail_cleanup(root, *args, check=True):
+            calls.append(args)
+            if args[0] == "for-each-ref":
+                return subprocess.CompletedProcess([], 0, "refs/heads/aps5-open-pr/1\n", "")
+            raise OSError("checkout disappeared during cleanup")
+        with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")), \
+                patch.object(progress_prs, "git", side_effect=fail_cleanup):
+            result = progress_prs.estimate("boykopovar/AnyPS5", self.root)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "API unavailable")
+        self.assertEqual(len(calls), 2)
 
 class DependencyProbeFailureTests(unittest.TestCase):
     def test_fatal_closed_dependency_probe_is_not_an_unresolved_dependency(self):
