@@ -7896,10 +7896,6 @@ int APS5_VABI _ZN7WebCore17JSHTMLLinkElementC1EPN3JSC9StructureERNS_17JSDOMGloba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore31BasicColorMatrixFilterOperation14transformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI _ZN7WebCore15DatabaseTracker23trackerWithDatabasePathERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
