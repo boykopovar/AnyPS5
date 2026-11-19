@@ -171,6 +171,27 @@ static void CheckExactOperations() {
     Require(std::isnan(fmaf_nid_postfix(INFINITY, 0.f, 1.f)));
 }
 
+static void CheckRandomStateAndClassificationGuestPointers() {
+    const auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    static const unsigned int readOnlyState = 1;
+    Require(rejectsKeepingErrno([] { rand_r_nid_postfix(reinterpret_cast<unsigned int*>(std::uintptr_t{0x10})); }));
+    Require(rejectsKeepingErrno([] { rand_r_nid_postfix(const_cast<unsigned int*>(&readOnlyState)); }));
+    Require(*static_cast<const volatile unsigned int*>(&readOnlyState) == 1u);
+    Require(rejectsKeepingErrno([] { _Dtest_nid_postfix(reinterpret_cast<const double*>(std::uintptr_t{0x10})); }));
+    Require(rejectsKeepingErrno([] { _FDtest_nid_postfix(reinterpret_cast<const float*>(std::uintptr_t{0x10})); }));
+    static const double readOnlyDouble = 1.0;
+    static const float readOnlyFloat = 0.0f;
+    Require(_Dtest_nid_postfix(&readOnlyDouble) == -1 && _FDtest_nid_postfix(&readOnlyFloat) == 0);
+    unsigned int state = 16807u;
+    Require(rand_r_nid_postfix(&state) == 282475249 && state == 282475249u);
+}
+
 static void CheckNearbyint() {
     std::feclearexcept(FE_ALL_EXCEPT);
     const double zero = nearbyint_nid_postfix(0.5);
@@ -4988,6 +5009,7 @@ int main() {
     CheckFdimFlags();
     CheckRoundFlagsAndSignalingNans();
     CheckRemainderConsoleBits();
+    CheckRandomStateAndClassificationGuestPointers();
     CheckFloatClassification();
     CheckDinkumwareConstants();
     CheckNoConversionZero();

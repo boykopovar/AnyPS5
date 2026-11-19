@@ -5890,7 +5890,7 @@ short APS5_VABI _FDtest_nid_postfix(const float* value) {
     constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
     if (value == nullptr) throw std::invalid_argument("_FDtest: null value");
     std::uint32_t bits;
-    std::memcpy(&bits, value, sizeof(bits));
+    if (!GuestCopyIn_nid_no_patch(&bits, value, sizeof(bits))) throw std::invalid_argument("_FDtest: unreadable value");
     const auto exponent = bits & 0x7f800000u;
     const auto fraction = bits & 0x007fffffu;
     if (exponent == 0x7f800000u) return fraction != 0 ? NotANumber : Infinite;
@@ -5902,7 +5902,7 @@ short APS5_VABI _Dtest_nid_postfix(const double* value) {
     constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
     if (value == nullptr) throw std::invalid_argument("_Dtest: null value");
     std::uint64_t bits;
-    std::memcpy(&bits, value, sizeof(bits));
+    if (!GuestCopyIn_nid_no_patch(&bits, value, sizeof(bits))) throw std::invalid_argument("_Dtest: unreadable value");
     const auto exponent = bits & 0x7ff0000000000000u;
     const auto fraction = bits & 0x000fffffffffffffu;
     if (exponent == 0x7ff0000000000000u) return fraction != 0 ? NotANumber : Infinite;
@@ -5983,8 +5983,11 @@ int APS5_VABI rand_nid_postfix() {
 
 int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
     if (state == nullptr) throw std::invalid_argument("rand_r: null state");
-    *state = MinimalStandardNext(static_cast<std::int32_t>(*state));
-    return static_cast<int>(*state);
+    unsigned int current;
+    if (!GuestCopyIn_nid_no_patch(&current, state, sizeof(current))) throw std::invalid_argument("rand_r: unreadable state");
+    current = MinimalStandardNext(static_cast<std::int32_t>(current));
+    if (!GuestCopyOut_nid_no_patch(state, &current, sizeof(current))) throw std::invalid_argument("rand_r: unwritable state");
+    return static_cast<int>(current);
 }
 
 void APS5_VABI srand_nid_postfix(unsigned int seed) {
