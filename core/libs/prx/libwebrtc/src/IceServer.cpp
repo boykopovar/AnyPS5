@@ -43,7 +43,10 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -55,6 +58,12 @@ namespace {
 
 constexpr std::int32_t TlsCertPolicySecure = 0;
 constexpr std::size_t StringCapacityMask = 15;
+constexpr std::size_t ChunkBytes = 4096;
+constexpr std::size_t ChunkStrings = ChunkBytes / sizeof(WebRtcGuestString);
+
+[[noreturn]] void ThrowInaccessible() {
+    throw std::invalid_argument("IceServer requires accessible strings");
+}
 
 void InitString(WebRtcGuestString& string) {
     string.reserved = 0;
@@ -78,16 +87,46 @@ void ReleaseString(WebRtcGuestString& string) {
 void CopyString(WebRtcGuestString& string, const WebRtcGuestString& other) {
     InitString(string);
     const std::size_t size = other.size;
-    char* data = string.buffer;
-    if (size > WebRtcGuestStringInlineCapacity) {
-        const std::size_t capacity = size | StringCapacityMask;
-        data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
-        string.pointer = data;
-        string.capacity = capacity;
+    if (size <= WebRtcGuestStringInlineCapacity) {
+        if (other.capacity > WebRtcGuestStringInlineCapacity) {
+            if (!GuestBytes(other.pointer).CopyIn(string.buffer, size))
+                ThrowInaccessible();
+        } else {
+            std::memcpy(string.buffer, other.buffer, size);
+        }
+        string.buffer[size] = '\0';
+        string.size = size;
+        return;
     }
-    std::memcpy(data, WebRtcGuestStringData(other), size);
-    data[size] = '\0';
+    const std::size_t capacity = size | StringCapacityMask;
+    char* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    string.pointer = data;
+    string.capacity = capacity;
+    std::array<char, ChunkBytes> chunk;
+    for (std::size_t offset = 0; offset < size;) {
+        const std::size_t batch = std::min(ChunkBytes, size - offset);
+        if (!GuestBytes(other.pointer + offset).CopyIn(chunk.data(), batch) || !GuestBytes(data + offset).CopyOut(chunk.data(), batch))
+            ThrowInaccessible();
+        offset += batch;
+    }
+    const char terminator = '\0';
+    if (!GuestBytes(data + size).CopyOut(&terminator, 1))
+        ThrowInaccessible();
     string.size = size;
+}
+
+template<typename TVisit>
+void ForEachString(const WebRtcGuestStringVector& vector, TVisit visit) {
+    std::array<WebRtcGuestString, ChunkStrings> chunk;
+    const auto count = static_cast<std::size_t>(vector.end - vector.begin);
+    for (std::size_t offset = 0; offset < count;) {
+        const std::size_t batch = std::min(ChunkStrings, count - offset);
+        if (!GuestPtr<const WebRtcGuestString>(vector.begin + offset).CopyIn(chunk.data(), batch))
+            ThrowInaccessible();
+        for (std::size_t index = 0; index < batch; ++index)
+            visit(chunk[index]);
+        offset += batch;
+    }
 }
 
 void InitVector(WebRtcGuestStringVector& vector) {
@@ -103,14 +142,12 @@ void ValidateVector(const WebRtcGuestStringVector& vector) {
     if (end < begin || capacity < end || (!begin && capacity) || begin % alignof(WebRtcGuestString) ||
         (end - begin) % sizeof(WebRtcGuestString) || (capacity - begin) % sizeof(WebRtcGuestString))
         throw std::invalid_argument("IceServer requires valid string vectors");
-    for (const WebRtcGuestString* string = vector.begin; string != vector.end; ++string)
-        ValidateString(*string);
+    ForEachString(vector, ValidateString);
 }
 
 void ReleaseVector(WebRtcGuestStringVector& vector) {
     if (vector.begin) {
-        for (WebRtcGuestString* string = vector.begin; string != vector.end; ++string)
-            ReleaseString(*string);
+        ForEachString(vector, [](WebRtcGuestString string) { ReleaseString(string); });
         GuestStringStorage::Deallocate(vector.begin, static_cast<std::size_t>(vector.capacityEnd - vector.begin) * sizeof(WebRtcGuestString));
     }
     InitVector(vector);
@@ -129,10 +166,18 @@ void CopyVector(WebRtcGuestStringVector& vector, const WebRtcGuestStringVector& 
     vector.begin = strings;
     vector.end = strings;
     vector.capacityEnd = strings + count;
-    for (std::size_t index = 0; index < count; ++index) {
-        CopyString(strings[index], other.begin[index]);
-        vector.end = strings + index + 1;
-    }
+    ForEachString(other, [&vector](const WebRtcGuestString& source) {
+        WebRtcGuestString copy{};
+        try {
+            CopyString(copy, source);
+            if (!GuestPtr<WebRtcGuestString>(vector.end).CopyOut(copy))
+                ThrowInaccessible();
+        } catch (...) {
+            ReleaseString(copy);
+            throw;
+        }
+        ++vector.end;
+    });
 }
 
 void InitServer(WebRtcIceServer& server) {
@@ -171,38 +216,50 @@ void ReleaseServer(WebRtcIceServer& server) {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(WebRtcIceServer* server) {
-    if (!server)
+    WebRtcIceServer host;
+    if (!server || !GuestWritable_nid_no_patch(server, sizeof(*server)) || !GuestPtr<WebRtcIceServer>(server).CopyIn(host))
         throw std::invalid_argument("IceServer constructor requires an object");
-    InitServer(*server);
+    InitServer(host);
+    if (!GuestPtr<WebRtcIceServer>(server).CopyOut(host))
+        throw std::invalid_argument("IceServer constructor requires an object");
 }
 
 void APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(WebRtcIceServer* server, const WebRtcIceServer* other) {
     if (!server || !other || server == other)
         throw std::invalid_argument("IceServer copy constructor requires distinct objects");
-    ValidateServer(*other);
+    WebRtcIceServer source;
+    if (!GuestPtr<const WebRtcIceServer>(other).CopyIn(source))
+        throw std::invalid_argument("IceServer copy constructor requires a readable source");
+    if (!GuestWritable_nid_no_patch(server, sizeof(*server)))
+        throw std::invalid_argument("IceServer copy constructor requires a writable object");
+    ValidateServer(source);
     WebRtcIceServer copy;
     InitServer(copy);
     try {
-        CopyString(copy.uri, other->uri);
-        CopyVector(copy.urls, other->urls);
-        CopyString(copy.username, other->username);
-        CopyString(copy.password, other->password);
-        copy.tlsCertPolicy = other->tlsCertPolicy;
-        CopyString(copy.hostname, other->hostname);
-        CopyVector(copy.tlsAlpnProtocols, other->tlsAlpnProtocols);
-        CopyVector(copy.tlsEllipticCurves, other->tlsEllipticCurves);
+        CopyString(copy.uri, source.uri);
+        CopyVector(copy.urls, source.urls);
+        CopyString(copy.username, source.username);
+        CopyString(copy.password, source.password);
+        copy.tlsCertPolicy = source.tlsCertPolicy;
+        CopyString(copy.hostname, source.hostname);
+        CopyVector(copy.tlsAlpnProtocols, source.tlsAlpnProtocols);
+        CopyVector(copy.tlsEllipticCurves, source.tlsEllipticCurves);
+        if (!GuestPtr<WebRtcIceServer>(server).CopyOut(copy))
+            throw std::invalid_argument("IceServer copy constructor requires a writable object");
     } catch (...) {
         ReleaseServer(copy);
         throw;
     }
-    std::memcpy(server, &copy, sizeof(copy));
 }
 
 void APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(WebRtcIceServer* server) {
-    if (!server)
+    WebRtcIceServer host;
+    if (!server || !GuestWritable_nid_no_patch(server, sizeof(*server)) || !GuestPtr<WebRtcIceServer>(server).CopyIn(host))
         throw std::invalid_argument("IceServer destructor requires an object");
-    ValidateServer(*server);
-    ReleaseServer(*server);
+    ValidateServer(host);
+    ReleaseServer(host);
+    if (!GuestPtr<WebRtcIceServer>(server).CopyOut(host))
+        throw std::invalid_argument("IceServer destructor requires an object");
 }
 
 }
