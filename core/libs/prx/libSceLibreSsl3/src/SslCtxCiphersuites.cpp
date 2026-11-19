@@ -44,10 +44,31 @@ std::string ReadGuestText(const char* text, const char* caller) {
     return copied;
 }
 
+LibreSsl3SslCtx ValidateWritableContext(LibreSsl3SslCtx* context, const char* caller) {
+    LibreSsl3SslCtx copy{};
+    const int savedErrno = errno;
+    const bool valid = GuestCopyIn_nid_no_patch(&copy, context, sizeof(copy)) &&
+        GuestWritable_nid_no_patch(&context->cipherListTls13, sizeof(context->cipherListTls13));
+    errno = savedErrno;
+    if (!valid) NotImplemented_nid_no_patch(caller);
+    return copy;
+}
+
+void WriteCipherList(LibreSsl3SslCtx* context, LibreSslStack* stack, const char* caller) {
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(&context->cipherListTls13, &stack, sizeof(stack));
+    errno = savedErrno;
+    if (!written) {
+        sk_free_nid_postfix(stack);
+        NotImplemented_nid_no_patch(caller);
+    }
+}
+
 }
 
 extern "C" int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix(LibreSsl3SslCtx* context, const char* ciphersuites) {
     if (!context || !ciphersuites) return 0;
+    const LibreSsl3SslCtx guestContext = ValidateWritableContext(context, __func__);
     const std::string guestText = ReadGuestText(ciphersuites, __func__);
     auto* const stack = sk_new_nid_postfix(nullptr);
     if (!stack) return 0;
@@ -64,7 +85,7 @@ extern "C" int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix(LibreSsl3SslCtx* c
             remaining.remove_prefix(separator + 1);
         }
     }
-    sk_free_nid_postfix(static_cast<LibreSslStack*>(context->cipherListTls13));
-    context->cipherListTls13 = stack;
+    WriteCipherList(context, stack, __func__);
+    sk_free_nid_postfix(static_cast<LibreSslStack*>(guestContext.cipherListTls13));
     return 1;
 }

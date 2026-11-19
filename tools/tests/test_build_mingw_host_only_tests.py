@@ -75,5 +75,25 @@ class IsProductLibraryTests(unittest.TestCase):
                 build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", sources), self.ROOT)
 
 
+class TargetDocumentTests(unittest.TestCase):
+    def test_minimal_and_full_targets_are_accepted(self):
+        full = {"name": "t", "link": {"commandFragments": [{}]}, "artifacts": [{}], "sources": [{}]}
+        self.assertIs(build_mingw_host_only_tests.target_document(full, "t.json"), full)
+        self.assertEqual(build_mingw_host_only_tests.target_document({}, "t.json"), {})
+
+    def test_invalid_fields_name_what_was_wrong(self):
+        cases = (
+            ([], "CMake target"),
+            ({"name": 3}, "CMake target name"),
+            ({"link": []}, "CMake target link"),
+            ({"link": {"commandFragments": [1]}}, "CMake link command fragments"),
+            ({"artifacts": {}}, "CMake target artifacts"),
+            ({"sources": ["a"]}, "CMake target sources"),
+        )
+        for value, message in cases:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                build_mingw_host_only_tests.target_document(value, "t.json")
+
+
 if __name__ == "__main__":
     unittest.main()
