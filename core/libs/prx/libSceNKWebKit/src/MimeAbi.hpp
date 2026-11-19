@@ -124,3 +124,10 @@ static_assert(offsetof(FixedVector<ASCIILiteral>, storage) == 0);
 static_assert(!std::is_trivially_destructible_v<FixedVector<ASCIILiteral>>);
 
 }  // namespace NKWebKit::WtfAbi
+
+namespace NKWebKit::WebCoreAbi {
+
+bool CanDisplayOnlyIfCanRequest(const WtfAbi::StringImpl* scheme);
+bool ShouldTreatURLSchemeAsDisplayIsolated(const WtfAbi::StringImpl* scheme);
+
+}  // namespace NKWebKit::WebCoreAbi
