@@ -6070,10 +6070,6 @@ int APS5_VABI sceIcuLegacyUnknown_dNIT3K4F_plus_dM_nid_no_patch() {
 }
 APS5_EXPORT("dNIT3K4F+dM", sceIcuLegacyUnknown_dNIT3K4F_plus_dM_nid_no_patch);
 
-int APS5_VABI ucnv_cbFromUWriteUChars_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_dOyJ_minus_4H4j3o_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

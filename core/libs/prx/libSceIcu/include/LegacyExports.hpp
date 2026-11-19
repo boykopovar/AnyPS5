@@ -1440,7 +1440,6 @@ int APS5_VABI uenum_reset_nid_postfix();
 int APS5_VABI ubrk_getBinaryRules_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorC1ERKS0__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_dNIT3K4F_plus_dM_nid_no_patch();
-int APS5_VABI ucnv_cbFromUWriteUChars_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_dOyJ_minus_4H4j3o_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_dRjnhSb9dA4_nid_no_patch();
 int APS5_VABI _ZN6icu_6811StringPieceC2ERKS0_ii_nid_postfix();
