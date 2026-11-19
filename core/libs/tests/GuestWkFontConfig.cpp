@@ -1,4 +1,5 @@
 #include "prx/libSceWkFontConfig/libSceWkFontConfig.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <cstddef>
@@ -125,6 +126,7 @@ void CheckRecordReads() {
     Require(sceWkFontConfigGetFontName(&empty, out, 1) == 0 && out[0] == '\0');
     Require(sceWkFontConfigGetFontName(&empty, out, 0) == bufferTooSmall);
 
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     GuardedPage page;
     std::memcpy(page.data + page.size - 3, "SST", 3);
     const FontRecord runsIntoGuard{nullptr, reinterpret_cast<const char*>(page.data + page.size - 3), {0x14, 0, 0, 0, 0}, 0};
@@ -139,6 +141,14 @@ void CheckRecordReads() {
         threw = true;
     }
     Require(threw && unread[1] == 0);
+    threw = false;
+    try {
+        sceWkFontConfigGetAttr(nullptr, unread);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && unread[1] == 0);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 } // namespace
 

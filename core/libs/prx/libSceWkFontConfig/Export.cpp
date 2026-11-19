@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include "SceTypes.hpp"
@@ -48,15 +49,13 @@ int APS5_VABI sceWkFontConfigGetAttr(const void* font, void* attr) {
     if (attr == nullptr) return SCE_WK_FONT_CONFIG_ERROR_INVALID_ARGUMENT;
     std::uint32_t size = 0;
     if (!GuestCopyIn_nid_no_patch(&size, attr, sizeof(size))) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        throw std::runtime_error(__func__);
     }
     if (size != WkFontConfigAttrSize) return SCE_WK_FONT_CONFIG_ERROR_INVALID_ARGUMENT;
     unsigned char record[WkFontConfigAttrSize];
     if (font == nullptr || !GuestCopyIn_nid_no_patch(record, static_cast<const unsigned char*>(font) + WkFontConfigFontAttrOffset, sizeof(record)) ||
         !GuestCopyOut_nid_no_patch(attr, record, sizeof(record))) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        throw std::runtime_error(__func__);
     }
     return 0;
 }
@@ -94,20 +93,17 @@ int APS5_VABI sceWkFontConfigGetFontName(const void* font, char* fontName, std::
     if (font == nullptr || fontName == nullptr) return SCE_WK_FONT_CONFIG_ERROR_INVALID_ARGUMENT;
     const char* namePointer = nullptr;
     if (!GuestCopyIn_nid_no_patch(&namePointer, static_cast<const unsigned char*>(font) + WkFontConfigFontNameOffset, sizeof(namePointer))) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        throw std::runtime_error(__func__);
     }
     const std::optional<std::string> name = namePointer ? ReadGuestString(namePointer) : std::nullopt;
     if (!name) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        throw std::runtime_error(__func__);
     }
     if (static_cast<std::uint32_t>(name->size()) + 1u > size) return SCE_WK_FONT_CONFIG_ERROR_BUFFER_TOO_SMALL;
     std::vector<char> copied(size, '\0');
     std::copy(name->begin(), name->end(), copied.begin());
     if (!GuestCopyOut_nid_no_patch(fontName, copied.data(), copied.size())) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        throw std::runtime_error(__func__);
     }
     return 0;
 }
