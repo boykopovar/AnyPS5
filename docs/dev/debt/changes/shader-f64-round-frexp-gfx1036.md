@@ -1,0 +1,4 @@
+# shader
+
+## change [v_floor_f64, v_ceil_f64, v_fract_f64, v_frexp_mant_f64 and v_frexp_exp_i32_f64]
+- [v_floor_f64, v_ceil_f64, v_fract_f64, v_frexp_mant_f64 and v_frexp_exp_i32_f64](../../../core/shader/recompiler/Translation/src/Float64Instructions.cpp) follow the `FLOAT_MODE` f16/f64 denormal field: bits 0 and 1 (clear = flush) apply to inputs and outputs in every mode (`0..3`), `v_frexp_exp_i32_f64` flushes only its input, `v_floor_f64` and `v_ceil_f64` ignore `f16/f64` rounding, and `v_fract_f64` follows `f16/f64` rounding (`0..3`). Measured on RDNA2 (`gfx1031`, Radeon RX 6700 XT, AMD Windows driver 32.0.21045.5002 through HIP, across all four `f16/f64` denormal/rounding modes at `IEEE=0/1` over 17 inputs; corroborated on `gfx1036` across `denorm16={0..3}` and `round16={0..3}`). The PS5's gfx1013 is not measured.
