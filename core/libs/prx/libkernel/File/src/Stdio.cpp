@@ -1236,6 +1236,44 @@ int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
     return ftruncate_nid_postfix(d, length) == 0 ? 0 : SceErrorFromErrno(*__error_nid_postfix());
 }
 
+extern "C" int APS5_VABI posix_fallocate_nid_postfix(int fd, int64_t offset, int64_t len) {
+    if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd) || GuestSockets::IsOpen(fd) || File::IsDirectoryDescriptor(fd)) {
+        return GUEST_EBADF;
+    }
+    if (offset < 0 || len <= 0) {
+        return GUEST_EINVAL;
+    }
+    if (offset > std::numeric_limits<int64_t>::max() - len) {
+        return GUEST_EFBIG;
+    }
+#ifdef _WIN32
+    const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([fd] { return ::_get_osfhandle(fd); }));
+    if (handle == INVALID_HANDLE_VALUE) return GUEST_EBADF;
+    LARGE_INTEGER currentSize{};
+    if (!::GetFileSizeEx(handle, &currentSize)) return GUEST_EBADF;
+    if (currentSize.QuadPart < offset + len) {
+        int err = NativeFtruncate(fd, offset + len);
+        if (err != 0) {
+            if (err == EACCES) return GUEST_EINVAL;
+            if (err == ENOSPC) return GUEST_ENOSPC;
+            if (err == EFBIG) return GUEST_EFBIG;
+            return GUEST_EINVAL;
+        }
+    }
+    return 0;
+#else
+    int err = ::posix_fallocate(fd, static_cast<off_t>(offset), static_cast<off_t>(len));
+    if (err != 0) {
+        if (err == EBADF) return GUEST_EBADF;
+        if (err == EINVAL) return GUEST_EINVAL;
+        if (err == EFBIG) return GUEST_EFBIG;
+        if (err == ENOSPC) return GUEST_ENOSPC;
+        return SceErrorFromErrno(err) & 0xffff;
+    }
+    return 0;
+#endif
+}
+
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
     if (!GuestSockets::IsOpen(d) && !DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
     if (whence < 0 || whence > 2) return PosixFailure(GUEST_EINVAL);
