@@ -1378,10 +1378,31 @@ float APS5_VABI copysignf_nid_postfix(float x, float y) {
     return std::copysign(x, y);
 }
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
+extern "C++" {
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_floor.c, s_ceil.c, s_floorf.c and s_ceilf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_floor.c */
+template<typename TFloat, typename TBits, int FractionBits>
+static TFloat RoundToward(TFloat x, bool up, TFloat huge) {
+    constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * 8 - 1);
+    TBits bits = std::bit_cast<TBits>(x);
+    const int exponent = static_cast<int>((bits & ~Sign) >> FractionBits) - Bias;
+    if (exponent >= FractionBits) return x;
+    const bool away = ((bits & Sign) != 0) != up;
+    const TBits mask = exponent < 0 ? ~Sign : (TBits{1} << (FractionBits - exponent)) - 1;
+    if ((bits & mask) == 0) return x;
+    [[maybe_unused]] const volatile TFloat inexact = huge + x;
+    if (exponent < 0) return std::bit_cast<TFloat>((bits & Sign) | (away ? static_cast<TBits>(Bias) << FractionBits : TBits{0}));
+    if (away) bits += mask + 1;
+    return std::bit_cast<TFloat>(bits & ~mask);
+}
+}
 double APS5_VABI trunc_nid_postfix(double x) { return std::isnan(x) ? x + x : std::trunc(x); }
-double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : std::ceil(x); }
+double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, true, 1.0e300); }
 float APS5_VABI truncf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::trunc(x); }
-float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::ceil(x); }
+float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, true, 1.0e30f); }
+double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : RoundToward<double, std::uint64_t, 52>(x, false, 1.0e300); }
+float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : RoundToward<float, std::uint32_t, 23>(x, false, 1.0e30f); }
 double APS5_VABI fma_nid_postfix(double x, double y, double z) { return std::fma(x, y, z); }
 float APS5_VABI fmaf_nid_postfix(float x, float y, float z) { return std::fma(x, y, z); }
 double APS5_VABI fmin_nid_postfix(double x, double y) { return GuestFmin(x, y); }
