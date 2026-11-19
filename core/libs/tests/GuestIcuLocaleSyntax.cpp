@@ -247,6 +247,81 @@ void CheckGuestStatus() {
 #endif
 }
 
+void CheckGuestKeywordStrings() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 3 * pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* mapping = mmap(nullptr, 3 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* pages = static_cast<char*>(mapping);
+#endif
+    std::memset(pages, 'Q', 3 * pageSize);
+    char* const readOnly = pages;
+    char* const writable = pages + pageSize;
+    char* const guard = pages + 2 * pageSize;
+    std::strcpy(readOnly, "de");
+    char* const keywordAtEnd = guard - sizeof("currency");
+    std::strcpy(keywordAtEnd, "currency");
+    char* const valueAtEnd = keywordAtEnd - sizeof("CHF");
+    std::strcpy(valueAtEnd, "CHF");
+    char* const bufferNearEnd = valueAtEnd - 32;
+    std::strcpy(bufferNearEnd, "de");
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(readOnly, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(guard, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(readOnly, pageSize, PROT_READ) == 0);
+    Require(mprotect(guard, pageSize, PROT_NONE) == 0);
+#endif
+    const auto* const unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    std::array<char, 32> buffer;
+    buffer.fill('Q');
+    std::strcpy(buffer.data(), "de");
+    const auto before = buffer;
+    std::int32_t status = 0;
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix(unmapped, "CHF", buffer.data(), 32, &status); }));
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("currency", unmapped, buffer.data(), 32, &status); }));
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("currency", "CHF", const_cast<char*>(unmapped), 32, &status); }));
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("currency", "CHF", readOnly, 32, &status); }));
+    Require(status == 0 && buffer == before && std::strcmp(readOnly, "de") == 0);
+    Require(uloc_setKeywordValue_nid_postfix("currency", "CHF", readOnly, 3, &status) == 15 && status == 15);
+    status = 0;
+    Require(uloc_setKeywordValue_nid_postfix(keywordAtEnd, valueAtEnd, buffer.data(), 32, &status) == 15 && status == 0);
+    Require(std::strcmp(buffer.data(), "de@currency=CHF") == 0);
+    Require(std::equal(buffer.begin() + 16, buffer.end(), before.begin() + 16));
+    Require(uloc_setKeywordValue_nid_postfix("currency", "CHF", bufferNearEnd, INT32_MAX, &status) == 15 && status == 0);
+    Require(std::strcmp(bufferNearEnd, "de@currency=CHF") == 0 && bufferNearEnd[16] == 'Q');
+    std::strcpy(bufferNearEnd, "de");
+    std::array<char, 32> nearEndBefore;
+    std::memcpy(nearEndBefore.data(), bufferNearEnd, nearEndBefore.size());
+    Require(uloc_setKeywordValue_nid_postfix("currency", "CHF", bufferNearEnd, 15, &status) == 15 && status == 15);
+    Require(std::memcmp(bufferNearEnd, nearEndBefore.data(), nearEndBefore.size()) == 0);
+    char* const unterminated = guard - 4;
+    std::memcpy(unterminated, "dede", 4);
+    status = 0;
+    Require(uloc_setKeywordValue_nid_postfix("currency", "CHF", unterminated, 3, &status) == 0 && status == 1);
+    status = 0;
+    Require(uloc_setKeywordValue_nid_postfix("currency", unmapped, unterminated, 3, &status) == 0 && status == 1);
+    status = 0;
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("currency", "CHF", unterminated, 4, &status); }));
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(mapping, 3 * pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -254,4 +329,5 @@ int main() {
     CheckKeywordUpdates();
     CheckKeywordErrors();
     CheckGuestStatus();
+    CheckGuestKeywordStrings();
 }
