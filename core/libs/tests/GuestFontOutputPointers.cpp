@@ -60,6 +60,48 @@ static const Font::SysDriver* DriverWithUnreadableTerm(const Font::SysDriver* dr
     return reinterpret_cast<const Font::SysDriver*>(copy);
 }
 
+static std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    return static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+#endif
+}
+
+static const Font::SysDriver* DriverOnOwnPage(const Font::SysDriver* driver) {
+    Require(sizeof(Font::SysDriver) <= PageSize());
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, PageSize(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, PageSize(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memcpy(page, driver, sizeof(Font::SysDriver));
+    return static_cast<const Font::SysDriver*>(page);
+}
+
+static void SetDriverReadable(const Font::SysDriver* driver, bool readable) {
+    void* page = const_cast<Font::SysDriver*>(driver);
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, PageSize(), readable ? PAGE_READWRITE : PAGE_NOACCESS, &previous) != 0);
+#else
+    Require(mprotect(page, PageSize(), readable ? PROT_READ | PROT_WRITE : PROT_NONE) == 0);
+#endif
+}
+
+static void ReleaseDriverPage(const Font::SysDriver* driver) {
+    void* page = const_cast<Font::SysDriver*>(driver);
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, PageSize()) == 0);
+#endif
+}
+
 static std::vector<unsigned char> BuildCharacterFont() {
     return FontFixture::BuildFont(3, {
         {"cmap", FontFixture::Words({0, 1, 3, 1, 0, 12, 4, 40, 0, 6, 4, 1, 2, 'A', 'V', 0xFFFF, 0, 'A', 'V', 0xFFFF, 1 - 'A', 2 - 'V', 1, 0, 0, 0})},
@@ -177,5 +219,16 @@ int main() {
 
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK && library == nullptr);
+
+    auto* const pagedDriver = DriverOnOwnPage(sceFontSelectLibraryFt(0));
+    FontLibrary pagedLibrary = nullptr;
+    Require(sceFontCreateLibrary(&memory, pagedDriver, &pagedLibrary) == SCE_FONT_OK && pagedLibrary != nullptr);
+    SetDriverReadable(pagedDriver, false);
+    errno = 71;
+    Require(sceFontDestroyLibrary(&pagedLibrary) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71 && pagedLibrary != nullptr);
+    SetDriverReadable(pagedDriver, true);
+    Require(sceFontDestroyLibrary(&pagedLibrary) == SCE_FONT_OK && pagedLibrary == nullptr);
+    ReleaseDriverPage(pagedDriver);
     return 0;
 }

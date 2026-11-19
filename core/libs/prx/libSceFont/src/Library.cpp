@@ -206,7 +206,9 @@ int APS5_VABI sceFontDestroyLibrary(FontLibrary* pLibrary) {
     if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* lib = static_cast<FontLibNative*>(*pLibrary);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
-    if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
+    decltype(lib->sys_driver->term) termFn = nullptr;
+    if (lib->sys_driver && !CopyInGuest(termFn, &lib->sys_driver->term)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (termFn) termFn(lib);
     const auto freeFn = lib->iface->dealloc;
     void* allocCtx = lib->alloc_ctx;
     if ((lib->flags & 1u) != 0 && lib->device_cache_buf) freeFn(allocCtx, lib->device_cache_buf);
