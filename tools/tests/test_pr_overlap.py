@@ -753,5 +753,20 @@ class BaseSourcesTests(unittest.TestCase):
             self.assertEqual(pr_overlap.base_sources("root", "ref"), [])
 
 
+class MergeBaseTests(unittest.TestCase):
+    def test_single_merge_base_is_returned(self):
+        with patch.object(pr_overlap, "git", return_value="abc\n") as git:
+            self.assertEqual(pr_overlap.merge_base("refs/pr/1"), "abc")
+        git.assert_called_once_with("merge-base", "--all", pr_overlap.BASE_REF, "refs/pr/1")
+
+    def test_multiple_bases_pick_the_one_with_the_smallest_diff(self):
+        def fake_git(*args):
+            if args[0] == "merge-base":
+                return "one two three\n"
+            return {"one": "a\0b\0c\0", "two": "a\0", "three": "a\0b\0"}[args[4]]
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.merge_base("refs/pr/2"), "two")
+
+
 if __name__ == "__main__":
     unittest.main()
