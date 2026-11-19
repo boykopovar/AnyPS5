@@ -77,7 +77,7 @@ static void CheckRoundingAndScaling() {
 }
 
 static void CheckSqrtlNegativeFlags() {
-    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L}) {
+    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L, -std::numeric_limits<long double>::infinity()}) {
         Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
         Require(std::feraiseexcept(FE_INEXACT) == 0);
         errno = 0;
@@ -773,6 +773,82 @@ static bool RejectsKeepingErrno(Call call) {
     return caught && errno == 71;
 }
 
+static void CheckExpOffsetsBeyond16Bits() {
+    const auto raises = [](int flag, int error) {
+        const bool matched = (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == flag && errno == error;
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return matched;
+    };
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    long double extended = -23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == -1 && SameBits(extended, Extended(0x5aa1, 0x8140e579a04783f7ull)) && raises(0, 0));
+    extended = 23000.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == -1 && SameBits(extended, Extended(0x255c, 0xfd846e6c1f803df8ull)) && raises(0, 0));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 1.0L;
+    Require(_LExp_nid_postfix(&extended, 1.0L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, 40000) == 1 && SameBits(extended, Extended(0x7fff, 0x8000000000000000ull)) && raises(FE_OVERFLOW, ERANGE));
+    extended = 0.0L;
+    Require(_LExp_nid_postfix(&extended, 1.5L, -40000) == 0 && SameBits(extended, Extended(0, 0)) && raises(FE_UNDERFLOW, ERANGE));
+    double binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, 40000) == 1 && binary == std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 1.0;
+    Require(_Exp_nid_postfix(&binary, 1.0, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    binary = -700.0;
+    Require(_Exp_nid_postfix(&binary, -1.0, 40000) == 1 && binary == -std::numeric_limits<double>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    binary = 0.0;
+    Require(_Exp_nid_postfix(&binary, 1.5, -40000) == 0 && binary == 0.0 && !std::signbit(binary) && raises(FE_UNDERFLOW, ERANGE));
+    float single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, 40000) == 1 && single == std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+    single = 1.0f;
+    Require(_FExp_nid_postfix(&single, 1.0f, -40000) == 0 && single == 0.0f && !std::signbit(single) && raises(FE_UNDERFLOW, ERANGE));
+    single = 0.0f;
+    Require(_FExp_nid_postfix(&single, -1.5f, 40000) == 1 && single == -std::numeric_limits<float>::infinity() && raises(FE_OVERFLOW, ERANGE));
+}
+
+static void CheckPowlBitsFlagsAndErrno() {
+    struct Case {
+        std::uint16_t baseExponent;
+        std::uint64_t baseMantissa;
+        std::uint16_t powerExponent;
+        std::uint64_t powerMantissa;
+        std::uint16_t resultExponent;
+        std::uint64_t resultMantissa;
+        int flags;
+        int error;
+    };
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    for (const Case& entry : {
+             Case{0x4000, 0x8000000000000000ull, 0x4002, 0xa000000000000000ull, 0x4009, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x4000, 0x8000000000000000ull, 0x3ffe, 0x8000000000000000ull, 0x3fff, 0xb504f333f9de6484ull, FE_INEXACT, 0},
+             Case{0x3fff, 0xc000000000000000ull, 0x4000, 0xa000000000000000ull, 0x4000, 0xb05cfeb4522aa265ull, FE_INEXACT, 0},
+             Case{0x4013, 0xd94b85970a38121dull, 0xc004, 0xe806a6636bc840deull, 0x3b4a, 0xbf8a7d7776971378ull, FE_INEXACT, 0},
+             Case{0x3ffe, 0xc5b5921c65706fc7ull, 0xc009, 0xe540000000000000ull, 0x42aa, 0xc893741921582f7cull, FE_INEXACT, 0},
+             Case{0x3fff, 0xb504f333f9de6484ull, 0x400f, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_OVERFLOW | FE_INEXACT, ERANGE},
+             Case{0x4002, 0xa000000000000000ull, 0xc00b, 0x9c40000000000000ull, 0x0000, 0x0000000000000000ull, FE_UNDERFLOW | FE_INEXACT, ERANGE},
+             Case{0xc002, 0x8000000000000000ull, 0x3ffd, 0xaaaaaaaaaaaaaaabull, 0x7fff, 0xc000000000000000ull, FE_INVALID, EDOM},
+             Case{0x0000, 0x0000000000000000ull, 0xbfff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0x8000, 0x0000000000000000ull, 0xc000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, FE_DIVBYZERO, ERANGE},
+             Case{0xc000, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xc002, 0x8000000000000000ull, FE_INEXACT, 0},
+             Case{0x3fff, 0x8000000000000000ull, 0x7fff, 0xc000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0x7fff, 0xc000000000000000ull, 0x0000, 0x0000000000000000ull, 0x3fff, 0x8000000000000000ull, 0, 0},
+             Case{0xffff, 0x8000000000000000ull, 0x4000, 0xc000000000000000ull, 0xffff, 0x8000000000000000ull, 0, 0},
+             Case{0x3ffe, 0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0, 0},
+         }) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const long double result = powl_nid_postfix(Extended(entry.baseExponent, entry.baseMantissa), Extended(entry.powerExponent, entry.powerMantissa));
+        Require(SameBits(result, Extended(entry.resultExponent, entry.resultMantissa)));
+        Require((std::fetestexcept(FE_ALL_EXCEPT) & Flags) == entry.flags && errno == entry.error);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    errno = 0;
+}
+
 static void CheckGuestPointers() {
     auto* unmappedValue = reinterpret_cast<long double*>(std::uintptr_t{0x10});
     auto* unmappedExponent = reinterpret_cast<short*>(std::uintptr_t{0x10});
@@ -860,6 +936,8 @@ int main(int argc, char** argv) {
     CheckFmalDirectedZero();
     CheckFmalFarApartDirected();
     CheckExpSpecialValues();
+    CheckExpOffsetsBeyond16Bits();
+    CheckPowlBitsFlagsAndErrno();
     CheckLogSpecialValues();
     CheckGuestPointers();
     return 0;
