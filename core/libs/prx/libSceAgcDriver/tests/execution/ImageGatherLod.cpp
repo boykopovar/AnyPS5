@@ -57,7 +57,7 @@ constexpr std::array<float, Threads> Lods{
     0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 6.0f, 0.49f, 0.5f,
     0.51f, 1.49f, 1.5f, 2.5f, -0.7f, -3.0f, 4294967296.0f, std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::quiet_NaN(), 1.25f, 2.75f, 3.2f, 0.25f, 1.75f, -0.4f, 2.0f,
-    3.5f, 0.75f, 1.0f, 2.25f, 0.0f, 3.0f, 1.5f, 2.6f,
+    3.5f, 0.75f, 1.0f, 2.25f, 1.498046875f, 1.498f, 1.5f, 2.6f,
 };
 
 struct Variant {
@@ -159,7 +159,7 @@ std::uint32_t Level(float lod, const Variant& variant) {
     const float biased = lod + static_cast<float>(variant.biasRaw) / 256.0f;
     const float sampled = std::min(std::isnan(biased) ? static_cast<float>(variant.minLodRaw) / 256.0f : std::max(biased, static_cast<float>(variant.minLodRaw) / 256.0f), static_cast<float>(variant.maxLodRaw) / 256.0f);
     const float limited = clamp(std::max(sampled, static_cast<float>(variant.textureMinLodRaw) / 256.0f), 0.0f, static_cast<float>(Levels - 1u));
-    return static_cast<std::uint32_t>(std::clamp(std::ceil(limited + 0.5f) - 1.0f, 0.0f, static_cast<float>(Levels - 1u)));
+    return static_cast<std::uint32_t>(std::clamp(std::floor(limited + 0.501953125f), 0.0f, static_cast<float>(Levels - 1u)));
 }
 
 std::array<std::uint32_t, 4> Expected(std::uint32_t tid, const Variant& variant) {

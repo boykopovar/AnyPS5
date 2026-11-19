@@ -1,0 +1,5 @@
+# shader
+
+## change [Explicit-LOD gathers]
+
+- [Explicit-LOD gathers](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) (`image_gather4_l`, 2D, no offset or depth compare) are emulated: no SPIR-V gather takes an LOD without `SPV_AMD_texture_gather_bias_lod`, so the shader picks the level. Measured on RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)): the LOD plus `LOD_BIAS`, raised to the S# `MIN_LOD`, lowered to its `MAX_LOD`, raised to the T# `MIN_LOD`, picks level floor(lod + 0.5 + 1/512) above `BASE_LEVEL`, so ties go up and 1.498047 already reads level 2; a linear `MIP_FILTER` gathers that level; `MIP_FILTER` none reads the T# `MIN_LOD` rounded down. Unverified: `LOD_BIAS_SEC` ignored, mirror-once modes taken as mirror-clamp to edge, coordinates clamped to +-2^24 texels. Images or samplers from a table, the border clamp modes (4, 6), offsets, depth compares, 2D arrays, 3D and cube images, and `image_gather4_b` still gather the base level; on 1D images `image_gather4_l` throws.
