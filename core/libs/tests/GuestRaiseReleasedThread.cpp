@@ -1,12 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "SceTypes.hpp"
-#include <malloc.h>
+#include <dlfcn.h>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <new>
 #include <thread>
 
 static constexpr int GUEST_SIGUSR1 = 30;
@@ -18,27 +18,16 @@ static void Require(bool value) { if (!value) std::abort(); }
 static std::atomic<void*> watched{nullptr};
 static std::atomic<bool> watchedReleased{false};
 
-static void Release(void* pointer) noexcept {
-    if (pointer == nullptr) return;
-    if (pointer == watched.load(std::memory_order_acquire)) {
-        std::memset(pointer, 0, malloc_usable_size(pointer));
+extern "C" void GuestHeapFree_nid_postfix(void* pointer) {
+    static const auto actual = reinterpret_cast<void (*)(void*)>(dlsym(RTLD_NEXT, "GuestHeapFree_nid_postfix"));
+    Require(actual != nullptr);
+    if (pointer != nullptr && pointer == watched.load(std::memory_order_acquire)) {
+        std::memset(pointer, 0, GuestHeap::GuestHeapUsableSize_nid_postfix(pointer));
         watchedReleased.store(true, std::memory_order_release);
         return;
     }
-    std::free(pointer);
+    actual(pointer);
 }
-
-void* operator new(std::size_t bytes) {
-    if (void* pointer = std::malloc(bytes != 0 ? bytes : 1)) return pointer;
-    throw std::bad_alloc();
-}
-void* operator new[](std::size_t bytes) { return operator new(bytes); }
-void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes != 0 ? bytes : 1); }
-void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes != 0 ? bytes : 1); }
-void operator delete(void* pointer) noexcept { Release(pointer); }
-void operator delete[](void* pointer) noexcept { Release(pointer); }
-void operator delete(void* pointer, std::size_t) noexcept { Release(pointer); }
-void operator delete[](void* pointer, std::size_t) noexcept { Release(pointer); }
 
 static std::atomic<int> handled{0};
 
