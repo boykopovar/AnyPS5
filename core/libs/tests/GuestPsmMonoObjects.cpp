@@ -111,12 +111,42 @@ int main() {
     SYSTEM_INFO sysInfo{};
     GetSystemInfo(&sysInfo);
     const std::size_t pageSize = sysInfo.dwPageSize;
+    auto* mapped = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(mapped != nullptr, "allocate mapped pages");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* mapped = static_cast<unsigned char*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(mapped != MAP_FAILED, "allocate mapped pages");
+#endif
+    unsigned char* crossSurrogate = mapped + pageSize - (0x14 + sizeof(std::uint16_t));
+    const std::int32_t pairLen = 2;
+    const std::uint16_t pairUnits[2] = {0xD83D, 0xDE00};
+    std::memcpy(crossSurrogate + 0x10, &pairLen, sizeof(pairLen));
+    std::memcpy(crossSurrogate + 0x14, pairUnits, sizeof(pairUnits));
+    char* pairUtf8 = ScePsmMonoStringToUtf8(crossSurrogate);
+    Require(pairUtf8 != nullptr && std::strcmp(pairUtf8, "\xF0\x9F\x98\x80") == 0, "surrogate pair crossing mapped page boundary");
+    ScePsmMonoFree(pairUtf8);
+
+    unsigned char* oddCross = mapped + pageSize - (0x14 + 3);
+    const std::int32_t oddLen = 4;
+    const std::uint16_t oddUnits[4] = {u'a', u'b', u'c', u'd'};
+    std::memcpy(oddCross + 0x10, &oddLen, sizeof(oddLen));
+    std::memcpy(oddCross + 0x14, oddUnits, sizeof(oddUnits));
+    char* oddUtf8 = ScePsmMonoStringToUtf8(oddCross);
+    Require(oddUtf8 != nullptr && std::strcmp(oddUtf8, "abcd") == 0, "odd-address string crossing mapped page boundary");
+    ScePsmMonoFree(oddUtf8);
+#ifdef _WIN32
+    VirtualFree(mapped, 0, MEM_RELEASE);
+#else
+    munmap(mapped, pageSize * 2);
+#endif
+
+#ifdef _WIN32
     auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     Require(pages != nullptr, "allocate guarded pages");
     DWORD prevProt = 0;
     Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &prevProt) != 0, "protect trailing page");
 #else
-    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     auto* pages = static_cast<unsigned char*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     Require(pages != MAP_FAILED, "allocate guarded pages");
     Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0, "protect trailing page");
@@ -133,6 +163,21 @@ int main() {
     std::memcpy(strTail + 0x14, unterminated, sizeof(unterminated));
     errno = 71;
     Require(throwsInvalidArgument([&] { ScePsmMonoStringToUtf8(strTail); }) && errno == 71, "StringToUtf8 spilling into guarded page throws");
+
+    unsigned char* oddGuarded = pages + pageSize - (0x14 + 1);
+    const std::int32_t oneLen = 1;
+    std::memcpy(oddGuarded + 0x10, &oneLen, sizeof(oneLen));
+    oddGuarded[0x14] = 'a';
+    errno = 71;
+    Require(throwsInvalidArgument([&] { ScePsmMonoStringToUtf8(oddGuarded); }) && errno == 71, "odd-address unit straddling guarded page throws");
+
+    unsigned char* lonelyHigh = pages + pageSize - (0x14 + sizeof(std::uint16_t));
+    const std::int32_t highLen = 10;
+    const std::uint16_t highUnit = 0xD83D;
+    std::memcpy(lonelyHigh + 0x10, &highLen, sizeof(highLen));
+    std::memcpy(lonelyHigh + 0x14, &highUnit, sizeof(highUnit));
+    errno = 71;
+    Require(throwsInvalidArgument([&] { ScePsmMonoStringToUtf8(lonelyHigh); }) && errno == 71, "high surrogate at guarded page boundary throws");
 #ifdef _WIN32
     VirtualFree(pages, 0, MEM_RELEASE);
 #else
