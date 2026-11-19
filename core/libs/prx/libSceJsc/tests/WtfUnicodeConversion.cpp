@@ -123,6 +123,13 @@ void TestUtf16ToUtf8() {
     char buffer[4];
     char* target = buffer;
     Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(nullptr, nullptr, &target, buffer + 4, true); }), __LINE__);
+
+    const char16_t* nullSource = nullptr;
+    char sentinel[4];
+    std::memset(sentinel, 0x5A, sizeof(sentinel));
+    char* target2 = sentinel;
+    Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&nullSource, nullptr, &target2, sentinel + 4, true); }), __LINE__);
+    Check(target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
 }
 
 void TestLatin1ToUtf8() {
@@ -141,6 +148,13 @@ void TestLatin1ToUtf8() {
 
     Check(Throws<std::out_of_range>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&source, input + 2, &target, buffer + 1); }), __LINE__);
     Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&source, input + 5, nullptr, buffer + 16); }), __LINE__);
+
+    const unsigned char* nullSource = nullptr;
+    char sentinel[4];
+    std::memset(sentinel, 0x5A, sizeof(sentinel));
+    char* target2 = sentinel;
+    Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&nullSource, input + 5, &target2, sentinel + 4); }), __LINE__);
+    Check(target2 == sentinel && std::memcmp(sentinel, "\x5A\x5A\x5A\x5A", sizeof(sentinel)) == 0, __LINE__);
 }
 
 }
