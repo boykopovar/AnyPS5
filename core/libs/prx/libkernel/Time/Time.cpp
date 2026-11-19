@@ -425,21 +425,45 @@ int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) 
     return GUEST_EIO;
 }
 
-static bool CpuTimeNanos(bool callingThread, bool countKernel, std::uint64_t* nanos) {
+static bool InvariantTsc() {
+    static const bool invariant = GuestCpu::Cpuid(0x80000000u, 0)[0] >= 0x80000007u && (GuestCpu::Cpuid(0x80000007u, 0)[3] & (1u << 8u)) != 0;
+    return invariant;
+}
+
+bool HostThreadCpuNanos_nid_no_patch(void* thread, std::uint64_t* nanos) {
+    if (InvariantTsc()) {
+        const std::uint64_t frequency = HostTscFrequency_nid_no_patch();
+        ULONG64 cycles = 0;
+        if (!QueryThreadCycleTime(static_cast<HANDLE>(thread), &cycles)) return false;
+        *nanos = cycles / frequency * 1000000000ULL + cycles % frequency * 1000000000ULL / frequency;
+        return true;
+    }
     FILETIME creation{};
     FILETIME exitTime{};
     FILETIME kernel{};
     FILETIME user{};
-    if (callingThread) {
-        if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user)) {
-            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
-            return false;
-        }
-    } else {
-        if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user)) {
-            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
-            return false;
-        }
+    if (!GetThreadTimes(static_cast<HANDLE>(thread), &creation, &exitTime, &kernel, &user)) return false;
+    const auto toTicks = [](const FILETIME& time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    *nanos = (toTicks(user) + toTicks(kernel)) * 100ULL;
+    return true;
+}
+
+static bool ThreadCpuTimeNanos(std::uint64_t* nanos) {
+    if (HostThreadCpuNanos_nid_no_patch(GetCurrentThread(), nanos)) return true;
+    *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+    return false;
+}
+
+static bool ProcessCpuTimeNanos(bool countKernel, std::uint64_t* nanos) {
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user)) {
+        *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+        return false;
     }
     const auto toTicks = [](const FILETIME& time) {
         return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
@@ -515,7 +539,7 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
     if (clockId == 1 || clockId == 2) {
 #ifdef _WIN32
         std::uint64_t nanos = 0;
-        if (!CpuTimeNanos(false, clockId == 2, &nanos)) return -1;
+        if (!ProcessCpuTimeNanos(clockId == 2, &nanos)) return -1;
 #else
         const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
 #endif
@@ -552,7 +576,7 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
     }
     if (clockId == 14 || clockId == 15) {
         std::uint64_t nanos = 0;
-        if (!CpuTimeNanos(clockId == 14, true, &nanos)) return -1;
+        if (!(clockId == 14 ? ThreadCpuTimeNanos(&nanos) : ProcessCpuTimeNanos(true, &nanos))) return -1;
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
