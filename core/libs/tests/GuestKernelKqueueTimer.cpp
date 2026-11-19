@@ -108,7 +108,7 @@ void AuditValidTimerRegistrationAndFiring() {
     change.flags = EvAdd | EvOneshot;
     change.fflags = NoteUseconds;
     change.data = 10000;
-    change.udata = 123;
+    change.udata = reinterpret_cast<void*>(std::uintptr_t{123});
 
     KernelEvent event{};
     Require(kevent_nid_postfix(kq, &change, 1, &event, 1, nullptr) >= 0);
@@ -117,7 +117,7 @@ void AuditValidTimerRegistrationAndFiring() {
     change.ident = 2;
     change.fflags = NoteMseconds;
     change.data = 5;
-    change.udata = 456;
+    change.udata = reinterpret_cast<void*>(std::uintptr_t{456});
     Require(kevent_nid_postfix(kq, &change, 1, &event, 1, nullptr) >= 0);
 
     change.flags = EvDelete;
