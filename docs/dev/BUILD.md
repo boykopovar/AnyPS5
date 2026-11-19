@@ -65,6 +65,7 @@ python3 tools/select_tests.py ctest build --output-on-failure
 - Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can block or quarantine the executables that the relinker tests create and run, which fails `optional_plt`, `empty_tls`, `windows_address_space`, `windows_bss`, `windows_fixed_base`, `windows_icon`, `loadexec_arguments`, `exec_arguments` and `exec_sys_*_arguments`. CTest sets `TMPDIR`, `TEMP` and `TMP` of the relinker tests to `core/relinker/test-temp` in the build directory, so setting them before running `ctest` does not move these files; add that directory (or the build directory if `relinker.exe` itself is quarantined) to the scanner's exclusions instead.
 - On Windows, Microsoft Defender quarantines some AGC test executables as `Trojan:Win64/ShellCode.MKA!MTB`, because they carry generated machine code: 34 targets in one full build on Windows 11, `agc_shader_replay.exe` and 33 `tests/agc_*_tests.exe`. The `objcopy` post-step of those targets then fails with `Invalid argument`, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
+- Smart App Control (Windows 11) blocks the executables the build and the relinker tests produce, because none of them is signed, and it is not an antivirus setting, so scanner exclusions do not apply to it. The Python relinker tests then fail with `OSError: [WinError 4551] An Application Control policy has blocked this file` when they start `relinker.exe` or a converted program, and CTest reports the native test executables as `Not Run` (`Process not started`). `VerifiedAndReputablePolicyState` under `HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` is 1 while it is on and 0 once it is off. Turn it off under Windows Security > App & browser control > Smart App Control settings before building; only recent Windows updates allow turning it back on afterwards without a reinstall.
 - Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
 
 `tools/package_release.py --output <dir>` writes the release packages. With `--docs <dir>` it collects the documentation into the output folder. Otherwise `--platform` picks the package: `headers` writes the public header package for `--version` (and takes no `--build` or `--revision`); `linux`, `windows` and `web` package the build tree given by `--build` for `--version`, and `web` also needs `--revision`, which the other platforms refuse.
@@ -437,6 +438,8 @@ Set `APS5_TIME_SCALE=<factor>` to scale `sceKernelGetProcessTime`, `sceKernelGet
 
 With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on stderr at most every 10 s. A line either counts the last 10 s (its counters are read and cleared when it is printed; the text says `(10 s)` or `over 10 s`) or counts from the start of the process (the text says `(cumulative)`). A rate is the difference of two cumulative lines divided by the time between them.
 
+With `APS5_PROFILE_DRAW=1`, the `lock wait` row in `[draw] driver phases` can include time spent enqueueing a draw, including waiting for space in the draw pipeline. Draws that acquire the GPU mutex also charge that acquisition to the same row. Use the per-thread `[lock]` counters or `GpuMutex.wait.<site>` trace slices to measure GPU mutex contention. For draw pipeline backpressure, use the `for room` time on the `[draw] pipelined` line. Check the producer's sampled stacks for `DrawPipeline::Enqueue` and the draw committer's trace to see where the time goes.
+
 | Line | Counts |
 |---|---|
 | `[rescache] revalidate` | last 10 s |
@@ -471,6 +474,10 @@ ctest --test-dir build/register-context --output-on-failure
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
 
+
+## Build inspection tools
+
+- `tools/compile_database_inventory.py <database>` groups the raw records of a saved compilation database without invoking a compiler or build tool.
 
 ## Test selection tools
 

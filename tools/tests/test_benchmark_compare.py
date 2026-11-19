@@ -560,6 +560,14 @@ class BenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(benchmark_compare.benchmark_display(16.6666666), "16.6667")
         self.assertEqual(benchmark_compare.benchmark_display(1234567.0), "1.23457e+06")
 
+    def test_benchmark_metric_value_walks_dotted_keys_and_raises_for_missing(self):
+        summary = {"metrics": {"fps": 60.0, "frame_ms": {"p99": 17.5}}}
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "fps"), 60.0)
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "frame_ms.p99"), 17.5)
+        self.assertEqual(benchmark_compare.benchmark_metric_value(summary, "frame_ms"), {"p99": 17.5})
+        with self.assertRaises(KeyError):
+            benchmark_compare.benchmark_metric_value(summary, "frame_ms.p50")
+
     def test_read_benchmark_json_reads_plain_bom_and_gzip_and_rejects_bad_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -591,6 +599,39 @@ class BenchmarkHelperTests(unittest.TestCase):
                 benchmark_compare.read_benchmark_json(root)
             with self.assertRaisesRegex(ValueError, "input must be a regular file"):
                 benchmark_compare.read_benchmark_json(root / "missing.json")
+
+class BenchmarkMetricsTests(unittest.TestCase):
+    def test_quantiles_fps_and_means_from_one_interval(self):
+        interval = {"frame_us": [3000, 1000, 2000], "start_s": 0.0, "end_s": 1.5, "gpu_busy_ms": 3.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["frames"], 3)
+        self.assertEqual(metrics["elapsed_s"], 1.5)
+        self.assertEqual(metrics["fps"], 2.0)
+        self.assertEqual(metrics["mean_frame_ms"], 2.0)
+        self.assertEqual(metrics["frame_ms"], {"p50": 2.0, "p90": 3.0, "p99": 3.0, "max": 3.0})
+        self.assertEqual(metrics["gpu_busy_ms_per_frame"], 1.0)
+        self.assertEqual((metrics["zero_frames"], metrics["saturated_frames"]), (0, 0))
+
+    def test_no_frames_gives_no_rates(self):
+        metrics = benchmark_compare.benchmark_metrics([])
+        self.assertEqual(metrics["frames"], 0)
+        self.assertIsNone(metrics["fps"])
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["gpu_busy_ms_per_frame"])
+        self.assertEqual(metrics["frame_ms"], {"p50": None, "p90": None, "p99": None, "max": None})
+
+    def test_saturated_frame_hides_mean_and_its_quantile(self):
+        interval = {"frame_us": [1000, benchmark_compare.UINT32_MAX], "start_s": 0.0, "end_s": 1.0, "gpu_busy_ms": 0.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["saturated_frames"], 1)
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["frame_ms"]["max"])
+
+    def test_zero_length_wall_span_has_no_fps_and_counts_zero_frames(self):
+        interval = {"frame_us": [0, 5000], "start_s": 2.0, "end_s": 2.0, "gpu_busy_ms": 1.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertIsNone(metrics["fps"])
+        self.assertEqual(metrics["zero_frames"], 1)
 
 
 if __name__ == "__main__":
