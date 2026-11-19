@@ -1445,5 +1445,30 @@ class CheckCompileEntryKeyTests(unittest.TestCase):
             self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
 
 
+class CheckCompileResolveSourceTests(unittest.TestCase):
+    def test_existing_file_inside_root_gets_a_relative_name(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "core").mkdir()
+            file = root / "core" / "a.cpp"
+            file.write_text("")
+            source, key = check_compile.resolve_source(file, root)
+            self.assertEqual(source, check_compile.real(file))
+            self.assertEqual(key, "core/a.cpp")
+
+    def test_missing_file_is_still_resolved(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source, key = check_compile.resolve_source(root / "gone.cpp", root)
+            self.assertEqual(key, "gone.cpp")
+            self.assertEqual(source, check_compile.real(root / "gone.cpp"))
+
+    def test_file_outside_root_keeps_an_absolute_name(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            file = Path(other) / "x.cpp"
+            _, key = check_compile.resolve_source(file, Path(name))
+            self.assertEqual(key, check_compile.real(file).as_posix())
+
+
 if __name__ == "__main__":
     unittest.main()
