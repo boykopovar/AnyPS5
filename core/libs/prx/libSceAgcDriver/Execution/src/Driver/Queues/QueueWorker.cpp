@@ -154,6 +154,7 @@ void Driver::reapCompletionLabels() {
 
 void Driver::run(std::uint32_t id) noexcept {
     onWorkerThread() = true;
+    epochQueue() = id;
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);
@@ -291,7 +292,8 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
+                        const auto wake = [&](const auto& done) { return changed.wait_for(lock, std::chrono::microseconds(200), done); };
+                        while (!released() && !wake(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }

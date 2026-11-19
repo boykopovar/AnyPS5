@@ -1026,11 +1026,9 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    _Stdout_nid_postfix.Orientation(-1);
-    const int result = LibcDetail::PrintWindows(format, args);
+    const int result = WriteSecure(&_Stdout_nid_postfix, format, reinterpret_cast<VaList*>(args));
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -1063,11 +1061,9 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
-    _Stdout_nid_postfix.Orientation(-1);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
+    const int result = WriteSecure(&_Stdout_nid_postfix, format, reinterpret_cast<VaList*>(args));
     va_end(args);
     return result;
 }

@@ -99,7 +99,7 @@ bool SeedDefaultState() {
 
 [[maybe_unused]] const bool g_defaultStateSeeded = SeedDefaultState();
 
-std::uint16_t g_rand48Seed[3]{0x330e, 0xabcd, 0x1234};
+std::uint16_t g_rand48Seed[3]{0x330e, 0, 0};
 constexpr std::uint64_t DefaultRand48Multiplier = 0x5deece66dull;
 constexpr std::uint16_t DefaultRand48Addend = 0xb;
 std::uint64_t g_rand48Multiplier = DefaultRand48Multiplier;
