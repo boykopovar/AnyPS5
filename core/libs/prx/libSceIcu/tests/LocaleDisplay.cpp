@@ -12,6 +12,8 @@
 
 static_assert(std::is_same_v<decltype(&uloc_getDisplayScript_nid_postfix),
     std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&uloc_getDisplayCountry_nid_postfix),
+    std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*)>);
 
 namespace {
 
@@ -29,14 +31,17 @@ struct Outcome {
     std::array<char16_t, 64> output;
 };
 
-Outcome CallNative(const char* locale, const char* displayLocale, std::int32_t capacity, std::int32_t incoming) {
+using NativeDisplay = std::int32_t (*)(const char*, const char*, char16_t*, std::int32_t, UErrorCode*);
+using WrappedDisplay = std::int32_t (APS5_VABI*)(const char*, const char*, char16_t*, std::int32_t, std::int32_t*);
+
+Outcome CallNative(NativeDisplay display, const char* locale, const char* displayLocale, std::int32_t capacity, std::int32_t incoming) {
     Outcome result{};
     result.status = incoming;
     result.output.fill(Sentinel);
     const auto* resolvedLocale = locale ? locale : Icu::DefaultLocaleName();
     const auto* resolvedDisplay = displayLocale ? displayLocale : Icu::DefaultLocaleName();
     auto status = static_cast<UErrorCode>(incoming);
-    result.length = uloc_getDisplayScript(
+    result.length = display(
         resolvedLocale,
         resolvedDisplay,
         capacity > 0 ? result.output.data() : nullptr,
@@ -46,11 +51,11 @@ Outcome CallNative(const char* locale, const char* displayLocale, std::int32_t c
     return result;
 }
 
-Outcome CallWrapper(const char* locale, const char* displayLocale, std::int32_t capacity, std::int32_t incoming) {
+Outcome CallWrapper(WrappedDisplay display, const char* locale, const char* displayLocale, std::int32_t capacity, std::int32_t incoming) {
     Outcome result{};
     result.status = incoming;
     result.output.fill(Sentinel);
-    result.length = uloc_getDisplayScript_nid_postfix(
+    result.length = display(
         locale,
         displayLocale,
         capacity > 0 ? result.output.data() : nullptr,
@@ -59,9 +64,10 @@ Outcome CallWrapper(const char* locale, const char* displayLocale, std::int32_t 
     return result;
 }
 
-void CheckCase(const char* locale, const char* displayLocale, std::int32_t capacity, std::int32_t incoming = 0) {
-    const auto expected = CallNative(locale, displayLocale, capacity, incoming);
-    const auto actual = CallWrapper(locale, displayLocale, capacity, incoming);
+void CheckCase(NativeDisplay native, WrappedDisplay wrapped, const char* locale, const char* displayLocale,
+               std::int32_t capacity, std::int32_t incoming = 0) {
+    const auto expected = CallNative(native, locale, displayLocale, capacity, incoming);
+    const auto actual = CallWrapper(wrapped, locale, displayLocale, capacity, incoming);
     Require(actual.length == expected.length);
     Require(actual.status == expected.status);
     Require(actual.output == expected.output);
@@ -74,15 +80,29 @@ void CheckBehavior() {
     for (const auto* locale : locales)
         for (const auto* display : displays)
             for (const auto capacity : capacities)
-                CheckCase(locale, display, capacity);
+                CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, locale, display, capacity);
     for (const auto capacity : capacities) {
-        CheckCase(nullptr, "en", capacity);
-        CheckCase("sr_Latn", nullptr, capacity);
-        CheckCase(nullptr, nullptr, capacity);
+        CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, nullptr, "en", capacity);
+        CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, "sr_Latn", nullptr, capacity);
+        CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, nullptr, nullptr, capacity);
     }
-    CheckCase("sr_Latn", "en", -1);
-    CheckCase("sr_Latn", "en", 8, -127);
-    CheckCase("sr_Latn", "en", 8, 1);
+    CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, "sr_Latn", "en", -1);
+    CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, "sr_Latn", "en", 8, -127);
+    CheckCase(uloc_getDisplayScript, uloc_getDisplayScript_nid_postfix, "sr_Latn", "en", 8, 1);
+
+    constexpr const char* countryLocales[] = {"en_US", "fr_CA", "zh_Hant_TW", "sr_Latn_RS", "de"};
+    for (const auto* locale : countryLocales)
+        for (const auto* display : displays)
+            for (const auto capacity : capacities)
+                CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, locale, display, capacity);
+    for (const auto capacity : capacities) {
+        CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, nullptr, "en", capacity);
+        CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", nullptr, capacity);
+        CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, nullptr, nullptr, capacity);
+    }
+    CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", -1);
+    CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", 8, -127);
+    CheckCase(uloc_getDisplayCountry, uloc_getDisplayCountry_nid_postfix, "en_US", "en", 8, 1);
 }
 
 template <typename Action>
@@ -138,6 +158,12 @@ void CheckGuestPointers() {
         uloc_getDisplayScript_nid_postfix("sr_Latn", "en", reinterpret_cast<char16_t*>(0x10), 16, &status);
     });
     Require(errno == 76 && status == 0);
+    status = 0;
+    errno = 77;
+    RequireInvalidArgument([&] {
+        uloc_getDisplayCountry_nid_postfix("en_US", "en", reinterpret_cast<char16_t*>(0x10), 16, &status);
+    });
+    Require(errno == 77 && status == 0);
     status = 1;
     Require(uloc_getDisplayScript_nid_postfix(
         reinterpret_cast<const char*>(0x10),
