@@ -193,7 +193,16 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
         const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
-        if (load.FileSize == 0 || (congruent && prefix == 0))
+        const bool alignmentCongruent = load.Alignment <= 1 || load.Offset % load.Alignment == load.MappedAddress % load.Alignment;
+        if (load.FileSize == 0) {
+            if (!alignmentCongruent) {
+                if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
+                    lowered = std::max(lowered, load.Alignment);
+                load.Alignment = congruent ? kDefaultLoadAlignment : 1;
+            }
+            continue;
+        }
+        if (congruent && prefix == 0 && alignmentCongruent)
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -208,7 +217,7 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
             }
         }
         const auto mapped = load.Offset - prefix;
-        bool differs = !congruent;
+        bool differs = !congruent || !alignmentCongruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
             differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
         if (!differs)
