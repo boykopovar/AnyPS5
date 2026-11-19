@@ -818,9 +818,22 @@ long double APS5_VABI sqrtl_nid_postfix(long double x) {
     return std::sqrt(x);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_modfl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_modfl.c */
 long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
+    const ExtendedBits bits = Bits(x);
+    const int exponent = (bits.signExponent & 0x7fff) - 16383;
+    const long double zero = JoinExtended(0, static_cast<std::uint16_t>(bits.signExponent & 0x8000));
     long double whole = x;
-    const long double fraction = std::isnan(x) ? x : std::modf(x, &whole);
+    long double fraction = zero;
+    if (exponent < 0) {
+        whole = zero;
+        fraction = x;
+    } else if (exponent >= 63) {
+        if (x != x) fraction = x;
+    } else if (const std::uint64_t mask = (std::uint64_t{1} << (63 - exponent)) - 1; (bits.mantissa & mask) != 0) {
+        whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
+        fraction = x - whole;
+    }
     GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
     return fraction;
 }
