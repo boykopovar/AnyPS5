@@ -243,7 +243,8 @@ void Ngs2Voice::ResetSetup() {
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
     filters.clear();
-    compressor.gain.fill(1.0f);
+    if (!PS4_LIBRARY && rack->rackId == SCE_NGS2_RACK_ID_MASTERING) compressor = {};
+    else compressor.gain.fill(1.0f);
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
     channels = 0;
@@ -590,7 +591,7 @@ static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVo
     }
 }
 
-static void SetSubmixerCompressor(Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
+static void SetVoiceCompressor(Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
     auto& compressor = voice.compressor;
     if (!compressor.configured) compressor.gain.fill(1.0f);
     compressor.param = param;
@@ -618,8 +619,7 @@ static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
         if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
         return;
     }
-    if (effect.enable_flag == 0) return;
-    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER && std::isnan(std::bit_cast<float>(effect.value))) return;
+    if (effect.enable_flag == 0 || param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) return;
     throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
@@ -1131,7 +1131,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
                 const auto& compressor = ParamAs<Ngs2SubmixerVoiceCompressorParam>(param);
                 CheckSubmixerCompressor(voice, compressor);
-                SetSubmixerCompressor(voice, compressor);
+                SetVoiceCompressor(voice, compressor);
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
@@ -1185,6 +1185,15 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (IsMasteringEffect(voice, param.id)) {
                 CheckMasteringEffect(param);
+                if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) {
+                    const auto& effect = ParamAs<Ngs2MasteringVoiceEffectParam>(param);
+                    const float threshold = std::bit_cast<float>(effect.value);
+                    if (effect.enable_flag == 0 || std::isnan(threshold)) {
+                        voice.compressor = {};
+                    } else {
+                        SetVoiceCompressor(voice, {{}, 0u, std::clamp(threshold, 0.0f, 1.0f), 0.0f, 0.0f, 0.01f, 0.1f, 1.0f, 0u});
+                    }
+                }
                 return;
             }
             break;

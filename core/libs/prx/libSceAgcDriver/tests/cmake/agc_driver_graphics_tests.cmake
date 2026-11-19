@@ -76,6 +76,7 @@ configure_windows_unwind(agc_driver_graphics_tests)
 if(BUILD_TESTING)
     add_test(NAME agc_driver_undithered_alpha_to_coverage_state COMMAND agc_driver_graphics_tests --undithered-alpha-to-coverage-state)
     add_test(NAME agc_driver_depth_bounds_state COMMAND agc_driver_graphics_tests --depth-bounds-state)
+    add_test(NAME agc_driver_vertex_control_state COMMAND agc_driver_graphics_tests --vertex-control-state)
     add_test(NAME agc_driver_linear_volume_nonresident COMMAND agc_driver_graphics_tests --linear-volume-nonresident)
     set_tests_properties(agc_driver_linear_volume_nonresident PROPERTIES ENVIRONMENT "APS5_NO_RESIDENT_LINEAR=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
@@ -85,13 +86,13 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_msaa_dcc_state COMMAND agc_driver_graphics_tests --multisample-dcc-state)
     add_test(NAME agc_driver_unused_viewport_depth COMMAND agc_driver_graphics_tests --unused-viewport-depth)
     set_tests_properties(agc_driver_unused_viewport_depth PROPERTIES TIMEOUT 30)
-    set_tests_properties(agc_driver_undithered_alpha_to_coverage_state agc_driver_depth_bounds_state PROPERTIES
+    set_tests_properties(agc_driver_undithered_alpha_to_coverage_state agc_driver_depth_bounds_state agc_driver_vertex_control_state PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_alpha_to_coverage_state COMMAND agc_driver_graphics_tests --alpha-to-coverage-state)
     set_tests_properties(agc_driver_alpha_to_coverage_state PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_alpha_to_coverage_state agc_driver_undithered_alpha_to_coverage_state agc_driver_depth_bounds_state agc_driver_msaa_dcc_state agc_driver_unused_viewport_depth PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_alpha_to_coverage_state agc_driver_undithered_alpha_to_coverage_state agc_driver_depth_bounds_state agc_driver_vertex_control_state agc_driver_msaa_dcc_state agc_driver_unused_viewport_depth PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
