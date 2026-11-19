@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RUNTIMESWITCHES_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RUNTIMESWITCHES_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -25,7 +26,28 @@ enum class RuntimeSwitch : std::size_t {
     TableSnapshot,
     NoTargetMemo,
     NoTargetMemoOverlapCache,
+    LeanFront,
+    LeanListDirect,
     Count,
+};
+
+class SwitchSnapshot {
+public:
+    bool Set(RuntimeSwitch id) const {
+        const auto index = static_cast<std::size_t>(id);
+        return ((bits[index / 64] >> (index % 64)) & 1u) != 0;
+    }
+
+    void Assign(RuntimeSwitch id, bool set) {
+        const auto index = static_cast<std::size_t>(id);
+        const auto bit = std::uint64_t{1} << (index % 64);
+        bits[index / 64] = set ? bits[index / 64] | bit : bits[index / 64] & ~bit;
+    }
+
+    bool operator==(const SwitchSnapshot&) const = default;
+
+private:
+    std::array<std::uint64_t, (static_cast<std::size_t>(RuntimeSwitch::Count) + 63) / 64> bits{};
 };
 
 namespace RuntimeSwitches {
@@ -33,6 +55,8 @@ namespace RuntimeSwitches {
 const char* Name(RuntimeSwitch id);
 bool Set(RuntimeSwitch id);
 void Assign(RuntimeSwitch id, bool set);
+std::uint64_t Generation();
+SwitchSnapshot Snapshot();
 std::optional<RuntimeSwitch> Find(std::string_view name);
 
 }

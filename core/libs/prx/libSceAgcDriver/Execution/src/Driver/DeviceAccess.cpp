@@ -10,6 +10,7 @@ DevicePointer::operator std::shared_ptr<VulkanDevice>() const { return Load(); }
 
 DevicePointer& DevicePointer::operator=(std::shared_ptr<VulkanDevice> value) {
     pointer.store(std::move(value), std::memory_order_release);
+    stores.fetch_add(1, std::memory_order_release);
     return *this;
 }
 
