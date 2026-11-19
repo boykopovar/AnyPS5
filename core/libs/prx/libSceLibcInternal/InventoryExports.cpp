@@ -1123,11 +1123,6 @@ int APS5_VABI libSceLibcInternalInventory_245_nid_no_patch() {
 }
 APS5_EXPORT("pDFe-IgbTPg", libSceLibcInternalInventory_245_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_246_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("aqyjhIx7jaY", libSceLibcInternalInventory_246_nid_no_patch);
-
 int APS5_VABI libSceLibcInternalInventory_252_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
