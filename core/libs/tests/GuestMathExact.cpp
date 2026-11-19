@@ -77,7 +77,7 @@ static void CheckRoundingAndScaling() {
 }
 
 static void CheckSqrtlNegativeFlags() {
-    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L}) {
+    for (const long double input : {-1.0L, -0x1p-16445L, -0x1p16383L, -std::numeric_limits<long double>::infinity()}) {
         Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
         Require(std::feraiseexcept(FE_INEXACT) == 0);
         errno = 0;
