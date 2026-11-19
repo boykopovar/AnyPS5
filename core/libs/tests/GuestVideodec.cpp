@@ -109,6 +109,88 @@ struct Session {
     FrameBuffer MakeTarget() { return FrameBuffer{sizeof(FrameBuffer), buffer.data(), buffer.size()}; }
 };
 
+PictureInfo makeSentinelPicture() {
+    PictureInfo picture{sizeof(PictureInfo)};
+    picture.isValid = 0;
+    picture.codecType = 0x5au;
+    picture.frameWidth = 0x1234u;
+    picture.framePitch = 0x2345u;
+    picture.frameHeight = 0x3456u;
+    picture.isErrorPic = 1;
+    picture.ptsData = 0x1122334455667788ull;
+    picture.attachedData = 0x8877665544332211ull;
+    return picture;
+}
+
+bool isPictureUntouched(const PictureInfo& picture, const PictureInfo& sentinel) {
+    return picture.thisSize == sentinel.thisSize &&
+           picture.isValid == sentinel.isValid &&
+           picture.codecType == sentinel.codecType &&
+           picture.frameWidth == sentinel.frameWidth &&
+           picture.framePitch == sentinel.framePitch &&
+           picture.frameHeight == sentinel.frameHeight &&
+           picture.isErrorPic == sentinel.isErrorPic &&
+           picture.ptsData == sentinel.ptsData &&
+           picture.attachedData == sentinel.attachedData;
+}
+
+void testDecodeCopyFailure(const std::vector<std::vector<std::uint8_t>>& units, FrameBuffer& badFrame, int expectedError, const std::string& label) {
+    Session session;
+    const auto sentinel = makeSentinelPicture();
+    int refusals = 0;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        auto picture = sentinel;
+        const auto status = sceVideodecDecode(&session.ctrl, &input, &badFrame, &picture);
+        check(status == 0 || status == expectedError, "unexpected decode status for " + label);
+        if (status == 0) {
+            check(!picture.isValid, "decode succeeded with a valid picture for " + label);
+        } else {
+            ++refusals;
+            check(!picture.isValid && isPictureUntouched(picture, sentinel), "failed decode modified picture info for " + label);
+        }
+    }
+    check(refusals > 0, "no decode picture failed for " + label);
+}
+
+void testFlushCopyFailure(const std::vector<std::vector<std::uint8_t>>& units, FrameBuffer& badFrame, int expectedError, const std::string& label) {
+    Session session;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        auto target = session.MakeTarget();
+        PictureInfo picture{sizeof(PictureInfo)};
+        check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed before flush test for " + label);
+    }
+    const auto sentinel = makeSentinelPicture();
+    int refusals = 0;
+    for (;;) {
+        auto picture = sentinel;
+        const auto status = sceVideodecFlush(&session.ctrl, &badFrame, &picture);
+        check(status == 0 || status == expectedError, "unexpected flush status for " + label);
+        if (status == 0) {
+            check(!picture.isValid, "flush succeeded with a valid picture for " + label);
+            break;
+        }
+        ++refusals;
+        check(!picture.isValid && isPictureUntouched(picture, sentinel), "failed flush modified picture info for " + label);
+    }
+    check(refusals > 0, "no flush picture failed for " + label);
+}
+
+void testCopyFailureLeavesPictureUntouched() {
+    const auto units = accessUnits(false);
+    std::vector<std::uint8_t> storage(FrameBytes);
+    FrameBuffer shortBuffer{sizeof(FrameBuffer), storage.data(), FrameBytes - 1};
+    const std::vector<std::uint8_t> zeros(Pitch, 0);
+    PageTail readOnlyPixels(zeros.data(), zeros.size());
+    readOnlyPixels.ReadOnly();
+    FrameBuffer readOnlyFrame{sizeof(FrameBuffer), readOnlyPixels.As<void>(), FrameBytes};
+    testDecodeCopyFailure(units, shortBuffer, ErrorFrameBufferSize, "short frame buffer");
+    testDecodeCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
+    testFlushCopyFailure(units, shortBuffer, ErrorFrameBufferSize, "short frame buffer");
+    testFlushCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
+}
+
 void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32_t cropTop, std::uint32_t cropBottom) {
     Session session;
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
@@ -425,6 +507,7 @@ int main() {
         testDecode();
         testDecodeCropped();
         testErrors();
+        testCopyFailureLeavesPictureUntouched();
         testReset();
         testDeepPicture();
         testDeepReorderedPicture();
@@ -437,3 +520,4 @@ int main() {
         return 1;
     }
 }
+
