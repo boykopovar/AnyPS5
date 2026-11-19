@@ -172,7 +172,7 @@ def execute_replay_trial(command, directory, environment, timeout, log_bytes):
         try:
             with path.open("wb") as output:
                 total = 0
-                while block := stream.read(65536):
+                while block := stream.read1(65536):
                     remaining = max(0, log_bytes - total)
                     output.write(block[:remaining])
                     total += len(block)
