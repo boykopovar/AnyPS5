@@ -509,6 +509,8 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     errno = 71;
     Require(sceFontCharactersRefersTextCodes(characters, nullptr, reinterpret_cast<FontTextCodes*>(0x10)) == nullptr);
     Require(errno == 71);
+    Require(sceFontCharactersRefersTextCodes(reinterpret_cast<const FontTextCharacter*>(0x10), nullptr, &codes) == nullptr);
+    Require(errno == 71 && codes.text.order == parsed.text + 1);
     Require(sceFontTextCodesStepNext(nullptr) == nullptr && sceFontTextCodesStepBack(nullptr) == nullptr);
     bool threw = false;
     try {
@@ -1279,6 +1281,9 @@ int main() {
     errno = 71;
     Require(sceFontCharacterGetSyllableStringState(&character, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(errno == 71);
+    syllableState = -1;
+    Require(sceFontCharacterGetSyllableStringState(reinterpret_cast<const FontTextCharacter*>(0x10), &syllableState) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(syllableState == 0 && errno == 71);
 
     const auto* glyphs0 = sceFontSelectGlyphsFt(0);
     Require(glyphs0 != nullptr);

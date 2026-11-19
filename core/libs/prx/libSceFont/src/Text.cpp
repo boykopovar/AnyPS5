@@ -235,6 +235,19 @@ const FontTextCharacter* TextCodesCharacter(const FontTextCodes* textCodes, std:
     return static_cast<const FontTextCharacter*>(textCodes->systemUse[slot]);
 }
 
+bool ReadCharacter(FontTextCharacter& character, const FontTextCharacter* textCharacter) {
+    return textCharacter && CopyInGuest(character, textCharacter);
+}
+
+FontTextCharacter* ClusterStart(FontTextCharacter* current, bool forward) {
+    FontTextCharacter character{};
+    for (; current; current = forward ? character.next : character.prev) {
+        if (!CopyInGuest(character, current)) return nullptr;
+        if (character.synthetic == 0 && character.clusterIndex == 0) return current;
+    }
+    return nullptr;
+}
+
 }
 
 #pragma GCC visibility push(default)
@@ -548,11 +561,12 @@ int APS5_VABI sceFontCharacterGetBidiLevel(const FontTextCharacter* textCharacte
 }
 
 int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* textCharacter, int* syllableStringState) {
-    if (!textCharacter || !syllableStringState) {
+    FontTextCharacter character{};
+    if (!syllableStringState || !ReadCharacter(character, textCharacter)) {
         if (syllableStringState) CopyOutGuest(syllableStringState, 0);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    if (textCharacter->characterCode >= 0x0E00 && textCharacter->characterCode <= 0x0E7F) throw std::runtime_error("libSceFont: sceFontCharacterGetSyllableStringState for Thai syllable clusters is not implemented");
+    if (character.characterCode >= 0x0E00 && character.characterCode <= 0x0E7F) throw std::runtime_error("libSceFont: sceFontCharacterGetSyllableStringState for Thai syllable clusters is not implemented");
     if (!CopyOutGuest(syllableStringState, 0)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
@@ -579,37 +593,38 @@ int APS5_VABI sceFontCharacterGetTextOrder(const FontTextCharacter* textCharacte
 }
 
 std::uint32_t APS5_VABI sceFontCharacterLooksFormatCharacters(const FontTextCharacter* textCharacter) {
-    if (!textCharacter) return 0;
-    return (textCharacter->flags & CHARACTER_FLAG_FORMAT) != 0 ? textCharacter->characterCode : 0;
+    FontTextCharacter character{};
+    if (!ReadCharacter(character, textCharacter)) return 0;
+    return (character.flags & CHARACTER_FLAG_FORMAT) != 0 ? character.characterCode : 0;
 }
 
 std::uint32_t APS5_VABI sceFontCharacterLooksWhiteSpace(const FontTextCharacter* textCharacter) {
-    if (!textCharacter) return 0;
-    return ((textCharacter->flags >> 8) & 0xFFu) == 0x0E ? textCharacter->characterCode : 0;
+    FontTextCharacter character{};
+    if (!ReadCharacter(character, textCharacter)) return 0;
+    return ((character.flags >> 8) & 0xFFu) == 0x0E ? character.characterCode : 0;
 }
 
 FontTextCharacter* APS5_VABI sceFontCharacterRefersTextBack(const FontTextCharacter* textCharacter) {
-    if (!textCharacter) return nullptr;
-    for (FontTextCharacter* current = textCharacter->prev; current; current = current->prev) {
-        if (current->synthetic == 0 && current->clusterIndex == 0) return current;
-    }
-    return nullptr;
+    FontTextCharacter character{};
+    if (!ReadCharacter(character, textCharacter)) return nullptr;
+    return ClusterStart(character.prev, false);
 }
 
 FontTextCharacter* APS5_VABI sceFontCharacterRefersTextNext(const FontTextCharacter* textCharacter) {
-    if (!textCharacter) return nullptr;
-    for (FontTextCharacter* current = textCharacter->next; current; current = current->next) {
-        if (current->synthetic == 0 && current->clusterIndex == 0) return current;
-    }
-    return nullptr;
+    FontTextCharacter character{};
+    if (!ReadCharacter(character, textCharacter)) return nullptr;
+    return ClusterStart(character.next, true);
 }
 
 FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacter* textCharacter, const FontTextCharacter* termCharacter, FontTextCodes* textCodes) {
     if (!textCodes) return nullptr;
     if (!textCharacter) throw std::runtime_error("libSceFont: sceFontCharactersRefersTextCodes without a text character");
-    if (textCharacter->clusterIndex != 0 || textCharacter->synthetic != 0) return nullptr;
+    FontTextCharacter character{};
+    if (!CopyInGuest(character, textCharacter)) return nullptr;
+    if (character.clusterIndex != 0 || character.synthetic != 0) return nullptr;
     FontTextCodes localCodes{};
-    StepTextCodes(&localCodes, textCharacter);
+    StepTextCodes(&localCodes, &character);
+    localCodes.systemUse[TEXT_CODES_CURRENT] = const_cast<FontTextCharacter*>(textCharacter);
     localCodes.systemUse[TEXT_CODES_START] = const_cast<FontTextCharacter*>(textCharacter);
     localCodes.systemUse[TEXT_CODES_TERM] = const_cast<FontTextCharacter*>(termCharacter);
     if (!CopyOutGuest(textCodes, localCodes)) return nullptr;

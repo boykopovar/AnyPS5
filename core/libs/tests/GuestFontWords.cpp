@@ -348,6 +348,18 @@ static void CharacterQueries() {
     Require(sceFontCharacterRefersTextNext(text[0]) == text[2] && sceFontCharacterRefersTextBack(text[2]) == text[0]);
     Require(sceFontCharacterRefersTextNext(text[2]) == nullptr && sceFontCharacterRefersTextBack(text[0]) == nullptr);
     Require(sceFontCharacterRefersTextNext(nullptr) == nullptr && sceFontCharacterRefersTextBack(nullptr) == nullptr);
+    auto* const unmapped = reinterpret_cast<FontTextCharacter*>(std::uintptr_t{0x10});
+    errno = EBUSY;
+    Require(sceFontCharacterLooksWhiteSpace(unmapped) == 0 && sceFontCharacterLooksFormatCharacters(unmapped) == 0);
+    Require(sceFontCharacterRefersTextNext(unmapped) == nullptr && sceFontCharacterRefersTextBack(unmapped) == nullptr);
+    FontTextCharacter* const next = text[0]->next;
+    FontTextCharacter* const previous = text[2]->prev;
+    text[0]->next = unmapped;
+    text[2]->prev = unmapped;
+    Require(sceFontCharacterRefersTextNext(text[0]) == nullptr && sceFontCharacterRefersTextBack(text[2]) == nullptr && errno == EBUSY);
+    text[0]->next = next;
+    text[2]->prev = previous;
+    Require(sceFontCharacterRefersTextNext(text[0]) == text[2] && sceFontCharacterRefersTextBack(text[2]) == text[0]);
 }
 
 int main() {
