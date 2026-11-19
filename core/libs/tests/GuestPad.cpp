@@ -218,6 +218,22 @@ static void CheckTouchContact(int handle) {
     Require(data.touch_data_touch_num == 1);
     Require(data.touch_data_touch0_x == 960);
     Require(data.touch_data_touch0_y == 471);
+    touch.touch[0] = {false, 0, 0, 0};
+    touch.touch[1] = {true, 500, 500, 3};
+    PadPublishInput_nid_postfix(touch);
+    Require(scePadReadState(handle, &stateData) == PAD_OK);
+    Require(stateData.touch_data_touch_num == 1);
+    Require(stateData.touch_data_touch0_x == 500);
+    Require(stateData.touch_data_touch0_y == 500);
+    touch.touch[0] = {true, 100, 100, 0};
+    touch.touch[1] = {true, 200, 200, 1};
+    PadPublishInput_nid_postfix(touch);
+    Require(scePadReadState(handle, &stateData) == PAD_OK);
+    Require(stateData.touch_data_touch_num == 2);
+    Require(stateData.touch_data_touch0_x == 100);
+    Require(stateData.touch_data_touch0_y == 100);
+    Require(stateData.touch_data_touch1_x == 200);
+    Require(stateData.touch_data_touch1_y == 200);
     PadPublishInput_nid_postfix(PadInputState{});
     Pad::ReadState();
 }
