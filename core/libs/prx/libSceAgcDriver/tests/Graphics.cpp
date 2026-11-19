@@ -241,6 +241,27 @@ void PolygonPrimitiveTests() {
     Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
+void VertexControlTests() {
+    const auto vertexControl = [](std::uint32_t word) {
+        auto queue = makeState();
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        queue.context[0x2f9] = word;
+        return queue;
+    };
+    for (const auto word : {0x29u, 0x2bu, 0x2du, 0x2fu}) {
+        const auto queue = vertexControl(word);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a PA_SU_VTX_CNTL rounding mode failed the draw precheck: " + rejection);
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    }
+    for (const auto word : {0x28u, 0x2cu, 0x21u, 0x25u, 0x31u, 0x39u, 0x69u}) {
+        const auto queue = vertexControl(word);
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("nonstandard pixel center or vertex quantization") != std::string::npos, "the draw precheck accepted an unsupported PA_SU_VTX_CNTL");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "nonstandard pixel center or vertex quantization");
+    }
+}
+
 void vertexPointListTests() {
     const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
         auto queue = makeState();
@@ -4681,11 +4702,21 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
-    for (const auto [packedInfo, name] : {std::pair{6u << 2u, "10_11_11 unorm"}, std::pair{(7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u, "11_11_10 float"}}) {
-        auto packed = rasterizedResolve;
-        for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
-        expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
-    }
+    auto packed = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(packed); }, "CB resolves of 10_11_11 unorm color targets");
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u;
+    const auto floatPass = DecodeColorMetadataPass(packed);
+    Require(floatPass.has_value() && floatPass->mode == ColorMetadataPass::Mode::Resolve && floatPass->source.has_value() && floatPass->source->packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && floatPass->source->samples == 2 && floatPass->targets.size() == 1, "a CB resolve of an 11_11_10 float target was refused");
+    auto swapped = packed;
+    swapped.context[0x32b] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(swapped); }, "11_11_10 float color targets of different layouts");
+    auto unormDestination = packed;
+    unormDestination.context[0x32b] = (unormDestination.context[0x32b] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormDestination); }, "11_11_10 float color targets of different layouts");
+    auto unormSource = packed;
+    unormSource.context[0x31c] = (unormSource.context[0x31c] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormSource); }, "11_11_10 float color targets of different layouts");
     auto uintSource = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
     const auto uintPass = DecodeColorMetadataPass(uintSource);
@@ -15495,6 +15526,11 @@ int main(int argc, char** argv) {
             DualSourceBlendTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-control-state") {
+            VertexControlTests();
+            std::cout << "Vertex control state checks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
             DepthBoundsBiasTests();
             ReadOnlyDepthBoundsComparisonTests();
@@ -15617,6 +15653,7 @@ int main(int argc, char** argv) {
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         PolygonPrimitiveTests();
+        VertexControlTests();
         vertexPointListTests();
         TuningFieldTests();
         ShaderDeclaredPixelInputTests();

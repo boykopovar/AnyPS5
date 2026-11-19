@@ -1453,6 +1453,7 @@ int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int
 int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result);
 GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result);
+char* APS5_VABI ctime_r_nid_postfix(const std::int64_t* timer, char* buffer);
 std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time);
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base);
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time);
@@ -1736,6 +1737,9 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt15_Xruntime_errorPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt13_Xrange_errorPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
+std::uint64_t APS5_VABI _ZNSt3__112__next_primeEm_nid_postfix(std::uint64_t minimum);
+std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept;
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept;
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix();

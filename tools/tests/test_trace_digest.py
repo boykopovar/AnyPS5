@@ -251,6 +251,36 @@ class TraceEventLossTests(unittest.TestCase):
         result = trace_digest.digest(trace)
         self.assertEqual(result["event_loss"], [{"thread": "tid 9", "at_ms": 1.5, "events_lost": 8}])
 
+    def test_filled_thread_reports_its_recorded_span_beside_the_retained_totals(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "draw committer"}},
+                  {"name": "thread_name", "ph": "M", "tid": 2, "args": {"name": "draw finisher"}}]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}} for index, ts in enumerate(range(0, 50000, 10000))]
+        events += [complete(1, "Graphics.Draw", 0, 6000), complete(1, "Graphics.Draw.wait", 1000, 1000),
+                   complete(1, "Graphics.Draw", 10000, 6000), complete(1, "Graphics.Draw", 20000, 400)]
+        events += [complete(2, "Driver.DrawFinish", start, 2000) for start in range(0, 40000, 10000)]
+        marker = {"name": "trace buffer full", "ph": "i", "ts": 20500, "tid": 1, "args": {"events_lost": 3}}
+        expected = trace_digest.digest(trace_digest.Trace(events))
+        result = trace_digest.digest(trace_digest.Trace(events + [marker]))
+        loss = result.pop("event_loss")
+        self.assertTrue(result.pop("trace_incomplete"))
+        self.assertEqual(result, expected)
+        self.assertAlmostEqual(expected["threads"][0]["busy_ms_per_frame"], 2.85)
+        self.assertEqual(loss, [{"thread": "draw committer", "at_ms": 20.5, "events_lost": 3, "frames_before_full": 2, "recorded_ms": 20.0,
+                                 "busy_ms_per_frame": 5.5, "wait_ms_per_frame": 0.5, "busy_pct": 55.0,
+                                 "top": [{"name": "Graphics.Draw", "ms_per_frame": 6.0}]}])
+        markdown = trace_digest.markdown(dict(result, event_loss=loss, trace_incomplete=True))
+        self.assertIn("- draw committer: 3 events lost; buffer full at 20.5 ms; over the 2 of 4 frames that ended before it: busy 5.5 ms per frame (55 %), "
+                      "wait 0.5, largest Graphics.Draw 6.0 (the thread table divides the retained slices by every frame)", markdown)
+
+    def test_gpu_recorded_span_is_the_union_of_clipped_ranges(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}}]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}} for index, ts in enumerate(range(0, 40000, 10000))]
+        events += [dict(complete(1, "batch", 0, 6000), args={"batch": 1}), dict(complete(1, "batch", 3000, 6000), args={"batch": 2}),
+                   dict(complete(1, "batch", 9500, 3000), args={"batch": 3})]
+        events.append({"name": "trace buffer full", "ph": "i", "ts": 10000, "tid": 1, "args": {"events_lost": 1}})
+        loss = trace_digest.digest(trace_digest.Trace(events))["event_loss"][0]
+        self.assertEqual((loss["frames_before_full"], loss["recorded_ms"], loss["busy_ms_per_frame"], loss["busy_pct"]), (1, 10.0, 9.5, 95.0))
+
     def test_loss_counters_are_validated(self):
         for lost in (None, True, -1, 1.5, "8"):
             with self.subTest(lost=lost):
