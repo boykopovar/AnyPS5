@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
+import { locales, translate } from "../i18n.mjs";
 
 class Element {
+  dataset = {};
   children = [];
   listeners = new Map();
   value = "";
@@ -20,9 +22,12 @@ class Element {
 
 async function setup(t, name, overrides = {}) {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  const elements = new Map([...html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/gu)].map(match => [
-    match[1], new Element(/\shidden(?:\s|>)/u.test(match[0]))
-  ]));
+  const elements = new Map([...html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/gu)].map(match => {
+    const element = new Element(/\shidden(?:\s|>)/u.test(match[0]));
+    const key = match[0].match(/\sdata-i18n="([^"]+)"/u)?.[1];
+    if (key) element.dataset.i18n = key;
+    return [match[1], element];
+  }));
   const get = id => {
     assert.ok(elements.has(id), `Missing element: ${id}`);
     return elements.get(id);
@@ -48,7 +53,7 @@ async function setup(t, name, overrides = {}) {
         assert.equal(selector, 'input[name="target"]:checked');
         return { value: "linux" };
       },
-      querySelectorAll: () => []
+      querySelectorAll: selector => selector === "[data-i18n]" ? [...elements.values()].filter(el => el.dataset.i18n) : []
     },
     window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
     Worker,
@@ -389,4 +394,25 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
+});
+
+test("changing language keeps the extraction instructions for the last bundle", async t => {
+  const { get, workers } = await setup(t, "bundle-instructions");
+  for (const names of [["one.zip", "two.zip"], ["one.zip"]]) {
+    get("file").files = names.map(name => ({ name }));
+    get("file").onchange();
+    const current = workers.at(-1);
+    await inspect(current, names.length);
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    await get("convert").onclick();
+    await current.onmessage({ data: { type: "complete", mode: "memory", apps: names.length,
+      outputName: "bundle", size: 123, blob: new Blob(), release: "test-release" } });
+    const key = names.length > 1 ? "resultNoteBatch" : "resultNoteSingle";
+    for (let i = 0; i < locales.length; i++) {
+      get("locale").onclick();
+      assert.equal(get("result-note").textContent, translate(document.documentElement.lang, key));
+    }
+    get("change").onclick();
+  }
 });
