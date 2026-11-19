@@ -40,6 +40,20 @@ namespace {
 
 std::atomic<ClockGetresFn_nid_no_patch> registeredClockGetres{nullptr};
 
+bool ReadRealtimeMicroseconds(std::int64_t& micros) {
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const std::uint64_t ticks = (static_cast<std::uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    micros = static_cast<std::int64_t>(ticks / 10) - 11644473600000000LL;
+#else
+    timespec now{};
+    if (::clock_gettime(CLOCK_REALTIME, &now) != 0) return false;
+    micros = static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+#endif
+    return true;
+}
+
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 constexpr std::size_t ASCTIME_SIZE = sizeof("Sun Jan-2147483648 -2147483648:-2147483648:-2147483648     -2147481748\n");
@@ -645,16 +659,15 @@ int64_t APS5_VABI time_nid_postfix(int64_t* timer) {
 }
 
 int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
-#ifdef _WIN32
-    FILETIME ft{};
-    GetSystemTimePreciseAsFileTime(&ft);
-    const uint64_t t = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
-    return static_cast<int64_t>(t / 10);
-#else
-    timespec now{};
-    clock_gettime(CLOCK_REALTIME, &now);
-    return static_cast<int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
-#endif
+    std::int64_t micros{};
+    ReadRealtimeMicroseconds(micros);
+    return micros;
+}
+
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept {
+    std::int64_t micros{};
+    if (!ReadRealtimeMicroseconds(micros)) std::terminate();
+    return micros;
 }
 
 int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {

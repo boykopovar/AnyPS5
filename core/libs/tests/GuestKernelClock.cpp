@@ -35,10 +35,19 @@ static void TestClockRealtime() {
     Require(time.tv_sec >= 0);
     Require(time.tv_nsec >= 0 && time.tv_nsec < NANOS_PER_SECOND);
 
+    *__error_nid_postfix() = 97;
+    const auto libcxxTime = _ZNSt3__16chrono12system_clock3nowEv_nid_postfix();
+    Require(*__error_nid_postfix() == 97);
+
     KernelTimespec sceTime{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_REALTIME, &sceTime) == SCE_OK);
     Require(sceTime.tv_sec >= 0);
     Require(sceTime.tv_nsec >= 0 && sceTime.tv_nsec < NANOS_PER_SECOND);
+
+    const auto toMicroseconds = [](const KernelTimespec& reading) {
+        return reading.tv_sec * 1000000 + reading.tv_nsec / 1000;
+    };
+    Require(toMicroseconds(time) <= libcxxTime && libcxxTime <= toMicroseconds(sceTime));
 }
 
 static void TestClockMonotonic() {
