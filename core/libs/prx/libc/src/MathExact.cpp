@@ -1035,96 +1035,10 @@ short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFract
 
 namespace {
 
-struct ExtendedStep {
-    short code;
-    bool stored;
-};
-
-ExtendedStep TruncateExtended(long double& value, short scale) {
-    ExtendedBits bits = Bits(value);
-    const int field = bits.signExponent & 0x7fff;
-    if (field == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) return {Zero, false};
-    const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
-    if (drop <= 0) return {Zero, false};
-    if (drop >= 64) {
-        StoreExtended(&value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
-        return {Finite, true};
-    }
-    const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
-    const std::uint64_t lost = bits.mantissa & mask;
-    bits.mantissa &= ~mask;
-    StoreExtended(&value, bits);
-    return {lost != 0 ? Finite : Zero, true};
-}
-
-ExtendedStep ScaleExtendedBits(long double& value, std::int64_t exponent) {
-    const ExtendedBits bits = Bits(value);
-    if ((bits.signExponent & 0x7fff) == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) {
-        StoreExtended(&value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
-        return {Zero, true};
-    }
-    const std::uint16_t sign = bits.signExponent & 0x8000;
-    const int field = bits.signExponent & 0x7fff;
-    const int shift = std::countl_zero(bits.mantissa);
-    const std::uint64_t mantissa = bits.mantissa << shift;
-    const std::int64_t normalized = (field != 0 ? field : 1) - shift;
-    ExtendedBits scaled{mantissa, sign};
-    short code = Finite;
-    if (exponent > 0 && 0x7fff - normalized <= exponent) {
-        scaled = {0x8000000000000000ull, static_cast<std::uint16_t>(sign | 0x7fff)};
-        code = Infinite;
-    } else if (-normalized < exponent) {
-        scaled.signExponent = static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(normalized + exponent));
-    } else if (normalized + exponent < -63) {
-        scaled = {0, 0};
-        code = Zero;
-    } else {
-        const int dropped = static_cast<int>(1 - normalized - exponent);
-        const std::uint64_t lost = dropped == 64 ? mantissa : mantissa & ((std::uint64_t{1} << dropped) - 1);
-        scaled.mantissa = dropped == 64 ? 0 : mantissa >> dropped;
-        if (lost != 0) {
-            const std::uint64_t half = std::uint64_t{1} << (dropped - 1);
-            const int rounding = _Fltrounds_nid_postfix();
-            const bool up = rounding == 3 ? sign != 0 : rounding == 2 ? sign == 0 : rounding != 0 && (lost > half || (lost == half && (scaled.mantissa & 1) != 0));
-            if (up) ++scaled.mantissa;
-        }
-        if (scaled.mantissa == 0x8000000000000000ull) scaled.signExponent = static_cast<std::uint16_t>(sign | 1);
-        if (scaled.mantissa == 0) code = Zero;
-    }
-    StoreExtended(&value, scaled);
-    return {code, true};
-}
-
-ExtendedStep UnscaleExtended(short& exponent, long double& value) {
-    const ExtendedBits bits = Bits(value);
-    exponent = 0;
-    if ((bits.signExponent & 0x7fff) == 0x7fff) return {ExtendedNan(bits) ? NotANumber : Infinite, false};
-    if (bits.mantissa == 0) return {Zero, false};
-    const int field = bits.signExponent & 0x7fff;
-    const int shift = std::countl_zero(bits.mantissa);
-    exponent = static_cast<short>((field != 0 ? field - 0x3ffe : -16381) - shift);
-    StoreExtended(&value, {bits.mantissa << shift, static_cast<std::uint16_t>((bits.signExponent & 0x8000) | 0x3ffe)});
-    return {Finite, true};
-}
-
-}
-
-template<>
-struct LibcDetail::Precision<long double> {
-    static constexpr short PartBits = 32;
-    static constexpr std::int64_t FirstExponent = 0x8000;
-    static constexpr long double NanBits = std::numeric_limits<long double>::quiet_NaN();
-    static short Test(long double* value) { return TestExtended(Bits(*value)); }
-    static short Unscale(short* exponent, long double* value) { return UnscaleExtended(*exponent, *value).code; }
-    static void Truncate(long double* value, short bits) { TruncateExtended(*value, bits); }
-    static void Scale(long double* value, std::int64_t exponent) { ScaleExtendedBits(*value, exponent); }
-    static long double Ldexp(long double value, int exponent) { return ldexpl_nid_postfix(value, exponent); }
-    static void Raise(int exceptions) { _Feraise_nid_postfix(exceptions); }
-};
-
-namespace {
+using LibcDetail::ExtendedStep;
+using LibcDetail::ScaleExtendedBits;
+using LibcDetail::TruncateExtended;
+using LibcDetail::UnscaleExtended;
 
 using PowerLogarithm = std::array<long double, 3>;
 
