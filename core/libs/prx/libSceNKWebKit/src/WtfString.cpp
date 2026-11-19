@@ -66,6 +66,7 @@
  * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
@@ -397,6 +398,36 @@ bool EqualImpls(const StringImpl* a, const StringImpl* b, bool ignoreCase = fals
 bool EqualBuffer(const StringImpl* impl, const void* buffer, unsigned length, bool is8Bit) {
     if (!impl) return !buffer;
     return buffer && EqualViews(View(impl), {buffer, length, is8Bit});
+}
+
+constexpr unsigned GuestChunkUnits = 2048;
+
+StringView LoadView(const StringView* self, const char* function) {
+    StringView view;
+    if (!GuestCopyIn_nid_no_patch(&view, &Checked(self), sizeof(view))) throw std::invalid_argument(std::string(function) + ": unreadable StringView");
+    return view;
+}
+
+void CopyGuestUnits(char16_t* destination, StringView view, unsigned offset, unsigned count, const char* function) {
+    unsigned char bytes[GuestChunkUnits];
+    const bool copied = view.is8Bit ? GuestCopyIn_nid_no_patch(bytes, static_cast<const unsigned char*>(view.data) + offset, count)
+                                    : GuestCopyIn_nid_no_patch(destination, static_cast<const char16_t*>(view.data) + offset, count * sizeof(char16_t));
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable WTF characters");
+    if (view.is8Bit) std::copy_n(bytes, count, destination);
+}
+
+template<typename Character>
+void CopyWithAsciiCase(StringView view, bool lower, Character* output, const char* function) {
+    CheckBuffer(view.data, view.length);
+    for (unsigned offset = 0; offset < view.length; offset += GuestChunkUnits) {
+        const unsigned count = std::min(GuestChunkUnits, view.length - offset);
+        char16_t units[GuestChunkUnits];
+        CopyGuestUnits(units, view, offset, count, function);
+        Character result[GuestChunkUnits];
+        for (unsigned i = 0; i < count; ++i) result[i] = static_cast<Character>(AsciiCase(units[i], lower));
+        if (!GuestCopyOut_nid_no_patch(output + offset, result, count * sizeof(Character)))
+            throw std::invalid_argument(std::string(function) + ": unwritable output");
+    }
 }
 
 bool Affix(const StringImpl* impl, const char* buffer, unsigned length, bool suffix) {
@@ -924,16 +955,16 @@ std::size_t APS5_VABI _ZNK3WTF10StringView4findES0_j(const StringView* self, Str
 }
 
 void APS5_VABI _ZNK3WTF10StringView26getCharactersWithASCIICaseENS0_15CaseConvertTypeEPDs(const StringView* self, unsigned type, char16_t* output) {
-    auto view = Checked(self);
+    const auto view = LoadView(self, __func__);
     CheckBuffer(output, view.length);
-    for (unsigned i = 0; i < view.length; ++i) output[i] = static_cast<char16_t>(AsciiCase(Unit(view, i), type == 1));
+    CopyWithAsciiCase(view, type == 1, output, __func__);
 }
 
 void APS5_VABI _ZNK3WTF10StringView26getCharactersWithASCIICaseENS0_15CaseConvertTypeEPh(const StringView* self, unsigned type, unsigned char* output) {
-    auto view = Checked(self);
+    const auto view = LoadView(self, __func__);
     CheckBuffer(output, view.length);
     if (!view.is8Bit) throw std::invalid_argument("cannot narrow WTF StringView case output");
-    for (unsigned i = 0; i < view.length; ++i) output[i] = static_cast<unsigned char>(AsciiCase(Unit(view, i), type == 1));
+    CopyWithAsciiCase(view, type == 1, output, __func__);
 }
 
 bool APS5_VABI _ZN3WTF22equalRespectingNullityENS_10StringViewES0_(StringView a, StringView b) {
@@ -970,7 +1001,19 @@ bool APS5_VABI _ZN3WTF20equalIgnoringNullityEPNS_10StringImplES1_(StringImpl* a,
 bool APS5_VABI _ZN3WTF20equalIgnoringNullityEPKDsmPNS_10StringImplE(const char16_t* data, std::size_t length, StringImpl* impl) {
     if (!impl) return !length;
     if (length != impl->length) return false;
-    return EqualViews({data, static_cast<unsigned>(length), false}, View(impl));
+    const StringView guest{data, static_cast<unsigned>(length), false};
+    const auto host = View(impl);
+    CheckBuffer(guest.data, guest.length);
+    CheckBuffer(host.data, host.length);
+    for (unsigned offset = 0; offset < guest.length; offset += GuestChunkUnits) {
+        const unsigned count = std::min(GuestChunkUnits, guest.length - offset);
+        char16_t units[GuestChunkUnits];
+        CopyGuestUnits(units, guest, offset, count, __func__);
+        for (unsigned i = 0; i < count; ++i) {
+            if (units[i] != Unit(host, offset + i)) return false;
+        }
+    }
+    return true;
 }
 
 bool APS5_VABI _ZN3WTF22equalIgnoringASCIICaseEPKNS_10StringImplES2_(const StringImpl* a, const StringImpl* b) {
