@@ -218,7 +218,14 @@ document.querySelectorAll('.add-folder').forEach(item => item.onclick = openAdd)
 document.querySelectorAll('[data-view]').forEach(item => item.onclick = () => navigate(item.dataset.view));
 document.querySelectorAll('.close').forEach(item => item.onclick = () => item.closest('dialog').close());
 let lastPoll = 0;
-refresh(); setInterval(() => { if (byId('add-dialog').open || Date.now() - lastPoll > 2000) { lastPoll = Date.now(); refresh(); } }, 250);
+async function pairFromLink() {
+    const match = /^#pair=([0-9]{8})$/.exec(location.hash);
+    if (!match) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    try { await api('/api/login', {token: match[1]}); }
+    catch (error) { byId('error').textContent = error.status === 401 ? 'This sign-in link has expired or was already used. Run Pair-Browser.cmd in your app folder for a new one.' : error.message; }
+}
+pairFromLink().finally(() => { refresh(); setInterval(() => { if (byId('add-dialog').open || Date.now() - lastPoll > 2000) { lastPoll = Date.now(); refresh(); } }, 250); });
 
 async function refreshEngine() {
     try {

@@ -54,7 +54,6 @@ if (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile") {
 }
 Write-Output "Ready: $url"
 if (-not $NoBrowser) {
-    Start-Process $url
     $stable = if ($InstallDirectory) { $InstallDirectory } else { Join-Path $env:LOCALAPPDATA 'AnyPS5\DesktopHelper' }
     & "$PSScriptRoot\Pair-Browser.ps1" -InstallDirectory $stable
 }
