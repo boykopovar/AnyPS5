@@ -7,7 +7,7 @@ extern "C" {
 int APS5_VABI libSceVnaWebsocketUnknown__minus_IDFERYOJPs_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_8KzE01OyRog_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_94G0OCEujjA_nid_no_patch();
-int APS5_VABI libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch();
+void APS5_VABI libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch();
 int APS5_VABI libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch();
 void* APS5_VABI libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(void* destination, const void* source);
 int APS5_VABI libSceVnaWebsocketUnknown_J8_minus_VXNQySz0_nid_no_patch();
