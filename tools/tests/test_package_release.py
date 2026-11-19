@@ -2412,6 +2412,31 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertFalse(full.exists())
             self.assertEqual(list(root.glob(".release-notes-*")), [])
 
+class NativeAuxiliaryRuntimesTests(unittest.TestCase):
+    def runtimes(self, platform, sanitizer=False, tracy=()):
+        with patch.object(package_release, "cmake_option", return_value=sanitizer), \
+                patch.object(package_release, "tracy_runtime", return_value=list(tracy)):
+            return package_release.native_auxiliary_runtimes(platform, Path("build"))
+
+    def test_each_platform_names_its_mimalloc_runtime(self):
+        base = Path("build") / "core/libs/libs"
+        self.assertEqual(self.runtimes("linux"), [base / "libmimalloc.so"])
+        self.assertEqual(self.runtimes("windows"), [base / "mimalloc.dll", base / "mimalloc-redirect.dll"])
+        self.assertEqual(self.runtimes("macos"), [base / "libmimalloc.dylib"])
+
+    def test_sanitizer_builds_on_linux_drop_mimalloc(self):
+        self.assertEqual(self.runtimes("linux", sanitizer=True), [])
+        self.assertEqual(len(self.runtimes("windows", sanitizer=True)), 2)
+
+    def test_tracy_runtime_is_appended(self):
+        extra = Path("build") / "tracy.so"
+        self.assertEqual(self.runtimes("linux", tracy=[extra])[-1], extra)
+        self.assertEqual(self.runtimes("linux", sanitizer=True, tracy=[extra]), [extra])
+
+    def test_unknown_platform_is_refused(self):
+        with self.assertRaises(KeyError):
+            self.runtimes("plan9")
+
 
 if __name__ == "__main__":
     unittest.main()
