@@ -1,6 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -64,14 +66,23 @@ Cell* ThreadCell() { return &Value; }
 
 namespace {
 
+std::atomic<int> HostReadHookCalls{0};
+
+void CountHostReadHook(std::uintptr_t, std::size_t) {
+    HostReadHookCalls.fetch_add(1, std::memory_order_relaxed);
+    errno = EINVAL;
+}
+
 void Require(bool value) { if (!value) std::abort(); }
 
 }
 
 int main() {
     const auto index = CellIndex();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(&CountHostReadHook);
     auto* own = static_cast<Cell*>(__tls_get_addr_nid_postfix(&index));
     Require(own == ThreadCell() && *own == Initial);
+    Require(HostReadHookCalls.load(std::memory_order_relaxed) == 0);
     *own = 7;
     Cell* other = nullptr;
     Cell seen = 1;
@@ -82,6 +93,7 @@ int main() {
         *other = 9;
     }).join();
     Require(other != own && seen == Initial && *own == 7);
+    Require(HostReadHookCalls.load(std::memory_order_relaxed) == 0);
     *own = Initial;
     bool threw = false;
     try { __tls_get_addr_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
@@ -103,9 +115,11 @@ int main() {
 #else
     Require(mprotect(memory, Page, PROT_NONE) == 0);
 #endif
-    const int savedErrno = errno;
+    errno = EAGAIN;
     bool unreadableThrew = false;
     try { __tls_get_addr_nid_postfix(reinterpret_cast<const KernelTlsIndex*>(memory)); } catch (const std::invalid_argument&) { unreadableThrew = true; }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     Require(unreadableThrew);
-    Require(errno == savedErrno);
+    Require(errno == EAGAIN);
+    Require(HostReadHookCalls.load(std::memory_order_relaxed) == 0);
 }

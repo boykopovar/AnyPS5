@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -29,10 +28,7 @@ extern "C" {
 void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index) {
     if (index == nullptr) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
     KernelTlsIndex host{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&host, index, sizeof(host));
-    errno = savedErrno;
-    if (!copied || host.module == 0) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
+    if (!GuestCopyInUnsynced_nid_no_patch(&host, index, sizeof(host)) || host.module == 0) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
 #if defined(_WIN32)
     const auto slot = *reinterpret_cast<const DWORD*>(static_cast<std::uintptr_t>(host.module));
     auto* blocks = *reinterpret_cast<char***>(reinterpret_cast<char*>(NtCurrentTeb()) + ThreadLocalStoragePointerOffset);
