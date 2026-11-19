@@ -418,6 +418,22 @@ class SetupTests(FixtureTests):
         self.assertEqual(code, 2, report)
         self.assertIn("overrides required environment", report["error"])
 
+    def test_mixed_case_environment_follows_host_semantics(self):
+        properties = 'ENVIRONMENT "anyps5_no_shader_cache=1;anyps5_require_vulkan=0"'
+        code, report = self.execute(self.source("base"), self.source("head", property_text=properties), "--repeat", "1")
+        self.assertEqual(code, 2 if os.name == "nt" else 0, report)
+        if os.name == "nt":
+            self.assertEqual(report["iterations"], [])
+            self.assertIn("overrides required environment ANYPS5_REQUIRE_VULKAN", report["error"])
+
+    def test_mixed_case_environment_modification_follows_host_semantics(self):
+        properties = 'ENVIRONMENT_MODIFICATION "aNyPs5_GpU=set:different"'
+        code, report = self.execute(self.source("base"), self.source("head", property_text=properties), "--repeat", "1")
+        self.assertEqual(code, 2 if os.name == "nt" else 0, report)
+        if os.name == "nt":
+            self.assertEqual(report["iterations"], [])
+            self.assertIn("overrides required environment ANYPS5_GPU", report["error"])
+
     def test_dirty_source_is_rejected_before_output_creation(self):
         baseline, candidate = self.source("base"), self.source("head")
         (candidate[0] / "untracked.txt").write_text("dirty")

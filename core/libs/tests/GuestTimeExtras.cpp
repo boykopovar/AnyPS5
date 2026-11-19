@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +110,8 @@ static void CheckXtime() {
     Require(xtime_get_nid_postfix(&time, 0) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 0");
     Require(xtime_get_nid_postfix(&time, 2) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 2");
     Require(xtime_get_nid_postfix(nullptr, 1) == 0, "xtime_get accepted a null xtime");
+    errno = 71;
+    Require(xtime_get_nid_postfix(reinterpret_cast<Xtime*>(0x10), 1) == 0 && errno == 71, "xtime_get accepted an unwritable xtime or changed errno");
     const std::int64_t before = static_cast<std::int64_t>(std::time(nullptr));
     Require(xtime_get_nid_postfix(&time, 1) == 1, "xtime_get rejected TIME_UTC");
     Require(time.sec >= before - 1 && time.sec <= before + 2 && time.nsec >= 0 && time.nsec < 1000000000 && time.nsec % 1000 == 0,
