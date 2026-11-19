@@ -293,7 +293,7 @@ int APS5_VABI sceImeBackendSetConvertMode(int mode) {
 }
 
 int APS5_VABI sceImeBackendForTestFunction(void) {
-    return ErrorInternal;
+    return kNotAvailable;
 }
 
 int APS5_VABI sceImeBackendDeleteCharacter(void) {

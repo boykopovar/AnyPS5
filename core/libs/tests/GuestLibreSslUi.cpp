@@ -9,6 +9,7 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <type_traits>
 
 static int APS5_VABI Open(void*) { return 1; }
 static int APS5_VABI Close(void*) { return 2; }
@@ -237,6 +238,48 @@ static void TestGuestMethods() {
     UI_destroy_method_nid_postfix(method);
 }
 
+static void TestOpenSslMethod() {
+    static_assert(std::is_same_v<decltype(UI_OpenSSL_nid_postfix()), LibreSslUiMethod*>);
+    ERR_clear_error_nid_postfix();
+    errno = 57;
+    LibreSslUiMethod* const method = UI_OpenSSL_nid_postfix();
+    Require(errno == 57);
+    Require(method != nullptr);
+    Require(UI_OpenSSL_nid_postfix() == method);
+    Require(method->name != nullptr && !std::strcmp(method->name, "OpenSSL default user interface"));
+    const UiSessionFunction opener = UI_method_get_opener_nid_postfix(method);
+    const UiStringFunction writer = UI_method_get_writer_nid_postfix(method);
+    const UiStringFunction reader = UI_method_get_reader_nid_postfix(method);
+    const UiSessionFunction closer = UI_method_get_closer_nid_postfix(method);
+    Require(opener != nullptr && opener == method->openSession);
+    Require(writer != nullptr && writer == method->writeString);
+    Require(reader != nullptr && reader == method->readString);
+    Require(closer != nullptr && closer == method->closeSession);
+    Require(opener != closer);
+    Require(writer != reader);
+    Require(method->flush == nullptr && method->constructPrompt == nullptr);
+
+    char customName[] = "custom wrapper";
+    LibreSslUiMethod* custom = UI_create_method_nid_postfix(customName);
+    Require(custom != nullptr);
+    Require(UI_method_set_opener_nid_postfix(custom, opener) == 0 && UI_method_get_opener_nid_postfix(custom) == opener);
+    Require(UI_method_set_writer_nid_postfix(custom, writer) == 0 && UI_method_get_writer_nid_postfix(custom) == writer);
+    Require(UI_method_set_reader_nid_postfix(custom, Read) == 0 && UI_method_get_reader_nid_postfix(custom) == Read);
+    Require(UI_method_set_closer_nid_postfix(custom, closer) == 0 && UI_method_get_closer_nid_postfix(custom) == closer);
+    UI_destroy_method_nid_postfix(custom);
+
+    Require(UI_method_get_opener_nid_postfix(method) == opener);
+    Require(UI_method_get_writer_nid_postfix(method) == writer);
+    Require(UI_method_get_reader_nid_postfix(method) == reader);
+    Require(UI_method_get_closer_nid_postfix(method) == closer);
+
+    RequireThrows([&] { opener(nullptr); });
+    RequireThrows([&] { writer(nullptr, nullptr); });
+    RequireThrows([&] { reader(nullptr, nullptr); });
+    RequireThrows([&] { closer(nullptr); });
+    Require(ERR_peek_error_nid_postfix() == 0);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
@@ -251,5 +294,6 @@ int main() {
     TestGetCloser();
     TestSetResult();
     TestGuestMethods();
+    TestOpenSslMethod();
     std::puts("libSceLibreSsl UI method tests passed");
 }

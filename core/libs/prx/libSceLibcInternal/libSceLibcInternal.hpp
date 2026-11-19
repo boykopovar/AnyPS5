@@ -10,6 +10,7 @@
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
+#include "prx/libSceLibcInternal/include/Fiopen.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ExceptionVirtuals.hpp"
 #include "prx/libSceLibcInternal/include/IosBase.hpp"
