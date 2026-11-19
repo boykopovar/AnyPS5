@@ -674,5 +674,36 @@ class ConversionArgumentsTests(unittest.TestCase):
             "--module-dir", "m1", "--module-dir", "m2", "--executable", "e1"])
 
 
+class ReadCatalogTests(unittest.TestCase):
+    def write(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_the_entries_of_a_format_one_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, '{"format": 1, "entries": [{"a": 1}]}')
+            self.assertEqual(suggest_patches.read_catalog(root), [{"a": 1}])
+
+    def test_wrong_shape_or_format_is_refused(self):
+        for text in ("[]", '{"format": 1}', '{"format": 2, "entries": []}', '{"format": true, "entries": []}',
+                     '{"format": 1, "entries": {}}', '{"format": 1, "entries": [], "extra": 1}'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "format 1 and an entries array"):
+                    suggest_patches.read_catalog(self.write(directory, text))
+
+    def test_strict_numbers_refuse_non_finite_constants(self):
+        text = '{"format": 1, "entries": [{"x": NaN}]}'
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, text)
+            self.assertEqual(len(suggest_patches.read_catalog(root)), 1)
+            with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                suggest_patches.read_catalog(root, strict_numbers=True)
+
+    def test_missing_index_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "file missing or outside directory"):
+                suggest_patches.read_catalog(Path(directory))
+
+
 if __name__ == "__main__":
     unittest.main()
