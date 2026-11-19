@@ -1079,6 +1079,56 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             Require(value == 0xff000000, "cached sampled image ignored copied compression-metadata writes");
         }
     }
+    {
+        TextureDetiler detiler(context);
+        auto imageContext = context;
+        imageContext.detiler = &detiler;
+        TextureCache textureCache(imageContext);
+        imageContext.textureCache = &textureCache;
+        struct Clear {
+            const Context& context;
+            Recorder& recorder;
+            ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+        } clear{context, recorder};
+        const auto linearView = [&](std::uint32_t pitchField, std::uint32_t format = 56u, std::uint64_t base = 0) {
+            const auto at = address + base;
+            ShaderRecompiler::RecompileResult program;
+            ShaderRecompiler::DescriptorBinding binding;
+            binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+            binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+            binding.descriptorSet = 0;
+            binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+            binding.count = 1;
+            binding.imageSamplers = {0};
+            binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+            binding.guestDescriptor = {static_cast<std::uint32_t>(at >> 8), static_cast<std::uint32_t>(at >> 40) | (format << 20) | (3u << 30), 15u | (63u << 14), 0x90000fac, pitchField, 0, 0, 0};
+            program.bindings.push_back(binding);
+            return program;
+        };
+        const auto narrowProgram = linearView(0);
+        const auto widePitchProgram = linearView(64);
+        const CompiledShader narrow{ShaderRecompiler::ShaderStage::Compute, &narrowProgram, 0};
+        const CompiledShader widePitch{ShaderRecompiler::ShaderStage::Compute, &widePitchProgram, 0};
+        recorder.Sync();
+        auto first = std::make_shared<ShaderResources>(imageContext, narrow);
+        recorder.Sync();
+        if (first->StorageImages().size() != 1) {
+            std::cout << "skipped, host imports are unavailable: a linear view with another pitch not tested\n";
+        } else {
+            auto second = std::make_shared<ShaderResources>(imageContext, widePitch);
+            Require(second->SampledTextures().size() == 1, "a linear view with another pitch over the same surface made no texture");
+            recorder.Keep(second);
+            const auto repackedProgram = linearView(0, 43u, 65536);
+            const CompiledShader repackedView{ShaderRecompiler::ShaderStage::Compute, &repackedProgram, 0};
+            auto repacked = std::make_shared<ShaderResources>(imageContext, repackedView);
+            recorder.Sync();
+            Require(repacked->SampledTextures().size() == 1 && repacked->SampledTextures().front()->SharedStorageSource() != nullptr, "a repacked 10_11_11 view lost its storage source");
+            recorder.Keep(repacked);
+            std::cout << "a linear view with another pitch does not reuse the surface's storage image: ok\n";
+        }
+        recorder.Keep(first);
+        recorder.Sync();
+    }
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
@@ -1181,7 +1231,8 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     std::uint32_t mixed = 0;
     for (std::uint32_t i = 0; i < words; ++i) {
         uploaded[i] = i * 2654435761u;
-        shader[i] = i % 7 == 0 ? uploaded[i] ^ (0x5a5a5a5au & byteMasks[(i / 7) % 6]) : uploaded[i];
+        const bool shaderChanges = (i / 2048) % 2 == 0 ? i % 7 == 0 : i % 211 == 0;
+        shader[i] = shaderChanges ? uploaded[i] ^ (0x5a5a5a5au & byteMasks[(i / 7) % 6]) : uploaded[i];
         held[i] = i % 5 == 0 ? uploaded[i] ^ (0xc3c3c3c3u & byteMasks[(i / 5 + 1) % 6]) : uploaded[i];
         bool overlap = false;
         for (std::uint32_t shift = 0; shift < 32; shift += 8) {
@@ -1256,7 +1307,8 @@ void boundChangedCopyRun(const Device& device, const Context& context, const std
     std::uint32_t contested = 0;
     for (std::uint32_t i = 0; i < words; ++i) {
         uploaded[i] = i * 2246822519u + 1u;
-        shader[i] = i % 3 == 0 ? uploaded[i] ^ (0x0f0f0f0fu << (8u * (i % 4))) : uploaded[i];
+        const bool shaderChanges = (i / 2048) % 2 == 0 ? i % 3 == 0 : i % 211 == 0;
+        shader[i] = shaderChanges ? uploaded[i] ^ (0x0f0f0f0fu << (8u * (i % 4))) : uploaded[i];
         held[i] = i % 4 == 1 ? uploaded[i] ^ (0x3c3c3c3cu & (0xffu << (8u * ((i / 12) % 4)))) : uploaded[i];
         bool overlap = false;
         for (std::uint32_t shift = 0; shift < 32; shift += 8) {
@@ -5523,7 +5575,14 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
     }
 }
 
+bool SkipOnCpuVulkan(const Device& device, const char* what) {
+    if (device.Properties().deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) return false;
+    std::cout << "skipped, unproven on CPU Vulkan (llvmpipe): " << what << "\n";
+    return true;
+}
+
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
+    if (SkipOnCpuVulkan(device, "an unchanged draw input was copied again (draw snapshot reuse)")) return;
     const auto& context = device.GetContext();
     constexpr std::size_t bytes = 65536;
     void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
@@ -6452,10 +6511,22 @@ bool drawInputHolds(const Context& context, Recorder& recorder, const std::share
     return std::memcmp(deviceBufferBytes(context, recorder, buffer, bytes).data(), reinterpret_cast<const void*>(address), bytes) == 0;
 }
 
+bool DmaBufDeviceOpens() {
+#ifdef _WIN32
+    return true;
+#else
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    close(fd);
+    return true;
+#endif
+}
+
 void vertexWindowMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
     if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    if (SkipOnCpuVulkan(device, "a kept vertex window was not mirrored in device memory")) return;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
     struct Release {
@@ -6496,6 +6567,11 @@ VKAPI_ATTR void VKAPI_CALL tightMemoryBudget(VkPhysicalDevice, VkPhysicalDeviceM
 }
 
 void drawInputMirrorTests(const Device& device) {
+    if (Recorder::DrawInputMirrors() && SkipOnCpuVulkan(device, "a reused draw input came back without its device-local mirror")) return;
+    if (!DmaBufDeviceOpens()) {
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened; draw input mirrors not tested\n";
+        return;
+    }
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
     static_assert(Recorder::DrawInputBudget >= 2 * Recorder::DrawInputMirrorBudget, "the mirror budget test needs room for the mirrors inside the draw input budget");
@@ -6588,6 +6664,11 @@ void drawInputMirrorTests(const Device& device) {
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
+    if (SkipOnCpuVulkan(device, "an unchanged draw input was copied again (draw input reuse)")) return;
+    if (!DmaBufDeviceOpens()) {
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened; draw input reuse not tested\n";
+        return;
+    }
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
     constexpr std::size_t bytes = 65536;
@@ -6761,7 +6842,17 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     if (copied) {
         Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an imported draw input was bound in place where draw inputs are copied");
         Require(!recorder.PendingReadOverlaps(vertices, 256), "a copied draw input's read was noted as an in-place read");
+        context.drawInputsInPlaceBelow = 64;
+        Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "a draw input fetching its whole range above the in-place size was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 128) == nullptr, "a draw input fetching more than the in-place size was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64) == nullptr, "a small draw input whose draw reads it an unknown number of times was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64, InPlaceDrawInputMaxReads + 1) == nullptr, "a small draw input read more often than the in-place read limit was bound in place");
+        Require(!recorder.PendingReadOverlaps(vertices, 256), "a copied small draw input's read was noted as an in-place read");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64, InPlaceDrawInputMaxReads) != nullptr, "a small draw input read no more often than the in-place read limit was copied");
+        Require(recorder.PendingReadOverlaps(vertices, 256), "a small draw input bound in place did not note its read");
         bool behind = false;
+        Require(InPlaceDrawInput(context, vertices, 256, 4, &behind, 64, InPlaceDrawInputMaxReads) != nullptr && !behind, "a small vertex input free of pending GPU writes was copied where draw inputs are copied");
+        recorder.Sync();
         Require(InPlaceDrawInput(context, vertices, 256, 4, &behind) == nullptr && !behind, "a vertex input free of pending GPU writes was bound in place where draw inputs are copied");
         recorder.NotePendingWrite(vertices, 16);
         Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an index input under a pending GPU write was bound in place where draw inputs are copied");
@@ -7626,6 +7717,10 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
     const auto probe = ProbeImportWriteProtection(base);
     if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
         std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
+    if (device.Properties().deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+        std::cout << "skipped, the device reports a CPU rasterizer, whose GPU copies are host writes the write watch cannot tell from CPU stores\n";
         return false;
     }
     SetImportWatch(base, ImportWatch::Watch);
@@ -9964,6 +10059,13 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
         context.detiler = &detiler;
         resource.baseAddress = address;
         resource.dccAddress = test.dcc ? address + keysOffset : 0;
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> reused{{{address, address + bytes}}};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (StorageTexture::AnyLiveOverlaps(reused)) {
+            Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": an earlier case's image is still in the live registry over the reused memory, so this image would store whole");
+            recorder.Reap();
+            std::this_thread::yield();
+        }
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
             if (test.dcc) Require(image->UploadedKeys() == DccKeys::Uncompressed, std::string(test.name) + ": the image did not take its keys as uncompressed");
@@ -14232,7 +14334,12 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
     TextureCache cache(context);
     context.textureCache = &cache;
     const DepthTarget target{address, 0, {side, side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
-    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the depth surface has no view");
+    const auto targetView = DepthSurfaceView(context, target);
+    Require(targetView != VK_NULL_HANDLE, "the depth surface has no view");
+    Require(RepeatDepthSurfaceView(context, target, false, false) == targetView, "the proved depth surface did not repeat its view");
+    auto differentTarget = target;
+    differentTarget.address += bytes;
+    Require(RepeatDepthSurfaceView(context, differentTarget, false, false) == VK_NULL_HANDLE, "a different depth identity repeated the old view");
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
     binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
@@ -17650,7 +17757,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-input-reuse-only") {
-            if (!AgcDriver::GuestMemory::WriteWatched()) return 77;
+            if (!AgcDriver::GuestMemory::WriteWatched() || !DmaBufDeviceOpens()) {
+                if (!DmaBufDeviceOpens()) std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+                return 77;
+            }
             drawInputReuseTests(device, recorder);
             vertexWindowSeriesTests(device, recorder);
             std::cout << "Draw input reuse tests passed\n";
@@ -17700,6 +17810,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-input-mirrors-only") {
+            if (!DmaBufDeviceOpens()) {
+                std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+                return 77;
+            }
             drawInputMirrorTests(device);
             if (Recorder::DrawInputMirrors()) vertexWindowMirrorTests(device);
             drawInputReuseTests(device, recorder);
