@@ -19,6 +19,7 @@ constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestWnohang = 1;
 constexpr std::uint32_t MutexType = 0x201;
+constexpr std::uint32_t TypeTag = 0x1000;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -90,6 +91,26 @@ void TestNamedObject() {
     Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0, "deleting the reused id failed");
 }
 
+void TestNamedObjectDelete() {
+    int object = 0;
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(0, MutexType), GuestEsrch, "__sys_namedobj_delete of id 0 did not fail with ESRCH");
+    const int id = __sys_namedobj_create_nid_postfix("kernel_web_delete", &object, MutexType);
+    Require(id > 0, "libkernel_sys __sys_namedobj_create did not return an id");
+    const auto handle = static_cast<std::uint32_t>(id);
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(handle, MutexType + 1), GuestEsrch,
+                   "__sys_namedobj_delete with another type did not fail with ESRCH");
+    Require(__sys_namedobj_delete_nid_disambig1_nid_postfix(handle, MutexType | TypeTag) == 0,
+            "__sys_namedobj_delete did not ignore the type tag bit");
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(handle, MutexType), GuestEsrch,
+                   "__sys_namedobj_delete of a deleted id did not fail with ESRCH");
+    RequireFailure(__sys_namedobj_delete_nid_postfix(handle, MutexType), GuestEsrch,
+                   "libkernel_sys still sees the id deleted through libkernel_web");
+    const int reused = __sys_namedobj_create_nid_disambig1_nid_postfix("kernel_web_delete", &object, MutexType);
+    Require(reused == id, "the id released through libkernel_web was not reused");
+    Require(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0,
+            "deleting the reused id through libkernel_web failed");
+}
+
 void TestWait4() {
     int status = -1;
     RequireFailure(_wait4_nid_disambig1_nid_postfix(-1, &status, GuestWnohang, nullptr), GuestEchild,
@@ -107,6 +128,7 @@ int main() {
     TestExec();
     TestDevelopmentMode();
     TestNamedObject();
+    TestNamedObjectDelete();
     TestWait4();
     return 0;
 }
