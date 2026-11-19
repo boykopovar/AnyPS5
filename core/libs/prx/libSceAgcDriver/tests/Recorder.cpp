@@ -2665,8 +2665,29 @@ void deferredBatchTests(const Device& device) {
         }
         refusedSubmits.store(false);
         Require(failingFences.load() == 0, "Sync did not wait on the first batch's fence");
-        Require(recorder.InFlightBatches() == 0, "Sync left " + std::to_string(recorder.InFlightBatches()) + " batches in flight after a fence wait failed");
+        Require(recorder.InFlightBatches() == 1, "Sync left " + std::to_string(recorder.InFlightBatches()) + " batches in flight after a fence wait failed, not the one it did not reach");
         Require(reason.find("vkQueueSubmit") != std::string::npos, "Sync did not report the submission failure first: " + reason);
+        recorder.Sync();
+        Require(recorder.InFlightBatches() == 0, "a sync after a failed fence wait left " + std::to_string(recorder.InFlightBatches()) + " batches in flight");
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        const auto live = liveCommandBuffers.load();
+        bool completed = false;
+        {
+            Recorder recorder(failing, false, true, context.queueFamily);
+            recordBarrierThrough(failing, recorder.Commands());
+            recorder.Submit();
+            recordBarrierThrough(failing, recorder.Commands());
+            recorder.OnComplete([&completed] { completed = true; });
+            recorder.Submit();
+            Require(recorder.InFlightBatches() == 2, "two submitted batches were not in flight");
+            failingFences.store(1);
+        }
+        Require(failingFences.load() == 0, "teardown did not wait on the first batch's fence");
+        Require(completed, "a recorder whose teardown wait failed dropped the batch it did not reach without finishing it");
+        Require(liveCommandBuffers.load() == live, "a recorder whose teardown wait failed leaked " + std::to_string(liveCommandBuffers.load() - live) + " command buffers");
     }
     {
         Context failing = context;

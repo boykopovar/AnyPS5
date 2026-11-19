@@ -1440,10 +1440,14 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, bool deferre
 }
 
 Recorder::~Recorder() {
-    try {
-        Sync();
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
+    for (;;) {
+        try {
+            Sync();
+            break;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
+            if (inFlight.empty()) break;
+        }
     }
     ForgetHtileMasks_nid_no_patch(id);
     latch.Shutdown();
@@ -5234,6 +5238,7 @@ void Recorder::Sync() {
             finish(std::move(batch), true, source);
         } catch (...) {
             if (failure == nullptr) failure = std::current_exception();
+            break;
         }
     }
     activeSyncSite = previousSite;
