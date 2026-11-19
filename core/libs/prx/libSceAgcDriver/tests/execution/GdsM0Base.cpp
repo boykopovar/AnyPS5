@@ -49,6 +49,17 @@ alignas(256) auto ReadCode = std::to_array<std::uint32_t>({
     0xbf810000,
 });
 
+alignas(256) auto Add64Code = std::to_array<std::uint32_t>({
+    0x7e020280,
+    0x7e040281,
+    0x7e060280,
+    0xbefc03ff, (Base << 16u) | Size,
+    0xd9820008, 0x04000201,
+    0xbf8cc07f,
+    0xe0702000, 0x80000400,
+    0xbf810000,
+});
+
 struct Workgroup {
     std::uint32_t threads;
     std::uint32_t waveSize;
@@ -127,6 +138,21 @@ void CheckAdd(AgcDriver::QueueState& queue, const Workgroup& workgroup) {
     Require(atZero == Canaries, what + ": GDS at address 0 + offset holds " + Words4(atZero) + ", expected the untouched " + Words4(Canaries));
 }
 
+void CheckAdd64(AgcDriver::QueueState& queue, const Workgroup& workgroup) {
+    const auto what = workgroup.Name() + " ds_add_rtn_u64 gds with M0 base " + std::to_string(Base);
+    std::vector<std::uint32_t> old(Output.begin(), Output.begin() + workgroup.threads);
+    std::sort(old.begin(), old.end());
+    for (std::uint32_t lane = 0; lane < workgroup.threads; ++lane) {
+        Require(old[lane] == Starts[2] + lane, what + ": sorted returned low dword " + std::to_string(lane) + " is " + std::to_string(old[lane]) + ", expected " + std::to_string(Starts[2] + lane));
+    }
+    auto expected = Starts;
+    expected[2] += workgroup.threads;
+    const auto atBase = ReadWords(queue, Base);
+    Require(atBase == expected, what + ": GDS at M0 base + offset holds " + Words4(atBase) + ", expected " + Words4(expected));
+    const auto atZero = ReadWords(queue, 0);
+    Require(atZero == Canaries, what + ": GDS at address 0 + offset holds " + Words4(atZero) + ", expected the untouched " + Words4(Canaries));
+}
+
 void CheckRead(const Workgroup& workgroup) {
     const auto what = workgroup.Name() + " ds_read_b32 gds with M0 base " + std::to_string(Base);
     for (std::uint32_t lane = 0; lane < workgroup.threads; ++lane) {
@@ -155,6 +181,10 @@ int main() {
             SetWords(queue, 0, Canaries);
             Run(*device, workgroup, ReadCode);
             CheckRead(workgroup);
+            SetWords(queue, Base, Starts);
+            SetWords(queue, 0, Canaries);
+            Run(*device, workgroup, Add64Code);
+            CheckAdd64(queue, workgroup);
         }
         std::puts("gds m0 base tests passed");
         return 0;

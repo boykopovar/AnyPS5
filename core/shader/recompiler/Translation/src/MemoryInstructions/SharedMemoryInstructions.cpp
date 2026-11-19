@@ -237,7 +237,7 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
     }
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.flushDenormals = floatAtomicFlush(opcode);
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     const IrU64 data0 = readU64(inst.source1);
     IrValue& active = ir.GetExec();
     IrValue* old;
