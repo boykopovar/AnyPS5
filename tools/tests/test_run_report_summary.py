@@ -49,6 +49,21 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertEqual(outputs[0], outputs[1])
         self.assertIn("Game: Café Game", outputs[0])
 
+    def test_cli_reports_excessively_nested_json(self):
+        depth = 10000
+        report = json.dumps(self.report("stop-none.json"))
+        nested = report[:-1] + ', "extra": ' + "[" * depth + "0" + "]" * depth + "}"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            path.write_text(nested, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                capture_output=True, text=True, timeout=15,
+            )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.splitlines(), ["run_report_summary: report JSON is too deeply nested"])
+
     def test_summary_includes_run_context_and_missing_import(self):
         summary = render(self.report("stop-missing-function.json"))
         self.assertIn("Game: Example Game (PPSA12345)", summary)
