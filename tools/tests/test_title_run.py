@@ -10,8 +10,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 import unittest.mock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
@@ -1719,6 +1721,36 @@ class DiffEntriesTests(unittest.TestCase):
 
     def test_empty_inputs_give_empty_lists(self):
         self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class HostIsIntelTests(unittest.TestCase):
+    def check(self, system, **replaced):
+        with patch.object(title_run, "os", system), patch.object(title_run, "sys", SimpleNamespace(platform=replaced.get("platform", "linux"))):
+            return title_run.host_is_intel()
+
+    def test_windows_reads_the_processor_identifier(self):
+        for identifier, expected in (("Intel64 Family 6", True), ("  INTEL64", True), ("AMD64 Family 25", False), ("", False)):
+            with self.subTest(identifier=identifier):
+                self.assertIs(self.check(SimpleNamespace(name="nt", environ={"PROCESSOR_IDENTIFIER": identifier})), expected)
+        self.assertIs(self.check(SimpleNamespace(name="nt", environ={})), False)
+
+    def test_macos_is_intel_only_on_x86_64(self):
+        for machine, expected in (("x86_64", True), ("arm64", False)):
+            system = SimpleNamespace(name="posix", uname=lambda machine=machine: SimpleNamespace(machine=machine))
+            self.assertIs(self.check(system, platform="darwin"), expected)
+
+    def test_linux_reads_proc_cpuinfo(self):
+        system = SimpleNamespace(name="posix")
+        for text, expected in (("vendor_id\t: GenuineIntel\n", True), ("vendor_id\t: AuthenticAMD\n", False)):
+            with self.subTest(text=text), patch.object(title_run, "Path") as path:
+                path.return_value.read_text.return_value = text
+                self.assertIs(self.check(system), expected)
+                path.assert_called_once_with("/proc/cpuinfo")
+
+    def test_unreadable_cpuinfo_is_not_intel(self):
+        with patch.object(title_run, "Path") as path:
+            path.return_value.read_text.side_effect = OSError("missing")
+            self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
 if __name__ == "__main__":
