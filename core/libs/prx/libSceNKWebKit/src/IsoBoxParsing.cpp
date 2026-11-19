@@ -360,6 +360,8 @@ void AssignFullBox(FullBox& box, const FullBox& other) {
 }
 
 bool ParseBox(Box& box, const DataView& view, unsigned& offset) {
+    if (offset > ViewByteLength(view))
+        return false;
     unsigned maximumPossibleSize = static_cast<unsigned>(ViewByteLength(view) - offset);
     std::uint32_t value = 0;
     if (!ReadU32(view, offset, value))
@@ -399,6 +401,8 @@ bool ParseFullBox(FullBox& box, const DataView& view, unsigned& offset) {
 }
 
 PeekResult PeekBox(const DataView& view, unsigned offset) {
+    if (offset > ViewByteLength(view))
+        return {0, 0, false};
     unsigned maximumPossibleSize = static_cast<unsigned>(ViewByteLength(view) - offset);
     std::uint32_t value = 0;
     if (!ReadU32(view, offset, value))
