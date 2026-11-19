@@ -8753,10 +8753,6 @@ int APS5_VABI sceIcuLegacyUnknown_tiMMuYmTWRo_nid_no_patch() {
 }
 APS5_EXPORT("tiMMuYmTWRo", sceIcuLegacyUnknown_tiMMuYmTWRo_nid_no_patch);
 
-int APS5_VABI ucnv_cbFromUWriteSub_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_tmx6qeUDqns_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
