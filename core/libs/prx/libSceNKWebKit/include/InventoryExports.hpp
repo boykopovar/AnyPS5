@@ -4699,8 +4699,6 @@ int APS5_VABI _ZNK3JSC13JSArrayBuffer8isSharedEv();
 int APS5_VABI _ZNK3JSC14CachedBytecode13commitUpdatesERKN3WTF8FunctionIFvlPKvmEEE();
 int APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC14FullCodeOrigin4dumpERN3WTF11PrintStreamE();
-int APS5_VABI _ZNK3JSC16ScriptExecutable8lastLineEv();
-int APS5_VABI _ZNK3JSC16ScriptExecutable9endColumnEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame8sourceIDEv();
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame9thisValueERNS_2VME();
 int APS5_VABI _ZNK3JSC18BasicBlockLocation8dumpDataEv();
