@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/LiftedWrappersExports.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1017,7 +1018,10 @@ std::uint64_t RunCase(const Case& c, std::uint32_t seed, unsigned char* arena) {
 
 static void TestRecordedBehaviour() {
     void* mapped = mmap(reinterpret_cast<void*>(ArenaAddress), ArenaSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    Require(mapped == reinterpret_cast<void*>(ArenaAddress));
+    if (mapped != reinterpret_cast<void*>(ArenaAddress)) {
+        std::fprintf(stderr, "could not map the recording arena at %#llx: %s\n", static_cast<unsigned long long>(ArenaAddress), std::strerror(errno));
+        Require(false);
+    }
     auto* arena = static_cast<unsigned char*>(mapped);
     for (const Case& c : Cases) {
         for (const Seed& s : c.seeds) {
