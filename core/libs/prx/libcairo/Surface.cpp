@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <new>
+#include <stdexcept>
 
 namespace {
 
@@ -66,7 +67,7 @@ int APS5_VABI cairo_image_surface_get_stride(CairoSurface* surface) {
 
 CairoSurface* APS5_VABI cairo_surface_create_similar(CairoSurface* other, int content,
                                                      int width, int height) {
-    if (!other) NotImplemented_nid_no_patch(__func__);
+    if (!other) throw std::runtime_error(__func__);
     return Guest(aps5_cairo_surface_create_similar(Backend(other), static_cast<cairo_content_t>(content),
                                                    width, height));
 }

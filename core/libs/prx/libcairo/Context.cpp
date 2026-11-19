@@ -9,6 +9,7 @@
 #include <bit>
 #include <cerrno>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 static_assert(sizeof(CairoPathData) == sizeof(cairo_path_data_t));
@@ -53,7 +54,7 @@ void WriteGuest(T* destination, const T& value, const char* caller) {
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
     errno = savedErrno;
     if (!ok)
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(caller);
 }
 
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
@@ -61,7 +62,7 @@ void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
     const bool ok = GuestWritable_nid_no_patch(destination, bytes);
     errno = savedErrno;
     if (!ok)
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(caller);
 }
 
 void RequireReadable(const double* source, std::size_t count, const char* caller) {

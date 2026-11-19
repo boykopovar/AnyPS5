@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -106,12 +107,12 @@ CairoFontFace* CairoFtFontFaceForPattern(FcPattern* duplicate) {
 extern "C" {
 
 CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
-    if (!face) NotImplemented_nid_no_patch(__func__);
+    if (!face) throw std::runtime_error(__func__);
     std::int64_t faceIndex{};
     const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&faceIndex, &face->face_index, sizeof(faceIndex));
     errno = savedErrno;
-    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (!readable) throw std::runtime_error(__func__);
     CairoFtFontFaceKey key;
     key.fromFace = true;
     key.face = face;
@@ -144,7 +145,7 @@ void APS5_VABI cairo_font_face_destroy(CairoFontFace* fontFace) {
 }
 
 void* APS5_VABI cairo_font_face_get_user_data(CairoFontFace* fontFace, const CairoUserDataKey* key) {
-    if (!fontFace) NotImplemented_nid_no_patch(__func__);
+    if (!fontFace) throw std::runtime_error(__func__);
     for (const auto& slot : State(fontFace)->userData)
         if (slot.key == key) return slot.data;
     return nullptr;

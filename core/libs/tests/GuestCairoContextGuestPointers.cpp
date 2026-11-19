@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Path.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <CairoBackend.h>
 
@@ -215,9 +216,11 @@ int main() {
     EXPECT_REJECTED(cairo_set_matrix(context, badMatrixIn));
     EXPECT_REJECTED(cairo_transform(context, nullptr));
     EXPECT_REJECTED(cairo_transform(context, badMatrixIn));
+    std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     EXPECT_REJECTED(cairo_get_matrix(context, nullptr));
     EXPECT_REJECTED(cairo_get_matrix(context, badMatrixOut));
     EXPECT_REJECTED(cairo_get_matrix(context, roMatrix));
+    CHECK(NotImplementedCalls_nid_no_patch() == reportedBefore);
 
     const CairoMatrix scale{2.0, 0.0, 0.0, 3.0, 4.0, -5.0};
     cairo_set_matrix(context, &scale);
@@ -268,6 +271,7 @@ int main() {
 
     double px = 77.0;
     double py = 88.0;
+    reportedBefore = NotImplementedCalls_nid_no_patch();
     EXPECT_REJECTED(cairo_get_current_point(context, &px, roDoubles));
     EXPECT_REJECTED(cairo_get_current_point(context, badDouble, &py));
     CHECK(Close(px, 77.0) && Close(py, 88.0));
@@ -289,6 +293,7 @@ int main() {
     EXPECT_REJECTED(cairo_clip_extents(context, &x1, &y1, &x2, roDoubles));
     EXPECT_REJECTED(cairo_clip_extents(nullptr, &x1, nullptr, nullptr, roDoubles));
     CHECK(Close(x1, 91.0) && Close(y1, 92.0) && Close(x2, 93.0) && Close(y2, 94.0));
+    CHECK(NotImplementedCalls_nid_no_patch() == reportedBefore);
 
     cairo_path_extents(context, &x1, &y1, &x2, &y2);
     CHECK(Close(x1, 10.0) && Close(y1, 20.0) && Close(x2, 30.0) && Close(y2, 50.0));

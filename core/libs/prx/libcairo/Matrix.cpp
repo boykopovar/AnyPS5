@@ -5,6 +5,7 @@
 
 #include <bit>
 #include <cstddef>
+#include <stdexcept>
 
 static_assert(sizeof(CairoMatrix) == sizeof(cairo_matrix_t));
 static_assert(offsetof(CairoMatrix, yx) == offsetof(cairo_matrix_t, yx));
@@ -27,14 +28,14 @@ template <typename T>
 T ReadGuest(const T* source, const char* function) {
     T value{};
     if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value)))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(function);
     return value;
 }
 
 template <typename T>
 void WriteGuest(T* destination, const T& value, const char* function) {
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(function);
 }
 
 }
@@ -97,7 +98,7 @@ void APS5_VABI cairo_matrix_transform_distance(const CairoMatrix* matrix, double
     double x = ReadGuest(dx, __func__);
     double y = ReadGuest(dy, __func__);
     if (!GuestWritable_nid_no_patch(dx, sizeof(x)) || !GuestWritable_nid_no_patch(dy, sizeof(y)))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     aps5_cairo_matrix_transform_distance(&backend, &x, &y);
     WriteGuest(dx, x, __func__);
     WriteGuest(dy, y, __func__);
@@ -110,7 +111,7 @@ void APS5_VABI cairo_matrix_transform_point(const CairoMatrix* matrix, double* x
     double pointY = sharedCoordinate ? 0.0 : ReadGuest(y, __func__);
     if (!GuestWritable_nid_no_patch(x, sizeof(pointX)) ||
         (!sharedCoordinate && !GuestWritable_nid_no_patch(y, sizeof(pointY))))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(__func__);
     aps5_cairo_matrix_transform_point(&backend, &pointX, sharedCoordinate ? &pointX : &pointY);
     WriteGuest(x, pointX, __func__);
     if (!sharedCoordinate) WriteGuest(y, pointY, __func__);

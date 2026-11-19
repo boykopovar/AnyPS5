@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Surface.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #ifdef NDEBUG
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <stdexcept>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cairo_image_surface_create(0, 1, 1)), CairoSurface*>);
@@ -208,6 +210,18 @@ void CheckDeviceScale() {
     cairo_surface_destroy(nullptr);
 }
 
+void CheckNullSimilarSource() {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    bool rejected = false;
+    try {
+        cairo_surface_create_similar(nullptr, 0x3000, 2, 2);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+    assert(NotImplementedCalls_nid_no_patch() == reportedBefore);
+}
+
 }
 
 int main() {
@@ -215,5 +229,6 @@ int main() {
     CheckBorrowedDataAndLifetime();
     CheckSimilarAndSubsurfaces();
     CheckDeviceScale();
+    CheckNullSimilarSource();
     std::puts("guest cairo image/surface tests passed");
 }

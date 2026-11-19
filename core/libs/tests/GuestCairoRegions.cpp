@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Region.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <cerrno>
@@ -234,11 +235,13 @@ static void TestGuestPointers() {
     auto* readOnlyRect = page.Set(CairoRectangleInt{8, 9, 10, 11});
     page.Protect();
 
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     Rejects([&] { cairo_region_union_rectangle(region, badIn); });
     Rejects([&] { cairo_region_get_rectangle(region, 0, badOut); });
     Rejects([&] { cairo_region_get_rectangle(region, 0, readOnlyRect); });
     Rejects([&] { cairo_region_get_rectangle(region, -1, readOnlyRect); });
     Rejects([&] { cairo_region_get_rectangle(nullptr, 0, readOnlyRect); });
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
     Require(readOnlyRect->x == 8 && readOnlyRect->y == 9 && readOnlyRect->width == 10 && readOnlyRect->height == 11);
     Verify(region, {{1, 2, 3, 4}});
     cairo_region_destroy(region);

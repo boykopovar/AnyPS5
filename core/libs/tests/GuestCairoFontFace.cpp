@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/FontFace.hpp"
+#include "prx/libc/include/General.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -80,6 +81,7 @@ void CheckCache() {
 }
 
 void CheckUnreadableFace() {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     auto* face = reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10});
     bool rejected = false;
     try {
@@ -88,6 +90,21 @@ void CheckUnreadableFace() {
         rejected = true;
     }
     assert(rejected);
+    rejected = false;
+    try {
+        cairo_ft_font_face_create_for_ft_face(nullptr, 0);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+    rejected = false;
+    try {
+        cairo_font_face_get_user_data(nullptr, &firstKey);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    assert(rejected);
+    assert(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 void CheckUserData() {

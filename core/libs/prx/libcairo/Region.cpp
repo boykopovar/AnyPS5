@@ -6,6 +6,7 @@
 #include <bit>
 #include <cerrno>
 #include <cstddef>
+#include <stdexcept>
 
 static_assert(sizeof(CairoRectangleInt) == sizeof(cairo_rectangle_int_t));
 static_assert(offsetof(CairoRectangleInt, y) == offsetof(cairo_rectangle_int_t, y));
@@ -29,7 +30,7 @@ T ReadGuest(const T* source, const char* caller) {
     const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
     errno = savedErrno;
     if (!ok)
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(caller);
     return value;
 }
 
@@ -39,7 +40,7 @@ void WriteGuest(T* destination, const T& value, const char* caller) {
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
     errno = savedErrno;
     if (!ok)
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(caller);
 }
 
 }

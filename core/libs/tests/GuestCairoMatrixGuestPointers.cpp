@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Matrix.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <cstddef>
@@ -176,8 +177,10 @@ void CheckCoordinateInputsAndOutputs() {
 }
 
 int main() {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     CheckMatrixOutputs();
     CheckMatrixInputs();
     CheckCoordinateInputsAndOutputs();
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
     std::puts("guest Cairo matrix pointer checks passed");
 }
