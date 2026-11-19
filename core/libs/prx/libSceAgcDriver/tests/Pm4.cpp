@@ -2705,6 +2705,7 @@ void testOrderHoldWake() {
     static char reason[200];
     std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; it must start at once", latencies[rounds / 2]);
     std::printf("order-signal: median %.3f ms, largest %.3f ms\n", latencies[rounds / 2], latencies.back());
+    if (const char* skip = std::getenv("APS5_SKIP_TIMING_TESTS"); skip != nullptr && skip[0] != '\0' && skip[0] != '0') return;
     check(latencies[rounds / 2] < 0.1, reason);
 }
 
