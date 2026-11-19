@@ -6,6 +6,7 @@ struct UConverter;
 
 extern "C" {
 void APS5_VABI u_flushDefaultConverter_nid_postfix();
+UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t*);
 void APS5_VABI u_releaseDefaultConverter_nid_postfix(UConverter*);
 int APS5_VABI ucnv_compareNames_nid_postfix(const char*, const char*);
 char* APS5_VABI ucnv_io_stripASCIIForCompare_nid_postfix(char*, const char*);
