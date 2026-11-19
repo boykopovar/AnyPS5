@@ -17700,38 +17700,6 @@ int APS5_VABI _ZN7WebCore16VisitedLinkStoreD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16convertToIntegerIaEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerIhEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerIiEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerIjEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerIlEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerImEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerIsEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16convertToIntegerItEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore16findIntersectionERKNS_10FloatPointES2_S2_S2_RS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19715,38 +19683,6 @@ int APS5_VABI _ZN7WebCore21WheelEventTestMonitor23removeDeferralForReasonEPKvNS0
 }
 
 int APS5_VABI _ZN7WebCore21WheelEventTestMonitor33setTestCallbackAndStartMonitoringEbbON3WTF8FunctionIFvvEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIaEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIhEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIiEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIjEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIlEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampImEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampIsEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21convertToIntegerClampItEET_RN3JSC14JSGlobalObjectENS2_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
