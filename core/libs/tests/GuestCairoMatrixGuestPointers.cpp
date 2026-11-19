@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Matrix.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <cstddef>
@@ -26,6 +27,7 @@ void Check(bool ok, int line) {
 
 template <typename TCall>
 void Rejects(TCall callback) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     bool rejected = false;
     try {
         callback();
@@ -33,6 +35,7 @@ void Rejects(TCall callback) {
         rejected = true;
     }
     Require(rejected);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 class ReadOnlyPage {
