@@ -4706,7 +4706,6 @@ int APS5_VABI _ZNK3JSC12StackVisitor5Frame8toStringEv();
 int APS5_VABI _ZNK3JSC12StackVisitor5Frame9sourceURLEv();
 int APS5_VABI _ZNK3JSC13JSArrayBuffer8isSharedEv();
 int APS5_VABI _ZNK3JSC14CachedBytecode13commitUpdatesERKN3WTF8FunctionIFvlPKvmEEE();
-int APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC14FullCodeOrigin4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC16ScriptExecutable8lastLineEv();
 int APS5_VABI _ZNK3JSC16ScriptExecutable9endColumnEv();
