@@ -45,10 +45,10 @@ static int CpuClock(Pthread thread) {
     return clockId;
 }
 
-static void BurnOwnCpu(std::int64_t nanos) {
+static void BurnOwnCpu(std::int64_t nanos, int clockId = GUEST_CLOCK_THREAD_CPUTIME_ID) {
     const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
-    const std::int64_t cpuStart = Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID);
-    while (Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID) - cpuStart < nanos)
+    const std::int64_t cpuStart = Nanos(clockId);
+    while (Nanos(clockId) - cpuStart < nanos)
         Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
 }
 
@@ -114,7 +114,7 @@ static void ProcessClocksNameOnlyTheGuest() {
     const int own = static_cast<int>(PROCESS_CPU_CLOCK | static_cast<std::uint32_t>(self));
     const int other = static_cast<int>(PROCESS_CPU_CLOCK | static_cast<std::uint32_t>(self + 1));
     const std::int64_t start = Nanos(own);
-    BurnOwnCpu(BURN_NANOS);
+    BurnOwnCpu(BURN_NANOS, own);
     const std::int64_t before = Nanos(own);
     const std::int64_t reference = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
     const std::int64_t after = Nanos(own);
