@@ -1125,11 +1125,12 @@ double APS5_VABI exp2_nid_postfix(double x) {
     return r * std::bit_cast<double>(static_cast<std::uint64_t>(static_cast<std::uint32_t>(0x3ff00000 + k + (1000 << 20))) << 32) * twom1000;
 }
 double APS5_VABI ldexp_nid_postfix(double x, int exponent) {
-    if (!std::isfinite(x) || x == 0.0) return x;
-    const int saved_errno = errno;
-    const double result = std::scalbn(x, exponent);
-    errno = !std::isfinite(result) || result == 0.0 ? ERANGE : saved_errno;
-    return result;
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (exponent == 0 || magnitude == 0 || magnitude >= 0x7ff0000000000000ull) return x;
+    const short code = _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(&x, exponent);
+    if (code == 0) _Feraise_nid_postfix(0x10);
+    else if (code == 1) _Feraise_nid_postfix(0x08);
+    return x;
 }
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
     const int saved_errno = errno;
