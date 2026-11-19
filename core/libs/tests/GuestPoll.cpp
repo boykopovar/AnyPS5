@@ -488,7 +488,7 @@ static void ReusedDescriptorNumberIsPolledFresh() {
     Require(connect_nid_postfix(reused, address.data(), address.size()) == 0);
     Require(send_nid_postfix(reused, "r", 1, 0) == 1);
     GuestPollDescriptor entry{reused, In, 0};
-    Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & In) != 0);
+    Require(poll_nid_postfix(&entry, 1, 1000) == 1 && (entry.revents & In) != 0);
     char byte{};
     Require(recv_nid_postfix(reused, &byte, sizeof(byte), 0) == 1 && byte == 'r');
     Require(close_nid_postfix(reused) == 0 && close_nid_postfix(held) == 0);
@@ -527,6 +527,39 @@ static void RejectsReadinessAfterSocketClose() {
         Require(result == 1 && entry.revents == Invalid);
     }
 }
+static void IgnoresEventBitsSocketsPipesAndKqueuesDoNotKnow() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    constexpr short Extend = 0x200, Attribute = 0x400, IgnoreEof = 0x2000;
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(write_nid_postfix(pipe[1], "x", 1) == 1);
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    GuestPollDescriptor entries[5]{
+        {pair[0], static_cast<short>(In | Extend), -1},
+        {pair[1], static_cast<short>(Out | Attribute), -1},
+        {pipe[0], static_cast<short>(In | Extend), -1},
+        {pipe[1], static_cast<short>(Out | Attribute), -1},
+        {queue, static_cast<short>(In | Extend), -1}};
+    Require(poll_nid_postfix(entries, 5, 0) == 4);
+    Require(entries[0].revents == In && entries[1].revents == Out && entries[2].revents == In && entries[3].revents == Out && entries[4].revents == 0);
+    GuestPollDescriptor unknownOnly[2]{{pipe[0], Extend, -1}, {queue, Extend, -1}};
+    Require(poll_nid_postfix(unknownOnly, 2, 0) == 0 && unknownOnly[0].revents == 0 && unknownOnly[1].revents == 0);
+    const auto added = UserEvent(EvAdd | EvClear, 0);
+    Require(kevent_nid_postfix(queue, &added, 1, nullptr, 0, nullptr) == 0);
+    const auto triggered = UserEvent(0, NoteTrigger);
+    Require(kevent_nid_postfix(queue, &triggered, 1, nullptr, 0, nullptr) == 0);
+    GuestPollDescriptor triggeredQueue{queue, static_cast<short>(In | Extend | IgnoreEof), -1};
+    Require(poll_nid_postfix(&triggeredQueue, 1, 0) == 1 && triggeredQueue.revents == In);
+    Require(close_nid_postfix(pipe[0]) == 0);
+    GuestPollDescriptor closed{pipe[0], static_cast<short>(In | Extend | IgnoreEof), -1};
+    Require(poll_nid_postfix(&closed, 1, 0) == 1 && closed.revents == Invalid);
+    for (const int descriptor : {pair[0], pair[1], pipe[1], queue}) Require(close_nid_postfix(descriptor) == 0);
+}
+
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
@@ -537,6 +570,7 @@ int main() {
     PollsAPipeClosedBeforeItsStatusQuery();
 #endif
     PollsAHungUpSocketWithoutPollout();
+    IgnoresEventBitsSocketsPipesAndKqueuesDoNotKnow();
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0 && listener < 1024);
     std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
