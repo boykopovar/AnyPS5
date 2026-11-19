@@ -1026,10 +1026,6 @@ int APS5_VABI uenum_openCharStringsEnumeration_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getUInt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ures_getBinary_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
