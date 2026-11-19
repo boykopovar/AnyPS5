@@ -85,6 +85,7 @@ void APS5_VABI udata_close_nid_postfix(UDataMemory* data);
 UCalendar* APS5_VABI ucal_clone_nid_postfix(const UCalendar* cal, std::int32_t* status);
 void APS5_VABI ucal_close_nid_postfix(UCalendar* cal);
 std::int32_t APS5_VABI ucal_get_nid_postfix(const UCalendar* cal, UCalendarDateFields field, std::int32_t* status);
+std::int32_t APS5_VABI ucal_getAttribute_nid_postfix(const UCalendar* cal, std::int32_t attr);
 std::int32_t APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix(
     const char16_t* id,
     std::int32_t len,
@@ -92,12 +93,15 @@ std::int32_t APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix(
     std::int32_t resultCapacity,
     std::int8_t* isSystemID,
     std::int32_t* status);
+std::int32_t APS5_VABI ucal_getDayOfWeekType_nid_postfix(const UCalendar* cal, std::int32_t dayOfWeek, std::int32_t* status);
 std::int32_t APS5_VABI ucal_getDefaultTimeZone_nid_postfix(char16_t*, std::int32_t, std::int32_t*);
 UEnumeration* APS5_VABI ucal_getKeywordValuesForLocale_nid_postfix(const char*, const char*, std::int8_t, std::int32_t*);
 std::int32_t APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix(const void* calendar, std::int32_t displayNameType,
                                                                const char* locale, char16_t* result,
                                                                std::int32_t resultLength, std::int32_t* status);
 UCalendar* APS5_VABI ucal_open_nid_postfix(const char16_t* zoneId, std::int32_t length, const char* locale, std::int32_t calendarType, std::int32_t* status);
+UEnumeration* APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix(std::int32_t zoneType, const char* region, const std::int32_t* rawOffset, std::int32_t* ec);
+UEnumeration* APS5_VABI ucal_openTimeZones_nid_postfix(std::int32_t* ec);
 void APS5_VABI ucal_setGregorianChange_nid_postfix(UCalendar* cal, UDate date, std::int32_t* status);
 void APS5_VABI ucal_setMillis_nid_postfix(UCalendar* cal, UDate dateTime, std::int32_t* status);
 
@@ -109,8 +113,10 @@ UCollator* APS5_VABI ucol_open_nid_postfix(const char* locale, std::int32_t* sta
 void APS5_VABI ucol_setAttribute_nid_postfix(UCollator* coll, UColAttribute attr, UColAttributeValue value, std::int32_t* status);
 
 void APS5_VABI udat_close_nid_postfix(UDateFormat*);
+std::int32_t APS5_VABI udat_countSymbols_nid_postfix(const UDateFormat* fmt, std::int32_t type);
 std::int32_t APS5_VABI udat_format_nid_postfix(const UDateFormat* format, double dateToFormat, char16_t* result, std::int32_t resultLength, UFieldPosition* position, std::int32_t* status);
 std::int32_t APS5_VABI udat_formatForFields_nid_postfix(const void* format, double dateToFormat, char16_t* result, std::int32_t resultLength, void* fpositer, std::int32_t* status);
+const UCalendar* APS5_VABI udat_getCalendar_nid_postfix(const UDateFormat* fmt);
 std::int32_t APS5_VABI udat_getSymbols_nid_postfix(const void* fmt, std::int32_t type, std::int32_t index, char16_t* result,
                                                    std::int32_t resultLength, std::int32_t* status);
 UDateFormat* APS5_VABI udat_open_nid_postfix(std::int32_t, std::int32_t, const char*, const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::int32_t*);
@@ -144,6 +150,7 @@ void APS5_VABI udtitvfmt_formatToResult_nid_postfix(const UDateIntervalFormat* f
 UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, const char16_t* skeleton, std::int32_t skeletonLength, const char16_t* tzID, std::int32_t tzIDLength, std::int32_t* status);
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
 
+std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
 void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
 UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t*);
 
@@ -198,8 +205,17 @@ URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* l
 
 void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
+std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
 
+UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search);
+std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search);
+std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* search, std::int32_t* status);
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
+void APS5_VABI usearch_reset_nid_postfix(UStringSearch* search);
+void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int32_t attribute, std::int32_t value, std::int32_t* status);
+void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t position, std::int32_t* status);
+void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t* status);
+void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t* text, std::int32_t textLength, std::int32_t* status);
 
 UText* APS5_VABI utext_close(UText* ut);
 

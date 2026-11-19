@@ -1,6 +1,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdint>
+#include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
@@ -41,6 +42,13 @@ GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* resu
 GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
     if (timer == nullptr || result == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, result);
+}
+
+char* APS5_VABI ctime_r_nid_postfix(const std::int64_t* timer, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("ctime_r: null buffer");
+    GuestTm local{};
+    if (localtime_r_nid_postfix(timer, &local) == nullptr) return nullptr;
+    return asctime_r_nid_postfix(&local, buffer);
 }
 
 std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {

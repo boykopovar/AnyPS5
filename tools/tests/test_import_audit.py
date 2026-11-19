@@ -4037,5 +4037,117 @@ class DynamicSymbolEntriesTests(unittest.TestCase):
             import_audit.dynamic_symbol_entries("m.elf", bytes(10), 0, 0, 0, 1, [])
 
 
+class ElfHasDynamicSegmentTests(unittest.TestCase):
+    @staticmethod
+    def header(offset, size, count):
+        values = [0] * 14
+        values[5], values[9], values[10] = offset, size, count
+        return values
+
+    def test_no_program_headers_has_no_dynamic_segment(self):
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", b"", self.header(0, 0, 0)))
+
+    def test_finds_pt_dynamic_among_program_headers(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52) + struct.pack("<I", 2) + bytes(52)
+        self.assertTrue(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 2)))
+
+    def test_other_program_header_types_are_not_dynamic(self):
+        data = bytes(64) + struct.pack("<I", 1) + bytes(52)
+        self.assertFalse(import_audit.elf_has_dynamic_segment("m.elf", data, self.header(64, 56, 1)))
+
+    def test_wrong_program_header_size_or_zero_offset_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(64, 32, 1))
+        with self.assertRaisesRegex(import_audit.AuditError, "56-byte program headers"):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(200), self.header(0, 56, 1))
+
+    def test_truncated_program_header_table_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_has_dynamic_segment("m.elf", bytes(80), self.header(64, 56, 2))
+
+
+class MachoCommandsTests(unittest.TestCase):
+    @staticmethod
+    def image(commands, magic=0xfeedfacf):
+        body = b"".join(commands)
+        return struct.pack("<IiiIIIII", magic, 0, 0, 0, len(commands), len(body), 0, 0) + body
+
+    def test_yields_each_command_with_its_offset_and_length(self):
+        first = struct.pack("<II", 0x19, 16) + bytes(8)
+        second = struct.pack("<II", 0x2, 8)
+        self.assertEqual(list(import_audit.macho_commands("m", self.image([first, second]))), [(0x19, 32, 16), (0x2, 48, 8)])
+
+    def test_wrong_magic_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "little-endian 64-bit Mach-O"):
+            list(import_audit.macho_commands("m", self.image([], magic=0xfeedface)))
+
+    def test_command_shorter_than_its_header_or_past_the_end_is_refused(self):
+        short = struct.pack("<II", 0x19, 4) + bytes(8)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([short])))
+        long = struct.pack("<II", 0x19, 64)
+        with self.assertRaisesRegex(import_audit.AuditError, "overruns"):
+            list(import_audit.macho_commands("m", self.image([long])))
+
+    def test_missing_load_commands_are_refused(self):
+        data = struct.pack("<IiiIIIII", 0xfeedfacf, 0, 0, 0, 1, 64, 0, 0)
+        with self.assertRaises(import_audit.AuditError):
+            list(import_audit.macho_commands("m", data))
+
+
+class ModuleFilesTests(unittest.TestCase):
+    def write(self, directory, name, content):
+        path = Path(directory) / name
+        path.write_bytes(content)
+        return path
+
+    def test_elf_files_and_guest_prx_pe_files_are_yielded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            elf = self.write(directory, "a.bin", b"\x7fELF" + bytes(8))
+            guest = self.write(directory, "b.guest.prx", b"MZ" + bytes(8))
+            self.write(directory, "notes.txt", b"hello world")
+            self.assertEqual(sorted(import_audit.module_files(directory)), sorted([elf, guest]))
+
+    def test_module_extension_with_foreign_content_is_refused(self):
+        for name, content in (("a.prx", b"junk" + bytes(4)), ("b.elf", b"\0\0\0\0"), ("c.sprx", b"MZ" + bytes(4))):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, name, content)
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+    def test_encrypted_module_magic_is_refused_whatever_the_name(self):
+        for magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee"):
+            with self.subTest(magic=magic), tempfile.TemporaryDirectory() as directory:
+                self.write(directory, "data.bin", magic + bytes(4))
+                with self.assertRaisesRegex(import_audit.AuditError, "expected ELF module"):
+                    list(import_audit.module_files(directory))
+
+
+class MachoImportsTests(unittest.TestCase):
+    @staticmethod
+    def dylib(path, kind=0xc, name_offset=24):
+        text = path.encode() + b"\0"
+        length = (24 + len(text) + 7) // 8 * 8
+        return struct.pack("<III", kind, length, name_offset) + bytes(12) + text.ljust(length - 24, b"\0")
+
+    @staticmethod
+    def image(commands):
+        body = b"".join(commands)
+        return struct.pack("<IiiIIIII", 0xfeedfacf, 0, 0, 0, len(commands), len(body), 0, 0) + body
+
+    def test_collects_dylib_basenames_and_ignores_other_commands(self):
+        other = struct.pack("<II", 0x19, 8)
+        data = self.image([self.dylib("/usr/lib/libfoo.dylib"), other, self.dylib("@rpath/libbar.dylib", kind=0x80000018)])
+        self.assertEqual(import_audit.macho_imports("m", data), {"libfoo.dylib", "libbar.dylib"})
+
+    def test_name_offset_outside_the_command_is_refused(self):
+        for offset in (8, 4096):
+            with self.assertRaisesRegex(import_audit.AuditError, "name offset"):
+                import_audit.macho_imports("m", self.image([self.dylib("/lib/x.dylib", name_offset=offset)]))
+
+    def test_image_without_dylib_commands_has_no_imports(self):
+        self.assertEqual(import_audit.macho_imports("m", self.image([])), set())
+
+
 if __name__ == "__main__":
     unittest.main()
