@@ -3,8 +3,10 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_CLOCK_REALTIME = 0;
@@ -75,6 +77,26 @@ static void TestClockMonotonic() {
     }
 }
 
+static std::int64_t ReadGuestMonotonicNanos() {
+    KernelTimespec reading{};
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_MONOTONIC, &reading) == SCE_OK);
+    return reading.tv_sec * NANOS_PER_SECOND + reading.tv_nsec;
+}
+
+static void TestLibcxxSteadyClock() {
+    *__error_nid_postfix() = 97;
+    const auto before = ReadGuestMonotonicNanos();
+    const auto first = _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix();
+    const auto after = ReadGuestMonotonicNanos();
+    Require(before <= first && first <= after);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    const auto laterBefore = ReadGuestMonotonicNanos();
+    const auto second = _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix();
+    const auto laterAfter = ReadGuestMonotonicNanos();
+    Require(first < second && laterBefore <= second && second <= laterAfter);
+    Require(*__error_nid_postfix() == 97);
+}
+
 static void TestInvalidClockIds() {
     for (int clockId : {-1, 9999}) {
         KernelTimespec ts{-1, -1};
@@ -116,6 +138,7 @@ static void TestNullPointerPassing() {
 int main() {
     TestClockRealtime();
     TestClockMonotonic();
+    TestLibcxxSteadyClock();
     TestInvalidClockIds();
     TestNullPointerPassing();
     return 0;

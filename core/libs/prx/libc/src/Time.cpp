@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <exception>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -902,6 +903,26 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     const bool copied = GuestCopyOut_nid_no_patch(str, local.get(), buffer.written * sizeof(std::uint16_t));
     errno = resultError;
     return copied && fits ? buffer.offset : 0;
+}
+
+static std::atomic<std::uint64_t (APS5_VABI*)()> g_monotonicTimeSource{nullptr};
+
+void LibcSetMonotonicTimeSource_nid_no_patch(std::uint64_t (APS5_VABI* source)()) {
+    g_monotonicTimeSource.store(source, std::memory_order_release);
+}
+
+std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept {
+    if (const auto source = g_monotonicTimeSource.load(std::memory_order_acquire)) {
+        return static_cast<std::int64_t>(source());
+    }
+#ifdef _WIN32
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
+    timespec now{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) std::terminate();
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(now.tv_sec) * 1000000000ULL + now.tv_nsec);
+#endif
 }
 
 static std::atomic<std::uint64_t (APS5_VABI*)()> g_processTimeSource{nullptr};
