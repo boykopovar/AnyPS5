@@ -877,5 +877,20 @@ class GitFailureAndExitTests(unittest.TestCase):
         self.assertTrue(stderr.getvalue().strip())
 
 
+class UniqueRecipeFieldsTests(unittest.TestCase):
+    def test_pairs_become_a_dict_in_order(self):
+        fields = performance_bisect.unique_recipe_fields([("b", 1), ("a", [2])])
+        self.assertEqual(list(fields.items()), [("b", 1), ("a", [2])])
+
+    def test_duplicate_field_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "recipe has a duplicate field: a"):
+            performance_bisect.unique_recipe_fields([("a", 1), ("b", 2), ("a", 3)])
+
+    def test_works_as_a_json_object_hook(self):
+        self.assertEqual(json.loads('{"a": 1}', object_pairs_hook=performance_bisect.unique_recipe_fields), {"a": 1})
+        with self.assertRaises(ValueError):
+            json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
+
+
 if __name__ == "__main__":
     unittest.main()
