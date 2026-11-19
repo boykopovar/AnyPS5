@@ -99,6 +99,12 @@ target_compile_definitions(libressl_crypto PRIVATE LIBRESSL_INTERNAL OPENSSL_NO_
 target_compile_options(libressl_crypto PRIVATE
     "-include;libressl_port.h"
     "-ffunction-sections" "-fdata-sections")
+if(APPLE)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/libressl/strlcpy.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/libressl/strlcat.c
+        PROPERTIES COMPILE_OPTIONS "-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=0")
+endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(libressl_crypto PUBLIC Threads::Threads)
