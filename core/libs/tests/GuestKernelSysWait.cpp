@@ -112,8 +112,21 @@ int main(int argc, char** argv) {
     const auto registerChild = reinterpret_cast<void (*)(std::int32_t, std::int64_t)>(GetProcAddress(static_cast<HMODULE>(libc), "RegisterChildProcess_nid_no_patch"));
     Require(registerChild != nullptr);
     registerChild(static_cast<std::int32_t>(child.dwProcessId), reinterpret_cast<std::int64_t>(child.hProcess));
-    const int reaped = test == "wait3" ? wait3(&status, 0, nullptr) : wait4(static_cast<int>(child.dwProcessId), &status, 0, nullptr);
+    const int reaped = test == "wait3" ? wait3(&status, 0, usage.data()) : wait4(static_cast<int>(child.dwProcessId), &status, 0, usage.data());
     Require(reaped == static_cast<int>(child.dwProcessId) && status == (42 << 8));
+    GuestResourceUsage resources{};
+    static_assert(sizeof(resources) == usage.size());
+    std::memcpy(&resources, usage.data(), sizeof(resources));
+    Require(resources.ru_utime.tv_sec >= 0 && resources.ru_stime.tv_sec >= 0);
+    Require(resources.ru_utime.tv_usec >= 0 && resources.ru_utime.tv_usec < 1000000);
+    Require(resources.ru_stime.tv_usec >= 0 && resources.ru_stime.tv_usec < 1000000);
+    Require(resources.ru_maxrss == 0 && resources.ru_minflt == 0 && resources.ru_nvcsw == 0);
+    PROCESS_INFORMATION second{};
+    Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &second) != FALSE);
+    Require(CloseHandle(second.hThread) != FALSE);
+    registerChild(static_cast<std::int32_t>(second.dwProcessId), reinterpret_cast<std::int64_t>(second.hProcess));
+    const int failed = test == "wait3" ? wait3(&status, 0, reinterpret_cast<void*>(1)) : wait4(static_cast<int>(second.dwProcessId), &status, 0, reinterpret_cast<void*>(1));
+    Require(failed == -1 && *error() == 14 && status == (42 << 8));
 #else
     int barrier[2]{};
     Require(::pipe(barrier) == 0);

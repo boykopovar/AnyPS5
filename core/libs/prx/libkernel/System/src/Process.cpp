@@ -728,7 +728,8 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     }
 #ifdef _WIN32
     int encoded = 0;
-    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr);
+    ChildProcessTimes childTimes{};
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage == nullptr ? nullptr : &childTimes);
     if (reaped == -2) {
         *__error_nid_postfix() = errnoNoChild;
         return -1;
@@ -738,6 +739,19 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
         *__error_nid_postfix() = guestFault;
         return -1;
+    }
+    if (usage != nullptr) {
+        const auto userMicros = childTimes.user / 10ULL;
+        const auto kernelMicros = childTimes.kernel / 10ULL;
+        GuestResourceUsage resources{};
+        resources.ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
+        resources.ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
+        resources.ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
+        resources.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
+        if (!WriteGuest(usage, &resources, sizeof(resources))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
     }
     return static_cast<int>(reaped);
 #else

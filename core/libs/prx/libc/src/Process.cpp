@@ -288,6 +288,7 @@ int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
 }
 
 #ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
 namespace {
 struct ChildProcess {
     std::int32_t processId;
@@ -318,7 +319,7 @@ extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::i
     childProcesses.push_back({processId, processHandle});
 }
 
-extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, bool requireUsage) {
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, ChildProcessTimes* times) {
     const bool noWait = (options & 1u) != 0;
     const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
     {
@@ -340,7 +341,16 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
                     *__error_nid_postfix() = 14;
                     return -1;
                 }
-                if (requireUsage) NotImplemented_nid_no_patch("wait4: child resource accounting on Windows");
+                if (times != nullptr) {
+                    FILETIME creation{};
+                    FILETIME exitTime{};
+                    FILETIME kernel{};
+                    FILETIME user{};
+                    if (!GetProcessTimes(handle, &creation, &exitTime, &kernel, &user))
+                        throw std::system_error(GetLastError(), std::system_category(), "wait4: GetProcessTimes failed");
+                    times->user = (static_cast<std::uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime;
+                    times->kernel = (static_cast<std::uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime;
+                }
                 encoded = ChildProcessWaitStatus(code);
                 CloseHandle(handle);
                 reaped = child.processId;
