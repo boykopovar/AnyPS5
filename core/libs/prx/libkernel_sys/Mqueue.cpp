@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/LibKernelSysProviders.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -73,7 +74,7 @@ std::map<int, std::shared_ptr<Open>> g_opens;
 std::map<std::string, std::shared_ptr<Queue>> g_queues;
 
 int Fail(int error) {
-    *__error_nid_postfix() = error;
+    *__error_nid_no_patch() = error;
     return -1;
 }
 
