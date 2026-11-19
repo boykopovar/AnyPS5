@@ -42,6 +42,13 @@ def copy_executable(program, target):
     for pattern in ("python*.dll", "vcruntime*.dll"):
         for library in Path(program).parent.glob(pattern):
             shutil.copy2(library, target.parent / library.name)
+    framework = Path(program).resolve().parent.parent
+    if sys.platform == "darwin" and (framework / "Python3").is_file():
+        for part in ("Python3", "Resources/Python.app/Contents/MacOS/Python"):
+            if (framework / part).is_file():
+                copied = target.parent.parent / part
+                copied.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(framework / part, copied)
 
 
 def snapshot(root):
