@@ -5,7 +5,7 @@ if(BUILD_TESTING)
     set_target_properties(agc_driver_frame_replay_state_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_driver_frame_replay_state_tests)
     add_dependencies(agc_driver_frame_replay_state_tests agc_frame_replay)
-    foreach(mode IN ITEMS submits shader_output)
+    foreach(mode IN ITEMS submits shader_output run_report)
         add_test(NAME agc_driver_frame_replay_${mode} COMMAND ${CMAKE_COMMAND}
                 "-DTOOL=$<TARGET_FILE:agc_frame_replay>" "-DWRITER=$<TARGET_FILE:agc_driver_frame_replay_state_tests>"
                 "-DDIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}" "-DMODE=${mode}"

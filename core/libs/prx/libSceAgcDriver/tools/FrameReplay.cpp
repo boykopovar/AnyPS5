@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -1409,8 +1410,9 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "agc_frame_replay: %s\n", error.what());
             if (code == 0) code = 2;
         }
-        if (code == 0) return 0;
     }
+    LibcRunReportFinishExit_nid_no_patch(code);
+    if (!listing && code == 0) return 0;
     std::fflush(stdout);
     std::fflush(stderr);
     std::_Exit(code);
