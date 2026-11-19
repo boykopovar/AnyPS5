@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
@@ -57,7 +58,7 @@ int main() {
     Require(_Mtx_lock_nid_postfix(&recMutex) == success);
     Require(_Mtx_trylock_nid_postfix(&recMutex) == success);
 
-    int contenderFirstTry = -1;
+    std::atomic<int> contenderFirstTry{-1};
     std::thread contender([&] {
         contenderFirstTry = _Mtx_trylock_nid_postfix(&recMutex);
         Require(_Mtx_lock_nid_postfix(&recMutex) == success);

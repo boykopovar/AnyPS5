@@ -1,0 +1,9 @@
+# libc
+
+## change [std::__sce_v2 _Xtime_diff_to_millis2]
+
+- [std::__sce_v2 _Xtime_diff_to_millis2](../../../core/libs/prx/libc/src/TimeExtras.cpp) (libc, NID `qlkHBOfGcpQ`) follows the `libc.prx` bundled with PPSA03671 v01.001.005 (J03848509): it normalizes the target's nanoseconds, subtracts `now` without normalizing it, returns 0 when the difference is not positive and otherwise rounds the nanoseconds up to milliseconds, with the module's 64-bit wraparound for out-of-range fields. On PS5 firmware 11.60 a payload process got the same results from the console's `libSceLibcInternal.sprx` in 16 calls, among them a target of 1.5e9 nanoseconds (1500), a `now` of 1.5e9 nanoseconds not normalized (501), `INT64_MAX` seconds (-1000) and `INT64_MAX` nanoseconds (9223372036855). A title and other firmware or SDK versions are unverified.
+
+## change [std::__sce_v2 _Timespec64_get_sys and _Timespec64_diff_to_ts]
+
+- [std::__sce_v2 _Timespec64_get_sys and _Timespec64_diff_to_ts](../../../core/libs/prx/libc/src/Threads.cpp) (libc, NIDs `0+cFCv7GzGk`, `TdRnoqlXhOA`) follow the `libc.prx` bundled with PPSA03671 v01.001.005 (J03848509): the current time is read with microsecond resolution and returned as seconds and nanoseconds; `_Timespec64_diff_to_ts` normalizes the target's nanoseconds, subtracts the current time and returns zero once the target is reached, with the module's 64-bit wraparound for out-of-range fields. The time comes from the host's realtime clock through `_Xtime_get_ticks`, not from `sceKernelGettimeofday`. A null argument throws `std::invalid_argument`, where the console faults. On PS5 firmware 11.60 (payload process) `_Timespec64_get_sys` gave multiples of 1000 ns in all 100 calls, within 1 us of `CLOCK_REALTIME`; `_Timespec64_diff_to_ts` gave zero for a past target, the remaining time for one 250 ms ahead, and under 1e9 ns for 1.5e9. A title and other firmware are unverified.

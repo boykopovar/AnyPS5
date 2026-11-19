@@ -9,10 +9,6 @@
 static constexpr int GuestSchedFifo = 1;
 static constexpr int GuestSchedRr = 3;
 
-static bool Valid(const PthreadAttr* attr) {
-    return attr && *attr;
-}
-
 static int LoadAttribute(const PthreadAttr* attr, PthreadAttr& handle) {
     if (!attr) return PosixThread::GUEST_EINVAL;
     if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
@@ -101,9 +97,9 @@ int APS5_VABI pthread_attr_getstack_nid_postfix(const PthreadAttr* __restrict at
 }
 
 int APS5_VABI pthread_attr_getstackaddr_nid_postfix(const PthreadAttr* __restrict attr, void** __restrict stack_addr) {
-    if (!Valid(attr) || !stack_addr) return PosixThread::GUEST_EINVAL;
-    *stack_addr = (*attr)->stackAddress;
-    return 0;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<void*>(stack_addr, handle->stackAddress);
 }
 
 int APS5_VABI pthread_attr_getstacksize_nid_postfix(const PthreadAttr* attr, size_t* stack_size) {

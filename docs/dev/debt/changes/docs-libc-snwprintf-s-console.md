@@ -1,0 +1,5 @@
+# libc
+
+## change [snwprintf_s and vsnwprintf_s]
+
+- [snwprintf_s and vsnwprintf_s](../../../core/libs/prx/libc/src/FormattingWide.cpp) (libc) - follow the `libc.prx` PPSA07923 and PPSA05916 ship. A null buffer, a size of 0 or above `SIZE_MAX >> 3` elements reports "<name>: bad argument" and returns -1 without writing; a null format clears `buffer[0]`, reports "<name>: bad format argument" and returns -1; `%n` or a null `%s` or `%ls` argument clears `buffer[0]` after the text before it, reports "wprintf_s: %n disallowed", "wprintf_s: bad %s argument" or "wprintf_s: bad %ls argument" and returns -23. Otherwise the output is truncated and the full length returned. Each report goes to the constraint handler with `EINVAL` and a null pointer. A PS5 payload process (firmware 11.60) measured the console's `snwprintf_s` doing all of this except the handler's arguments (not recorded); `vsnwprintf_s` was not called. Invalid multibyte `%s` behavior in the `_s` forms remains unverified against the bundled libraries, as does a title process
