@@ -19,7 +19,7 @@ constexpr std::uint32_t PerspectiveType = 19;
 static WebCore::PerspectiveTransformOperation Make(WebCore::Length p, std::uint32_t type = PerspectiveType) {
     WebCore::PerspectiveTransformOperation op{};
     op.m_base.m_refCount = 1;
-    op.m_base.m_type = type;
+    op.m_base.m_type = static_cast<WebCore::TransformOperation::Type>(type);
     op.m_p = p;
     return op;
 }
