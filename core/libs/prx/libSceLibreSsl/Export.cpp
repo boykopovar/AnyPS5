@@ -35,6 +35,27 @@ constexpr int Asn1TooLong = 155;
 constexpr int Asn1WrongTag = 168;
 constexpr int ErrorAsn1Library = 13;
 
+void CopyGuestIn(void* destination, const void* source, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyGuestOut(void* destination, const void* source, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template <typename T>
+T ReadExtensionField(const void* extension, std::size_t offset, const char* function) {
+    T value {};
+    CopyGuestIn(&value, static_cast<const unsigned char*>(extension) + offset, sizeof(value), function);
+    return value;
+}
+
 void PutAsn1Error(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, ErrorFunctionUnknown, reason, __FILE__, __LINE__);
 }
@@ -208,26 +229,34 @@ void APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void* callback) {
 
 void APS5_VABI DES_ecb_encrypt_nid_postfix(const unsigned char* input, unsigned char* output, const unsigned char* schedule, int enc) {
     if (input == nullptr || output == nullptr || schedule == nullptr) APS5_INVALID_ARG_EX;
+    unsigned char block[MBEDTLS_DES_KEY_SIZE];
+    unsigned char key[MBEDTLS_DES_KEY_SIZE];
+    CopyGuestIn(block, input, sizeof(block), __func__);
+    CopyGuestIn(key, schedule, sizeof(key), __func__);
     mbedtls_des_context context;
     mbedtls_des_init(&context);
-    unsigned char block[MBEDTLS_DES_KEY_SIZE];
-    std::memcpy(block, input, sizeof(block));
-    int status = enc ? mbedtls_des_setkey_enc(&context, schedule) : mbedtls_des_setkey_dec(&context, schedule);
-    if (status == 0) status = mbedtls_des_crypt_ecb(&context, block, output);
+    unsigned char result[MBEDTLS_DES_KEY_SIZE];
+    int status = enc ? mbedtls_des_setkey_enc(&context, key) : mbedtls_des_setkey_dec(&context, key);
+    if (status == 0) status = mbedtls_des_crypt_ecb(&context, block, result);
     mbedtls_des_free(&context);
     if (status != 0) throw std::runtime_error("DES_ecb_encrypt: mbedtls failed");
+    CopyGuestOut(output, result, sizeof(result), __func__);
 }
 
 int APS5_VABI DES_set_key_nid_postfix(const unsigned char* key, unsigned char* schedule) {
     if (key == nullptr || schedule == nullptr) APS5_INVALID_ARG_EX;
-    std::memset(schedule, 0, DesScheduleBytes);
-    std::memcpy(schedule, key, MBEDTLS_DES_KEY_SIZE);
+    unsigned char copy[DesScheduleBytes] {};
+    CopyGuestIn(copy, key, MBEDTLS_DES_KEY_SIZE, __func__);
+    CopyGuestOut(schedule, copy, sizeof(copy), __func__);
     return 0;
 }
 
 void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    mbedtls_des_key_set_parity(key);
+    unsigned char copy[MBEDTLS_DES_KEY_SIZE];
+    CopyGuestIn(copy, key, sizeof(copy), __func__);
+    mbedtls_des_key_set_parity(copy);
+    CopyGuestOut(key, copy, sizeof(copy), __func__);
 }
 
 int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void) {
@@ -560,23 +589,17 @@ std::uint64_t APS5_VABI SSLeay_nid_postfix(void) {
 
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
     if (!extension) return 0;
-    std::int32_t critical;
-    std::memcpy(&critical, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, critical), sizeof(critical));
-    return critical > 0;
+    return ReadExtensionField<std::int32_t>(extension, offsetof(X509Extension, critical), __func__) > 0;
 }
 
 void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension) {
     if (!extension) return nullptr;
-    void* value;
-    std::memcpy(&value, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, value), sizeof(value));
-    return value;
+    return ReadExtensionField<void*>(extension, offsetof(X509Extension, value), __func__);
 }
 
 void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
     if (!extension) return nullptr;
-    void* object;
-    std::memcpy(&object, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, object), sizeof(object));
-    return object;
+    return ReadExtensionField<void*>(extension, offsetof(X509Extension, object), __func__);
 }
 
 int APS5_VABI X509_INFO_free_nid_postfix(void) {

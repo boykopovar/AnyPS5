@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -16,6 +17,13 @@ static void Require(bool value) { if (!value) std::abort(); }
 template<typename TAction>
 static void RequireThrows(TAction action) {
     try { action(); } catch (const std::invalid_argument&) { return; }
+    std::abort();
+}
+
+template<typename TAction>
+static void RequireRejected(TAction action) {
+    errno = 71;
+    try { action(); } catch (const std::runtime_error&) { if (errno == 71) return; }
     std::abort();
 }
 
@@ -71,5 +79,19 @@ int main() {
     RequireThrows([&] { DES_set_key_nid_postfix(nullptr, schedule.data()); });
     RequireThrows([&] { DES_ecb_encrypt_nid_postfix(weak.data(), schedule.data(), nullptr, 1); });
     RequireThrows([] { DES_set_odd_parity_nid_postfix(nullptr); });
+    auto* unmapped = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    DesBlock output{};
+    output.fill(0x5c);
+    const DesBlock untouched = output;
+    Require(DES_set_key_nid_postfix(weak.data(), schedule.data()) == 0);
+    const DesSchedule scheduleBefore = schedule;
+    RequireRejected([&] { DES_ecb_encrypt_nid_postfix(unmapped, output.data(), schedule.data(), 1); });
+    RequireRejected([&] { DES_ecb_encrypt_nid_postfix(weak.data(), output.data(), unmapped, 1); });
+    RequireRejected([&] { DES_ecb_encrypt_nid_postfix(weak.data(), unmapped, schedule.data(), 0); });
+    Require(output == untouched);
+    RequireRejected([&] { DES_set_key_nid_postfix(unmapped, schedule.data()); });
+    RequireRejected([&] { DES_set_key_nid_postfix(weak.data(), unmapped); });
+    Require(schedule == scheduleBefore);
+    RequireRejected([] { DES_set_odd_parity_nid_postfix(reinterpret_cast<unsigned char*>(std::uintptr_t{0x10})); });
     return 0;
 }
