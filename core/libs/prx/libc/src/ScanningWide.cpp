@@ -278,7 +278,7 @@ private:
             directive.length += static_cast<char>(*format++);
         }
         directive.conversion = *format;
-        if (directive.conversion == 0) Fail("incomplete conversion specification");
+        if (directive.conversion == 0) return directive;
         ++format;
         if (directive.conversion == u'[') {
             directive.setExcluded = *format == u'^';
