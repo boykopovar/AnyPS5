@@ -173,6 +173,26 @@ def main():
             unaligned[0x200:0x206] = b"\xff\x25" + struct.pack("<i", 0x802 - 0x206)
             struct.pack_into("<Q", unaligned, 0x802, 0x210)
             convert("even-unaligned-slot", unaligned, expected={(0x802, 8, 0x210)})
+
+            def split_image(words, table=None, boundary=0x800):
+                image = bytearray(main_image(words))
+                struct.pack_into("<IIQQQQQQ", image, 64, 1, 7, 0, 0, 0, boundary, boundary, 0x1000)
+                struct.pack_into("<IIQQQQQQ", image, 176, 1, 7, boundary, boundary, boundary,
+                                 len(image) - boundary, len(image) - boundary, 0x1000)
+                struct.pack_into("<H", image, 56, 3)
+                if table is not None:
+                    start, packed = table
+                    for index, word in enumerate(packed):
+                        struct.pack_into("<Q", image, start + index * 8, word)
+                    image = replace_tag(image, 36, start, guest)
+                    image = replace_tag(image, 35, len(packed) * 8, guest)
+                return image
+
+            crossed = split_image((), (0x81c, (0x800, 3)), boundary=0x820)
+            convert("cross-segment-table", crossed, expected={(0x800, 8, 0x210), (0x808, 8, 0x210)})
+            straddle = split_image((0x800, 0x8fc), boundary=0x900)
+            struct.pack_into("<Q", straddle, 0x8fc, 0x210)
+            convert("cross-segment-target", straddle, expected={(0x800, 8, 0x210), (0x8fc, 8, 0x210)})
             empty = main_image(())
             empty[0x200:0x206] = b"\xb8\x2a\x00\x00\x00\xc3"
             convert("empty", empty, expected=set())

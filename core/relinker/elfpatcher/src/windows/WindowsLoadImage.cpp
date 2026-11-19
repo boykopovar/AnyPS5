@@ -95,11 +95,13 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
 std::uint32_t WindowsLoadImage::GetRva(const std::uint64_t address, const std::uint64_t size) const {
     if (size == 0)
         throw Domain::RelinkerException("Cannot map an empty ELF address range", address);
-    for (const auto& segment : segments) {
-        if (address >= segment.MappedAddress && address - segment.MappedAddress < segment.MemorySize && size <= segment.MemorySize - (address - segment.MappedAddress))
-            return CheckedRva(LoadRva + address - firstAddress);
+    for (std::uint64_t offset = 0; offset < size; ++offset) {
+        const auto vaddr = address + offset;
+        if (!std::any_of(segments.begin(), segments.end(), [vaddr](const Domain::ProgramHeader& segment) {
+                return vaddr >= segment.MappedAddress && vaddr - segment.MappedAddress < segment.MemorySize; }))
+            throw Domain::RelinkerException("ELF address is not contained in PT_LOAD memory", address);
     }
-    throw Domain::RelinkerException("ELF address is not contained in PT_LOAD memory", address);
+    return CheckedRva(LoadRva + address - firstAddress);
 }
 
 std::uint32_t WindowsLoadImage::GetEndRva() const {

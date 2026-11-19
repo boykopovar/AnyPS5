@@ -127,11 +127,17 @@ void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::Progra
 }
 
 void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std::uint64_t address, const std::uint64_t size, const std::uint32_t flags, const std::string& what) {
-    for (const auto& header : headers)
-        if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
-            return;
-    const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
-    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+    const auto loaded = [&](const std::uint64_t vaddr) {
+        for (const auto& header : headers)
+            if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && vaddr >= header.MappedAddress && vaddr - header.MappedAddress < header.MemorySize)
+                return true;
+        return false;
+    };
+    for (std::uint64_t offset = 0; offset < size; ++offset)
+        if (!loaded(address + offset)) {
+            const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
+            throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+        }
 }
 
 std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry) {
