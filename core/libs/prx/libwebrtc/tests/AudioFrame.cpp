@@ -208,6 +208,58 @@ void TestDataView() {
     RequireThrows<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(nullptr); });
 }
 
+void TestCopyFrom() {
+    auto source = Filled();
+    auto destination = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(source.get());
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(destination.get());
+    source->timestamp = 0x12345678;
+    source->elapsedTimeMs = 111;
+    source->ntpTimeMs = 222;
+    source->samplesPerChannel = 2;
+    source->sampleRateHz = 48000;
+    source->numChannels = 2;
+    source->speechType = 3;
+    source->vadActivity = 1;
+    source->profileTimestampMs = 444;
+    source->channelLayout = WebRtcChannelLayoutStereo;
+    source->absoluteCaptureTimestampMs.value = 987654321;
+    source->absoluteCaptureTimestampMsEngaged = true;
+    source->muted = false;
+    source->data[0] = -1;
+    source->data[1] = 22;
+    source->data[2] = 333;
+    source->data[3] = -4444;
+    destination->profileTimestampMs = 999;
+
+    _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(destination.get(), source.get());
+    Require(destination->timestamp == source->timestamp);
+    Require(destination->elapsedTimeMs == source->elapsedTimeMs && destination->ntpTimeMs == source->ntpTimeMs);
+    Require(destination->samplesPerChannel == 2 && destination->sampleRateHz == 48000 && destination->numChannels == 2);
+    Require(destination->speechType == 3 && destination->vadActivity == 1 && destination->channelLayout == WebRtcChannelLayoutStereo);
+    Require(destination->absoluteCaptureTimestampMsEngaged && destination->absoluteCaptureTimestampMs.value == 987654321);
+    Require(!destination->muted && std::memcmp(destination->data, source->data, 4 * sizeof(source->data[0])) == 0);
+    for (std::size_t index = 4; index < WebRtcAudioFrameMaxDataSizeSamples; ++index) Require(destination->data[index] == 0);
+    Require(destination->profileTimestampMs == 999 && destination->packetInfos == nullptr);
+
+    source->muted = true;
+    destination->muted = false;
+    destination->data[0] = 123;
+    _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(destination.get(), source.get());
+    Require(destination->muted && destination->timestamp == source->timestamp);
+    Require(AllSamples(_ZNK6webrtc10AudioFrame4dataEv_nid_postfix(destination.get()), 0));
+}
+
+void TestCopyFromOversizedSource() {
+    auto source = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(source.get());
+    source->samplesPerChannel = WebRtcAudioFrameMaxDataSizeSamples;
+    source->numChannels = 2;
+    auto destination = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(destination.get());
+    RequireThrows<std::runtime_error>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(destination.get(), source.get()); });
+}
+
 int main() {
     TestConstructor();
     TestMutedData();
@@ -218,5 +270,7 @@ int main() {
     TestUpdateFrameLayouts();
     TestUpdateFrameLimits();
     TestDataView();
+    TestCopyFrom();
+    TestCopyFromOversizedSource();
     return 0;
 }

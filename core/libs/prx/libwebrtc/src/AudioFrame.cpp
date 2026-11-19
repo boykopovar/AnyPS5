@@ -41,6 +41,7 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -94,6 +95,32 @@ void APS5_VABI _ZN6webrtc10AudioFrameC1Ev_nid_postfix(WebRtcAudioFrame* frame) {
     frame->channelLayout = WebRtcChannelLayoutNone;
     frame->absoluteCaptureTimestampMs.nullState = 0;
     frame->absoluteCaptureTimestampMsEngaged = false;
+}
+
+void APS5_VABI _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(WebRtcAudioFrame* frame, const WebRtcAudioFrame* source) {
+    if (!frame || !source) throw std::invalid_argument("AudioFrame::CopyFrom requires two frames");
+    if (frame == source) return;
+    if (frame->packetInfos || source->packetInfos) NotImplemented_nid_no_patch(__func__);
+    if (source->numChannels && source->samplesPerChannel > WebRtcAudioFrameMaxDataSizeSamples / source->numChannels) {
+        throw std::runtime_error("AudioFrame::CopyFrom: samples_per_channel_ * num_channels_ exceeds kMaxDataSizeSamples");
+    }
+    const std::size_t sampleCount = source->samplesPerChannel * source->numChannels;
+
+    if (frame->muted && !source->muted) std::memset(frame->data, 0, sizeof(frame->data));
+    frame->timestamp = source->timestamp;
+    frame->elapsedTimeMs = source->elapsedTimeMs;
+    frame->ntpTimeMs = source->ntpTimeMs;
+    frame->muted = source->muted;
+    frame->samplesPerChannel = source->samplesPerChannel;
+    frame->sampleRateHz = source->sampleRateHz;
+    frame->speechType = source->speechType;
+    frame->vadActivity = source->vadActivity;
+    frame->numChannels = source->numChannels;
+    frame->channelLayout = source->channelLayout;
+    frame->absoluteCaptureTimestampMs = source->absoluteCaptureTimestampMs;
+    frame->absoluteCaptureTimestampMsEngaged = source->absoluteCaptureTimestampMsEngaged;
+
+    if (!frame->muted && sampleCount) std::memcpy(frame->data, source->data, sampleCount * sizeof(frame->data[0]));
 }
 
 void APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(WebRtcAudioFrame* frame) {
