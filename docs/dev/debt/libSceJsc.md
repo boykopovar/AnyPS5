@@ -3,7 +3,6 @@
 ### Unknown function info
 
 - [JSString ABI and ownership](../../../core/libs/prx/libSceJsc/Export.cpp): the console JavaScriptCore version, allocation policy, opaque object layout and thread initialization remain unverified. These host objects cannot be passed to a title-supplied native JavaScriptCore module. The ten names occur in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c); ownership and signatures follow pinned WebKit [JSStringRef.cpp](https://github.com/WebKit/WebKit/blob/f274ef4c03ebace644c46f8ec55746b391acdcc8/Source/JavaScriptCore/API/JSStringRef.cpp). A null handle given to retain, release or the maximum-size query, a UTF-8 input above `INT32_MAX` bytes and a UTF-16 length above 2147483635, given or decoded from non-ASCII UTF-8, throw where WebKit faults. Other JavaScriptCore APIs remain unavailable.
-- [JSStringGetMaximumUTF8CStringSize](../../../core/libs/prx/libSceJsc/Export.cpp) (libSceJsc) - the console result is unmeasured. It keeps the 32-bit arithmetic of pinned [JSStringRef.cpp](https://github.com/WebKit/WebKit/blob/f274ef4c03ebace644c46f8ec55746b391acdcc8/Source/JavaScriptCore/API/JSStringRef.cpp#L83-L87), `return string->length() * 3 + 1`, where `OpaqueJSString::length()` returns `unsigned`. The product therefore wraps for UTF-16 lengths of 1431655766 units and up, before it widens to `size_t`. A test for that range needs about 2.9 GB, so none is kept. Closes when: measured on a PS5 or compared with a console module.
 
 ### Functional
 
