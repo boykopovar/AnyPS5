@@ -341,6 +341,33 @@ static void CheckLongDoubleExpTinyRounding() {
     Require(std::fesetround(saved) == 0);
 }
 
+static void CheckRoundlAndFdimlFlags() {
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    const auto raised = [] {
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT) & Flags;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return flags;
+    };
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double signaling = Extended(0x7fff, 0xa000000000000000ull);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(SameBits(roundl_nid_postfix(2.5L), 3.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(-2.5L), -3.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(0.25L), 0.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(3.0L), 3.0L) && raised() == 0);
+    Require(SameBits(roundl_nid_postfix(-0.0L), -0.0L) && raised() == 0);
+    Require(SameBits(roundl_nid_postfix(0x1p70L), 0x1p70L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(Extended(0xc045, 0x8000000000000001ull)), Extended(0xc045, 0x8000000000000001ull)) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(signaling), signaling) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(3.0L, 5.0L), 0.0L) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(5.0L, 3.0L), 2.0L) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(0x1p-68L, 1.0L), 0.0L) && raised() == FE_INEXACT);
+    Require(SameBits(fdiml_nid_postfix(1.0L, 0x1p-68L), 1.0L) && raised() == FE_INEXACT);
+    Require(SameBits(fdiml_nid_postfix(infinity, infinity), 0.0L) && raised() == FE_INVALID);
+    Require(SameBits(fdiml_nid_postfix(signaling, 1.0L), signaling) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(1.0L, signaling), signaling) && raised() == 0);
+}
+
 static void CheckRintTiesToEven() {
     const int saved = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -852,6 +879,7 @@ int main(int argc, char** argv) {
     CheckLongDoubleExpTinyMultiplierOverflow();
     CheckLongDoubleExpTinyRounding();
     CheckRintTiesToEven();
+    CheckRoundlAndFdimlFlags();
     CheckClassification();
     CheckLongDoubleExp();
     CheckRoundHalfwayAwayFromZero();
