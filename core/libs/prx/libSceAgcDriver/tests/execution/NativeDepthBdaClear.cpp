@@ -198,6 +198,10 @@ int RunNativeClear(AgcDriver::VulkanDevice& device, ClearConsumer consumer) {
         return VulkanTestSkipped;
     }
     const auto context = AgcDriver::VulkanDeviceTestAccess::Context(device);
+    if (!SharedMemoryReachableByGpuStores() && !HostImportCovers(context, metadata.Address(), metadataBytes)) {
+        std::puts("skipped, /dev/udmabuf cannot be opened and the HTILE block is not imported in place without it");
+        return VulkanTestSkipped;
+    }
     Require(context.recorder != nullptr, "the native clear context has no recorder");
     context.recorder->Activate();
     struct Cleanup {
@@ -267,7 +271,6 @@ int main() {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
         for (const auto consumer : {ClearConsumer::Owner, ClearConsumer::Texture, ClearConsumer::Attachment}) {
             const auto result = RunNativeClear(*device, consumer);
             if (result != 0) return result;
