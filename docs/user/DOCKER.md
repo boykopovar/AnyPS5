@@ -1,126 +1,125 @@
 # AnyPS5 with Docker
 
-Build this fork's complete Windows x86-64 engine, native launcher and desktop helper in Linux containers, then start its local web launcher:
+Build the Windows x86-64 engine, native launcher, desktop helper and local web app from this fork:
 
 ```powershell
-docker compose up
+docker compose up --build
 ```
 
-Run this in the source folder containing `compose.yaml`. A source ZIP works without host Git or initialized submodules. Docker retrieves missing dependencies at the revisions in `tools/engine/dependencies.lock`. It builds the supplied source; it does not download a replacement AnyPS5 checkout or use an existing `b/` build.
+Run this in the folder containing `compose.yaml`. A clone and a source ZIP both work. No host compiler, Git, CMake, Ninja, Python or Node installation is required. Docker retrieves upstream source and dependencies; existing host `b/` output is not used.
 
 ## Requirements
 
-Use Windows x86-64, Docker Desktop in Linux-container mode, Compose with `up --wait` support, and internet access for the first build. The tested versions are below; older releases have not been validated. No host compiler, CMake, Ninja, Python or Node installation is required. The builder runs pinned Windows WinLibs GCC 15.2, CMake 3.31.6, Ninja 1.12.1 and Python 3.13.3 under Wine 9 inside Linux. This preserves the project's required SysV exception handling; Ubuntu's native MinGW compiler failed that link probe.
+Use Windows x86-64, Docker Desktop in Linux-container mode, Docker Compose v2.17 or newer and internet access for engine builds. The builder uses pinned WinLibs GCC 15.2, CMake 3.31.6, Ninja 1.12.1 and Python 3.13.3 under Wine 9 inside Linux. These tools preserve the project's required System V exception ABI. The exported engine and helper execute on Windows.
 
-The default parallelism is four jobs. For a smaller Docker allocation, set `$env:ANYPS5_BUILD_JOBS = '2'` before building. Builds need substantial free Docker disk space for sources, Wine/toolchains, intermediate objects and BuildKit cache. See the validation section for measured observations; they are observations on this machine, not minimum hardware guarantees.
-
-Games execute on the Windows desktop. Docker does not run graphical games, download games, decrypt packages or establish compatibility with every title/GPU.
+The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` for a smaller Docker allocation, or increase it if your allocation supports more compiler processes. The first build needs substantial time and free Docker disk space. Cached builds still check the configured upstream ref.
 
 ## First run
 
-1. Extract this fork's source ZIP, or clone this fork. Open PowerShell in its source folder.
-2. Run `docker compose up`. Leave the terminal open during the build. The `engine` service verifies and exports the engine, then exits with code **0**. The `web` service becomes **healthy**. An exited engine service is normal.
-3. Open [http://127.0.0.1:8766](http://127.0.0.1:8766). Download the Windows engine and helper using the setup panel. Extract the complete ZIP to a writable folder and run **Install-Helper.cmd**. If asked, choose the source folder containing `compose.yaml`. Alternatively, run `Install-Helper.cmd` directly from that source folder after export.
-4. The installer installs the helper for the current Windows user, registers sign-in startup, opens the browser and shows a short-lived pairing code. Enter it in the browser. Use `Pair-Browser.cmd` in the source or extracted bundle whenever another code is needed. A code expires in two minutes and works once.
-5. Paste an Explorer folder path, including spaces or surrounding quotes, into **Add folder**. Scan, review, add selected games, then choose **Play**. The signed-in user's helper accesses the Windows path directly; do not translate it to a Linux path.
+1. Extract the source ZIP or clone this fork. Open PowerShell in the source folder.
+2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. The web service starts after successful export. An exited engine service is normal.
+3. Open [http://127.0.0.1:8766](http://127.0.0.1:8766). The public **About** tab explains capabilities, limitations and the build's exact upstream revision.
+4. Download the engine/helper ZIP from the setup panel, extract it completely and run **Install-Helper.cmd**. Choose the source folder containing `compose.yaml` if asked. Alternatively, run `Install-Helper.cmd` directly from the source folder after export.
+5. Enter the helper's eight-digit desktop pairing code in the browser. It expires in two minutes and works once. Run **Pair-Browser.cmd** to generate another code. The permanent credential remains in local storage and is not shown in the browser.
+6. Paste a Windows Explorer folder path into **Add folder**, scan and review the results. Link existing prepared folders or choose **Prepare & add** for supported extracted inputs. The game runs only when you choose **Play**.
 
-The generated installer checks the helper hash against the bundle manifest. It validates the new configuration before stopping an existing helper, refuses updates while its games are running, and retains `.previous` executable/configuration backups. Startup failure restores the previous installation. Keep downloaded code from a trusted local build; checksums detect corruption, not a malicious replacement of both code and manifest.
+After initial setup, **Start-AnyPS5.cmd** builds/starts the stack, installs the matching per-user helper and opens pairing. Close games and finish or cancel preparation before updating the helper. The installer retains a previous executable/configuration and restores them if startup fails.
 
-The browser never receives the permanent helper credential. The installer reads it from the selected local app folder. The local endpoint serves engine binaries without pairing so first-run setup can download them. No game data or credential is included in that archive. Web health requires a valid engine export, but does not require an online Windows helper.
-
-Readiness results are cached for at most 30 seconds; export-pointer changes bypass that cache. Each download additionally checks the archive hash. If an export changes while verification is running, readiness temporarily fails until a consistent export can be verified.
-
-## Prepared games and converter
-
-A ready game has its converted executable, matching `libs`, `app0` resources and required launch settings. Keep the complete folder together, including saves and configuration. For an extracted game marked **Needs Windows preparation**, choose **Prepare & add** in its scan result. The bundled worker validates the engine, unwraps decrypted SELF images when needed, copies resources and the matching runtime, converts the executable, standard bundled modules and statically referenced PRX dependencies in other folders, then checks Windows imports before copying the remaining resources and registering the output. It never runs the game automatically.
-
-Prepared copies default to `%LOCALAPPDATA%\AnyPS5\PreparedGames`, independently of the source folder. To use another drive, create a folder there, open **Settings > Preparation storage**, paste its Windows path and save. The setting applies to new copies; existing games and saves remain in place. The app shows available space, and a failed space check reports required, available and missing GB before resource copying. The helper caches its immutable engine under `%LOCALAPPDATA%\AnyPS5\DesktopHelper\engines`. No installed Python or compiler is needed. Progress, cancellation and **Open log on Windows** are available in the app. Cancellation or failure does not add a game; original games, saves and settings are untouched. A completed copy is available to launch, with gameplay still unverified.
-
-Encrypted inputs and package extraction/decryption are unsupported. Extracted ELF64 x86-64 or decrypted SELF inputs need an unambiguous main executable. Companion x86-64 ELF/SELF executables are converted together with the main program and audited before registration. Package wrappers containing loose helpers are scanned for the nested game entry point. Executables sharing module directories, incompatible shared-module layouts and dynamically loaded external modules without static dependency declarations require manual preparation. Unsupported console syscall instructions remain a conversion error; automatic preparation does not bypass the syscall check. Automatic preparation currently limits each game to 250,000 resource files and main executables to 2 GiB. Insufficient disk space, unsupported conversion and missing runtime imports are reported as errors. A newer engine may be required for unsupported games; preparation cannot implement missing system functionality.
-
-Use the generated `relinker.exe` and `libs` together, following [USAGE](USAGE.md), with supported extracted, decrypted input. Prepare into a **new** output folder. Keep the original input and existing working runtime intact. Renaming an input does not convert it. Rebuilding the engine never replaces runtime libraries inside registered games.
-
-The bundle also includes the native `AnyPS5Launcher.exe` and `portable.flag`. It can manage a separate portable collection beside the bundle with Docker stopped. Existing `Start-Launcher.cmd` continues to use the original native build when present.
-
-## Everyday commands
-
-Start in the background, inspect status/logs, stop, or remove this stack's containers/network:
+## Start, stop and cleanup
 
 ```powershell
-docker compose up -d
+docker compose up --build
+docker compose up -d --build --wait
 docker compose ps -a
 docker compose logs --tail=100
-docker compose stop
 docker compose down
 ```
 
-All retain bind-mounted application state and external game folders. Ctrl+C stops an attached `up`. Windows game processes have a separate lifecycle; close them normally through the game. The helper retries while the backend is unavailable and reconnects when it returns.
+`-d` is an option for **up**, not **down**. `docker compose down -d` is invalid. Use `docker compose down --remove-orphans` to also remove obsolete services belonging to this Compose project.
 
-After updating source, incorporate changes explicitly:
+Default `down` removes the stack's containers and network. It retains images, compiler/download caches, exported engine bundles, pairing state, library entries, settings, saves and game folders. Ctrl+C stops an attached `up`; `down` removes its containers afterward. No global Docker prune is needed.
+
+When Compose replaces the engine service, it also restarts the web service after successful export. This resets readiness checks against the newly published bundle.
+
+Windows helper, game and preparation processes have a separate lifecycle. The helper stays installed and reconnects after the backend returns. Cancel preparation and close games normally before shutdown if you want those Windows processes to stop. Docker cannot stop or restart an interactive Windows desktop process by itself.
+
+To remove the helper's sign-in startup and executable, run:
 
 ```powershell
+.\Start-AnyPS5.cmd -Uninstall
+```
+
+Configuration, cached bundles, tokens, logs, games and saves are retained. Reinstall the helper before using desktop actions again. Shutdown and uninstall are not data-erasure commands.
+
+## Upstream source updates
+
+Every engine build resolves the configured ref from `https://github.com/boykopovar/AnyPS5.git` through BuildKit's Git source operation. The default is **main**. The build records the exact resolved upstream SHA, fork overlay base, built-source fingerprint and dependency revisions in the engine manifest. The web app's About view displays the upstream SHA and engine identity.
+
+The builder compares supplied fork files with the base in `tools/engine/upstream.lock`, retains upstream changes to unmodified files and merges the fork's changes into updated files. New launcher/build files are retained. A conflict, missing source, unsupported dependency change or failed compilation stops the build; the host checkout and prior completed exports are not replaced. There is no silent fallback to stale upstream source.
+
+Third-party source follows the resolved upstream gitlinks, including recursive modules. `tools/engine/dependencies.lock` retains tested toolchain downloads and baseline submodule metadata; baseline submodule revisions do not override newer upstream gitlinks. Explicit fork dependency overrides and deletions belong in `upstream.lock`. When rebasing the fork, maintainers must advance its base to the upstream revision used for that rebase.
+
+For an exact upstream source selection:
+
+```powershell
+$env:ANYPS5_UPSTREAM_REF = '<full upstream commit SHA>'
 docker compose up -d --build --wait
+Remove-Item Env:ANYPS5_UPSTREAM_REF
 ```
 
-Plain `up` can reuse existing images. The rebuild uses unchanged build layers and an incremental compiler cache. UI assets are excluded from the engine context. Each completed engine has its own identity and directory. Install the newly generated helper when updating; existing prepared games keep their original runtime and settings. Metadata records a content fingerprint even for a ZIP; Git revision is recorded when available. Cleanliness is deliberately unknown with metadata-only Git context. Build times and PE timestamps mean byte-for-byte reproducibility is not claimed.
+Plain `up` can reuse existing images; use `--build` to check upstream. A web-only build does not rebuild the engine. New upstream commits can introduce regressions, and latest source does not guarantee title compatibility. Pin a tested SHA for a shared release and include it with the source ZIP and engine ZIP. Byte-for-byte reproducibility is not claimed.
 
-Independent engine/export and web image commands:
+After a successful engine update, install its helper using the generated installer or **Start-AnyPS5.cmd**. Existing prepared games keep their own runtime libraries; updating the engine does not automatically upgrade them or migrate saves into a new copy.
+
+## Preparation and compatibility
+
+A complete Windows game folder contains its launch executable, matching `libs`, `app0` resources and required launch settings. Existing prepared folders are linked in place. Availability checks for linked folders establish file presence, not gameplay compatibility.
+
+Automatic preparation validates the engine, unwraps decrypted SELF inputs where needed, converts main/companion executables and declared PRX dependencies, and audits imports before copying remaining game assets. It publishes a separate output and registers it only after success. It never launches the game automatically. Progress, cancellation and **Open log on Windows** remain available during preparation.
+
+The default output folder is `%LOCALAPPDATA%\AnyPS5\PreparedGames`. To choose another drive, create a folder there and save its Windows path under **Settings > Preparation storage**. This affects new copies only. The app shows available space; failed space checks report required, available and missing GB. Preparation needs a full resource copy, matching runtime and conversion workspace.
+
+Current limitations:
+
+- Encrypted SELF inputs, package extraction/decryption, games, firmware and keys are not supplied or handled automatically.
+- Missing exports/libraries, unsupported console syscalls and incompatible executable/module layouts stop preparation. Disabling syscall validation is not an automatic preparation strategy.
+- Dynamic external modules without static dependency declarations may require manual preparation. Executables sharing module directories or needing incompatible shared-module outputs are unsupported by the automatic workflow.
+- Main executables are limited to 2 GiB; each game is limited to 250,000 resource files. Linked resources and UNC paths are unsupported. Use local drive paths; map network storage to a drive first.
+- Prepared/available means files and applicable loader checks passed. Rendering, controllers, audio, save/load and gameplay require title-specific testing on the actual CPU/GPU/drivers. Exit code 0 is not proof that a game rendered or was playable.
+- The web app does not edit per-game environment/launch settings or remove individual library entries; use the native launcher. It does not automatically update existing game copies or migrate saves.
+- A helper restart loses live game monitoring and requires closure confirmation before another launch. The desktop folder picker can pause heartbeats while its modal dialog is open.
+
+AnyPS5 relinks executables and reimplements system libraries; it is not a general PS5 emulator. See the upstream [game bring-up discussions](https://github.com/boykopovar/AnyPS5/discussions/categories/game-bring-up) for reports, which apply to their tested build and hardware.
+
+## Data locations
+
+| Data | Location |
+| --- | --- |
+| Web/library collection | `.local/launcher` |
+| Pairing and backend state | `.local/launcher-web` |
+| Engine exports and downloads | `.local/engine-artifacts` |
+| Engine bundle | `.local/engine-artifacts/bundles/<id>` |
+| Windows download | `.local/engine-artifacts/<id>.zip` |
+| Installed helper and immutable cache | `%LOCALAPPDATA%\AnyPS5\DesktopHelper` |
+| Default prepared outputs | `%LOCALAPPDATA%\AnyPS5\PreparedGames` |
+| Custom prepared outputs | Folder saved in Settings |
+
+Back up collection/state and complete game folders, including their saves, settings and matching libraries. Game data and credentials are excluded from distributable engine/source archives. Keep runtime output outside `b/` and source release packages.
+
+## Maintainer checks
+
+The fork's **Sync upstream into fork** GitHub Actions workflow checks `boykopovar/AnyPS5` daily at 09:23 UTC and can be started manually. It prepares a merge into `sync/upstream`, refreshes the overlay base and recursive dependency metadata, runs integration tests, then opens a pull request against this fork's `main`. It does not replace `main` or merge the pull request automatically. An existing open sync pull request is retained for review. Merge conflicts or failed tests stop publication and appear as a failed workflow run.
+
+Enable Actions for the fork and **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**. Workflow-created pull requests can require approval before their other Actions checks run. Review native build and gameplay results separately; the scheduled checks do not establish Windows compilation or title compatibility. Docker builds continue checking upstream independently of source-sync pull requests.
+
+For a manual source sync, work on a new branch, merge upstream without discarding fork changes, update recursive submodules, run `python tools/engine/sources.py --write`, and advance `tools/engine/upstream.lock` to that exact upstream SHA. Run the checks below and open a pull request. Do not force-reset the fork to upstream or replace installed game runtimes during a source sync.
+
+Run the engine/source integration, worker and web backend tests with a development Python installation:
 
 ```powershell
-docker compose build engine
-docker compose run --rm engine
-docker compose build web
-docker compose up -d
+python tools/engine/tests.py
+python tools/launcher/TestsPreparation.py
+python tools/launcher/TestsWeb.py
 ```
 
-Building the engine image compiles and verifies its payload. Running `engine` publishes it. Building `web` alone does not compile the engine; full startup still requires successful export. Interrupted downloads use temporary files and checksum verification. Exports serialize with a filesystem lock, validate staged files/PE architecture/import dependencies/archive hashes, and publish pointers atomically. Failed exports retain previous completed bundles and mark the expected export unavailable.
-
-## Storage and backups
-
-| Data | Location relative to source folder |
-| --- | --- |
-| Immutable engine directory | `.local/engine-artifacts/bundles/<id>/` |
-| Engine download | `.local/engine-artifacts/<id>.zip` |
-| Current/expected export pointers | `.local/engine-artifacts/current.json`, `expected.json` |
-| Exported Windows setup | `.local/engine-artifacts/bundles/<id>/Install-Helper.cmd` |
-| Library and folder settings | `.local/launcher/data/` |
-| Launcher logs | `.local/launcher/logs/` |
-| Web database, credential, helper logs | `.local/launcher-web/` |
-| Per-user helper/configuration/backups | `%LOCALAPPDATA%\AnyPS5\DesktopHelper\` |
-| Games and game-local saves/configuration | The complete Windows folders you selected |
-| Disposable build cache/images | Docker-managed storage |
-
-Do not edit immutable bundles. Back up the complete game folders, `.local/launcher`, `.local/launcher-web` and installed helper configuration after closing games and stopping helper/stack writes. Protect credentials; do not share them in source archives or reports. Restore to the same paths, or reinstall/reconfigure the helper for the new folder. A different PC needs its own local setup and pairing. `Start-AnyPS5.cmd -Uninstall` removes helper startup/executable while retaining data.
-
-Do not delete `.local`, game folders or Docker volumes as routine troubleshooting, and do not globally prune Docker. Retry a failed build with `docker compose up -d --build --wait`; inspect the first failing URL/compiler stage. Check connectivity, certificate/proxy settings, free disk and Docker resources. Do not disable TLS or checksum checks. If a bundle is corrupt, preserve it for diagnosis and rebuild/export from source. A missing-folder or disconnected-helper message refers to Windows access, not the engine build.
-
-Advanced isolated testing can override `ANYPS5_WEB_PORT`, `ANYPS5_WEB_STATE_DIR`, `ANYPS5_ENGINE_DIR` and `ANYPS5_CACHE_SCOPE`, with a separate Compose project name. Normal users need none of these settings. The generated installer defaults to port 8766; custom test ports use `Setup-WebHelper.ps1 -Port` explicitly.
-
-## Validation
-
-| Environment / check | Observed result |
-| --- | --- |
-| Windows | Windows 11 Home, 10.0.26300 |
-| Docker Desktop / Engine / Compose | 4.99.0.245822 / 29.9.3 / 5.7.0, Linux x86-64 containers |
-| Docker allocation | 8 CPUs, 30.14 GiB RAM; 5.38 GiB VM memory in use was sampled while two four-job cold builds ran. Per-build peak memory was not exposed by BuildKit and is not claimed. Lower allocations have not been validated. |
-| Compiler and target | Pinned WinLibs GCC 15.2 under Wine 9; complete Windows x86-64 engine, launcher and helper; DWARF exception link check passed |
-| Cold clone / source ZIP | Both completed all 4,299 steps, exported 413 patched PRXs, exited engine `0` and reached healthy web status with no helper connected. Compiler-stage times were 3,812.8 seconds each, running concurrently at four jobs each with separate initially empty compiler caches. Pinned tooling layers were cached; first tooling downloads add time. |
-| Archive provenance | The ZIP had no `.git` or populated submodules. Its controlled source edit appeared in the fingerprint embedded in `relinker --version`; archive provenance recorded no Git revision. Both cold outputs passed native Windows synthetic execution with exit 42. |
-| Cold export | 47.3 seconds per exporter in the observed concurrent runs |
-| Cold working storage | 3,652,225,859 logical bytes / 4,439,064,576 allocated bytes in one compiler cache, excluding tooling/image layers and exported artifacts |
-| Working storage | A populated-source incremental build used 2,286,549,354 bytes under its build cache, excluding toolchain/image layers and exported artifacts. Reserve additional Docker storage for dependency copies and caches. This is not a minimum disk requirement. |
-| Runtime artifacts | 545 files / 391,118,372 payload bytes; 135,735,482-byte ZIP in the observed release. Final engine image about 696 MB and pinned tooling stage about 4.06 GB; Docker retains additional intermediate layers. |
-| Incremental source build | 57.4 seconds inside the compiler stage on the observed run; this excludes image/context transfer and export |
-| Unchanged background startup | `docker compose up -d` returned in 21.7 seconds with no compilation; initial web health verification can finish afterward |
-| UI-only edit | A controlled CSS edit reused every engine filesystem layer; Docker regenerated its provenance attestation |
-| Windows execution | New relinker `--version`/`--help`, synthetic ELF conversion, and the new-runtime imported function call returned 42 with a System32-only PATH |
-| Real titles | Fresh outputs prepared from available DOOM PPSA99666 and Celeste PPSA59322 inputs; DOOM menu and Celeste title screen rendered after browser/helper launches; closure was observed in the browser |
-| Automatic preparation | Bundled Windows interpreter; ELF conversion and explicit native launch returning 42; DOOM decrypted SELF and Sunshine conversion/import audits; Chromium cancellation, retry, invalid-input rejection, automatic registration, source deduplication, responsive controls and unchanged test-source hashes |
-| Browser and helper | Pairing, paths containing spaces and quotes, scan/review/add, laptop and narrow layouts, download CRC/hash, generated installation, backend restart/reconnection and registration persistence passed |
-| Standalone | Relocated native launcher opened the new DOOM output outside the checkout with this project's containers stopped and a System32-only PATH |
-| Preservation | All 3,716 recorded existing collection/game file hashes were unchanged; original native build timestamps were retained |
-| Recovery | Invalid downloads/runtime hashes, missing DLLs, stale pointers, interrupted publication and concurrent exports were exercised on fixtures; prior completed bundles were retained. A failed Windows helper startup restored and restarted the previous helper with its exact configuration. |
-
-The cold tests used a prepared tracked-source snapshot and uninitialized submodules. The final source distribution is replayed from fresh folders after packaging changes using those same isolated caches; no host build outputs are used.
-
-The rendering observations do not establish gameplay, controller input, audio or save/load compatibility. No disposable Windows VM has been used, so installation on a tool-free fresh PC remains unverified. The actual converter, native launcher and runtime smoke tests used a restricted host PATH. Local Git clone and ZIP tests run in isolated Compose projects with uninitialized submodules and separate compiler caches; no original `b/` artifacts or host toolchain are supplied to their build contexts.
+Then verify `down`, a fresh `up --build`, public setup/About, browser pairing, supported preparation, unsupported-input handling, native launch and persistent user data. Use separate test state/ports and remove those test containers and disposable fixtures afterward. Do not prune unrelated projects or delete registered game data.

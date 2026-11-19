@@ -1,0 +1,117 @@
+name: Sync upstream into fork
+
+on:
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'Cramessar/AnyPS5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/github-script@v9
+        id: pending
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.pulls.list({ owner, repo, state: 'open', base: 'main', head: `${owner}:sync/upstream` });
+            core.setOutput('exists', String(data.length > 0));
+            if (data.length) core.notice(`Review the existing upstream sync before generating another: ${data[0].html_url}`);
+      - name: Merge upstream and refresh source metadata
+        if: steps.pending.outputs.exists != 'true'
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags --no-recurse-submodules https://github.com/boykopovar/AnyPS5.git main
+          upstream_sha=$(git rev-parse FETCH_HEAD)
+          base_sha=$(python3 -c "import json; print(json.load(open('tools/engine/upstream.lock'))['base_revision'])")
+          if git merge-base --is-ancestor "$upstream_sha" HEAD && [ "$base_sha" = "$upstream_sha" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git switch -c sync/upstream
+          if ! git merge --no-ff -m "chore(sync): merge upstream ${upstream_sha:0:12}" "$upstream_sha"; then
+            git status --short
+            git merge --abort
+            echo 'Upstream conflicts with fork changes. Resolve a manual sync; main and the existing sync branch were not replaced.' >&2
+            exit 1
+          fi
+          git submodule sync --recursive
+          git -c protocol.file.allow=never submodule update --init --recursive --depth 1 --jobs 4
+          python3 tools/engine/sources.py --write
+          UPSTREAM_SHA="$upstream_sha" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path('tools/engine/upstream.lock')
+          configuration = json.loads(path.read_text())
+          configuration['base_revision'] = os.environ['UPSTREAM_SHA']
+          path.write_text(json.dumps(configuration, indent=2) + '\n')
+          PY
+          git add tools/engine/dependencies.lock tools/engine/upstream.lock
+          git commit -m "chore(engine): align metadata with upstream ${upstream_sha:0:12}"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream_sha" >> "$GITHUB_OUTPUT"
+      - name: Verify dependency metadata and fork integration
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          python3 tools/engine/sources.py --check
+          python3 tools/engine/tests.py
+          python3 tools/launcher/TestsPreparation.py
+          python3 tools/launcher/TestsWeb.py
+          python3 -m unittest discover -s tools/tests -p test_import_audit.py
+      - name: Publish reviewable sync
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { execFileSync } = require('child_process');
+            const { owner, repo } = context.repo;
+            const branch = 'sync/upstream';
+            let previous = '';
+            try {
+              previous = (await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` })).data.object.sha;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const authorization = Buffer.from(`x-access-token:${process.env.GITHUB_TOKEN}`).toString('base64');
+            core.setSecret(authorization);
+            execFileSync('git', ['push', 'origin', `HEAD:refs/heads/${branch}`, `--force-with-lease=refs/heads/${branch}:${previous}`], {
+              env: { ...process.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${authorization}` },
+              stdio: 'pipe'
+            });
+            const upstream = process.env.UPSTREAM_SHA;
+            let body = fs.readFileSync('.github/pull_request_template.md', 'utf8');
+            body = body.replace('### What', `### What\n\nMerge upstream boykopovar/AnyPS5 at ${upstream} into this fork, preserving fork changes. Refresh the engine overlay base and recursive dependency lock.`);
+            body = body.replace('### Tested', '### Tested\n\nLinux: dependency lock, engine integration, preparation worker, web backend and import-audit tests passed in the sync workflow. Native compilation, Windows execution, GPU validation and gameplay were not run by this scheduled job. Review required before merging.');
+            body = body.replaceAll('- [ ]', '- [x]');
+            for (const [field, value] of [['Depends on', 'none'], ['Fixes', 'none'], ['Unblocks', 'none'], ['GPUs tested', 'not run; source synchronization only'], ['AI-assisted', 'yes']]) {
+              body = body.replace(`- [x] ${field}:`, `- [x] ${field}: ${value}`);
+            }
+            const { data } = await github.rest.pulls.create({ owner, repo, head: branch, base: 'main', title: `chore(sync): merge upstream ${upstream.slice(0, 12)}`, body });
+            core.notice(`Upstream sync ready for review: ${data.html_url}`);
+            await core.summary.addHeading('Upstream sync').addLink('Review pull request', data.html_url).write();

@@ -1,4 +1,5 @@
 import hashlib
+import subprocess
 import importlib.util
 import json
 import struct
@@ -17,6 +18,91 @@ sources = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(sources)
 sys.path.insert(0, str(Path(__file__).parent))
 from bundle import EngineCatalogue, identity, sha256, verify_bundle
+
+
+import upstream
+
+
+class UpstreamTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.repository = self.root / 'repository'
+        self.repository.mkdir()
+        self.command('init', '-q')
+        self.command('config', 'user.email', 'test@example.invalid')
+        self.command('config', 'user.name', 'Test')
+        self.source = self.root / 'supplied'
+        self.destination = self.root / 'combined'
+        self.source.mkdir()
+        self.destination.mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def command(self, *arguments):
+        return subprocess.check_output(['git', '-C', str(self.repository), *arguments], text=True).strip()
+
+    def commit(self, content):
+        (self.repository / 'engine.txt').write_bytes(content)
+        self.command('add', '.')
+        self.command('commit', '-qm', 'test: update fixture')
+        return self.command('rev-parse', 'HEAD')
+
+    def test_latest_source_keeps_disjoint_fork_changes_and_additions(self):
+        original = b'first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth\n'
+        base = self.commit(original)
+        remote = original.replace(b'eighth', b'upstream')
+        revision = self.commit(remote)
+        local = original.replace(b'first', b'fork')
+        (self.source / 'engine.txt').write_bytes(local)
+        (self.source / 'launcher.txt').write_bytes(b'launcher')
+        (self.destination / 'engine.txt').write_bytes(remote)
+        result = upstream.merge_supplied(self.source, self.destination, self.repository, base, revision)
+        self.assertEqual((self.destination / 'engine.txt').read_bytes(), remote.replace(b'first', b'fork'))
+        self.assertEqual((self.destination / 'launcher.txt').read_bytes(), b'launcher')
+        self.assertEqual((self.source / 'engine.txt').read_bytes(), local)
+        self.assertEqual(result['changed_files'], ['engine.txt'])
+
+    def test_unchanged_fork_does_not_overwrite_new_upstream(self):
+        base = self.commit(b'old\n')
+        revision = self.commit(b'new\n')
+        (self.source / 'engine.txt').write_bytes(b'old\r\n')
+        (self.destination / 'engine.txt').write_bytes(b'new\n')
+        upstream.merge_supplied(self.source, self.destination, self.repository, base, revision)
+        self.assertEqual((self.destination / 'engine.txt').read_bytes(), b'new\n')
+
+    def test_conflict_stops_integration_without_modifying_source(self):
+        base = self.commit(b'base\n')
+        revision = self.commit(b'upstream\n')
+        (self.source / 'engine.txt').write_bytes(b'fork\n')
+        (self.destination / 'engine.txt').write_bytes(b'upstream\n')
+        with self.assertRaisesRegex(ValueError, 'merge conflict'):
+            upstream.merge_supplied(self.source, self.destination, self.repository, base, revision)
+        self.assertEqual((self.source / 'engine.txt').read_bytes(), b'fork\n')
+        self.assertEqual((self.destination / 'engine.txt').read_bytes(), b'upstream\n')
+
+    def test_overlay_rejects_escape_paths(self):
+        for path in ('../games', '/games', 'C:/games', '.git/config'):
+            with self.assertRaises(ValueError):
+                upstream.safe_path(self.destination, path)
+
+    def test_dependency_override_discards_upstream_content_for_locked_checkout(self):
+        self.commit(b'base\n')
+        (self.repository / '.gitmodules').write_text('[submodule "fixture"]\npath = 3rdparty/fixture\nurl = https://example.invalid/fixture.git\n')
+        self.command('add', '.gitmodules')
+        self.command('update-index', '--add', '--cacheinfo', '160000,' + 'a' * 40 + ',3rdparty/fixture')
+        self.command('commit', '-qm', 'test: add fixture dependency')
+        revision = self.command('rev-parse', 'HEAD')
+        module = self.repository / '3rdparty/fixture'
+        module.mkdir(parents=True)
+        (module / 'old.txt').write_bytes(b'upstream version')
+        record = {'path': '3rdparty/fixture', 'url': 'https://example.invalid/fixture.git', 'commit': 'b' * 40}
+        configuration = {'repository': str(self.repository), 'base_revision': revision, 'submodule_overrides': [record['path']]}
+        combined, lock, metadata = upstream.prepare_upstream(self.source, self.repository, self.root / 'work', {'submodules': [record]}, configuration)
+        self.assertFalse((combined / record['path']).exists())
+        self.assertEqual(lock['submodules'], [record])
+        self.assertEqual((module / 'old.txt').read_bytes(), b'upstream version')
 
 
 class SourceTests(unittest.TestCase):
@@ -106,7 +192,7 @@ class BundleTests(unittest.TestCase):
         module = importlib.util.spec_from_file_location('engine_export', Path(__file__).with_name('export.py'))
         exporter = importlib.util.module_from_spec(module)
         module.loader.exec_module(exporter)
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(exporter.os, 'chown'):
             root = Path(temporary)
             payload, artifacts, state = root / 'payload', root / 'artifacts', root / 'state'
             manifest = self.make_bundle(payload)

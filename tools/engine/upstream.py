@@ -117,25 +117,26 @@ def reference_repository(cache, url, revisions):
     return directory
 
 
-def resolve_modules(repository, revision, known, cache, prefix='', overrides=()):
+def resolve_modules(repository, revision, known, cache, prefix='', overrides=(), configuration_file=None):
     data = git(repository, 'show', revision + ':.gitmodules', check=False)
     if data.returncode:
         return []
     configuration = configparser.ConfigParser()
-    configuration.read_string(data.stdout.decode('utf-8'))
+    configuration.read_string(configuration_file.read_text(encoding='utf-8') if configuration_file else data.stdout.decode('utf-8'))
     result = []
     for section in configuration.sections():
         name = configuration[section]['path']
         safe_path(Path('/source'), name)
         path = prefix + name
         entry = git(repository, 'ls-tree', revision, name).stdout.decode().split()
-        if len(entry) < 3 or entry[0] != '160000':
-            raise ValueError('Upstream submodule has no gitlink: ' + path)
-        record = {'path': path, 'url': configuration[section]['url'], 'commit': entry[2]}
         if path in overrides:
             if path not in known:
                 raise ValueError('Fork submodule override is not locked: ' + path)
             record = dict(known[path])
+        else:
+            if len(entry) < 3 or entry[0] != '160000':
+                raise ValueError('Fork-added submodules require a locked explicit override: ' + path)
+            record = {'path': path, 'url': configuration[section]['url'], 'commit': entry[2]}
         result.append(record)
         if path in known and known[path] == record:
             result.extend(dict(item) for nested, item in known.items() if nested.startswith(path + '/'))
@@ -158,7 +159,15 @@ def prepare_upstream(supplied, upstream, work, lock, configuration):
     overlay = merge_supplied(supplied, combined, repository, base, revision, configuration.get('deleted_files', ()))
     effective = dict(lock)
     effective['submodules'] = sorted(resolve_modules(repository, revision, {record['path']: record for record in lock['submodules']}, references,
-                                                   overrides=configuration.get('submodule_overrides', ())), key=lambda record: record['path'])
+                                                   overrides=configuration.get('submodule_overrides', ()), configuration_file=combined / '.gitmodules'), key=lambda record: record['path'])
+    for name in configuration.get('submodule_overrides', ()):
+        if name not in {record['path'] for record in effective['submodules']}:
+            raise ValueError('Fork submodule override does not exist in the merged source: ' + name)
+        target = safe_path(combined, name)
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
     upstream_identity = {'repository': configuration['repository'], 'ref': os.environ.get('ANYPS5_UPSTREAM_REF', 'main'), 'revision': revision}
     print('FORK OVERLAY: ' + str(len(overlay['changed_files'])) + ' changed files, ' + str(len(overlay['added_files'])) + ' additions; base ' + base, flush=True)
     return combined, effective, {'upstream': upstream_identity, 'fork_overlay': dict(overlay, base_revision=base)}

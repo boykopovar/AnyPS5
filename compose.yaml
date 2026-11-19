@@ -16,6 +16,7 @@ services:
     depends_on:
       engine:
         condition: service_completed_successfully
+        restart: true
     build:
       context: .
       dockerfile: tools/launcher/web/Dockerfile
