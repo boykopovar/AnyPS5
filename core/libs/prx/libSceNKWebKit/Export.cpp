@@ -12700,10 +12700,6 @@ int APS5_VABI _ZN3JSC8JSBigInt12tryRightTrimERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC8JSBigInt13equalsToInt32Ei() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC8JSBigInt13tryCreateZeroERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -12713,10 +12709,6 @@ int APS5_VABI _ZN3JSC8JSBigInt16createWithLengthEPNS_14JSGlobalObjectEj() {
 }
 
 int APS5_VABI _ZN3JSC8JSBigInt19tryCreateWithLengthERNS_2VMEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC8JSBigInt6equalsEPS0_S1_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
