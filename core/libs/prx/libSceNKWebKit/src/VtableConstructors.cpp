@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/VtableConstructorExports.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -508,6 +509,17 @@ void StoreVtable(void* self, const void* const* table) {
 
 extern "C" {
 
+const void* const* APS5_VABI NKWebKitVtableSlotTargets_nid_no_patch() {
+    static const void* const targets[] = {
+        reinterpret_cast<const void*>(&__cxa_pure_virtual_nid_postfix),
+        reinterpret_cast<const void*>(&NKWebKitVtableEmpty_nid_no_patch),
+        reinterpret_cast<const void*>(&NKWebKitVtableZero_nid_no_patch),
+        reinterpret_cast<const void*>(&NKWebKitVtableNullResult_nid_no_patch),
+        reinterpret_cast<const void*>(&NKWebKitVtableZeroResult_nid_no_patch),
+    };
+    return targets;
+}
+
 const void* const* APS5_VABI NKWebKitVtable_JSC_WeakHandleOwnerTable_nid_no_patch() {
     return NKWebKitVtable_JSC_WeakHandleOwner_nid_no_patch;
 }
@@ -775,9 +787,8 @@ void APS5_VABI _ZN9Inspector15RemoteInspector6ClientC2Ev(void* self) {
 
 void APS5_VABI _ZN9Inspector24RemoteControllableTargetC2ERKS0_(void* self, const void* other) {
     if (!self) throw std::invalid_argument("_ZN9Inspector24RemoteControllableTargetC2ERKS0_ requires an object");
-    (void)other;
-    StoreVtable(self, NKWebKitVtable_Inspector_RemoteControllableTarget_nid_no_patch);
     if (!other) throw std::invalid_argument("_ZN9Inspector24RemoteControllableTargetC2ERKS0_ requires a source object");
+    StoreVtable(self, NKWebKitVtable_Inspector_RemoteControllableTarget_nid_no_patch);
     std::memcpy(static_cast<char*>(self) + 0x8, static_cast<const char*>(other) + 0x8, 4);
 }
 

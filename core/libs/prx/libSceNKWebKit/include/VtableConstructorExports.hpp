@@ -24,6 +24,7 @@ const void* const* APS5_VABI NKWebKitVtable_WebCore_InspectorFrontendClientLocal
 const void* const* APS5_VABI NKWebKitVtable_Inspector_RemoteInspector_ClientTable_nid_no_patch();
 const void* const* APS5_VABI NKWebKitVtable_Inspector_RemoteControllableTargetTable_nid_no_patch();
 
+const void* const* APS5_VABI NKWebKitVtableSlotTargets_nid_no_patch();
 void APS5_VABI NKWebKitVtableEmpty_nid_no_patch();
 std::uint64_t APS5_VABI NKWebKitVtableZero_nid_no_patch();
 void* APS5_VABI NKWebKitVtableNullResult_nid_no_patch(void* result);
