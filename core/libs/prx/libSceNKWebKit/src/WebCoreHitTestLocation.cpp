@@ -25,6 +25,7 @@
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 
 #include <climits>
+#include <cmath>
 #include <new>
 
 namespace {
@@ -46,6 +47,32 @@ int Subtract(int value, unsigned amount) {
 
 int Extent(unsigned first, unsigned second) {
     return static_cast<int>(first + second + 1u);
+}
+
+WebCore::LayoutUnit FromFloatFloor(float value, const char* caller) {
+    const float scaled = std::floor(value * static_cast<float>(FixedPointDenominator));
+    if (std::isnan(scaled)) {
+        NotImplemented_nid_no_patch(caller);
+    }
+    if (scaled >= static_cast<float>(INT_MAX)) {
+        return {INT_MAX};
+    }
+    if (scaled <= static_cast<float>(INT_MIN)) {
+        return {INT_MIN};
+    }
+    return {static_cast<int>(scaled)};
+}
+
+float ToFloat(WebCore::LayoutUnit value) {
+    return static_cast<float>(value.m_value) / FixedPointDenominator;
+}
+
+WebCore::FloatQuad QuadOf(const WebCore::IntRect& rect) {
+    const float x = static_cast<float>(rect.m_location.m_x);
+    const float y = static_cast<float>(rect.m_location.m_y);
+    const float maxX = x + static_cast<float>(rect.m_size.m_width);
+    const float maxY = y + static_cast<float>(rect.m_size.m_height);
+    return {{x, y}, {maxX, y}, {maxX, maxY}, {x, maxY}};
 }
 
 }  // namespace
@@ -81,6 +108,19 @@ void APS5_VABI _ZN7WebCore15HitTestLocationC2ERKS0_(WebCore::HitTestLocation* se
 
 void APS5_VABI _ZN7WebCore15HitTestLocationC1ERKS0_(WebCore::HitTestLocation* self, const WebCore::HitTestLocation* other) {
     _ZN7WebCore15HitTestLocationC2ERKS0_(self, other);
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC2ERKNS_10FloatPointE(WebCore::HitTestLocation* self, const WebCore::FloatPoint* point) {
+    if (self == nullptr || point == nullptr) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    const WebCore::LayoutPoint floored{FromFloatFloor(point->m_x, __func__), FromFloatFloor(point->m_y, __func__)};
+    const WebCore::IntRect box = _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj(floored, 0, 0, 0, 0);
+    new (self) WebCore::HitTestLocation{floored, box, {ToFloat(floored.m_x), ToFloat(floored.m_y)}, QuadOf(box)};
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationC1ERKNS_10FloatPointE(WebCore::HitTestLocation* self, const WebCore::FloatPoint* point) {
+    _ZN7WebCore15HitTestLocationC2ERKNS_10FloatPointE(self, point);
 }
 
 }
