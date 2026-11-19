@@ -373,6 +373,14 @@ class IntegerRangeTests(unittest.TestCase):
         for value in (True, 2.0, 0, 11):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be an integer between 1 and 10'):
                 pad_timeline.integer(value, 'x', 1, 10)
+
+    def test_integer_boundary_values_and_boolean_refusal(self):
+        self.assertEqual(pad_timeline.integer(1, 'x', 1, 10), 1)
+        self.assertEqual(pad_timeline.integer(10, 'x', 1, 10), 10)
+        with self.assertRaisesRegex(ValueError, 'x must be an integer between 0 and 10'):
+            pad_timeline.integer(False, 'x', 0, 10)
+
+
 class TimelineLoadTests(unittest.TestCase):
     def test_load_timeline_reads_a_json_document(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -385,6 +393,13 @@ class TimelineLoadTests(unittest.TestCase):
             path = Path(directory) / 'timeline.json'
             path.write_text('{"version": 1, "version": 2}', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'duplicate timeline field'):
+                pad_timeline.load_timeline(path)
+
+    def test_load_timeline_refuses_nested_duplicate_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "events": [{"at_ms": 100, "at_ms": 200}]}', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, "duplicate timeline field 'at_ms'"):
                 pad_timeline.load_timeline(path)
 
 
