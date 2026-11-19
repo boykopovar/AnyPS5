@@ -50,6 +50,18 @@ class TitlesTests(unittest.TestCase):
         self.assertEqual(sorted(title_id for title_id, entry in titles.items() if entry.get("smoke")),
                          ["PPSA17641", "PPSA85300", "PPSA98766", "PPSA99203", "PPSA99505", "PPSA99666"])
 
+    def test_catalog_must_be_an_object(self):
+        for value in (None, True, 1, 1.5, "PPSA00001", [], ["PPSA00001"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "title catalog must be an object"):
+                title_run.load_titles(self.write(value))
+        self.assertEqual(title_run.load_titles(self.write({})), {})
+
+    def test_title_entries_must_be_objects(self):
+        for value in (None, True, 1, 1.5, "title", [], ["--registry"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "PPSA00001: entry must be an object"):
+                title_run.load_titles(self.write({"PPSA00001": value}))
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {}})), {"PPSA00001": {}})
+
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))
@@ -644,8 +656,14 @@ class PreparationTests(unittest.TestCase):
         unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
         invalid = self.root / "invalid.json"
         invalid.write_text("not json", encoding="utf-8")
+        array_catalog = self.root / "array.json"
+        array_catalog.write_text("[]", encoding="utf-8")
+        null_entry = self.root / "null-entry.json"
+        null_entry.write_text('{"PPSA00001": null}', encoding="utf-8")
         for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
                                       ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--titles", array_catalog, "title catalog must be an object"),
+                                      ("--titles", null_entry, "PPSA00001: entry must be an object"),
                                       ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
             with self.subTest(option=option, path=path.name):
                 errors = io.StringIO()

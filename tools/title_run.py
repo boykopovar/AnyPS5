@@ -90,9 +90,13 @@ def load_titles(path):
         return fields
 
     titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    if not isinstance(titles, dict):
+        raise ValueError(f"{path}: title catalog must be an object")
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
+        if not isinstance(entry, dict):
+            raise ValueError(f"{path}: {title_id}: entry must be an object")
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
