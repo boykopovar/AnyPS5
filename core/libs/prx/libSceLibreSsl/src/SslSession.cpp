@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(LibreSslCertKey) == 24);
@@ -47,17 +48,25 @@ bool SetMethod(LibreSslSsl& ssl, const LibreSslMethod* method, const char* funct
     if (!ssl.internal) throw std::invalid_argument(std::string(function) + ": null internal state");
     void*& handshake = ssl.internal->handshakeFunc;
     const int connecting = handshake ? handshake == reinterpret_cast<void*>(current.sslConnect) : -1;
-    bool created = true;
-    if (current.version == next.version) {
+    if (current.version != next.version) {
+        const void* previous = ssl.method;
+        void* state = ssl.s3;
+        ssl.s3 = nullptr;
         ssl.method = method;
-    } else {
+        if (!next.sslNew(&ssl)) {
+            ssl.s3 = state;
+            ssl.method = previous;
+            return false;
+        }
+        std::swap(state, ssl.s3);
+        ssl.method = previous;
         current.sslFree(&ssl);
-        ssl.method = method;
-        created = next.sslNew(&ssl) != 0;
+        ssl.s3 = state;
     }
+    ssl.method = method;
     if (connecting == 1) handshake = reinterpret_cast<void*>(next.sslConnect);
     if (connecting == 0) handshake = reinterpret_cast<void*>(next.sslAccept);
-    return created;
+    return true;
 }
 
 const LibreSslCertKey* CurrentKey(const LibreSslSsl* ssl, const char* function) {

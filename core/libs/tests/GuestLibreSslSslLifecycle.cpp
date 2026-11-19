@@ -18,6 +18,7 @@ using namespace SslLayout;
 namespace {
 
 bool failHostAllocations = false;
+bool failGuestAllocations = false;
 
 }
 
@@ -53,6 +54,7 @@ void APS5_VABI Release(void* pointer) {
 }
 
 void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t size) {
+    if (failGuestAllocations) return nullptr;
     void* pointer = std::calloc(count, size);
     if (pointer) live.insert(pointer);
     return pointer;
@@ -594,6 +596,17 @@ void TestSetSession() {
     method = static_cast<const LibreSslMethod*>(ssl->method);
     Require(ssl->session == &second && second.references == 2 && first.references == 1 && ssl->verifyResult == 9);
     Require(method->internal->version == Tls1Version && ssl->version == Tls1Version && ssl->s3 != nullptr);
+    Require(ssl->internal->handshakeFunc == reinterpret_cast<void*>(method->internal->sslConnect));
+
+    LibreSslSession older{};
+    older.sslVersion = Tls1_1Version;
+    older.references = 1;
+    void* const state = ssl->s3;
+    failGuestAllocations = true;
+    Require(SSL_set_session_nid_postfix(ssl, &older) == 0);
+    failGuestAllocations = false;
+    Require(ssl->method == method && ssl->s3 == state && ssl->version == Tls1Version);
+    Require(ssl->session == &second && second.references == 2 && older.references == 1);
     Require(ssl->internal->handshakeFunc == reinterpret_cast<void*>(method->internal->sslConnect));
 
     LibreSslSession unknown{};
