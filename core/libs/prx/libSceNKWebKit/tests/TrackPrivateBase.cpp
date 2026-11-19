@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <stdexcept>
 
 using NKWebKit::WtfAbi::AtomString;
 using NKWebKit::WtfAbi::String;
@@ -136,10 +137,95 @@ void TestConstructor() {
         Require(object[i] == 0);
 }
 
+struct FakeClient {
+    const void* const* vptr;
+    int willRemoveCalls;
+};
+
+struct FakeTrack {
+    const void* const* vptr;
+    std::uint32_t refCount;
+    FakeClient* client;
+    int clientCalls;
+};
+
+void* APS5_VABI FakeTrackClient(const void* self) {
+    auto* track = static_cast<FakeTrack*>(const_cast<void*>(self));
+    ++track->clientCalls;
+    return track->client;
+}
+
+void APS5_VABI FakeWillRemove(void* self) {
+    ++static_cast<FakeClient*>(self)->willRemoveCalls;
+}
+
+void TestWillBeRemoved() {
+    const std::array<const void*, 8> clientVtable = {
+        nullptr, nullptr, nullptr, nullptr, nullptr,
+        reinterpret_cast<const void*>(&FakeWillRemove), nullptr, nullptr,
+    };
+    const std::array<const void*, 8> trackVtable = {
+        nullptr, nullptr,
+        reinterpret_cast<const void*>(&FakeTrackClient),
+        nullptr, nullptr, nullptr, nullptr, nullptr,
+    };
+
+    FakeClient client{clientVtable.data(), 0};
+    FakeTrack track{trackVtable.data(), 1, &client, 0};
+    _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(&track);
+    Require(track.clientCalls == 1);
+    Require(client.willRemoveCalls == 1);
+    Require(track.refCount == 1);
+    _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(&track);
+    Require(track.clientCalls == 2);
+    Require(client.willRemoveCalls == 2);
+
+    track.client = nullptr;
+    _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(&track);
+    Require(track.clientCalls == 3);
+    Require(client.willRemoveCalls == 2);
+
+    bool threw = false;
+    try {
+        _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(nullptr);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+void TestDestructors() {
+    alignas(8) std::array<std::uint8_t, 32> object;
+    object.fill(0xa5);
+    _ZN7WebCore16TrackPrivateBaseC2Ev(object.data());
+    const void* const* vptr;
+    std::memcpy(&vptr, object.data(), sizeof(vptr));
+    Require(vptr[0] == reinterpret_cast<const void*>(&_ZN7WebCore16TrackPrivateBaseD1Ev));
+    Require(vptr[1] == reinterpret_cast<const void*>(&_ZN7WebCore16TrackPrivateBaseD0Ev));
+
+    const auto before = object;
+    _ZN7WebCore16TrackPrivateBaseD1Ev(object.data());
+    Require(object == before);
+    reinterpret_cast<void (APS5_VABI *)(void*)>(const_cast<void*>(vptr[0]))(object.data());
+    Require(object == before);
+
+    for (int i = 0; i < 64; ++i) {
+        void* heap = _ZN3WTF10fastMallocEm(16);
+        Require(heap != nullptr);
+        _ZN7WebCore16TrackPrivateBaseC2Ev(heap);
+        if (i % 2)
+            _ZN7WebCore16TrackPrivateBaseD0Ev(heap);
+        else
+            reinterpret_cast<void (APS5_VABI *)(void*)>(const_cast<void*>(vptr[1]))(heap);
+    }
+}
+
 }
 
 int main() {
     TestConstructor();
+    TestDestructors();
+    TestWillBeRemoved();
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase2idEv);
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase5labelEv);
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase8languageEv);

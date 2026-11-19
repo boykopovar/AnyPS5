@@ -7,6 +7,9 @@
 extern "C" {
 
 void APS5_VABI _ZN7WebCore16TrackPrivateBaseC2Ev(void* self);
+void APS5_VABI _ZN7WebCore16TrackPrivateBaseD1Ev(void* self);
+void APS5_VABI _ZN7WebCore16TrackPrivateBaseD0Ev(void* self);
+void APS5_VABI _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(void* self);
 NKWebKit::WtfAbi::AtomString APS5_VABI _ZNK7WebCore16TrackPrivateBase2idEv(const void* self);
 NKWebKit::WtfAbi::AtomString APS5_VABI _ZNK7WebCore16TrackPrivateBase5labelEv(const void* self);
 NKWebKit::WtfAbi::AtomString APS5_VABI _ZNK7WebCore16TrackPrivateBase8languageEv(const void* self);

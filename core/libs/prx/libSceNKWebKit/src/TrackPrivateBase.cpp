@@ -29,10 +29,15 @@
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/include/NoOpExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -68,20 +73,26 @@ static_assert(sizeof(TrackPrivateBase) == 16);
 static_assert(offsetof(TrackPrivateBase, vptr) == 0);
 static_assert(offsetof(TrackPrivateBase, refCount) == 8);
 
-void APS5_VABI CompleteDestructor(void*) {
-    _ZN7WebCore16TrackPrivateBaseD1Ev();
-}
+using ClientGetter = void* (APS5_VABI*)(const void*);
+using WillRemove = void (APS5_VABI*)(void*);
 
-void APS5_VABI DeletingDestructor(void*) {
-    _ZN7WebCore16TrackPrivateBaseD0Ev();
+constexpr std::size_t ClientSlot = 2;
+constexpr std::size_t WillRemoveSlot = 5;
+
+const void* const* VtableOf(const void* object, const char* caller) {
+    if (!object) throw std::invalid_argument(std::string("WebCore::TrackPrivateBase::") + caller + ": null object");
+    const void* const* vptr;
+    std::memcpy(&vptr, object, sizeof(vptr));
+    if (!vptr) throw std::invalid_argument(std::string("WebCore::TrackPrivateBase::") + caller + ": null vtable");
+    return vptr;
 }
 
 const TrackPrivateBaseVtableStorage TrackPrivateBaseVtableInstance = {
     0,
     nullptr,
     {
-        &CompleteDestructor,
-        &DeletingDestructor,
+        &_ZN7WebCore16TrackPrivateBaseD1Ev,
+        &_ZN7WebCore16TrackPrivateBaseD0Ev,
         &__cxa_pure_virtual_nid_postfix,
         &_ZNK7WebCore16TrackPrivateBase2idEv,
         &_ZNK7WebCore16TrackPrivateBase5labelEv,
@@ -99,6 +110,21 @@ void APS5_VABI _ZN7WebCore16TrackPrivateBaseC2Ev(void* self) {
     auto& base = *static_cast<TrackPrivateBase*>(self);
     base.vptr = &TrackPrivateBaseVtableInstance.dispatch;
     base.refCount = 1;
+}
+
+void APS5_VABI _ZN7WebCore16TrackPrivateBaseD1Ev(void*) {
+    _ZN7WebCore16TrackPrivateBaseD2Ev();
+}
+
+void APS5_VABI _ZN7WebCore16TrackPrivateBaseD0Ev(void* self) {
+    _ZN7WebCore16TrackPrivateBaseD1Ev(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+void APS5_VABI _ZN7WebCore16TrackPrivateBase13willBeRemovedEv(void* self) {
+    auto client = reinterpret_cast<ClientGetter>(const_cast<void*>(VtableOf(self, "willBeRemoved")[ClientSlot]))(self);
+    if (!client) return;
+    reinterpret_cast<WillRemove>(const_cast<void*>(VtableOf(client, "willBeRemoved")[WillRemoveSlot]))(client);
 }
 
 NKWebKit::WtfAbi::AtomString APS5_VABI _ZNK7WebCore16TrackPrivateBase2idEv(const void*) {

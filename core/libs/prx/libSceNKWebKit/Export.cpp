@@ -17757,18 +17757,6 @@ int APS5_VABI _ZN7WebCore16ThreadGlobalDataD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16TrackPrivateBase13willBeRemovedEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16TrackPrivateBaseD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16TrackPrivateBaseD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 
 
