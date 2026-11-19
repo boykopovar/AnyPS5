@@ -66,10 +66,12 @@
  * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -283,6 +285,23 @@ template<typename T> T& Checked(T* value) {
 
 void CheckBuffer(const void* value, std::size_t length) {
     if (!value && length) throw std::invalid_argument("null WTF character buffer");
+}
+
+constexpr std::size_t GuestPageSize = 4096;
+
+std::string CopyGuestCString(const char* data, const char* function) {
+    const int savedErrno = errno;
+    std::string text;
+    char chunk[GuestPageSize];
+    for (const char* cursor = data;; cursor += GuestPageSize - reinterpret_cast<std::uintptr_t>(cursor) % GuestPageSize) {
+        const std::size_t size = GuestPageSize - reinterpret_cast<std::uintptr_t>(cursor) % GuestPageSize;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, cursor, size);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable C string");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, 0, size));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return text;
+    }
 }
 
 StringView View(const StringImpl* impl) {
@@ -693,12 +712,16 @@ void APS5_VABI _ZN3WTF6StringC2EPKDsj(String* self, const char16_t* data, unsign
 
 void APS5_VABI _ZN3WTF6StringC1EPKc(String* self, const char* data) {
     Checked(self);
-    Checked(self).impl = data ? CopyImpl({data, static_cast<unsigned>(std::strlen(data)), true}) : nullptr;
+    if (!data) {
+        Checked(self).impl = nullptr;
+        return;
+    }
+    const std::string text = CopyGuestCString(data, __func__);
+    Checked(self).impl = CopyImpl({text.data(), static_cast<unsigned>(text.size()), true});
 }
 
 void APS5_VABI _ZN3WTF6StringC2EPKc(String* self, const char* data) {
-    Checked(self);
-    Checked(self).impl = data ? CopyImpl({data, static_cast<unsigned>(std::strlen(data)), true}) : nullptr;
+    _ZN3WTF6StringC1EPKc(self, data);
 }
 
 void APS5_VABI _ZN3WTF6StringC1EPKcj(String* self, const char* data, unsigned length) {
@@ -759,7 +782,9 @@ String APS5_VABI _ZN3WTF6String8fromUTF8EPKhm(const unsigned char* data, std::si
 }
 
 String APS5_VABI _ZN3WTF6String8fromUTF8EPKh(const unsigned char* data) {
-    return FromUTF8(data, data ? std::strlen(reinterpret_cast<const char*>(data)) : 0);
+    if (!data) return FromUTF8(nullptr, 0);
+    const std::string text = CopyGuestCString(reinterpret_cast<const char*>(data), __func__);
+    return FromUTF8(reinterpret_cast<const unsigned char*>(text.data()), text.size());
 }
 
 String APS5_VABI _ZN3WTF6String8fromUTF8ERKNS_7CStringE(const CString& value) {
@@ -960,7 +985,8 @@ bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const StringImpl* impl, cons
 
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKh(const StringImpl* impl, const unsigned char* data) {
     if (!impl || !data) return !impl && !data;
-    return EqualBuffer(impl, data, static_cast<unsigned>(std::strlen(reinterpret_cast<const char*>(data))), true);
+    const std::string text = CopyGuestCString(reinterpret_cast<const char*>(data), __func__);
+    return EqualBuffer(impl, text.data(), static_cast<unsigned>(text.size()), true);
 }
 
 bool APS5_VABI _ZN3WTF20equalIgnoringNullityEPNS_10StringImplES1_(StringImpl* a, StringImpl* b) {
@@ -984,13 +1010,13 @@ bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(cons
 }
 
 void APS5_VABI _ZN3WTF7CStringC1EPKc(CString* self, const char* data) {
-    auto value = CopyCString(data, (data ? std::strlen(data) : 0));
+    const std::string text = data ? CopyGuestCString(data, __func__) : std::string();
+    auto value = CopyCString(data ? text.data() : nullptr, text.size());
     Checked(self).buffer = std::exchange(value.buffer, nullptr);
 }
 
 void APS5_VABI _ZN3WTF7CStringC2EPKc(CString* self, const char* data) {
-    auto value = CopyCString(data, (data ? std::strlen(data) : 0));
-    Checked(self).buffer = std::exchange(value.buffer, nullptr);
+    _ZN3WTF7CStringC1EPKc(self, data);
 }
 
 void APS5_VABI _ZN3WTF7CStringC1EPKcm(CString* self, const char* data, std::size_t length) {
