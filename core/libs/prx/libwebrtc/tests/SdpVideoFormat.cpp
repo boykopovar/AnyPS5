@@ -16,6 +16,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -378,6 +380,130 @@ void TestInvalidGuestInputs() {
     Require(live.empty());
 }
 
+using Entries = std::initializer_list<std::pair<std::string_view, std::string_view>>;
+
+struct FormatList {
+    std::vector<WebRtcSdpVideoFormat> formats;
+
+    explicit FormatList(std::initializer_list<std::pair<std::string_view, Entries>> items) : formats(items.size()) {
+        std::size_t index = 0;
+        for (const auto& item : items)
+            BuildFormat(formats[index++], item.first, item.second);
+    }
+
+    ~FormatList() {
+        for (auto& format : formats)
+            _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&format);
+    }
+
+    static void BuildFormat(WebRtcSdpVideoFormat& format, std::string_view name, Entries entries) {
+        InitEmptyFormat(format, name);
+        WebRtcStringMapNode* parent = EndNode(format.parameters);
+        WebRtcStringMapNode** slot = &format.parameters.root;
+        for (const auto& entry : entries) {
+            auto* node = MakeNode(entry.first, entry.second, parent == EndNode(format.parameters));
+            node->links.parent = parent;
+            *slot = node;
+            parent = node;
+            slot = &node->links.right;
+        }
+        if (format.parameters.root)
+            format.parameters.beginNode = format.parameters.root;
+        format.parameters.size = entries.size();
+    }
+};
+
+bool InList(std::string_view name, Entries entries, std::initializer_list<std::pair<std::string_view, Entries>> items) {
+    FormatList self{{name, entries}};
+    FormatList list(items);
+    return _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), list.formats.data(), list.formats.size());
+}
+
+bool SameCodec(std::string_view name, Entries left, Entries right) {
+    return InList(name, left, {{name, right}});
+}
+
+void TestCodecInListNames() {
+    Require(!_ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(nullptr, nullptr, 0));
+    Require(InList("vp8", {}, {{"VP9", {}}, {"VP8", {{"x", "1"}}}}));
+    Require(!InList("VP8", {}, {{"VP9", {}}, {"AV1", {}}}));
+    Require(!InList("VP8", {}, {{"VP8 ", {}}}));
+    Require(InList("Foo", {{"a", "1"}}, {{"fOO", {{"a", "2"}}}}));
+    Require(!InList("AV1X", {}, {{"AV1", {}}}));
+    Require(!InList("H265", {}, {{"VP8", {}}}));
+}
+
+void TestCodecInListH264() {
+    Require(SameCodec("H264", {}, {{"profile-level-id", "42e01f"}}));
+    Require(SameCodec("H264", {{"profile-level-id", "42E01F"}}, {{"profile-level-id", "4d801f"}}));
+    Require(SameCodec("H264", {{"profile-level-id", "42e01f"}}, {{"profile-level-id", "42e00b"}}));
+    Require(SameCodec("H264", {{"profile-level-id", "640c34"}}, {{"profile-level-id", "640c0a"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "42e01f"}}, {{"profile-level-id", "640c1f"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "42001f"}}, {{"profile-level-id", "42e01f"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "64001f"}}, {{"profile-level-id", "640c1f"}}));
+    Require(SameCodec("H264", {{"profile-level-id", "f4001f"}}, {{"profile-level-id", "f40032"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "zzzzzz"}}, {{"profile-level-id", "zzzzzz"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "42e01"}}, {{"profile-level-id", "42e01"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "42e0ff"}}, {{"profile-level-id", "42e0ff"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "42e000"}}, {{"profile-level-id", "42e000"}}));
+    Require(!SameCodec("H264", {{"profile-level-id", "65001f"}}, {{"profile-level-id", "65001f"}}));
+    Require(SameCodec("H264", {{"packetization-mode", "0"}}, {}));
+    Require(!SameCodec("H264", {{"packetization-mode", "1"}}, {}));
+    Require(SameCodec("H264", {{"packetization-mode", "1"}, {"profile-level-id", "42e01f"}}, {{"profile-level-id", "42e01f"}, {"packetization-mode", "1"}}));
+}
+
+void TestCodecInListVp9Av1() {
+    Require(SameCodec("VP9", {}, {{"profile-id", "0"}}));
+    Require(SameCodec("VP9", {{"profile-id", "2"}}, {{"profile-id", "2"}}));
+    Require(SameCodec("VP9", {{"profile-id", "02"}}, {{"profile-id", "2"}}));
+    Require(!SameCodec("VP9", {{"profile-id", "1"}}, {{"profile-id", "2"}}));
+    Require(!SameCodec("VP9", {{"profile-id", "4"}}, {{"profile-id", "4"}}));
+    Require(!SameCodec("VP9", {{"profile-id", " 1"}}, {{"profile-id", "1"}}));
+    Require(!SameCodec("VP9", {{"profile-id", "1x"}}, {{"profile-id", "1x"}}));
+    Require(!SameCodec("VP9", {{"profile-id", ""}}, {{"profile-id", ""}}));
+    Require(!SameCodec("VP9", {{"profile-id", "99999999999"}}, {{"profile-id", "99999999999"}}));
+
+    Require(SameCodec("AV1", {}, {{"profile", "0"}, {"tier", "0"}, {"level-idx", "5"}}));
+    Require(SameCodec("av1x", {{"profile", "1"}}, {{"profile", "1"}}));
+    Require(!SameCodec("AV1", {{"profile", "3"}}, {{"profile", "3"}}));
+    Require(!SameCodec("AV1", {{"tier", "1"}}, {}));
+    Require(!SameCodec("AV1", {{"level-idx", "6"}}, {}));
+    Require(!SameCodec("AV1", {{"level-idx", "05"}}, {}));
+}
+
+void TestCodecInListUnknownAndInvalid() {
+    bool threw = false;
+    try {
+        SameCodec("h265", {}, {});
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+
+    FormatList self{{"VP8", {}}};
+    const auto liveBaseline = live;
+    auto* badPtr = reinterpret_cast<WebRtcSdpVideoFormat*>(0x10);
+    errno = 55;
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), nullptr, 1); }));
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(nullptr, self.formats.data(), 1); }));
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(badPtr, self.formats.data(), 1); }));
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), badPtr, 1); }));
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), self.formats.data(), static_cast<std::size_t>(-1)); }));
+    self.formats[0].parameters.size = 1;
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), self.formats.data(), 1); }));
+    self.formats[0].parameters.size = 0;
+    Require(errno == 55);
+
+    FormatList duplicate{{"VP9", {{"profile-id", "1"}, {"profile-id", "2"}}}};
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(duplicate.formats.data(), self.formats.data(), 1); }));
+
+    FormatList matchFirst{{"VP8", {}}, {"VP8", {}}};
+    matchFirst.formats[1].parameters.size = 7;
+    Require(_ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(self.formats.data(), matchFirst.formats.data(), 2));
+    matchFirst.formats[1].parameters.size = 0;
+    Require(live.size() == liveBaseline.size() + 2);
+}
+
 }
 
 int main() {
@@ -392,6 +518,11 @@ int main() {
     TestMove();
     TestAllocationFailureCleanup();
     TestInvalidGuestInputs();
+    TestCodecInListNames();
+    TestCodecInListH264();
+    TestCodecInListVp9Av1();
+    TestCodecInListUnknownAndInvalid();
+    Require(live.empty());
     std::puts("libwebrtc SdpVideoFormat tests passed");
     return 0;
 }

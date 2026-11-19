@@ -458,3 +458,24 @@ void WebRtcDestroySdpNameAndParameters_nid_no_patch(WebRtcGuestString* name, Web
 }
 
 }
+
+extern "C" {
+
+void WebRtcReadSdpNameAndParameters_nid_no_patch(const WebRtcGuestString* name, const WebRtcStringMap* parameters, const char* message, std::string* outName, std::map<std::string, std::string>* outParameters) {
+    ValidateString(*name, message);
+    std::vector<WebRtcStringMapNode*> nodes;
+    ValidateMapNodes(*parameters, message, nodes);
+    std::map<std::string, std::string> entries;
+    for (const WebRtcStringMapNode* node : nodes) {
+        WebRtcStringMapNode nodeCopy{};
+        CopyInChecked(&nodeCopy, node, sizeof(nodeCopy), message);
+        std::string key(WebRtcGuestStringData(nodeCopy.key), nodeCopy.key.size);
+        std::string value(WebRtcGuestStringData(nodeCopy.value), nodeCopy.value.size);
+        if (!entries.emplace(std::move(key), std::move(value)).second)
+            throw std::invalid_argument(message);
+    }
+    *outName = std::string(WebRtcGuestStringData(*name), name->size);
+    *outParameters = std::move(entries);
+}
+
+}
