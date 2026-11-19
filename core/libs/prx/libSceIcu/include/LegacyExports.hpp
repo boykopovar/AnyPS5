@@ -49,7 +49,7 @@ int APS5_VABI _ZN6icu_6814ResourceBundle13getNextStringEPPKcR10UErrorCode_nid_po
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKDsi_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown__minus_1flXphRNrw_nid_no_patch();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer224normalizeSecondAndAppendERNS_13UnicodeStringERKS1_R10UErrorCode_nid_postfix();
-int APS5_VABI ustr_hashUCharsN_nid_postfix();
+std::int32_t APS5_VABI ustr_hashUCharsN_nid_postfix(const std::uint16_t* s, std::int32_t length);
 int APS5_VABI sceIcuLegacyUnknown__minus_8vX2t8cKRw_nid_no_patch();
 int APS5_VABI _ZN6icu_6812PatternProps8isSyntaxEi_nid_postfix();
 int APS5_VABI utext_equals_nid_postfix();
@@ -76,7 +76,7 @@ int APS5_VABI _ZN6icu_6810Appendable15getAppendBufferEiiPDsiPi_nid_postfix();
 int APS5_VABI _ZN6icu_686LocaleC2ERKS0__nid_postfix();
 int APS5_VABI _ZNK6icu_6822RuleBasedBreakIterator8getRulesEv_nid_postfix();
 int APS5_VABI _ZN6icu_689LocaleKeyD2Ev_nid_postfix();
-int APS5_VABI ustr_hashCharsN_nid_postfix();
+std::int32_t APS5_VABI ustr_hashCharsN_nid_postfix(const char* s, std::int32_t length);
 int APS5_VABI _ZNK6icu_686UStack17getDynamicClassIDEv_nid_postfix();
 int APS5_VABI _ZN6icu_6814ResourceBundle13resetIteratorEv_nid_postfix();
 int APS5_VABI _ZN6icu_6817CanonicalIterator7extractEPNS_9HashtableEiPKDsiiR10UErrorCode_nid_postfix();
@@ -1081,7 +1081,7 @@ int APS5_VABI _ZN6icu_6817StringTrieBuilder18writeBranchSubNodeEiiii_nid_postfix
 int APS5_VABI sceIcuLegacyUnknown_S4ykVJc3FuQ_nid_no_patch();
 int APS5_VABI _ZN6icu_6815Normalizer2Impl7combineEPKti_nid_postfix();
 int APS5_VABI ures_getLocaleByType_nid_postfix();
-int APS5_VABI ustr_hashICharsN_nid_postfix();
+std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char* s, std::int32_t length);
 int APS5_VABI _ZN6icu_6817StringEnumerationD2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_689LocaleKeyD1Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_S80YBBKf1Ac_nid_no_patch();
@@ -2114,7 +2114,7 @@ int APS5_VABI _ZN6icu_6813LocaleBuilder18copyExtensionsFromERKNS_6LocaleER10UErr
 int APS5_VABI _ZN6icu_689ErrorCodeD1Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_wOPixgiIoJ8_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_wORJc9ExK_minus_U_nid_no_patch();
-int APS5_VABI uloc_getName_nid_postfix();
+std::int32_t APS5_VABI uloc_getName_nid_postfix(const char* localeID, char* name, std::int32_t capacity, std::int32_t* status);
 int APS5_VABI _ZNK6icu_687UVector7toArrayEPPv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_wR3MAUetM9M_nid_no_patch();
 int APS5_VABI _ZN6icu_689UVector32D2Ev_nid_postfix();
