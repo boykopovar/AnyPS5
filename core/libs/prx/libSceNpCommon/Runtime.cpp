@@ -378,20 +378,66 @@ void* const NpMemoryStreamWriterVtable[] = {
 };
 constexpr int NP_ERROR_STREAM_SHORT = static_cast<int>(0x80559E10);
 constexpr std::size_t NP_STREAM_CHUNK = 0x100;
+constexpr int NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80558009);
+
+bool CopyIn(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOut(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool Writable(void* destination, std::size_t size) {
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(destination, size);
+    errno = savedErrno;
+    return writable;
+}
+
+bool CopyGuestToGuest(void* destination, const void* source, std::size_t size) {
+    std::array<std::uint8_t, 4096> chunk;
+    for (std::size_t offset = 0; offset < size; offset += chunk.size()) {
+        const std::size_t count = std::min(chunk.size(), size - offset);
+        if (!CopyIn(chunk.data(), static_cast<const std::uint8_t*>(source) + offset, count) ||
+            !CopyOut(static_cast<std::uint8_t*>(destination) + offset, chunk.data(), count)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool VirtualFunction(const void* self, void*& function) {
+    const void* const* vtable = nullptr;
+    return CopyIn(&vtable, self, sizeof(vtable)) && CopyIn(&function, vtable + 2, sizeof(function));
+}
 
 int StreamRead(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
     using Read = int(APS5_VABI*)(NpStreamReader*, void*, void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Read>(const_cast<void*>(self->vtable[2]))(self, handle, out, size, read);
+    void* function = nullptr;
+    if (!VirtualFunction(self, function)) return NP_ERROR_INVALID_ARGUMENT;
+    return reinterpret_cast<Read>(function)(self, handle, out, size, read);
 }
 
 int StreamWrite(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written) {
     using Write = int(APS5_VABI*)(NpStreamWriter*, void*, const void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Write>(const_cast<void*>(self->vtable[2]))(self, handle, data, size, written);
+    void* function = nullptr;
+    if (!VirtualFunction(self, function)) return NP_ERROR_INVALID_ARGUMENT;
+    return reinterpret_cast<Write>(function)(self, handle, data, size, written);
 }
 
 int StreamNotify(NpStreamCtx* ctx, const void* data, std::size_t size) {
     using Notify = int(APS5_VABI*)(NpStreamCtx*, const void*, std::size_t);
-    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(const_cast<void*>(ctx->vtable[2]))(ctx, data, size);
+    if (ctx == nullptr) return 0;
+    void* function = nullptr;
+    if (!VirtualFunction(ctx, function)) return NP_ERROR_INVALID_ARGUMENT;
+    return reinterpret_cast<Notify>(function)(ctx, data, size);
 }
 
 int ReadAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
@@ -544,7 +590,6 @@ NpMemoryHeap g_ipcClientHeap {};
 constexpr int KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 constexpr int KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 constexpr int KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
-constexpr int NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80558009);
 constexpr int NP_ERROR_TIMEOUT = static_cast<int>(0x8055800B);
 constexpr int NP_ERROR_EVENT_FLAG_BUSY = static_cast<int>(0x8055800C);
 constexpr int NP_ERROR_CANCELED = static_cast<int>(0x80558010);
@@ -1616,10 +1661,8 @@ int APS5_VABI _ZN3sce2np4Cond8SignalToEP7pthread(NpCondObject* self, Pthread thr
     return std::min(sceNpCondSignalTo(&self->cond, thread), 0);
 }
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
-    self->vtable = &NpMemoryStreamReaderVtable[2];
-    self->data = data;
-    self->size = size;
-    self->position = 0;
+    const NpMemoryStreamReader reader {&NpMemoryStreamReaderVtable[2], data, size, 0};
+    if (!CopyOut(self, &reader, sizeof(reader))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
@@ -1635,21 +1678,22 @@ void APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(NpMemoryStreamReader* self) {
 }
 
 int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStreamReader* self, void*, void* out, std::size_t size, std::size_t* read) {
+    NpMemoryStreamReader reader {};
+    if (!CopyIn(&reader, self, sizeof(reader)) || !Writable(read, sizeof(*read))) return NP_ERROR_INVALID_ARGUMENT;
     std::size_t count = 0;
-    if (self->position < self->size) {
-        count = std::min(size, self->size - self->position);
-        std::memcpy(out, static_cast<const std::uint8_t*>(self->data) + self->position, count);
-        self->position += count;
+    if (reader.position < reader.size) {
+        count = std::min(size, reader.size - reader.position);
+        if (!CopyGuestToGuest(out, static_cast<const std::uint8_t*>(reader.data) + reader.position, count)) return NP_ERROR_INVALID_ARGUMENT;
+        reader.position += count;
+        if (!CopyOut(self, &reader, sizeof(reader))) return NP_ERROR_INVALID_ARGUMENT;
     }
-    *read = count;
+    if (!CopyOut(read, &count, sizeof(count))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 void APS5_VABI _ZN3sce2np18MemoryStreamWriterC1EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
-    self->vtable = &NpMemoryStreamWriterVtable[2];
-    self->data = data;
-    self->size = size;
-    self->position = 0;
+    const NpMemoryStreamWriter writer {&NpMemoryStreamWriterVtable[2], data, size, 0};
+    if (!CopyOut(self, &writer, sizeof(writer))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3sce2np18MemoryStreamWriterC2EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
@@ -1665,13 +1709,16 @@ void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self) {
 }
 
 int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
-    if (self->data != nullptr) {
-        const std::size_t room = self->size == 0 ? 0 : self->size - self->position;
+    NpMemoryStreamWriter writer {};
+    if (!CopyIn(&writer, self, sizeof(writer))) return NP_ERROR_INVALID_ARGUMENT;
+    if (writer.data != nullptr) {
+        const std::size_t room = writer.size == 0 ? 0 : writer.size - writer.position;
         if (room < size) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
-        std::memcpy(static_cast<std::uint8_t*>(self->data) + self->position, data, size);
+        if (!CopyGuestToGuest(static_cast<std::uint8_t*>(writer.data) + writer.position, data, size)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    self->position += size;
-    if (written != nullptr) *written = size;
+    writer.position += size;
+    if (!CopyOut(self, &writer, sizeof(writer))) return NP_ERROR_INVALID_ARGUMENT;
+    if (written != nullptr && !CopyOut(written, &size, sizeof(size))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1893,7 +1940,9 @@ bool APS5_VABI _ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpT
 int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
     int result = StreamRead(self, handle, out, size, read);
     if (result < 0) return result;
-    if (ctx != nullptr) result = StreamNotify(ctx, out, *read);
+    std::size_t count = 0;
+    if (ctx != nullptr && !CopyIn(&count, read, sizeof(count))) return NP_ERROR_INVALID_ARGUMENT;
+    if (ctx != nullptr) result = StreamNotify(ctx, out, count);
     return result < 0 ? result : 0;
 }
 
@@ -1940,7 +1989,9 @@ int APS5_VABI _ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEPNS0_9Strea
 int APS5_VABI _ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written) {
     int result = StreamWrite(self, handle, data, size, written);
     if (result < 0) return result;
-    if (ctx != nullptr) result = StreamNotify(ctx, data, *written);
+    std::size_t count = 0;
+    if (ctx != nullptr && !CopyIn(&count, written, sizeof(count))) return NP_ERROR_INVALID_ARGUMENT;
+    if (ctx != nullptr) result = StreamNotify(ctx, data, count);
     return result < 0 ? result : 0;
 }
 

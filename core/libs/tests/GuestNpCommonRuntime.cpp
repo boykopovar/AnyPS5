@@ -2141,6 +2141,89 @@ void TestRefObjects() {
         "releasing the last reference deletes the object through the stored allocator");
 }
 
+void TestStreamGuestPointers() {
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    std::vector<std::uint8_t> source(10000);
+    for (std::size_t i = 0; i < source.size(); ++i) source[i] = static_cast<std::uint8_t>(i * 13 + 1);
+    std::vector<std::uint8_t> out(source.size());
+    std::size_t count = 99;
+    errno = 71;
+
+    NpMemoryStreamReader reader {};
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, source.data(), source.size());
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), SIZE_MAX, &count) == 0 && count == source.size() &&
+                out == source && reader.position == source.size(),
+        "a memory read larger than one chunk copies every byte");
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, source.data(), source.size());
+    count = 99;
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(static_cast<NpMemoryStreamReader*>(unmapped), nullptr, out.data(), 4, &count) ==
+                    NpInvalidArgument &&
+                _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, unmapped, 4, &count) == NpInvalidArgument &&
+                _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 4, static_cast<std::size_t*>(unmapped)) ==
+                    NpInvalidArgument &&
+                count == 99 && reader.position == 0,
+        "a memory read through an unmapped reader, buffer or count is refused and moves nothing");
+    GuardedPage page;
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, page.End() - 8, 64);
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 64, &count) == NpInvalidArgument && count == 99 &&
+                reader.position == 0,
+        "a memory read that runs into unmapped data is refused");
+
+    std::vector<std::uint8_t> sink(source.size() + 1);
+    NpMemoryStreamWriter writer {};
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, sink.data(), sink.size());
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, source.data(), source.size(), &count) == 0 &&
+                count == source.size() && std::equal(source.begin(), source.end(), sink.begin()) && writer.position == source.size(),
+        "a memory write larger than one chunk stores every byte");
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, source.data(), SIZE_MAX, &count) == NpStreamBufferTooSmall,
+        "an oversized memory write is refused before copying");
+    count = 99;
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(static_cast<NpMemoryStreamWriter*>(unmapped), nullptr, "a", 1, &count) ==
+                    NpInvalidArgument &&
+                _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, unmapped, 1, &count) == NpInvalidArgument &&
+                count == 99 && writer.position == source.size(),
+        "a memory write from an unmapped writer or source is refused and moves nothing");
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "a", 1, static_cast<std::size_t*>(unmapped)) == NpInvalidArgument,
+        "a memory write to an unmapped count is refused");
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, unmapped, 4);
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == NpInvalidArgument && writer.position == 0,
+        "a memory write into an unmapped buffer is refused");
+
+    bool refused = false;
+    try {
+        _ZN3sce2np18MemoryStreamReaderC1EPKvm(static_cast<NpMemoryStreamReader*>(unmapped), source.data(), 1);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "constructing a memory reader in unmapped memory is refused");
+    refused = false;
+    try {
+        _ZN3sce2np18MemoryStreamWriterC1EPvm(static_cast<NpMemoryStreamWriter*>(unmapped), sink.data(), 1);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "constructing a memory writer in unmapped memory is refused");
+
+    const NpStreamReader badReader {static_cast<const void* const*>(unmapped)};
+    SumContext context {{SumContextVtable}, 0, 0, 0};
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, source.data(), source.size());
+    Require(_ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(static_cast<NpStreamReader*>(unmapped), nullptr, &context.base, out.data(), 4,
+                &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(const_cast<NpStreamReader*>(&badReader), nullptr, &context.base,
+                    out.data(), 4, &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(reinterpret_cast<NpStreamReader*>(&reader), nullptr,
+                    static_cast<NpStreamCtx*>(unmapped), out.data(), 4, &count) == NpInvalidArgument &&
+                context.bytes == 0,
+        "a stream read through an unmapped reader, vtable or context is refused");
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, sink.data(), sink.size());
+    Require(_ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(static_cast<NpStreamWriter*>(unmapped), nullptr, &context.base, "ab", 2,
+                &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(reinterpret_cast<NpStreamWriter*>(&writer), nullptr,
+                    static_cast<NpStreamCtx*>(unmapped), "ab", 2, &count) == NpInvalidArgument &&
+                context.bytes == 0 && errno == 71,
+        "a stream write through an unmapped writer or context is refused");
+}
+
 void TestCommIdObjects() {
     NpCommunicationId parts {};
     std::memset(&parts, 0x77, sizeof(parts));
@@ -2227,6 +2310,7 @@ int main() {
     TestTitleSecretObjects();
     TestStreamHelpers();
     TestRefObjects();
+    TestStreamGuestPointers();
     TestCommIdObjects();
     TestBase64();
     TestNumbers();
