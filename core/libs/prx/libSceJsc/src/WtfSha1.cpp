@@ -116,6 +116,14 @@ void Finalize(SHA1& sha1) {
     ProcessBlock(sha1);
 }
 
+void AddBytes(SHA1& sha1, const std::uint8_t* input, std::size_t length) {
+    while (length--) {
+        sha1.buffer[sha1.cursor++] = *input++;
+        ++sha1.totalBytes;
+        if (sha1.cursor == BlockSize) ProcessBlock(sha1);
+    }
+}
+
 void Reset(SHA1& sha1) {
     sha1.cursor = 0;
     sha1.totalBytes = 0;
@@ -145,6 +153,21 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     }
 
     Reset(*self);
+}
+
+Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    if (!decoder) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode requires a decoder");
+    if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: buffer cursor out of range");
+    if (decoder->bufferPosition > decoder->bufferEnd) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: position past the buffer end");
+    Jsc::WtfAbi::OptionalSHA1Digest result{};
+    if (static_cast<std::size_t>(decoder->bufferEnd - decoder->bufferPosition) < result.value.size()) return result;
+    std::memcpy(result.value.data(), decoder->bufferPosition, result.value.size());
+    decoder->bufferPosition += result.value.size();
+    const unsigned typeSalt = 101;
+    AddBytes(decoder->sha1, reinterpret_cast<const std::uint8_t*>(&typeSalt), sizeof(typeSalt));
+    AddBytes(decoder->sha1, result.value.data(), result.value.size());
+    result.hasValue = true;
+    return result;
 }
 
 }

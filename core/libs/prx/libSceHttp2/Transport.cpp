@@ -83,6 +83,32 @@ std::string Lower(std::string text) {
     return text;
 }
 
+bool NamesField(std::string_view line, std::string_view name) {
+    return line.size() > name.size() && line[name.size()] == ':' && Lower(std::string(line.substr(0, name.size()))) == name;
+}
+
+bool GzipEncoded(const std::string& block) {
+    const char* value = nullptr;
+    std::size_t size = 0;
+    if (sceHttpParseResponseHeader(block.data(), block.size(), "Content-Encoding", &value, &size) < 0 || !value || size < 4) return false;
+    return Lower(std::string(value, 4)) == "gzip";
+}
+
+std::string WithoutGzipFields(std::string_view block) {
+    std::string result;
+    bool removing = false;
+    for (std::size_t start = 0; start < block.size();) {
+        const auto newline = block.find('\n', start);
+        const std::size_t end = newline == std::string_view::npos ? block.size() : newline + 1;
+        const auto line = block.substr(start, end - start);
+        start = end;
+        if (removing && line.starts_with(' ')) continue;
+        removing = NamesField(line, "content-encoding") || NamesField(line, "content-length");
+        if (!removing) result.append(line);
+    }
+    return result;
+}
+
 std::uint64_t Number(std::string_view text, int base = 10) {
     std::uint64_t value = 0;
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value, base);
@@ -388,6 +414,8 @@ struct Request::State {
     std::vector<std::uint8_t> pending;
     std::size_t pendingOffset = 0;
     std::string rawHeaders;
+    std::string strippedSource;
+    std::string strippedHeaders;
     unsigned http1HeaderBlocks = 0;
     std::size_t headerBytes = 0;
     std::vector<std::uint8_t> body;
@@ -1111,12 +1139,13 @@ int Request::Send(const void* data, std::size_t size) {
     if (state->started && state->ended) return AlreadySent;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
-    Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
-    Require(state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
+    const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
+    Require(disconnected || state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
+    Require(disconnected || state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
-        if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+        if (disconnected) {
             state->Check(state->Total());
             state->Raise(NetworkError, "sceHttp2: network disconnected");
         }
@@ -1279,13 +1308,18 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    if (state->version < 3) {
-        *header = state->rawHeaders.data();
-        *size = state->rawHeaders.size();
-    } else {
-        *header = state->allHeaders.data();
-        *size = state->allHeaders.size();
+    auto& block = state->version < 3 ? state->rawHeaders : state->allHeaders;
+    if (state->settings.inflateGzip && state->settings.stripGzipHeaders && GzipEncoded(block)) {
+        if (state->strippedSource != block) {
+            state->strippedHeaders = WithoutGzipFields(block);
+            state->strippedSource = block;
+        }
+        *header = state->strippedHeaders.data();
+        *size = state->strippedHeaders.size();
+        return 0;
     }
+    *header = block.data();
+    *size = block.size();
     return 0;
 }
 
