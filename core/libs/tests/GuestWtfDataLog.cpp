@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -23,8 +24,16 @@
 #include <thread>
 #ifdef _WIN32
 #include <io.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -162,6 +171,33 @@ bool ThrowsLogicError(TCall call) {
         return true;
     }
     return false;
+}
+
+template <typename TCall>
+bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TValue>
+TValue* ReadOnlyCopy(const TValue& value) {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, sizeof(value), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "read-only page allocation");
+    std::memcpy(page, &value, sizeof(value));
+    DWORD previous = 0;
+    Require(VirtualProtect(page, sizeof(value), PAGE_READONLY, &previous) != 0, "read-only page protection");
+#else
+    void* page = mmap(nullptr, sizeof(value), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "read-only page allocation");
+    std::memcpy(page, &value, sizeof(value));
+    Require(mprotect(page, sizeof(value), PROT_READ) == 0, "read-only page protection");
+#endif
+    return static_cast<TValue*>(page);
 }
 
 void CheckVtableLayout() {
@@ -332,6 +368,40 @@ void CheckOpenFailure() {
     Require(result.pointer == nullptr, "failed fopen gives a null stream");
 }
 
+void CheckUnusableGuestPointers(const std::filesystem::path& directory) {
+    errno = 71;
+    Require(ThrowsInvalidArgument([] {
+        _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(reinterpret_cast<PrintStreamPtr*>(0x10));
+    }), "setDataFile rejects an unreadable unique_ptr");
+    Require(errno == 71, "setDataFile keeps errno for an unreadable unique_ptr");
+
+    FilePrintStream* stream = Open("read-only-owner.txt");
+    PrintStreamPtr* owner = ReadOnlyCopy(PrintStreamPtr{AsStream(stream)});
+    errno = 71;
+    Require(ThrowsInvalidArgument([owner] {
+        _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(owner);
+    }), "setDataFile rejects a read-only unique_ptr");
+    Require(errno == 71, "setDataFile keeps errno for a read-only unique_ptr");
+    Require(owner->pointer == AsStream(stream), "a rejected setDataFile keeps a read-only owner unchanged");
+    Require(&_ZN3WTF8dataFileEv() != AsStream(stream), "a rejected setDataFile installs nothing");
+    _ZN3WTF15FilePrintStreamD0Ev(stream);
+
+    const std::string path = GuestPath("unusable-result.txt");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&path] {
+        _ZN3WTF15FilePrintStream4openEPKcS2_(reinterpret_cast<FilePrintStreamPtr*>(0x10), path.c_str(), "w");
+    }), "open rejects an unmapped result");
+    Require(errno == 71, "open keeps errno for an unmapped result");
+    FilePrintStreamPtr* result = ReadOnlyCopy(FilePrintStreamPtr{reinterpret_cast<FilePrintStream*>(1)});
+    errno = 71;
+    Require(ThrowsInvalidArgument([result, &path] {
+        _ZN3WTF15FilePrintStream4openEPKcS2_(result, path.c_str(), "w");
+    }), "open rejects a read-only result");
+    Require(errno == 71, "open keeps errno for a read-only result");
+    Require(result->pointer == reinterpret_cast<FilePrintStream*>(1), "a rejected open leaves a read-only result unchanged");
+    Require(!std::filesystem::exists(directory / "unusable-result.txt"), "a rejected open creates no file");
+}
+
 void InstallDataFile(PrintStream* stream) {
     PrintStreamPtr owner{stream};
     _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(&owner);
@@ -377,6 +447,7 @@ void RunDefault(const std::filesystem::path& directory) {
     CheckBorrowedFileStaysOpen(directory, "borrow-d0.txt", DestroyD0Export, true);
     CheckBorrowedFileStaysOpen(directory, "borrow-slot1.txt", DestroySlot1, true);
     CheckOpenFailure();
+    CheckUnusableGuestPointers(directory);
     CheckSetDataFileAfterDefault(directory);
 }
 
