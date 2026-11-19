@@ -247,7 +247,7 @@ WebCore::LayoutUnit APS5_VABI _ZN7WebCore14valueForLengthERKNS_6LengthENS_10Layo
 }
 
 WebCore::FloatRect APS5_VABI _ZNK7WebCore9FloatQuad11boundingBoxEv(const WebCore::FloatQuad* self) {
-    return BoundingBox(*self);
+    return BoundingBox(Checked(self));
 }
 
 WebCore::FloatRect APS5_VABI _ZN7WebCore19unitedBoundingBoxesERKN3WTF6VectorINS_9FloatQuadELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(const WebCore::FloatQuadVector& quads) {

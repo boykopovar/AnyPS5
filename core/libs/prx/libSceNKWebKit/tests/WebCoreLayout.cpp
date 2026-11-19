@@ -159,6 +159,7 @@ static void TestUnitedBoundingBoxes() {
     const auto nonFinite = Quad(1, 2, 2, 1, nan, nan, 0, 3);
     Require(RectIs(United(&nonFinite, 1), 1, 1, 1, 1));
     Require(RectIs(_ZNK7WebCore9FloatQuad11boundingBoxEv(&nonFinite), 1, 1, 1, 1));
+    Require(Throws([] { _ZNK7WebCore9FloatQuad11boundingBoxEv(nullptr); }));
     Require(Throws([&] { United(nullptr, 2); }));
 }
 
