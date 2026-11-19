@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,14 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -57,6 +66,7 @@ int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw 
 
 constexpr std::uint64_t EvpCode(std::uint64_t reason) { return 0x06fff000ULL | reason; }
 constexpr std::uint64_t RsaCode(std::uint64_t reason) { return 0x04fff000ULL | reason; }
+constexpr std::uint64_t BigNumberCode(std::uint64_t reason) { return 0x03fff000ULL | reason; }
 constexpr std::uint64_t EcCode(std::uint64_t reason) { return 0x10fff000ULL | reason; }
 
 void ExpectErrors(std::initializer_list<std::uint64_t> codes) {
@@ -1145,6 +1155,32 @@ void KeyConsistency() {
     Require(RSA_check_key_nid_postfix(rsa6) == 0);
     ExpectErrors({RsaCode(128), RsaCode(127), RsaCode(123)});
     ReleaseKey(key6);
+    const auto replaceFactor = [](LibreSsl3Rsa* rsa, void* LibreSsl3Rsa::*factor) {
+        BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(rsa->*factor));
+        rsa->*factor = LibreSsl3::NewRsaBignum_nid_no_patch(nullptr, 0);
+        Require(rsa->*factor != nullptr);
+    };
+    auto* key7 = NewSigningKey(true, false, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key7->key), &LibreSsl3Rsa::p);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key7->key)) == 0);
+    ExpectErrors({RsaCode(128), RsaCode(127)});
+    ReleaseKey(key7);
+    auto* key8 = NewSigningKey(true, true, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key8->key), &LibreSsl3Rsa::p);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key8->key)) == -1);
+    ExpectErrors({RsaCode(128), RsaCode(127), RsaCode(124), BigNumberCode(103)});
+    ReleaseKey(key8);
+    auto* key9 = NewSigningKey(true, true, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key9->key), &LibreSsl3Rsa::q);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key9->key)) == -1);
+    ExpectErrors({RsaCode(129), RsaCode(127), RsaCode(125), BigNumberCode(108)});
+    ReleaseKey(key9);
+    auto* key10 = NewSigningKey(true, false, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key10->key), &LibreSsl3Rsa::p);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key10->key), &LibreSsl3Rsa::q);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key10->key)) == 0);
+    ExpectErrors({RsaCode(128), RsaCode(129), RsaCode(127), RsaCode(123)});
+    ReleaseKey(key10);
 }
 
 } // namespace
@@ -1413,6 +1449,76 @@ void EcdhDerivation() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(destination);
 }
 
+class ReadOnlyLength {
+public:
+    explicit ReadOnlyLength(std::size_t value) {
+#ifdef _WIN32
+        SYSTEM_INFO info {};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        page = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(page != nullptr);
+        std::memcpy(page, &value, sizeof(value));
+        DWORD previous {};
+        Require(VirtualProtect(page, size, PAGE_READONLY, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+        std::memcpy(page, &value, sizeof(value));
+        Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyLength() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+
+    std::size_t* Get() const { return static_cast<std::size_t*>(page); }
+
+private:
+    void* page = nullptr;
+    std::size_t size = 0;
+};
+
+void GuestOutputLengths() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+    Require(context != nullptr);
+    auto* unmapped = reinterpret_cast<std::size_t*>(std::uintptr_t {0x10});
+    std::array<unsigned char, 256> buffer {};
+
+    Require(EVP_PKEY_encrypt_init_nid_postfix(context) == 1);
+    errno = 71;
+    Require(Throws([&] { EVP_PKEY_encrypt_nid_postfix(context, nullptr, unmapped, MessageBytes(), MessageLength); }));
+    Require(errno == 71);
+    ReadOnlyLength empty(0);
+    Require(Throws([&] { EVP_PKEY_encrypt_nid_postfix(context, nullptr, empty.Get(), MessageBytes(), MessageLength); }));
+    Require(errno == 71 && *empty.Get() == 0);
+    ReadOnlyLength exact(256);
+    Require(EVP_PKEY_encrypt_nid_postfix(context, nullptr, exact.Get(), MessageBytes(), MessageLength) == 1);
+    Require(errno == 71 && *exact.Get() == 256);
+    ReadOnlyLength tooSmall(255);
+    Require(EVP_PKEY_encrypt_nid_postfix(context, buffer.data(), tooSmall.Get(), MessageBytes(), MessageLength) == 0);
+    ExpectErrors({EvpCode(155)});
+    Require(errno == 71 && *tooSmall.Get() == 255);
+
+    Require(EVP_PKEY_decrypt_init_nid_postfix(context) == 1);
+    Require(Throws([&] { EVP_PKEY_decrypt_nid_postfix(context, buffer.data(), unmapped, Pkcs1Cipher, sizeof(Pkcs1Cipher)); }));
+    Require(errno == 71);
+    Require(EVP_PKEY_sign_init_nid_postfix(context) == 1);
+    Require(Throws([&] { EVP_PKEY_sign_nid_postfix(context, buffer.data(), unmapped, DigestSha1, sizeof(DigestSha1)); }));
+    Require(errno == 71);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
 int main() {
     std::array<void*, 10> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Calloc_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
@@ -1443,6 +1549,7 @@ int main() {
     SignFinalVerifyFinal();
     DigestSignInitWithoutDigest();
     EcdhDerivation();
+    GuestOutputLengths();
     Require(allocations.empty());
     std::puts("LibreSSL3 EVP_PKEY_CTX RSA encryption and signature tests passed");
 }

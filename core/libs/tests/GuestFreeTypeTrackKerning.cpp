@@ -61,6 +61,7 @@ int main() {
             }
             std::int64_t value = 0;
             Require(FT_Get_Track_Kerning_nid_postfix(&face->guest.rec, 12 << 16, 0, nullptr) == FT_Get_Track_Kerning(face->oracle, 12 << 16, 0, nullptr));
+            Require(FT_Get_Track_Kerning_nid_postfix(&face->guest.rec, 12 << 16, 0, reinterpret_cast<std::int64_t*>(std::uintptr_t{1})) == FT_Err_Invalid_Argument);
             Require(value == 0);
         }
         std::int64_t value = 0;
