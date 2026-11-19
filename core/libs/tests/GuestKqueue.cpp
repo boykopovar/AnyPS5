@@ -998,6 +998,10 @@ static void LowWaterMarks() {
     Require(Throws([kq, datagram] { Apply(kq, Change(datagram, EvfiltRead, EvAdd, NoteLowat, 2)); }));
     Require(Apply(kq, Change(datagram, EvfiltRead, EvAdd, NoteLowat, 1)) == 0);
     Require(send_nid_postfix(datagrams[1], "f", 1, 0) == 1);
+#ifdef _WIN32
+    GuestPollDescriptor ready{datagrams[0], 0x1, 0};
+    Require(poll_nid_postfix(&ready, 1, 1000) == 1 && (ready.revents & 0x1) != 0);
+#endif
     Require(Poll(kq, events, 4) == 1 && events[0].ident == datagram && events[0].data == 1);
     Require(close_nid_postfix(datagrams[0]) == 0 && close_nid_postfix(datagrams[1]) == 0);
     Require(close_nid_postfix(pair[1]) == 0);
