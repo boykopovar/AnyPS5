@@ -263,8 +263,15 @@ def persistent_peaks(values):
 
 
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
-    window_ms = summary["window"]["ms"] if summary else None
-    frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
+    window_end = None
+    if summary:
+        window = summary["window"]
+        if not isinstance(window, dict):
+            raise ValueError("window must be an object")
+        window_end = interval_number(window["ms"], "window.ms") * 1000.0
+        if not math.isfinite(window_end):
+            raise ValueError("window.ms is too large to convert to microseconds")
+    frames = trace.frames(window_end)
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
     count = max(len(frames), 1)
     result = {"summary": summary, "frames": len(frames), "window_ms": span_us / 1000.0}
@@ -465,7 +472,7 @@ def load_intervals(path):
     candidate = resolve_summary_path(path)
     lines = []
     for number, record in load_summary_lines(candidate, numbered=True, label=path):
-        if "interval_start_s" not in record:
+        if "interval_start_s" not in record and "interval_end_s" not in record:
             continue
         try:
             validate_interval(record)

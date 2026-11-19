@@ -4,6 +4,8 @@
 
 #include <CairoBackend.h>
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cerrno>
 #include <cstddef>
@@ -57,6 +59,20 @@ void WriteGuest(T* destination, const T& value, const char* caller) {
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
     const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(caller);
+}
+
+void RequireReadable(const double* source, std::size_t count, const char* caller) {
+    std::array<double, 4096> probe;
+    const int savedErrno = errno;
+    bool ok = true;
+    for (std::size_t done = 0; ok && done < count;) {
+        const std::size_t chunk = std::min(count - done, probe.size());
+        ok = GuestCopyIn_nid_no_patch(probe.data(), source + done, chunk * sizeof(double));
+        done += chunk;
+    }
     errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
@@ -204,28 +220,17 @@ double APS5_VABI cairo_get_miter_limit(CairoContext* context) {
     return aps5_cairo_get_miter_limit(Backend(context));
 }
 
-constexpr int MaxDashCount = 4096;
-
 void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes, int numDashes, double offset) {
-    if (numDashes <= 0) {
-        aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
-        return;
+    if (numDashes > 0) {
+        if (!dashes)
+            NotImplemented_nid_no_patch(__func__);
+        RequireReadable(dashes, static_cast<std::size_t>(numDashes), __func__);
     }
-    if (!dashes || numDashes > MaxDashCount)
-        NotImplemented_nid_no_patch(__func__);
-    std::vector<double> hostDashes(static_cast<std::size_t>(numDashes));
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(hostDashes.data(), dashes, hostDashes.size() * sizeof(double));
-    errno = savedErrno;
-    if (!ok)
-        NotImplemented_nid_no_patch(__func__);
-    aps5_cairo_set_dash(Backend(context), hostDashes.data(), numDashes, offset);
+    aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
 }
 
 void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset) {
     const int count = aps5_cairo_get_dash_count(Backend(context));
-    if (dashes && count > MaxDashCount)
-        NotImplemented_nid_no_patch(__func__);
     std::vector<double> hostDashes(dashes && count > 0 ? static_cast<std::size_t>(count) : 0);
     if (!hostDashes.empty())
         RequireWritable(dashes, hostDashes.size() * sizeof(double), __func__);
