@@ -79,10 +79,6 @@ int APS5_VABI udtitvfmt_resultAsValue_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ufieldpositer_next_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uldn_keyValueDisplayName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

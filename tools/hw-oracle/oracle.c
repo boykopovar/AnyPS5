@@ -50,6 +50,23 @@ static hsa_status_t findCpu(hsa_agent_t agent, void* data) {
     return HSA_STATUS_SUCCESS;
 }
 
+static void printIdentity(void) {
+    char name[64] = {0};
+    char vendor[64] = {0};
+    char product[64] = {0};
+    uint32_t chipId;
+    uint32_t asicRevision;
+    uint32_t computeUnits;
+    CHECK(hsa_agent_get_info(gpu, HSA_AGENT_INFO_NAME, name));
+    CHECK(hsa_agent_get_info(gpu, HSA_AGENT_INFO_VENDOR_NAME, vendor));
+    CHECK(hsa_agent_get_info(gpu, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_PRODUCT_NAME, product));
+    CHECK(hsa_agent_get_info(gpu, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_CHIP_ID, &chipId));
+    CHECK(hsa_agent_get_info(gpu, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_ASIC_REVISION, &asicRevision));
+    CHECK(hsa_agent_get_info(gpu, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_COMPUTE_UNIT_COUNT, &computeUnits));
+    printf("name\t%s\nvendor\t%s\nproduct\t%s\nchip_id\t%u\nasic_revision\t%u\ncompute_units\t%u\n",
+        name, vendor, product, chipId, asicRevision, computeUnits);
+}
+
 static int parseRange(const char* text, uint32_t minimum, uint32_t maximum, uint32_t* result) {
     char* end;
     const char* number = text;
@@ -73,16 +90,20 @@ static void* readFile(const char* path, size_t* size) {
 }
 
 int main(int argc, char** argv) {
-    if (argc == 2 && strcmp(argv[1], "--target") == 0) {
+    if (argc == 2 && (strcmp(argv[1], "--target") == 0 || strcmp(argv[1], "--identity") == 0)) {
         CHECK(hsa_init());
         CHECK(hsa_iterate_agents(findGpu, NULL));
         if (!haveGpu) { fprintf(stderr, "no GPU agent\n"); return 1; }
-        char name[64] = {0};
-        CHECK(hsa_agent_get_info(gpu, HSA_AGENT_INFO_NAME, name));
-        printf("%s\n", name);
+        if (strcmp(argv[1], "--identity") == 0) {
+            printIdentity();
+        } else {
+            char name[64] = {0};
+            CHECK(hsa_agent_get_info(gpu, HSA_AGENT_INFO_NAME, name));
+            printf("%s\n", name);
+        }
         return 0;
     }
-    if (argc != 6) { fprintf(stderr, "usage: oracle --target | oracle code.o threads in.bin out.bin out_dwords\n"); return 2; }
+    if (argc != 6) { fprintf(stderr, "usage: oracle --target | oracle --identity | oracle code.o threads in.bin out.bin out_dwords\n"); return 2; }
     uint32_t threads, outDwords;
     if (!parseRange(argv[2], 1, 1024, &threads)) { fprintf(stderr, "THREADS must be 1 to 1024\n"); return 2; }
     if (!parseRange(argv[5], 1, 16, &outDwords)) { fprintf(stderr, "OUT_DWORDS must be 1 to 16\n"); return 2; }
