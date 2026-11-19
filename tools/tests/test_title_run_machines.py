@@ -201,8 +201,12 @@ class MachineCliTests(unittest.TestCase):
                 expected_aggregate = A if name == "uniform" else {field: "Fixture OS" if field == "os" and name != "missing" else "" for field in A}
                 self.assertEqual(now["machine"], expected_aggregate)
                 first, second = comparison["titles"]["PPSA00001"], comparison["titles"]["PPSA00002"]
-                self.assertEqual(first["context"]["status"], "matched")
-                self.assertEqual(second["context"]["status"], status)
+                known_cache = sys.platform.startswith("linux")
+                self.assertEqual(first["context"]["status"], "matched" if known_cache else "unknown")
+                self.assertEqual(second["context"]["status"], "unknown" if status == "matched" and not known_cache else status)
+                if not known_cache:
+                    self.assertEqual(first["context"]["unknowns"], {
+                        "before": ["driverCache", "runCachePolicies"], "now": ["driverCache", "runCachePolicies"]})
                 self.assertEqual(second["provenance"]["now"]["status"], "matched")
                 self.assertEqual(second["fps"], {"before": 60.0, "now": 60.0})
                 self.assertEqual(second["context"]["before"]["runMachines"], [B, B])

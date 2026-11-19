@@ -1,7 +1,7 @@
 import copy
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tempfile
@@ -42,7 +42,7 @@ class CachePolicyFactsTests(unittest.TestCase):
             with self.subTest(directory=directory):
                 environment = {**{name: directory for name in DIRECTORIES}, "UNRELATED_SECRET": "not recorded"}
                 with mock.patch.object(sys, "platform", "linux"):
-                    result = module.configured_cache_policy(environment, {}, Path(directory).parent)
+                    result = module.configured_cache_policy(environment, {}, PurePosixPath(directory).parent)
                 self.assertEqual(result, policy(directory))
                 self.assertNotIn("UNRELATED_SECRET", json.dumps(result))
         self.assertEqual(module.recorded_cache_policy(policy("/one/driver-cache")),
@@ -181,7 +181,7 @@ class CacheCliFixture(unittest.TestCase):
         (self.build / "core/libs/libs/libmimalloc.so").write_bytes(b"runtime fixture, not executed")
         (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\nTRACY_ENABLE:BOOL=OFF\n")
         native = '''import json,os,struct,time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 root=Path(os.environ['FIXTURE_ROOT']).resolve()
 keys=('MESA_SHADER_CACHE_DIR','MESA_SHADER_CACHE_DISABLE','__GL_SHADER_DISK_CACHE_PATH','__GL_SHADER_DISK_CACHE','ANYPS5_SHADER_CACHE_DIR','ANYPS5_NO_SHADER_CACHE')
 settings={key:os.environ.get(key) for key in keys}
