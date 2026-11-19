@@ -1,6 +1,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv.h"
+#include <cerrno>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 extern "C" {
 
@@ -3489,10 +3496,6 @@ int APS5_VABI sceIcuLegacyUnknown_L2qqjRb7Ufg_nid_no_patch() {
 }
 APS5_EXPORT("L2qqjRb7Ufg", sceIcuLegacyUnknown_L2qqjRb7Ufg_nid_no_patch);
 
-int APS5_VABI u_uastrcpy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_L4CoSJBSxQc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5971,10 +5974,6 @@ int APS5_VABI sceIcuLegacyUnknown_cF8dbaDCzuc_nid_no_patch() {
 }
 APS5_EXPORT("cF8dbaDCzuc", sceIcuLegacyUnknown_cF8dbaDCzuc_nid_no_patch);
 
-int APS5_VABI u_terminateWChars_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6818UStringEnumeration17getDynamicClassIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8119,10 +8118,6 @@ int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_getInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_qsrqpMOCXYE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8710,10 +8705,6 @@ int APS5_VABI _ZNK6icu_6810UnicodeSet13cloneAsThawedEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_terminateUChars_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6814ResourceBundleC1EP15UResourceBundleR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8956,10 +8947,6 @@ int APS5_VABI sceIcuLegacyUnknown_wjcxye4juLE_nid_no_patch() {
 }
 APS5_EXPORT("wjcxye4juLE", sceIcuLegacyUnknown_wjcxye4juLE_nid_no_patch);
 
-int APS5_VABI u_uastrncpy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6823UCharsDictionaryMatcherD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9171,8 +9158,69 @@ int APS5_VABI _ZN6icu_6810UnicodeSetC2EPKtiNS0_14ESerializationER10UErrorCode_ni
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_openPackage_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+Icu::Converter* APS5_VABI ucnv_openPackage_nid_postfix(const char* packageName, const char* converterName,
+                                                       std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    const int savedErrno = errno;
+    std::int32_t status = 0;
+    const bool statusReadable = GuestCopyIn_nid_no_patch(&status, error, sizeof(status));
+    errno = savedErrno;
+    if (!statusReadable) throw std::invalid_argument("ucnv_openPackage: unreadable error code");
+    if (U_FAILURE(static_cast<UErrorCode>(status))) return nullptr;
+    const std::int32_t incomingStatus = status;
+    if (!converterName) APS5_INVALID_ARG_EX;
+
+    auto readByte = [savedErrno](const char* source, std::size_t offset) {
+        const auto address = reinterpret_cast<std::uintptr_t>(source);
+        if (address > std::numeric_limits<std::uintptr_t>::max() - offset)
+            throw std::invalid_argument("ucnv_openPackage: unterminated string");
+        char value = 0;
+        const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), 1);
+        errno = savedErrno;
+        if (!readable) throw std::invalid_argument("ucnv_openPackage: unreadable string");
+        return value;
+    };
+    auto readString = [&readByte](const char* source, std::string value = {}) {
+        for (;;) {
+            const char next = readByte(source, value.size());
+            if (!next) return value;
+            value.push_back(next);
+        }
+    };
+
+    std::string converter;
+    for (;;) {
+        const char next = readByte(converterName, converter.size());
+        if (!next) break;
+        if (next == UCNV_OPTION_SEP_CHAR) {
+            converter.push_back(next);
+            converter = readString(converterName, std::move(converter));
+            break;
+        }
+        if (converter.size() + 1 >= UCNV_MAX_CONVERTER_NAME_LENGTH) {
+            status = U_ILLEGAL_ARGUMENT_ERROR;
+            const bool statusWritable = GuestCopyOut_nid_no_patch(error, &status, sizeof(status));
+            errno = savedErrno;
+            if (!statusWritable) throw std::invalid_argument("ucnv_openPackage: unwritable error code");
+            return nullptr;
+        }
+        converter.push_back(next);
+    }
+
+    std::string package;
+    if (packageName) package = readString(packageName);
+    UErrorCode nativeStatus = static_cast<UErrorCode>(status);
+    auto* native = ucnv_openPackage(packageName ? package.c_str() : nullptr, converter.c_str(), &nativeStatus);
+    status = static_cast<std::int32_t>(nativeStatus);
+    if (status != incomingStatus) {
+        const bool statusWritable = GuestCopyOut_nid_no_patch(error, &status, sizeof(status));
+        errno = savedErrno;
+        if (!statusWritable) {
+            ucnv_close(native);
+            throw std::invalid_argument("ucnv_openPackage: unwritable error code");
+        }
+    }
+    return reinterpret_cast<Icu::Converter*>(native);
 }
 
 int APS5_VABI _ZN6icu_6810NormalizerC2ENS_14ConstChar16PtrEi18UNormalizationMode_nid_postfix() {

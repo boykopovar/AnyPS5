@@ -980,6 +980,38 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("[library not named]", out)
         self.assertIn("EEEEEEEEEEE  (imported by main.prx)", out)
 
+    def test_a_passed_module_registry_replaces_the_module_file_imports(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "main.prx").write_bytes(build_elf([
+            ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("EEEEEEEEEEE", 0, GLOBAL_FUNCTION), ("MMMMMMMMMMM", 1, GLOBAL_FUNCTION)],
+            ["libSceA.prx", "libSceMissing.prx"]))
+        files = {"linux.prx.guest.prx": "GGGGGGGGGGG", "lib.c.prx": "LLLLLLLLLLL", "c.prx": "CCCCCCCCCCC", "n.prx": "NNNNNNNNNNN",
+                 "d.prx": "DDDDDDDDDDD", "game.d.prx": "KKKKKKKKKKK", "f.prx": "FFFFFFFFFFF"}
+        for name, nid in files.items():
+            (work.modules / name).write_bytes(build_elf([(nid, 0, GLOBAL_FUNCTION)]))
+        executable = work.root / "my.game.registry.json"
+        write_registry(executable, [("MMMMMMMMMMM", "main.prx")])
+        covered = ("main.prx", "linux.prx", "lib.c.prx", "bin.prx", "d.prx", "x.f.prx")
+        registries = [work.root / f"my.game.{name}.guest.prx.registry.json" for name in covered]
+        write_registry(registries[0], [("AAAAAAAAAAA", "libSceA.prx"), ("AAAAAAAAAAA", "libSceA.prx")])
+        for registry in registries[1:]:
+            write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(executable, "--json", str(result), registries=registries)
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        records = {(record["nid"], record["library"], record.get("module")): record for record in data["imports"]}
+        self.assertEqual(sorted(records, key=str), sorted([
+            ("MMMMMMMMMMM", "main.prx", None), ("AAAAAAAAAAA", "libSceA.prx", None), ("CCCCCCCCCCC", None, "c.prx"),
+            ("NNNNNNNNNNN", None, "n.prx"), ("KKKKKKKKKKK", None, "game.d.prx"), ("FFFFFFFFFFF", None, "f.prx")], key=str))
+        self.assertEqual(data["references"], 7)
+        self.assertEqual(records[("AAAAAAAAAAA", "libSceA.prx", None)]["references"], 2)
+        self.assertEqual(records[("MMMMMMMMMMM", "main.prx", None)]["providers"], ["main.prx"])
+        self.assertEqual(data["missing_libraries"], {"libSceMissing.prx": 1})
+        code, out, err = work.run(registries[0], "--json", str(result), registries=registries[1:])
+        self.assertEqual(json.loads(result.read_text())["references"], 2 + 2 + len(files))
+
     def test_guest_provider_origin_survives_host_stub_collision(self):
         work = self.work
         name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")
@@ -3829,6 +3861,11 @@ class PureHelperTests(unittest.TestCase):
     def test_origin_name_keeps_only_the_basename_after_origin(self):
         self.assertEqual(import_audit.origin_name("$ORIGIN/lib/libfoo.prx"), "libfoo.prx")
         self.assertEqual(import_audit.origin_name("${ORIGIN}/a/../libbar.sprx"), "libbar.sprx")
+
+    def test_hashed_nid_hashes_symbols_and_passes_unencodable_ones_through(self):
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), "1jfXLRVzisc")
+        self.assertEqual(import_audit.hashed_nid("sceKernelUsleep"), nid_names.compute_nid("sceKernelUsleep"))
+        self.assertEqual(import_audit.hashed_nid("\udcff"), "\udcff")
 
     def test_origin_name_leaves_other_names_unchanged(self):
         self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
