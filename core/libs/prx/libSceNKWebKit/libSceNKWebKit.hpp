@@ -74,6 +74,7 @@
 #include "prx/libSceNKWebKit/include/AccessibilityObjectExports.hpp"
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
+#include "prx/libSceNKWebKit/include/EnclosingRectExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/SVGPathStringBuilderExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
@@ -82,3 +83,4 @@
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
+#include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"

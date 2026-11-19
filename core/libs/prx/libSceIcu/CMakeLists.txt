@@ -777,9 +777,35 @@ if(BUILD_TESTING)
         set_tests_properties(guest_icu_resource_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
+
+    add_test_executable(guest_icu_resource_uint_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResourceUInt.cpp)
+    target_include_directories(guest_icu_resource_uint_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_resource_uint_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_resource_uint_tests)
+    add_test(NAME guest_icu_resource_uint COMMAND guest_icu_resource_uint_tests)
+    set_tests_properties(guest_icu_resource_uint PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_resource_uint PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
 endif()
 
 target_sources(libSceIcu PRIVATE RightToLeft.cpp)
+
+if(BUILD_TESTING)
+    target_sources(libSceIcu PRIVATE tests/OpenStandardNamesSetup.cpp)
+    add_test_executable(guest_icu_open_standard_names_tests tests/OpenStandardNames.cpp)
+    target_include_directories(guest_icu_open_standard_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_open_standard_names_tests PRIVATE libSceIcu icu_common)
+    configure_windows_unwind(guest_icu_open_standard_names_tests)
+    add_test(NAME guest_icu_open_standard_names_reduced COMMAND guest_icu_open_standard_names_tests)
+    add_test(NAME guest_icu_open_standard_names_full COMMAND guest_icu_open_standard_names_tests full)
+    set_tests_properties(guest_icu_open_standard_names_reduced guest_icu_open_standard_names_full PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_open_standard_names_reduced guest_icu_open_standard_names_full PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_right_to_left_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RightToLeft.cpp)

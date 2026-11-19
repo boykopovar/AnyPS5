@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -3334,6 +3335,8 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     HostImportFor(context, address, bytes);
 }
 
+std::atomic<std::uint64_t> multisampleUseWalks{0};
+
 #ifdef _WIN32
 bool deferredSettleTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
@@ -4101,8 +4104,16 @@ bool rewatchUnderImageTests(const Device& device) {
     return true;
 }
 
-bool settleInitialDccTests(const Device& device) {
+bool settleInitialDccTests(const Device& device, bool ordered = false) {
     using namespace AgcDriver::GuestMemory;
+    struct ResetObservationHook {
+        ~ResetObservationHook() { SetObservationHookForTest(nullptr); }
+    } resetObservationHook;
+    if (ordered) {
+        SetObservationHookForTest(+[](int point) {
+            if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
     const auto& base = device.GetContext();
     constexpr std::size_t unit = 65536;
     constexpr std::size_t tail = 0x4000;
@@ -4314,12 +4325,14 @@ bool settleInitialDccTests(const Device& device) {
         }
         const auto before = HostImportSettles();
         Require(!fmaskAlone || before.submitted == quiet.submitted, "(m) a settle read was submitted between the FMASK's import and the target's first use");
+        if (ordered) multisampleUseWalks.store(0, std::memory_order_relaxed);
         std::string refusal;
         try {
             Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "(m) the multisampled DCC target has no view");
         } catch (const std::exception& error) {
             refusal = error.what();
         }
+        const auto firstUseWalks = ordered ? multisampleUseWalks.load(std::memory_order_relaxed) : 0;
         const auto after = HostImportSettles();
         const auto* settled = ExistingHostImportFor(context, address, importBytes);
         const char* name = kind == Case::Pending ? "a pending settle" : kind == Case::PartialBlock ? "an import of whole and partial 64 KiB blocks" : kind == Case::ComparedNeighbour ? "a compared import in its last 64 KiB block" : kind == Case::DeferredOff ? "deferred settles off" : kind == Case::UnwatchedKeys ? "explicitly unwatched DCC keys" : kind == Case::PendingFmask ? "an eight-sample target whose color and FMASK imports both have pending settles" : "an eight-sample target whose FMASK alone has a pending settle";
@@ -4331,6 +4344,12 @@ bool settleInitialDccTests(const Device& device) {
             return;
         }
         Require(refusal.empty(), std::string("(m) an initial multisampled DCC import over ") + name + " was refused: " + refusal);
+        Require(!ordered || firstUseWalks != 0, std::string("(m) the first ordered use over ") + name + " reused another caller's observation");
+        if (ordered) {
+            multisampleUseWalks.store(0, std::memory_order_relaxed);
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, std::string("(m) the repeated multisampled DCC target over ") + name + " has no view");
+            Require(multisampleUseWalks.load(std::memory_order_relaxed) == 0, std::string("(m) the repeated ordered use over ") + name + " walked its own unchanged observations again");
+        }
         Require(!fmaskAlone || (after.submitted - before.submitted == 1 && after.rewatched - before.rewatched == 1), "(m) the first use over a pending FMASK settle alone submitted " + std::to_string(after.submitted - before.submitted) + " settle reads, not the FMASK's alone");
         const bool settledBefore = kind == Case::PartialBlock;
         Require((settledBefore ? after.submitted == before.submitted : after.submitted > before.submitted && after.rewatched > before.rewatched) && Watched(address, importBytes) && settled != nullptr && !settled->unwatched, std::string("(m) the initial DCC import over ") + name + " did not settle the import and return it to the write watch");
@@ -4393,7 +4412,146 @@ bool settleInitialDccTests(const Device& device) {
     std::cout << "initial multisampled DCC over a pending settle tests passed\n";
     return true;
 }
+
+bool settleInitialDccCommitterTests(const Device& device) {
+    bool passed = false;
+    std::exception_ptr failure;
+    auto& committer = AgcDriver::DriverDetail::DrawPipeline::Queue0();
+    committer.Enqueue(AgcDriver::DriverDetail::DrawPipeline::CommitKind::Draw, [&] {
+        try {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::GuestMemory::CollectEpoch() != 0, "the initial DCC committer fixture has no collect epoch");
+            passed = settleInitialDccTests(device, true);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }, {}, 0, {}, {}, true);
+    committer.Drain(AgcDriver::DriverDetail::DrawPipeline::DrainReason::Submission);
+    committer.Stop();
+    if (failure) std::rethrow_exception(failure);
+    return passed;
+}
 #endif
+
+bool multisampleUseCollectTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    if (!device.Graphics() || (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !WriteWatched()) {
+        std::cout << "skipped, watched memory or four-sample colour targets unavailable\n";
+        return false;
+    }
+    const auto run = [&](bool ordered, std::uint32_t samples) {
+        auto context = base;
+        Recorder recorder(context);
+        recorder.Activate();
+        constexpr std::size_t unit = 65536;
+        constexpr std::size_t bytes = 4 * unit;
+        auto* block = static_cast<std::uint8_t*>(AllocateWatched(bytes, unit));
+        Require(block != nullptr, "cannot allocate the multisample-use collect fixture");
+        struct Release {
+            const Context& context;
+            Recorder& recorder;
+            void* block;
+            ~Release() {
+                SetObservationHookForTest(nullptr);
+                {
+                    std::lock_guard gpu(GpuMutex());
+                    recorder.Sync();
+                    ClearMultisampleTargets(context.device);
+                    recorder.FlushDeferredReleases();
+                }
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                ReleaseWatched(block, bytes);
+            }
+        } release{context, recorder, block};
+        std::memset(block, 0, bytes);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        std::unique_lock gpu(GpuMutex());
+        ColorTarget target{};
+        target.address = reinterpret_cast<std::uint64_t>(block);
+        target.surfaceAddress = target.address;
+        target.extent = {32, 32};
+        target.surfaceExtent = target.extent;
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.elementBytes = 4;
+        target.samples = samples;
+        target.tileMode = ColorTileMode::RenderTarget;
+        target.dccPipeAligned = true;
+        target.bytes = MultisampledColorBytes(target);
+        Require(target.bytes <= unit, "multisample-use colour plane exceeds the fixture");
+        target.dccAddress = target.address + unit;
+        const auto dccBytes = MultisampledDccBytes(target);
+        Require(dccBytes <= unit, "multisample-use DCC plane exceeds the fixture");
+        std::memset(block + unit, 0xc0, dccBytes);
+        if (samples == 8) {
+            target.cmaskAddress = target.address + 2 * unit;
+            target.cmaskBytes = CmaskBytes(target.extent.width, target.extent.height);
+            target.cmaskFastClear = true;
+            target.fmaskAddress = target.address + 3 * unit;
+            std::memset(block + 2 * unit, 0xcc, static_cast<std::size_t>(target.cmaskBytes));
+            std::memset(block + 3 * unit, 0x11, unit);
+        }
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the multisample-use fixture has no view");
+        SetObservationHookForTest(+[](int point) {
+            if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
+        });
+        if (ordered && CollectEpoch() == 0) {
+            std::uint64_t zeroEpochWalks = 0;
+            for (int use = 0; use != 2; ++use) {
+                multisampleUseWalks.store(0, std::memory_order_relaxed);
+                MultisampleTargetView(context, target);
+                const auto walked = multisampleUseWalks.load(std::memory_order_relaxed);
+                Require(walked != 0, "a GPU use without a collect epoch reused an observation");
+                zeroEpochWalks += walked;
+            }
+            std::cout << "multisample-use samples=" << samples << " zero-epoch walks=" << zeroEpochWalks << '\n';
+        }
+        BumpCollectEpoch();
+        multisampleUseWalks.store(0, std::memory_order_relaxed);
+        MultisampleTargetView(context, target);
+        Require(multisampleUseWalks.load(std::memory_order_relaxed) != 0, "the first ordered use did not observe memory");
+        multisampleUseWalks.store(0, std::memory_order_relaxed);
+        MultisampleTargetView(context, target);
+        const auto repeated = multisampleUseWalks.load(std::memory_order_relaxed);
+        const bool memoized = ordered && CollectEpoch() != 0;
+        Require(memoized ? repeated == 0 : repeated != 0, memoized ? "a repeated GPU use walked unchanged multisample planes again" : "a use without GPU epoch reuse skipped a fresh observation");
+        auto* changed = reinterpret_cast<volatile std::uint8_t*>(samples == 8 ? target.fmaskAddress : target.dccAddress);
+        *changed = samples == 8 ? 0x11 : 0xc0;
+        if (ordered) BumpCollectEpoch();
+        std::string refusal;
+        try {
+            MultisampleTargetView(context, target);
+        } catch (const std::exception& error) {
+            refusal = error.what();
+        }
+        const auto expected = samples == 8 ? "writes to a resident native FMASK" : "writes to a resident multisampled DCC target";
+        Require(refusal.find(expected) != std::string::npos, "a same-value CPU store over a multisample plane was missed: " + refusal);
+        std::cout << "multisample-use samples=" << samples << " ordered=" << ordered << " repeat walks=" << repeated << ", same-value CPU store refused\n";
+    };
+    std::vector<std::uint32_t> sampleCounts{4};
+    if (base.storageImageMultisample && (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_8_BIT) != 0) sampleCounts.push_back(8);
+    std::exception_ptr failure;
+    auto& committer = AgcDriver::DriverDetail::DrawPipeline::Queue0();
+    committer.Enqueue(AgcDriver::DriverDetail::DrawPipeline::CommitKind::Draw, [&] {
+        try {
+            Require(CollectEpoch() == 0, "the draw-committer fixture did not start at collect epoch zero");
+            for (const auto samples : sampleCounts) run(true, samples);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }, {}, 0, {}, {}, true);
+    committer.Drain(AgcDriver::DriverDetail::DrawPipeline::DrainReason::Submission);
+    committer.Stop();
+    if (failure) std::rethrow_exception(failure);
+    for (const auto samples : sampleCounts) run(false, samples);
+    return true;
+}
 
 void remappedImportTests(const Device& device) {
     const auto& context = device.GetContext();
@@ -5807,7 +5965,13 @@ bool sparseRunImportTests(const Device& device, bool copied) {
         Require(std::memcmp(readback.Bytes().data(), guest, committed) == 0, "the GPU does not read a sparse run heap's bytes through its in-place view");
     });
     upload(true, 0, [&](GuestBufferMemory& memory) {
-        Require(!bound(memory, address, heap), "a written sparse run heap is bound in place");
+        if (const auto* import = run(); import != nullptr) {
+            std::uint32_t adjustment = 0;
+            const auto view = memory.Descriptor(address, heap, adjustment);
+            Require(view.buffer == import->buffer && view.range == committed && adjustment == 0, "a written sparse run heap with an import is not bound in place from its run's import");
+        } else {
+            Require(!bound(memory, address, heap), "a written sparse run heap without an import is bound in place");
+        }
     });
     upload(false, 5 * unit, [&](GuestBufferMemory& memory) {
         Require(!bound(memory, address, heap), "a sparse run heap with a view past its run is bound in place");
@@ -18239,6 +18403,7 @@ int main(int argc, char** argv) {
             return 77;
         }
         Device& device = *created;
+        if (argc == 2 && std::string_view(argv[1]) == "--multisample-use-collect-only") return multisampleUseCollectTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());
         if (argc == 2 && (std::string_view(argv[1]) == "--gpu-timing-complete-only" || std::string_view(argv[1]) == "--gpu-timing-incomplete-only")) {
@@ -18256,9 +18421,9 @@ int main(int argc, char** argv) {
             importWatchTests(device);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--settle-initial-dcc-only") {
+        if (argc == 2 && (std::string_view(argv[1]) == "--settle-initial-dcc-only" || std::string_view(argv[1]) == "--settle-initial-dcc-committer-only")) {
 #ifdef _WIN32
-            return settleInitialDccTests(device) ? 0 : 77;
+            return (std::string_view(argv[1]) == "--settle-initial-dcc-committer-only" ? settleInitialDccCommitterTests(device) : settleInitialDccTests(device)) ? 0 : 77;
 #else
             std::cout << "skipped, the device has no deferred settle of host imports: imports under 1 MiB wait for one only on Windows\n";
             return 77;
