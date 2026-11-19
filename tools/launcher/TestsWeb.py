@@ -175,12 +175,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
         self.assertEqual(self.request('GET', '/../../auth.token')[0], 404)
 
-    def test_missing_engine_is_unhealthy_even_when_helper_reports(self):
-        self.assertEqual(self.request('GET', '/healthz')[0], 200)
+    def test_missing_engine_is_not_ready_even_when_helper_reports(self):
+        self.assertEqual(self.request('GET', '/ready')[0], 200)
         self.server.engine = web.EngineCatalogue(Path(self.temp.name) / 'missing-engine')
-        self.assertEqual(self.request('GET', '/healthz')[0], 503)
+        self.assertEqual(self.request('GET', '/ready')[0], 503)
+        self.assertEqual(self.request('GET', '/healthz')[0], 200)
         self.snapshot()
-        self.assertEqual(self.request('GET', '/healthz')[0], 503)
+        self.assertEqual(self.request('GET', '/ready')[0], 503)
         self.assertEqual(self.request('GET', '/engine/download')[0], 503)
         self.assertEqual(self.request('GET', '/engine/status')[0], 200)
         with self.assertRaisesRegex(ValueError, 'protocol'):

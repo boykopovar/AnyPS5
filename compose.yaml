@@ -44,11 +44,11 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=180)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)"]
       interval: 10s
-      timeout: 185s
+      timeout: 3s
       retries: 3
-      start_period: 180s
+      start_period: 5s
     logging:
       driver: json-file
       options:

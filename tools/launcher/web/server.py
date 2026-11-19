@@ -193,6 +193,8 @@ class LauncherWebHandler(BaseHTTPRequestHandler):
             return self.respond(403, {'error': 'Origin not allowed'})
         path = self.path
         if path == '/healthz':
+            return self.respond(200, {'status': 'ok'})
+        if path == '/ready':
             engine = self.server.engine.status(30) if self.server.engine else {'status': 'not_configured'}
             ready = engine['status'] in ('ready', 'not_configured')
             return self.respond(200 if ready else 503, {'status': 'ok' if ready else 'engine_unavailable', 'engine': engine})

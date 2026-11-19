@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath "$repository\tools\engine\Dockerfile") {
 $url = "http://127.0.0.1:$Port"
 $ready = $false
 for ($attempt = 0; $attempt -lt 30; $attempt++) {
-    try { $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/healthz" -TimeoutSec 2; $ready = $response.StatusCode -eq 200 } catch { }
+    try { $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/ready" -TimeoutSec 5; $ready = $response.StatusCode -eq 200 } catch { }
     if ($ready) { break }
     Start-Sleep -Seconds 1
 }
