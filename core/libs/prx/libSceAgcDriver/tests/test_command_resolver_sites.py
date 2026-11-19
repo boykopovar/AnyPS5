@@ -55,7 +55,7 @@ def untyped_sites(text, header):
                 if name not in TYPED_EXEMPT:
                     found.append(first + offset)
             for table in FOR_BATCH.findall(line):
-                if table != "functions":
+                if table not in ("functions", "context.BatchFor(functions)"):
                     found.append(first + offset)
     return found
 
@@ -105,7 +105,7 @@ def problems(root, listed, resolvers, typed=None):
             messages.append(f"{name}: no function matches its TYPED_SCOPES header")
         untyped = untyped_sites(text, header)
         if untyped:
-            messages.append(f"{name}: a per-draw command resolved without the batch's command table (lines {', '.join(map(str, untyped))}): record it through Context::ForBatch(functions, ...)")
+            messages.append(f"{name}: a per-draw command resolved without the batch's command table (lines {', '.join(map(str, untyped))}): record it through Context::ForBatch(functions, ...) or Context::ForBatch(context.BatchFor(functions), ...)")
     for name in sorted(resolvers):
         path = root / name
         if not path.exists():
@@ -145,18 +145,20 @@ class RulesTest(unittest.TestCase):
         text = "\n".join([
             "void CommandState::SetA(const Context& context) {",
             '    context.ForBatch(functions, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &v);',
+            '    context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &s);',
             "}",
             "void CommandState::SetB(const Context& context) {",
             '    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &s);',
             '    context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias")(commands, 0, 0, 0);',
             '    context.ForBatch(nullptr, &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &v);',
             '    context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, 1, 1, 1);',
+            '    context.ForBatch(context.BatchFor(nullptr), &CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &v);',
             "}",
             "void Other(const Context& context) {",
             '    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &s);',
             "}",
         ])
-        self.assertEqual(untyped_sites(text, header), [5, 6, 7])
+        self.assertEqual(untyped_sites(text, header), [6, 7, 8, 10])
 
     def test_the_list_parses(self):
         self.assertIn("CmdDraw", listed_commands(COMMAND_LIST.read_text(encoding="utf-8")))
