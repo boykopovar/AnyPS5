@@ -1866,7 +1866,7 @@ int APS5_VABI sceIcuLegacyUnknown_osoom0ghhoE_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl20hasCompBoundaryAfterEPKhS2_a_nid_postfix();
 int APS5_VABI _ZNK6icu_689ErrorCode13assertSuccessEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_p0Bb5fo1gx8_nid_no_patch();
-int APS5_VABI uprv_tzname_clear_cache_nid_postfix();
+void APS5_VABI uprv_tzname_clear_cache_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_p1py_plus_0pWihc_nid_no_patch();
 int APS5_VABI _ZN6icu_6810Normalizer5resetEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer211composePairEii_nid_postfix();
