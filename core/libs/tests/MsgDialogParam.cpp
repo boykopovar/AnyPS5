@@ -1,9 +1,11 @@
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -36,6 +38,39 @@ struct Param {
     void setMode(std::int32_t mode) { std::memcpy(bytes + 0x38, &mode, 4); }
     void setUserMessage(const UserMessage* user) { std::memcpy(bytes + 0x40, &user, 8); }
 };
+
+std::size_t guestReadCount = 0;
+std::size_t failedGuestRead = 0;
+
+void ThrowOnGuestRead(std::uintptr_t, std::size_t) {
+    if (++guestReadCount == failedGuestRead) {
+        errno = 91;
+        throw std::runtime_error("checked guest read failed");
+    }
+}
+
+void CheckReadFailure(const Param& param) {
+    for (std::size_t failedRead = 1; failedRead <= 3; ++failedRead) {
+        guestReadCount = 0;
+        failedGuestRead = failedRead;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ThrowOnGuestRead);
+        errno = 71;
+        MsgDialog::ParsedParam parsed;
+        bool escaped = false;
+        try {
+            parsed = MsgDialog::ParseParam(&param);
+        } catch (const std::runtime_error&) {
+            escaped = true;
+        }
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        Require(!escaped, "checked guest read exception escaped the parser");
+        Require(guestReadCount == failedRead, "checked read failure was not reached");
+        Require(errno == 71, "checked read failure changed errno");
+        Require(parsed.mode == MsgDialog::ModeUserMsg, "checked read failure changed default mode");
+        Require(parsed.hasUserMessage == (failedRead == 3), "checked read failure changed user message presence");
+        Require(!parsed.hasText && parsed.text.empty(), "checked read failure retained text");
+    }
+}
 
 char* GuardedPageEnd() {
 #ifdef _WIN32
@@ -95,6 +130,7 @@ int main() {
     Require(parsed.hasUserMessage && parsed.hasText, "user message not read");
     Require(parsed.buttonType == MsgDialog::ButtonTypeYesNoFocusNo, "button type");
     Require(parsed.text == "Overwrite the save?\nThis cannot be undone.", "message text");
+    CheckReadFailure(param);
     const auto* unreadableUser = reinterpret_cast<const UserMessage*>(0x10);
     param.setUserMessage(unreadableUser);
     errno = 71;

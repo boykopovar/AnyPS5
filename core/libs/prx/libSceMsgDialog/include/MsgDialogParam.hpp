@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace MsgDialog {
@@ -37,7 +38,13 @@ struct ParsedParam {
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
 inline bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
     const int savedErrno = errno;
-    const bool read = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    bool read = false;
+    try {
+        read = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    } catch (const std::runtime_error&) {
+        errno = savedErrno;
+        return false;
+    }
     errno = savedErrno;
     return read;
 }
