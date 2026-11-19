@@ -22,7 +22,7 @@ std::size_t GetDefaultStackSize_nid_no_patch() {
 }
 
 bool SetDefaultStackSize_nid_no_patch(std::size_t size) {
-    if (size <= MIN_STACK_SIZE) return false;
+    if (size < MIN_STACK_SIZE) return false;
     defaultStackSize.store(size, std::memory_order_relaxed);
     return true;
 }
@@ -109,10 +109,11 @@ int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksiz
 }
 
 int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** stackaddr, std::size_t* stacksize) {
-    if (!attr || !*attr || !stackaddr || !stacksize) return SCE_KERNEL_ERROR_EINVAL;
-    *stackaddr = (*attr)->stackAddress;
-    *stacksize = (*attr)->_stacksize;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    if (!stackaddr || !stacksize) return SCE_KERNEL_ERROR_EINVAL;
+    if (const int error = StoreOutput<void*>(stackaddr, handle->stackAddress)) return error;
+    return StoreOutput<std::size_t>(stacksize, handle->_stacksize);
 }
 
 int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {

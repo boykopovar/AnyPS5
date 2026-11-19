@@ -265,11 +265,14 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
 }
 
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
-    if (!pWritingLine || !*pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* line = static_cast<WritingLine*>(*pWritingLine);
+    if (!pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    void* handle = nullptr;
+    if (!Font::CopyInGuest(handle, pWritingLine) || !handle) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* line = static_cast<WritingLine*>(handle);
     {
         std::lock_guard lock(linesMutex);
         if (!lines.contains(line) || !IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_WRITING;
+        if (!Font::CopyOutGuest(pWritingLine, static_cast<void*>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
         lines.erase(line);
     }
     const FontMemory* memory = line->memory;
@@ -277,7 +280,6 @@ int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
     line->kind = 0;
     std::destroy_at(line);
     memory->iface->dealloc(memory->mspace_handle, line);
-    *pWritingLine = nullptr;
     return SCE_FONT_OK;
 }
 
@@ -302,6 +304,13 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
         if (!lines.contains(line)) return SCE_FONT_ERROR_INVALID_WRITING;
     }
     if (!IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    FontWritingMetrics localMetrics{};
+    if (writingMetrics) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localMetrics, writingMetrics, sizeof(localMetrics));
+        errno = savedErrno;
+        if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     if (line->cursor) ResetOrders(*line);
     void* allocation = line->memory->iface->alloc(line->memory->mspace_handle, sizeof(WritingOrder));
     if (!allocation) return SCE_FONT_ERROR_ALLOCATION_FAILED;
@@ -309,7 +318,7 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
     if (!line->last) line->first = order;
     order->orderer = writingOrderer;
     order->attribute = writingAttribute;
-    if (writingMetrics) order->metrics = *writingMetrics;
+    if (writingMetrics) order->metrics = localMetrics;
     Link(*line, order, level);
     if (!order->prev) line->head = order;
     if (!order->next) line->tail = order;
