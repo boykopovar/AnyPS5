@@ -8,9 +8,11 @@
 #include <stdexcept>
 #include <vector>
 
+constexpr const char* TestName = "LiftedBranchingFunctions";
+
 static void Check(bool value, int line) {
     if (!value) {
-        std::fprintf(stderr, "LiftedBranchingFunctions check failed at line %d\n", line);
+        std::fprintf(stderr, "%s check failed at line %d\n", TestName, line);
         std::abort();
     }
 }
@@ -585,14 +587,21 @@ int main() {
     std::vector<std::uint64_t> storage(ArenaWords);
     std::uint64_t* arena = storage.data();
     int checked = 0;
+    int mismatches = 0;
     for (const Case& c : Cases) {
         for (const Seed& s : c.seeds) {
             const Inputs in = Generate(s.seed, arena, c.hints.data(), c.hints.size());
             const std::uint64_t result = c.call(in);
-            Require(Digest(arena, result, c.kind) == s.digest);
+            const std::uint64_t digest = Digest(arena, result, c.kind);
+            if (digest != s.digest) {
+                std::fprintf(stderr, "%s case %d seed %llu: digest %016llx, expected %016llx\n", TestName, static_cast<int>(&c - Cases),
+                             static_cast<unsigned long long>(s.seed), static_cast<unsigned long long>(digest), static_cast<unsigned long long>(s.digest));
+                ++mismatches;
+            }
             ++checked;
         }
     }
+    Require(mismatches == 0);
     for (const int k : NullFirst) {
         Inputs in{};
         bool threw = false;
