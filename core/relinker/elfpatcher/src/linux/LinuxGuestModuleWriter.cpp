@@ -2,10 +2,12 @@
 #include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/SharedStubData.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 
@@ -316,6 +318,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             throw Domain::RelinkerException("AMD-only guest stub exceeds rel32 range", offset);
         return static_cast<std::int32_t>(-static_cast<std::int64_t>(distance));
     };
+    std::optional<std::uint64_t> sharedDataAddress;
+    if (Codegen::UsesSharedStubData(image.Trampolines)) {
+        bytes.resize(Io::AlignUp(bytes.size(), kStubAlignment), kTrapFill);
+        sharedDataAddress = checkedAdd(extraAddress, bytes.size() - extraOffset, 0);
+        const auto shared = Codegen::SharedStubData();
+        bytes.insert(bytes.end(), shared.begin(), shared.end());
+    }
     for (const auto& site : image.Trampolines) {
         if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length ||
             site.Body.size() < kJmpRel32.Size ||
@@ -348,7 +357,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         const auto returnDisplacement = displacement(returnAddress, stubReturn, site.Offset);
         const auto siteDisplacement = displacement(stubAddress, siteNext, site.Offset);
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
-        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + stubOffset, site.ReturnBranchOffset), site.Relocations, site.Address, stubAddress, site.Offset);
+        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + stubOffset, site.ReturnBranchOffset), site.Relocations, site.Address, stubAddress, site.Offset, sharedDataAddress);
         Io::WriteU32(bytes, stubOffset + site.ReturnBranchOffset + 1,
                      static_cast<std::uint32_t>(returnDisplacement));
         std::fill_n(bytes.begin() + static_cast<std::ptrdiff_t>(site.Offset), site.Length, kNop1.Bytes[0]);

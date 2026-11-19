@@ -88,12 +88,14 @@ MemoryOperand DecodeMemoryOperand(const std::uint8_t* data, const std::size_t le
     return operand;
 }
 
-void ApplyStubRelocations(const std::span<std::uint8_t> body, const std::span<const StubRelocation> relocations, const std::uint64_t siteAddress, const std::uint64_t stubAddress, const Domain::FileByteOffset failureOffset) {
+void ApplyStubRelocations(const std::span<std::uint8_t> body, const std::span<const StubRelocation> relocations, const std::uint64_t siteAddress, const std::uint64_t stubAddress, const Domain::FileByteOffset failureOffset, const std::optional<std::uint64_t> sharedDataAddress) {
     using namespace X64OpcodeConstants;
     for (const auto& relocation : relocations) {
         if (relocation.InstructionEnd > body.size() || relocation.DisplacementOffset > relocation.InstructionEnd || relocation.InstructionEnd - relocation.DisplacementOffset < Disp32Size)
             throw CodegenException("Stub relocation lies outside the stub body", failureOffset);
-        const auto target = siteAddress + static_cast<std::uint64_t>(relocation.SiteTarget);
+        if (relocation.SharedData && !sharedDataAddress)
+            throw CodegenException("Stub refers to shared stub data that was not placed", failureOffset);
+        const auto target = (relocation.SharedData ? *sharedDataAddress : siteAddress) + static_cast<std::uint64_t>(relocation.SiteTarget);
         const auto displacement = static_cast<std::int64_t>(target - (stubAddress + relocation.InstructionEnd));
         if (!relocation.AddressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
             throw CodegenException("RIP-relative operand is out of rel32 range from its stub", failureOffset);
@@ -139,29 +141,57 @@ void StubBodyBuilder::RipOperand(const std::initializer_list<std::uint8_t> opcod
     _constants.push_back(constant);
 }
 
-void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand) {
+void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand, const std::uint8_t prefix, const std::uint8_t opcode, const std::int32_t bias) {
     using namespace X64OpcodeConstants;
-    const auto displacement = static_cast<std::int64_t>(operand.Displacement) + static_cast<std::int64_t>(operand.StackBase ? _stackDepth : 0);
-    if (displacement > std::numeric_limits<std::int32_t>::max())
+    const auto displacement = static_cast<std::int64_t>(operand.Displacement) + static_cast<std::int64_t>(operand.StackBase ? _stackDepth : 0) + bias;
+    if (displacement > std::numeric_limits<std::int32_t>::max() || displacement < std::numeric_limits<std::int32_t>::min())
         throw CodegenException("Stack displacement does not fit after spilling");
-    const auto mod = operand.StackBase && _stackDepth != 0 ? ModRmModDisp32 : operand.Mod;
+    const bool absolute = operand.Mod == ModRmModIndirect && operand.Rm == ModRmRmSibPresent && (operand.Sib & SibBaseMask) == SibBaseDisp32;
+    const bool widen = !operand.RipRelative && !absolute && (bias != 0 || (operand.StackBase && _stackDepth != 0));
+    const auto mod = widen ? ModRmModDisp32 : operand.Mod;
     _bytes.insert(_bytes.end(), operand.Prefixes.begin(), operand.Prefixes.end());
-    _bytes.push_back(kPrefixScalar);
+    _bytes.push_back(prefix);
     const auto rex = static_cast<std::uint8_t>(kRexBase | ((reg & 8) != 0 ? kRexR : 0) | operand.RexIndexBase);
     if (rex != kRexBase)
         _bytes.push_back(rex);
-    _bytes.insert(_bytes.end(), {TwoByteOpcodeEscape, kMovdqu, static_cast<std::uint8_t>((mod << ModRmModShift) | ((reg & 7) << ModRmRegShift) | operand.Rm)});
+    _bytes.insert(_bytes.end(), {TwoByteOpcodeEscape, opcode, static_cast<std::uint8_t>((mod << ModRmModShift) | ((reg & 7) << ModRmRegShift) | operand.Rm)});
     if (operand.Rm == ModRmRmSibPresent)
         _bytes.push_back(operand.Sib);
     if (operand.RipRelative) {
         const auto addressSize32 = std::find(operand.Prefixes.begin(), operand.Prefixes.end(), PrefixAddressSize) != operand.Prefixes.end();
-        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, _siteOffset + static_cast<std::int64_t>(operand.InstructionLength) + operand.Displacement, addressSize32});
+        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, _siteOffset + static_cast<std::int64_t>(operand.InstructionLength) + operand.Displacement + bias, addressSize32});
         _bytes.insert(_bytes.end(), Disp32Size, 0);
         return;
     }
     const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
     for (std::size_t index = 0; index < _displacementSize(mod, operand.Rm, operand.Sib); ++index)
         _bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+}
+
+void StubBodyBuilder::SharedOperand(const std::initializer_list<std::uint8_t> opcode, const std::uint8_t reg, const std::size_t sharedOffset) {
+    _emit(_bytes, kPrefixPacked, reg, 0, opcode, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRip));
+    _relocations.push_back({_bytes.size(), _bytes.size() + X64OpcodeConstants::Disp32Size, static_cast<std::int64_t>(sharedOffset), false, true});
+    _bytes.insert(_bytes.end(), X64OpcodeConstants::Disp32Size, 0);
+}
+
+void StubBodyBuilder::SharedAddress(const std::uint8_t reg, const std::size_t sharedOffset) {
+    _bytes.insert(_bytes.end(), {static_cast<std::uint8_t>(kRexBase | 0x08 | ((reg & 8) != 0 ? kRexR : 0)), 0x8D, static_cast<std::uint8_t>(((reg & 7) << 3) | kModRmRip)});
+    _relocations.push_back({_bytes.size(), _bytes.size() + X64OpcodeConstants::Disp32Size, static_cast<std::int64_t>(sharedOffset), false, true});
+    _bytes.insert(_bytes.end(), X64OpcodeConstants::Disp32Size, 0);
+}
+
+void StubBodyBuilder::Push(const std::uint8_t reg) {
+    if ((reg & 8) != 0)
+        _bytes.push_back(kRexBase | kRexB);
+    _bytes.push_back(static_cast<std::uint8_t>(0x50 | (reg & 7)));
+    _stackDepth += 8;
+}
+
+void StubBodyBuilder::Pop(const std::uint8_t reg) {
+    if ((reg & 8) != 0)
+        _bytes.push_back(kRexBase | kRexB);
+    _bytes.push_back(static_cast<std::uint8_t>(0x58 | (reg & 7)));
+    _stackDepth -= 8;
 }
 
 void StubBodyBuilder::Spill(const std::uint8_t reg) {

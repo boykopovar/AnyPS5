@@ -4,12 +4,14 @@
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/SharedStubData.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
 #include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <map>
 #include <set>
 #include <span>
@@ -391,7 +393,8 @@ void LinuxElfPatcher::_appendTrampoline(
     std::vector<std::uint8_t>& buf,
     const Codegen::TrampolineSite& site,
     const std::uint64_t extraBlockOffset,
-    const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const
+    const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset,
+    const std::optional<std::uint64_t> sharedDataAddress) const
 {
     using namespace Codegen::Amd64OnlySubstitutionTable;
     if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length || site.Body.size() < kJmpRel32.Size || site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size || site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
@@ -407,7 +410,7 @@ void LinuxElfPatcher::_appendTrampoline(
     const auto bodyVaddr = vaddrOfExtraBlockOffset(bodyOff);
     for (const std::uint8_t b : site.Body)
         buf.push_back(b);
-    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(buf.data() + bodyOff, site.ReturnBranchOffset), site.Relocations, site.Address, bodyVaddr, site.Offset);
+    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(buf.data() + bodyOff, site.ReturnBranchOffset), site.Relocations, site.Address, bodyVaddr, site.Offset, sharedDataAddress);
 
     const auto inRange = [](const std::int64_t displacement) {
         return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
@@ -774,8 +777,16 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto stubSize = static_cast<std::uint64_t>(buf.size()) - stubOff;
     _byteWriter->WriteU64(buf, kEhdrEntryOffset, address(stubVaddr));
 
+    std::optional<std::uint64_t> sharedDataAddress;
+    if (Codegen::UsesSharedStubData(trampolines)) {
+        while (buf.size() % Codegen::Amd64OnlySubstitutionTable::kStubAlignment != 0)
+            buf.push_back(Codegen::Amd64OnlySubstitutionTable::kTrapFill);
+        sharedDataAddress = vaddrOfExtraBlockOffset(static_cast<std::uint64_t>(buf.size()));
+        const auto shared = Codegen::SharedStubData();
+        buf.insert(buf.end(), shared.begin(), shared.end());
+    }
     for (const auto& site : trampolines)
-        _appendTrampoline(buf, site, extraBlockOff, vaddrOfExtraBlockOffset);
+        _appendTrampoline(buf, site, extraBlockOff, vaddrOfExtraBlockOffset, sharedDataAddress);
 
     static constexpr char kInterp[] = "/lib64/ld-linux-x86-64.so.2";
     const auto interpOff = static_cast<std::uint64_t>(buf.size());

@@ -51,6 +51,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SharedStubData.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
@@ -181,6 +182,11 @@ if(BUILD_TESTING)
     target_link_libraries(mulx_lowering_tests PRIVATE relinker_core)
     add_test(NAME mulx_lowering COMMAND mulx_lowering_tests)
     set_tests_properties(mulx_lowering PROPERTIES TIMEOUT 20)
+
+    add_test_executable(reciprocal_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/ReciprocalLoweringTests.cpp)
+    target_link_libraries(reciprocal_lowering_tests PRIVATE relinker_core)
+    add_test(NAME reciprocal_lowering COMMAND reciprocal_lowering_tests)
+    set_tests_properties(reciprocal_lowering PROPERTIES TIMEOUT 120)
 
     add_test_executable(relinker_conversion_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ConversionTests.cpp)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
@@ -326,6 +332,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SharedStubData.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
@@ -609,6 +616,7 @@ if(BUILD_TESTING)
     add_test_executable(linux_load_pages_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/LinuxLoadPageTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SharedStubData.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
@@ -650,6 +658,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SharedStubData.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp

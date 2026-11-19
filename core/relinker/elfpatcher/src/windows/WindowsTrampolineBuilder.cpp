@@ -1,10 +1,12 @@
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/SharedStubData.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <map>
 #include <span>
 
@@ -49,6 +51,12 @@ void WindowsTrampolineBuilder::Build(const std::vector<Codegen::TrampolineSite>&
     std::map<std::uint32_t, std::uint64_t> ranges;
     std::vector<SitePatch> patches;
     patches.reserve(sites.size());
+    std::optional<std::uint64_t> sharedDataRva;
+    if (Codegen::UsesSharedStubData(sites)) {
+        sharedDataRva = sectionRva;
+        const auto shared = Codegen::SharedStubData();
+        bytes.insert(bytes.end(), shared.begin(), shared.end());
+    }
     for (const auto& site : sites) {
         const auto siteRva = image.GetRva(site.Address, site.Length);
         if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length || site.Body.size() < kJmpRel32.Size || site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size || site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
@@ -66,7 +74,7 @@ void WindowsTrampolineBuilder::Build(const std::vector<Codegen::TrampolineSite>&
         const auto stubRva = CheckedRva(sectionRva + bytes.size());
         const auto bodyOffset = bytes.size();
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
-        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + bodyOffset, site.ReturnBranchOffset), site.Relocations, siteRva, stubRva, site.Offset);
+        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + bodyOffset, site.ReturnBranchOffset), site.Relocations, siteRva, stubRva, site.Offset, sharedDataRva);
         const auto returnRva = CheckedRva(siteEndRva);
         const auto displacement = static_cast<std::int64_t>(returnRva) - (static_cast<std::int64_t>(stubRva) + static_cast<std::int64_t>(site.ReturnBranchOffset + kJmpRel32.Size));
         if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())

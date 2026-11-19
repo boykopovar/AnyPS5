@@ -38,7 +38,7 @@ struct MemoryOperand {
 [[nodiscard]] MemoryOperand DecodeMemoryOperand(const std::uint8_t* data, std::size_t length, std::size_t modRmOffset, std::uint8_t rex, std::vector<std::uint8_t> prefixes);
 
 void EmitSse(std::vector<std::uint8_t>& out, std::uint8_t prefix, std::initializer_list<std::uint8_t> opcode, std::uint8_t dst, std::uint8_t src);
-void ApplyStubRelocations(std::span<std::uint8_t> body, std::span<const StubRelocation> relocations, std::uint64_t siteAddress, std::uint64_t stubAddress, Domain::FileByteOffset failureOffset);
+void ApplyStubRelocations(std::span<std::uint8_t> body, std::span<const StubRelocation> relocations, std::uint64_t siteAddress, std::uint64_t stubAddress, Domain::FileByteOffset failureOffset, std::optional<std::uint64_t> sharedDataAddress = std::nullopt);
 
 class StubBodyBuilder {
 public:
@@ -48,7 +48,11 @@ public:
     void ShiftImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void ShiftDwordImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void RipOperand(std::initializer_list<std::uint8_t> opcode, std::uint8_t reg, const StubConstant& constant);
-    void Load(std::uint8_t reg, const MemoryOperand& operand);
+    void Load(std::uint8_t reg, const MemoryOperand& operand, std::uint8_t prefix = 0xF3, std::uint8_t opcode = 0x6F, std::int32_t bias = 0);
+    void SharedOperand(std::initializer_list<std::uint8_t> opcode, std::uint8_t reg, std::size_t sharedOffset);
+    void SharedAddress(std::uint8_t reg, std::size_t sharedOffset);
+    void Push(std::uint8_t reg);
+    void Pop(std::uint8_t reg);
     void Spill(std::uint8_t reg);
     void Restore(std::uint8_t reg);
     void Raw(std::span<const std::uint8_t> bytes);

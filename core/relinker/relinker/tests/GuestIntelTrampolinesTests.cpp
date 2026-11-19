@@ -26,9 +26,33 @@ const Bytes kModuleCode = {
     0xF2, 0x0F, 0x78, 0xD1, 0x08, 0x10,
     0x66, 0x48, 0x0F, 0x7E, 0xD0,
     0xC3,
+    0x66, 0x48, 0x0F, 0x6E, 0xC7,
+    0x0F, 0x53, 0xC8,
+    0x0F, 0x52, 0xD0,
+    0x66, 0x0F, 0x62, 0xCA,
+    0x66, 0x48, 0x0F, 0x7E, 0xC8,
+    0xC3,
 };
 constexpr std::uint64_t kSites[] = {10, 16};
 constexpr std::size_t kSiteLength = 6;
+
+constexpr std::size_t kReciprocalOffset = 28;
+constexpr std::size_t kReciprocalSite = kReciprocalOffset + 5;
+
+using ReciprocalStub = std::uint64_t APS5_VABI (std::uint64_t);
+
+struct Measured {
+    std::uint32_t Input;
+    std::uint64_t Result;
+};
+
+constexpr Measured kReciprocals[] = {
+    {0x3F800000, 0x3F7FF8003F7FF000ull},
+    {0x40400000, 0x3F13C8003EAAA800ull},
+    {0x00000000, 0x7F8000007F800000ull},
+    {0xBF800000, 0xFFC00000BF7FF000ull},
+    {0x7F7FFFFF, 0x1F80000000000000ull},
+};
 
 using SseStub = std::uint64_t APS5_VABI (std::uint64_t, std::uint64_t);
 
@@ -68,6 +92,11 @@ int main(const int argc, char** argv) {
         const auto function = image.At<SseStub>(0);
         for (const auto [value, destination] : {std::pair{0x1122334455667788ull, 0x0123456789ABCDEFull}, {0ull, ~0ull}, {~0ull, 0ull}, {0x9E3779B97F4A7C15ull, 0x0F1E2D3C4B5A6978ull}})
             require(function(value, destination) == expected(value, destination), "Relinked guest module trampolines computed the wrong value");
+        const auto* reciprocalSite = image.At<const std::uint8_t>(kReciprocalSite);
+        require(reciprocalSite[0] == 0xE9, "RCPPS site in the guest module was not replaced by a jump");
+        const auto reciprocal = image.At<ReciprocalStub>(kReciprocalOffset);
+        for (const auto& measured : kReciprocals)
+            require(reciprocal(measured.Input) == measured.Result, "Relinked RCPPS and RSQRTPS stubs in the guest module do not match the measured console results");
         std::cout << "Guest Intel trampoline execution tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

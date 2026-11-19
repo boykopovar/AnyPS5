@@ -1,6 +1,7 @@
 #ifndef CODEGEN_X86_RECIPROCALOPERANDS_HPP
 #define CODEGEN_X86_RECIPROCALOPERANDS_HPP
 
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -19,6 +20,8 @@ struct ReciprocalOperands {
     bool Vex;
     bool Scalar;
     std::uint8_t Upper;
+    bool Wide = false;
+    std::optional<MemoryOperand> Memory = std::nullopt;
 };
 
 [[nodiscard]] std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, std::size_t length);

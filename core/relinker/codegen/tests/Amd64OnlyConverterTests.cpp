@@ -23,6 +23,7 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
 #include <algorithm>
+#include <iterator>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -1439,15 +1440,25 @@ void reciprocalOperands() {
     require(vex2High && vex2High->Operation == Codegen::ReciprocalOperation::Reciprocal && vex2High->Destination == 8 && vex2High->Source == 1, "VEX2 VRCPPS with a high destination was not decoded");
     const auto vex3 = Codegen::DecodeReciprocal(Bytes{0xC4, 0x41, 0x78, 0x52, 0xC9}.data(), 5);
     require(vex3 && vex3->Destination == 9 && vex3->Source == 9, "VEX3 VRSQRTPS with high registers was not decoded");
-    require(!Codegen::DecodeReciprocal(Bytes{0xC5, 0xFC, 0x52, 0xD5}.data(), 4), "256-bit VRSQRTPS must stay native");
-    require(!Codegen::DecodeReciprocal(Bytes{0xC5, 0xF8, 0x52, 0x10}.data(), 4), "Memory form must stay native");
+    const auto wide = Codegen::DecodeReciprocal(Bytes{0xC5, 0xFC, 0x52, 0xD5}.data(), 4);
+    require(wide && wide->Wide && !wide->Scalar && !wide->Memory && wide->Destination == 2 && wide->Source == 5, "256-bit VRSQRTPS was not decoded");
+    const auto memory = Codegen::DecodeReciprocal(Bytes{0xC5, 0xF8, 0x52, 0x10}.data(), 4);
+    require(memory && !memory->Wide && memory->Memory && memory->Memory->Rm == 0 && memory->Memory->Mod == 0 && memory->Destination == 2, "VEX memory VRSQRTPS was not decoded");
+    const auto prefixed = Codegen::DecodeReciprocal(Bytes{0x3E, 0x67, 0xF3, 0x41, 0x0F, 0x53, 0x44, 0x88, 0x10}.data(), 9);
+    require(prefixed && prefixed->Scalar && !prefixed->Vex && prefixed->Destination == 0 && prefixed->Memory && prefixed->Memory->RexIndexBase == 1 && prefixed->Memory->Sib == 0x88 && prefixed->Memory->Displacement == 0x10 && prefixed->Memory->Prefixes == Bytes{0x3E, 0x67}, "Prefixed memory RCPSS lost its prefixes or operand");
+    for (const std::uint8_t segment : {std::uint8_t{0x64}, std::uint8_t{0x65}})
+        require(!Codegen::DecodeReciprocal(Bytes{segment, 0x0F, 0x53, 0x00}.data(), 4), "An FS or GS memory reciprocal must stay native for the guest TLS and GS handling");
+    const auto rip = Codegen::DecodeReciprocal(Bytes{0xC4, 0x61, 0x7C, 0x53, 0x0D, 0x10, 0x00, 0x00, 0x00}.data(), 9);
+    require(rip && rip->Wide && rip->Destination == 9 && rip->Memory && rip->Memory->RipRelative && rip->Memory->Displacement == 0x10, "RIP-relative 256-bit VRCPPS was not decoded");
+    require(!Codegen::DecodeReciprocal(Bytes{0xC5, 0xF8, 0x52, 0x10, 0x00}.data(), 5), "A reciprocal with trailing bytes was accepted");
+    require(!Codegen::DecodeReciprocal(Bytes{0x66, 0x0F, 0x53, 0xD5}.data(), 4), "An operand-size prefixed reciprocal was accepted");
     require(!Codegen::DecodeReciprocal(Bytes{0xC5, 0xF8, 0x51, 0xD5}.data(), 4), "VSQRTPS is not a reciprocal");
     require(vex2->Vex && vex2High->Vex && vex3->Vex, "VEX reciprocals must clear the upper vector bits");
     const auto legacy = Codegen::DecodeReciprocal(Bytes{0x0F, 0x52, 0xD5}.data(), 3);
     require(legacy && !legacy->Vex && legacy->Operation == Codegen::ReciprocalOperation::ReciprocalSquareRoot && legacy->Destination == 2 && legacy->Source == 5, "Legacy RSQRTPS was not decoded");
     const auto legacyHigh = Codegen::DecodeReciprocal(Bytes{0x45, 0x0F, 0x53, 0xC9}.data(), 4);
     require(legacyHigh && !legacyHigh->Vex && legacyHigh->Operation == Codegen::ReciprocalOperation::Reciprocal && legacyHigh->Destination == 9 && legacyHigh->Source == 9, "Legacy RCPPS with high registers was not decoded");
-    for (const Bytes& unsupported : {Bytes{0xF3, 0x0F, 0x52, 0x10}, Bytes{0xF3, 0x0F, 0x53, 0x10}, Bytes{0x0F, 0x52, 0x10}, Bytes{0x0F, 0x53, 0x10}, Bytes{0x0F, 0x51, 0xD5}, Bytes{0x0F, 0x52}, Bytes{0x45, 0x0F, 0x53}, Bytes{0xF3, 0x0F, 0x52}, Bytes{0xF3, 0xC5, 0xFA, 0x52, 0xD5}})
+    for (const Bytes& unsupported : {Bytes{0x0F, 0x51, 0xD5}, Bytes{0x0F, 0x52}, Bytes{0x45, 0x0F, 0x53}, Bytes{0xF3, 0x0F, 0x52}, Bytes{0xF3, 0xC5, 0xFA, 0x52, 0xD5}})
         require(!Codegen::DecodeReciprocal(unsupported.data(), unsupported.size()), "An unsupported legacy reciprocal encoding was accepted");
     require(legacy->Scalar == false && vex2->Scalar == false, "Packed reciprocals were decoded as scalar");
     const auto vrsqrtss = Codegen::DecodeReciprocal(Bytes{0xC5, 0xEA, 0x52, 0xD5}.data(), 4);
@@ -1455,7 +1466,7 @@ void reciprocalOperands() {
     const auto vrcpss = Codegen::DecodeReciprocal(Bytes{0xC4, 0x41, 0x52, 0x53, 0xC9}.data(), 5);
     require(vrcpss && vrcpss->Vex && vrcpss->Scalar && vrcpss->Operation == Codegen::ReciprocalOperation::Reciprocal && vrcpss->Destination == 9 && vrcpss->Upper == 5 && vrcpss->Source == 9, "VEX3 VRCPSS with high registers was not decoded");
     require(Codegen::DecodeReciprocal(Bytes{0xC5, 0xFE, 0x52, 0xD5}.data(), 4).has_value(), "VRSQRTSS ignores VEX.L");
-    for (const Bytes& unsupported : {Bytes{0xC5, 0xF9, 0x52, 0xD5}, Bytes{0xC5, 0xFB, 0x53, 0xD5}, Bytes{0xC5, 0xFA, 0x52, 0x10}})
+    for (const Bytes& unsupported : {Bytes{0xC5, 0xF9, 0x52, 0xD5}, Bytes{0xC5, 0xFB, 0x53, 0xD5}})
         require(!Codegen::DecodeReciprocal(unsupported.data(), unsupported.size()), "An unsupported VEX reciprocal encoding was accepted");
     const auto rsqrtss = Codegen::DecodeReciprocal(Bytes{0xF3, 0x0F, 0x52, 0xD5}.data(), 4);
     require(rsqrtss && !rsqrtss->Vex && rsqrtss->Scalar && rsqrtss->Operation == Codegen::ReciprocalOperation::ReciprocalSquareRoot && rsqrtss->Destination == 2 && rsqrtss->Upper == 2 && rsqrtss->Source == 5, "Legacy RSQRTSS was not decoded");
@@ -1492,8 +1503,10 @@ void converterReciprocal() {
     std::copy(load.begin(), load.end(), ripRelative.begin() + 0x200);
     const auto moved = converter->Convert(ripRelative, {segmentHeader(load.size())});
     require(moved.Trampolines.size() == 1 && moved.KeptCount == 0 && moved.Bytes == ripRelative && moved.Trampolines[0].Length == 10, "VRSQRTPS did not absorb the following RIP-relative load");
-    const auto& movedSite = moved.Trampolines[0];
-    require(movedSite.Relocations.size() == 1 && movedSite.Relocations[0].DisplacementOffset == movedSite.ReturnBranchOffset - 4 && movedSite.Relocations[0].InstructionEnd == movedSite.ReturnBranchOffset && movedSite.Relocations[0].SiteTarget == 10 + 0x10, "Absorbed RIP-relative load has the wrong relocation");
+    std::vector<Codegen::StubRelocation> siteRelocations;
+    std::copy_if(moved.Trampolines[0].Relocations.begin(), moved.Trampolines[0].Relocations.end(), std::back_inserter(siteRelocations), [](const Codegen::StubRelocation& relocation) { return !relocation.SharedData; });
+    const auto returnBranch = moved.Trampolines[0].ReturnBranchOffset;
+    require(siteRelocations.size() == 1 && siteRelocations[0].DisplacementOffset == returnBranch - 4 && siteRelocations[0].InstructionEnd == returnBranch && siteRelocations[0].SiteTarget == 10 + 0x10, "Absorbed RIP-relative load has the wrong relocation");
     for (const std::uint8_t opcode : {std::uint8_t{0x52}, std::uint8_t{0x53}}) {
         const std::string name = opcode == 0x52 ? "RSQRTPS" : "RCPPS";
         for (const Bytes& instruction : {Bytes{0x0F, opcode, 0xD5}, Bytes{0x45, 0x0F, opcode, 0xC9}}) {
@@ -1853,82 +1866,6 @@ std::array<std::uint64_t, 2> runRegisterFormStub(const Bytes& site, const std::u
     require(scratchOut[0] == scratchIn[0] && scratchOut[1] == scratchIn[1], "Register form stub clobbered a scratch register");
     require(spareOut[0] == spareIn[0] && spareOut[1] == spareIn[1], "Stub clobbered xmm1");
     return {out[0], out[1]};
-}
-
-std::uint64_t packLanes(const float (&lanes)[4], const std::size_t first) {
-    std::uint64_t packed = 0;
-    std::memcpy(&packed, lanes + first, sizeof(packed));
-    return packed;
-}
-
-bool sameLane(const float expected, const float actual) {
-    if (std::isnan(expected))
-        return std::isnan(actual);
-    std::uint32_t a = 0;
-    std::uint32_t b = 0;
-    std::memcpy(&a, &expected, sizeof(a));
-    std::memcpy(&b, &actual, sizeof(b));
-    return a == b;
-}
-
-void reciprocalExecution() {
-    const bool avx = hostExecutesAvx("VRSQRTPS and VRCPPS stub execution, the host does not execute AVX");
-    const float inputs[][4] = {
-        {1.0f, 4.0f, 0.25f, 2.0f},
-        {0.0f, -0.0f, INFINITY, -1.0f},
-        {1.00000012f, 0.99999994f, 3.0e-38f, 1.0e30f}};
-    for (const auto& lanes : inputs) {
-        const std::uint64_t source[2] = {packLanes(lanes, 0), packLanes(lanes, 2)};
-        const std::uint64_t destination[2] = {0x1111111111111111ull, 0x2222222222222222ull};
-        for (const bool squareRoot : {true, false}) for (const bool vex : {false, true}) {
-            if (vex && !avx) continue;
-            const std::uint8_t opcode = squareRoot ? 0x52 : 0x53;
-            const Bytes distinct = vex ? Bytes{0xC5, 0xF8, opcode, 0xD5} : Bytes{0x0F, opcode, 0xD5};
-            const Bytes same = vex ? Bytes{0xC5, 0xF8, opcode, 0xD2} : Bytes{0x0F, opcode, 0xD2};
-            const auto distinctOut = runRegisterFormStub(distinct, destination, source);
-            const auto sameOut = runRegisterFormStub(same, source, source);
-            float distinctLanes[4];
-            float sameLanes[4];
-            std::memcpy(distinctLanes, distinctOut.data(), sizeof(distinctLanes));
-            std::memcpy(sameLanes, sameOut.data(), sizeof(sameLanes));
-            for (std::size_t lane = 0; lane < 4; ++lane) {
-                const float expected = squareRoot ? 1.0f / std::sqrt(lanes[lane]) : 1.0f / lanes[lane];
-                require(sameLane(expected, distinctLanes[lane]), "Packed reciprocal stub does not match 1/x or SQRT then DIV");
-                require(sameLane(expected, sameLanes[lane]), "Packed reciprocal stub with equal operands does not match 1/x or SQRT then DIV");
-            }
-        }
-    }
-    if (!avx) return;
-    const float one[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    const std::uint64_t ones[2] = {packLanes(one, 0), packLanes(one, 2)};
-    const auto unit = runRegisterFormStub({0xC5, 0xF8, 0x52, 0xD5}, ones, ones);
-    require(unit[0] == ones[0] && unit[1] == ones[1], "VRSQRTPS of 1.0 must be exactly 1.0 so a renormalised unit quaternion stays unit");
-    const float upperLanes[4] = {8.0f, 9.0f, 10.0f, 11.0f};
-    const std::uint64_t upper[2] = {packLanes(upperLanes, 0), packLanes(upperLanes, 2)};
-    for (const auto& lanes : inputs) for (const float value : lanes) {
-        const float sourceLanes[4] = {value, 5.0f, 6.0f, 7.0f};
-        const std::uint64_t source[2] = {packLanes(sourceLanes, 0), packLanes(sourceLanes, 2)};
-        for (const bool squareRoot : {true, false}) {
-            const std::uint8_t opcode = squareRoot ? 0x52 : 0x53;
-            const float expected = squareRoot ? 1.0f / std::sqrt(value) : 1.0f / value;
-            struct Site {
-                Bytes Code;
-                const std::uint64_t (&Destination)[2];
-                const float (&Upper)[4];
-            };
-            for (const auto& site : {Site{{0xF3, 0x0F, opcode, 0xD5}, upper, upperLanes}, Site{{0xC5, 0xEA, opcode, 0xD5}, upper, upperLanes}, Site{{0xC5, 0xD2, opcode, 0xD5}, upper, sourceLanes},
-                                     Site{{0xF3, 0x0F, opcode, 0xD2}, source, sourceLanes}, Site{{0xC5, 0xEA, opcode, 0xD2}, source, sourceLanes}}) {
-                const auto out = runRegisterFormStub(site.Code, site.Destination, source);
-                float outLanes[4];
-                std::memcpy(outLanes, out.data(), sizeof(outLanes));
-                require(sameLane(expected, outLanes[0]), "Scalar reciprocal stub does not match 1/x or SQRT then DIV");
-                for (std::size_t lane = 1; lane < 4; ++lane)
-                    require(sameLane(site.Upper[lane], outLanes[lane]), "Scalar reciprocal stub changed the wrong upper lanes");
-            }
-        }
-    }
-    const auto scalarUnit = runRegisterFormStub({0xC5, 0xEA, 0x52, 0xD5}, ones, ones);
-    require(scalarUnit[0] == ones[0] && scalarUnit[1] == ones[1], "VRSQRTSS of 1.0 must be exactly 1.0");
 }
 
 void registerFormExecution() {
@@ -2509,7 +2446,6 @@ void clwbExecution() {
     require(carry == 1, "CLWB replacement changed the flags");
 }
 #else
-void reciprocalExecution() {}
 void registerFormExecution() {}
 void sha1Execution() {}
 void sha256Execution() {}
@@ -2600,7 +2536,6 @@ int main() {
         sha256Execution();
         sha1Execution();
         clzeroExecution();
-        reciprocalExecution();
         ripRelativeExecution();
         rdpruExecution();
         mcommitExecution();
