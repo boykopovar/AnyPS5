@@ -40,6 +40,18 @@ static void TestNamedSingletons() {
     Require(&FromType(3) == &iBeam);
 }
 
+static void TestPointerCursor() {
+    const Cursor& pointer = _ZN7WebCore13pointerCursorEv();
+    Require(&pointer == &_ZN7WebCore13pointerCursorEv());
+    Require(static_cast<std::uint32_t>(pointer.type) == 0);
+    Require(IsBlank(pointer));
+    Require(&FromType(0) == &pointer);
+    Require(&FromType(43) == &pointer);
+    Require(&FromType(63) == &pointer);
+    Require(&pointer != &_ZN7WebCore10handCursorEv());
+    Require(&pointer != &_ZN7WebCore11iBeamCursorEv());
+}
+
 static void TestFromType() {
     std::set<const Cursor*> seen;
     for (std::uint32_t value = 0; value < 43; ++value) {
@@ -69,6 +81,7 @@ static void TestOutOfRange() {
 
 int main() {
     TestNamedSingletons();
+    TestPointerCursor();
     TestFromType();
     TestOutOfRange();
     std::puts("WebCore cursor tests passed");

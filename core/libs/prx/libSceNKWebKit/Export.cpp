@@ -15929,10 +15929,6 @@ int APS5_VABI _ZN7WebCore13isStartOfLineERKNS_15VisiblePositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore13pointerCursorEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13releaseMemoryEN3WTF8CriticalENS0_11SynchronousENS_24MaintainBackForwardCacheENS_19MaintainMemoryCacheE() {
     NotImplemented_nid_no_patch(__func__);
 }

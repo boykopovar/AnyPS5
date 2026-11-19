@@ -68,6 +68,10 @@ const Cursor& APS5_VABI _ZN7WebCore11iBeamCursorEv() {
     return StandardCursor(CursorType::IBeam);
 }
 
+const Cursor& APS5_VABI _ZN7WebCore13pointerCursorEv() {
+    return StandardCursor(CursorType::Pointer);
+}
+
 const Cursor& APS5_VABI _ZN7WebCore6Cursor8fromTypeENS0_4TypeE(CursorType type) {
     const auto value = static_cast<std::uint32_t>(type);
     if (value >= CursorTypeValueCount) {

@@ -1936,7 +1936,6 @@ int APS5_VABI _ZN7WebCore13endOfSentenceERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore13getLogChannelERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore13internalErrorERKN3WTF3URLE();
 int APS5_VABI _ZN7WebCore13isStartOfLineERKNS_15VisiblePositionE();
-int APS5_VABI _ZN7WebCore13pointerCursorEv();
 int APS5_VABI _ZN7WebCore13releaseMemoryEN3WTF8CriticalENS0_11SynchronousENS_24MaintainBackForwardCacheENS_19MaintainMemoryCacheE();
 int APS5_VABI _ZN7WebCore14CachedResource12removeClientERNS_20CachedResourceClientE();
 int APS5_VABI _ZN7WebCore14CachedResource16unregisterHandleEPNS_24CachedResourceHandleBaseE();
