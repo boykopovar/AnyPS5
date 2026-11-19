@@ -454,6 +454,7 @@ static void Trigonometry() {
         ++vectorCases;
     }
     FT_Vector_Unit_nid_postfix(nullptr, INT64_MIN);
+    FT_Vector_Unit_nid_postfix(reinterpret_cast<GuestVector*>(std::uintptr_t{1}), INT64_MIN);
     Require(FT_Angle_Diff_nid_postfix(INT64_MIN, INT64_MIN + 1) == 1);
     Require(FT_Angle_Diff_nid_postfix(INT64_MAX, INT64_MAX - 1) == -1);
     Require(FT_Angle_Diff_nid_postfix(INT64_MIN, INT64_MIN) == 0);

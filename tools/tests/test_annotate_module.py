@@ -265,6 +265,18 @@ class ImportRelocationTests(unittest.TestCase):
                 else:
                     self.assertEqual(annotate_module.Module(bytes(data)).imports(), {SLOT: symbol_name(IMPORT_NAME)})
 
+    def test_defined_symbols_bound_to_this_module_are_not_imports(self):
+        for binding, visibility, section, kind, expected in (
+                (1, 3, 1, 16, False), (1, 3, 1, 17, False), (1, 2, 1, 6, False),
+                (1, 1, 1, 1, False), (0, 0, 1, 1, False), (1, 0, 1, 6, True),
+                (2, 0, 0, 6, True), (1, 3, 1, 5, True)):
+            with self.subTest(binding=binding, visibility=visibility, section=section, kind=kind):
+                symbol_type = 6 if kind in (16, 17) else 1
+                image = bytearray(build_module(symbols=[(IMPORT_NAME, section, binding << 4 | symbol_type, 0)]))
+                image[0x2040 + 24 + 5] = visibility
+                image = with_relocation(image, 0x2280, 0, SLOT, 1, kind)
+                self.assertEqual(annotate_module.Module(image).imports(), {SLOT: symbol_name(IMPORT_NAME)} if expected else {})
+
     def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
         for table in (0x2200, 0x2280):
             for symbol_index in (0, 1, 0xFFFFFFFF):
@@ -500,6 +512,17 @@ class AnnotateModuleTests(unittest.TestCase):
             self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
             summary = self.annotate(build_module())
         self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
+    def test_listing_marks_the_elf_entry_instruction(self):
+        image = bytearray(build_module(code=b"\xe8\x90\x90\x90\x90\xc3"))
+        entry = CODE_ADDRESS + 1
+        struct.pack_into("<Q", image, 24, entry)
+        self.annotate(image)
+        lines = self.read(".asm").splitlines()
+        self.assertEqual(lines.count("; ===== ELF entry point"), 1)
+        line = lines[lines.index("; ===== ELF entry point") + 1]
+        self.assertEqual(int(line.split(":")[0], 16), entry)
+        self.assertIn("nop", line)
 
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
@@ -1093,6 +1116,84 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(report.read_bytes(), b"previous report")
             self.assertFalse((root / "report.exports.txt").exists())
             self.assertTrue(loop.is_symlink())
+
+
+class ReferencedAddressTests(unittest.TestCase):
+    def test_referenced_address_is_none_without_a_reference(self):
+        import annotate_module
+        self.assertIsNone(annotate_module.referenced_address("    nop"))
+        self.assertIsNone(annotate_module.referenced_address("    mov %fs:0x28, %rax"))
+
+
+class LineNoteTests(unittest.TestCase):
+    def test_line_note_is_empty_for_plain_instructions(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                raise AssertionError("not expected for a plain instruction")
+        self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
+class FakeNamer:
+    def resolve(self, name):
+        return name.upper()
+
+
+class ListingHelperTests(unittest.TestCase):
+    def test_export_lines_lists_exports_then_thread_local_offsets(self):
+        self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
+                         ["0x10 a A", "tls+0x4 tl TL"])
+
+    def test_write_lines_terminates_each_line_with_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.txt"
+            annotate_module.write_lines(path, ["a", "b"])
+            self.assertEqual(path.read_bytes(), b"a\nb\n")
+
+    def test_annotate_listing_adds_a_header_before_each_export(self):
+        listing = ["  10:\tnop", "  14:\tnop"]
+        self.assertEqual(annotate_module.annotate_listing(listing, {}, {0x10: ["a"]}, {}, FakeNamer()),
+                         ["", "; ===== export A", "  10:\tnop", "  14:\tnop"])
+
+    def test_find_stubs_maps_a_jump_through_a_known_slot_to_its_name(self):
+        listing = ["  30:\tjmpq   *0x2(%rip)        # 0x20", "  34:\tnop"]
+        self.assertEqual(annotate_module.find_stubs(listing, {0x20: "tbl"}, FakeNamer()), {0x30: "TBL"})
+        self.assertEqual(annotate_module.find_stubs(listing, {}, FakeNamer()), {})
+class ArgumentAndPathTests(unittest.TestCase):
+    def test_parse_arguments_defaults_to_the_disassembly_outputs(self):
+        args = annotate_module.parse_arguments(["lib.prx"])
+        self.assertEqual(args.module, "lib.prx")
+        self.assertIsNone(args.out)
+        self.assertIsNone(args.db)
+        self.assertFalse(args.no_names)
+        self.assertFalse(args.symbols_json)
+
+    def test_parse_arguments_refuses_an_offline_mode_with_out(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            annotate_module.parse_arguments(["lib.prx", "--symbols-json", "--out", "x"])
+
+    def test_resolved_path_follows_a_link_and_accepts_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "real.prx"
+            target.write_bytes(b"x")
+            self.assertEqual(annotate_module.resolved_path(target), target.resolve())
+            link = root / "link.prx"
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            self.assertEqual(annotate_module.resolved_path(link), target.resolve())
+            missing = root / "missing.prx"
+            self.assertEqual(annotate_module.resolved_path(missing), missing.resolve())
 
 
 if __name__ == "__main__":

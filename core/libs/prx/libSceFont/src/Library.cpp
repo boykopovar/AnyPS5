@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <limits>
@@ -302,7 +303,9 @@ int APS5_VABI sceFontRendererResetOutlineBuffer(FontRenderer fontRenderer) {
 int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, std::uint64_t bufferPolicy, std::uint32_t basalSize, std::uint32_t limitSize) {
     (void)bufferPolicy;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer) return SCE_FONT_ERROR_INVALID_RENDERER;
+    std::uint16_t magic = 0;
+    if (!CopyInGuest(magic, &renderer->magic) || magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (limitSize != 0 && basalSize > limitSize) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!renderer->alloc_fn || !renderer->free_fn || !renderer->alloc_ctx) return SCE_FONT_ERROR_INVALID_MEMORY;
     auto desiredSize = std::max(static_cast<std::uint64_t>(renderer->workspace_size), static_cast<std::uint64_t>(basalSize));
@@ -360,13 +363,15 @@ int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, 
             rc = SCE_FONT_ERROR_ALLOCATION_FAILED;
         } else {
             const std::uint32_t pageCount = (size - 0x1000) >> 12;
-            header[0] = size;
-            header[1] = pageCount;
-            header[2] = 0;
-            header[3] = pageCount;
+            std::array<std::uint32_t, 6> initial{size, pageCount, 0, pageCount};
             const std::uint64_t pageInfo = 0x0FF800001000ull;
-            std::memcpy(header + 4, &pageInfo, sizeof(pageInfo));
-            if (size - 0x1000 > 0x0FFF) {
+            std::memcpy(initial.data() + 4, &pageInfo, sizeof(pageInfo));
+            bool written = true;
+            if (owned) std::memcpy(header, initial.data(), sizeof(initial));
+            else written = CopyOutGuest(static_cast<std::array<std::uint32_t, 6>*>(buffer), initial);
+            if (!written) {
+                rc = SCE_FONT_ERROR_INVALID_PARAMETER;
+            } else if (size - 0x1000 > 0x0FFF) {
                 lib->flags |= owned;
                 stored = header;
                 rc = SCE_FONT_OK;

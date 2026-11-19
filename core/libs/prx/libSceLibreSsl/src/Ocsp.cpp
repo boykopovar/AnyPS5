@@ -36,12 +36,17 @@ int Fail(int reason) {
     return 0;
 }
 
-bool ParseGeneralizedTime(const Asn1String& time, GuestTm& result) {
-    if (!time.data || time.length != GeneralizedTimeLength || time.data[GeneralizedTimeLength - 1] != 'Z') return false;
+bool ParseGeneralizedTime(const Asn1String* guestTime, GuestTm& result) {
+    Asn1String time{};
+    if (!GuestCopyIn_nid_no_patch(&time, guestTime, sizeof(time))) NotImplementedAt_nid_no_patch("OCSP_check_validity", __FILE__, __LINE__);
+    if (!time.data || time.length != GeneralizedTimeLength) return false;
+    unsigned char bytes[GeneralizedTimeLength];
+    if (!GuestCopyIn_nid_no_patch(bytes, time.data, sizeof(bytes))) NotImplementedAt_nid_no_patch("OCSP_check_validity", __FILE__, __LINE__);
+    if (bytes[GeneralizedTimeLength - 1] != 'Z') return false;
     for (int i = 0; i < GeneralizedTimeLength - 1; ++i) {
-        if (time.data[i] < '0' || time.data[i] > '9') return false;
+        if (bytes[i] < '0' || bytes[i] > '9') return false;
     }
-    const auto pair = [&time](int index) { return (time.data[index] - '0') * 10 + (time.data[index + 1] - '0'); };
+    const auto pair = [&bytes](int index) { return (bytes[index] - '0') * 10 + (bytes[index + 1] - '0'); };
     result.tm_year = pair(0) * 100 + pair(2) - 1900;
     result.tm_mon = pair(4) - 1;
     result.tm_mday = pair(6);
@@ -104,7 +109,7 @@ int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, cons
     time_nid_postfix(&now);
     GuestTm thisTime{};
     GuestTm limit{};
-    if (!ParseGeneralizedTime(*thisUpdate, thisTime)) return Fail(ErrorInThisUpdate);
+    if (!ParseGeneralizedTime(thisUpdate, thisTime)) return Fail(ErrorInThisUpdate);
     if (!TimeAt(now, static_cast<std::uint64_t>(slack), limit)) return 0;
     if (Fields(thisTime) > Fields(limit)) return Fail(StatusNotYetValid);
     if (maxAge >= 0) {
@@ -113,7 +118,7 @@ int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, cons
     }
     if (!nextUpdate) return 1;
     GuestTm nextTime{};
-    if (!ParseGeneralizedTime(*nextUpdate, nextTime)) return Fail(ErrorInNextUpdate);
+    if (!ParseGeneralizedTime(nextUpdate, nextTime)) return Fail(ErrorInNextUpdate);
     if (!TimeAt(now, 0 - static_cast<std::uint64_t>(slack), limit)) return 0;
     if (Fields(nextTime) < Fields(limit)) return Fail(StatusExpired);
     if (Fields(nextTime) < Fields(thisTime)) return Fail(NextUpdateBeforeThisUpdate);

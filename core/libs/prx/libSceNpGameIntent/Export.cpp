@@ -19,6 +19,7 @@ constexpr int NpGameIntentErrorValueNotFound = -2141898745;
 constexpr int NpGameIntentUserIdInvalid = -1;
 constexpr int NpAppLauncherErrorNotInitialized = -2141898238;
 constexpr int NpAppLauncherErrorInvalidArgument = -2141898236;
+constexpr int NpSessionServiceErrorNotInitialized = -2141861374;
 
 std::atomic_bool& NpGameIntentInitialized() {
     static std::atomic_bool initialized{false};
@@ -221,8 +222,7 @@ int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
 }
 
 int APS5_VABI sceNpSessionServiceGetJoinedPartySession() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceInitialize() {
@@ -230,21 +230,19 @@ int APS5_VABI sceNpSessionServiceInitialize() {
 }
 
 int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceSendPlayerSessionRequestToJoin() {
-    NotImplemented_nid_no_patch(__func__);
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    return NpSessionServiceErrorNotInitialized;
 }
 
 }
