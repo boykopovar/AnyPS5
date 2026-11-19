@@ -13270,10 +13270,6 @@ int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPN3JSC9CodeBlockE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -26233,10 +26229,6 @@ int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE() {
 }
 
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
