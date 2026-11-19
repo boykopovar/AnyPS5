@@ -4065,6 +4065,26 @@ static void CheckDoubleClassification() {
     }
 }
 
+static void CheckFloorAndCeilWithDenormalsAreZero() {
+    const auto saved = _mm_getcsr();
+    for (const bool denormalsAreZero : {false, true}) {
+        _mm_setcsr(0x1f80u | (denormalsAreZero ? 0x40u : 0u));
+        const std::uint64_t up = std::bit_cast<std::uint64_t>(ceil_nid_postfix(std::bit_cast<double>(std::uint64_t{1})));
+        const std::uint64_t upNegative = std::bit_cast<std::uint64_t>(ceil_nid_postfix(std::bit_cast<double>(0x8000000000000001ull)));
+        const std::uint64_t down = std::bit_cast<std::uint64_t>(floor_nid_postfix(std::bit_cast<double>(0x800fffffffffffffull)));
+        const std::uint64_t downPositive = std::bit_cast<std::uint64_t>(floor_nid_postfix(std::bit_cast<double>(0x000fffffffffffffull)));
+        const std::uint32_t upSingle = std::bit_cast<std::uint32_t>(ceilf_nid_postfix(std::bit_cast<float>(0x007fffffu)));
+        const std::uint32_t upSingleNegative = std::bit_cast<std::uint32_t>(ceilf_nid_postfix(std::bit_cast<float>(0x80000001u)));
+        const std::uint32_t downSingle = std::bit_cast<std::uint32_t>(floorf_nid_postfix(std::bit_cast<float>(0x80000001u)));
+        const std::uint32_t downSinglePositive = std::bit_cast<std::uint32_t>(floorf_nid_postfix(std::bit_cast<float>(0x00000001u)));
+        const bool inexact = (_mm_getcsr() & 0x20u) != 0;
+        _mm_setcsr(saved);
+        Require(up == 0x3ff0000000000000ull && upNegative == 0x8000000000000000ull && down == 0xbff0000000000000ull && downPositive == 0);
+        Require(upSingle == 0x3f800000u && upSingleNegative == 0x80000000u && downSingle == 0xbf800000u && downSinglePositive == 0);
+        Require(inexact == !denormalsAreZero);
+    }
+}
+
 static void CheckDoubleRounding(double value, std::int64_t expected, bool invalid) {
     for (const bool useLlround : {false, true}) {
         std::feclearexcept(FE_ALL_EXCEPT);
@@ -4989,6 +5009,7 @@ int main() {
     CheckLdexpSpecialValues();
     CheckSquareRoot();
     CheckExp2Errno();
+    CheckFloorAndCeilWithDenormalsAreZero();
     CheckExactOperations();
     CheckNearbyint();
     CheckNearbyintEnvironment();
