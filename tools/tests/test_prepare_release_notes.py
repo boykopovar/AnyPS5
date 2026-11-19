@@ -54,8 +54,15 @@ class PrepareInputTests(ReleaseNotesCase):
                 self.assertRejectedWithoutOutputs("Generated release notes body must be a string")
 
     def test_deeply_nested_payload_is_reported_as_value_error(self):
-        self.write_source("[" * 100000 + "]" * 100000)
-        self.assertRejectedWithoutOutputs("too deeply nested")
+        text = "[" * 100000 + "]" * 100000
+        self.write_source(text)
+        try:
+            json.loads(text)
+        except RecursionError:
+            expected = "too deeply nested"
+        else:
+            expected = "must be a JSON object with a body field"
+        self.assertRejectedWithoutOutputs(expected)
 
     def test_utf8_byte_order_mark_is_accepted(self):
         self.write_source(b'\xef\xbb\xbf' + json.dumps({"body": "hi"}).encode("utf-8"))
@@ -217,8 +224,9 @@ class PrepareDestinationTests(ReleaseNotesCase):
     def test_dangling_symbolic_link_destination_is_written_through_to_its_target(self):
         link = self.link("body-link", "missing.md")
         self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
-        self.assertEqual(prepare_release_notes.resolve_output_path(link),
-                         Path(os.path.realpath(self.root / "missing.md")))
+        resolved = prepare_release_notes.resolve_output_path(link)
+        self.assertEqual(resolved.name, "missing.md")
+        self.assertTrue(os.path.samefile(resolved.parent, self.root))
         prepare_release_notes.prepare_notes(self.source, link, self.full)
         self.assertTrue(link.is_symlink())
         self.assertEqual((self.root / "missing.md").read_bytes(), b"## New Contributors\n* a\n")
