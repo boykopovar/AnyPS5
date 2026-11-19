@@ -29,7 +29,7 @@ def names(repo, *args):
 
 def resolve_base(repo, name):
     for candidate in (name,) if name else BASES:
-        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}", check=False).returncode == 0:
+        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^0", check=False).returncode == 0:
             return candidate
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 
@@ -120,7 +120,7 @@ def main(argv=None):
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", remote, branch)
+            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:

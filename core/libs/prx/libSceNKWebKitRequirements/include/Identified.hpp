@@ -5,12 +5,13 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestXml.hpp"
 #include "prx/libSceNKWebKitRequirements/include/GuestPsl.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libkernel_sys/include/CfiCheckFail.hpp"
 #include <cstdio>
 #include <cstdint>
 
 extern "C" {
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix();
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix();
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
 int APS5_VABI deflate_nid_postfix(NKWebKitRequirements::GuestZStream* stream, int flush);
 std::uint64_t APS5_VABI deflateBound_nid_postfix(NKWebKitRequirements::GuestZStream* stream, std::uint64_t sourceLength);
 int APS5_VABI deflateEnd_nid_postfix(NKWebKitRequirements::GuestZStream* stream);
@@ -58,6 +59,8 @@ int APS5_VABI psl_suffix_exception_count_nid_postfix(const NKWebKit::GuestPslCtx
 int APS5_VABI psl_suffix_wildcard_count_nid_postfix(const NKWebKit::GuestPslCtx* psl);
 const char* APS5_VABI psl_unregistrable_domain_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain);
 int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* destinationLength, const std::uint8_t* source, std::uint64_t sourceLength);
+std::uint32_t APS5_VABI wpe_key_code_to_unicode_nid_postfix(std::uint32_t keyCode);
+std::uint32_t APS5_VABI wpe_unicode_to_key_code_nid_postfix(std::uint32_t character);
 int64_t APS5_VABI xmlByteConsumed_nid_postfix(NKWebKit::GuestParserCtxt* ctxt);
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreateMemoryParserCtxt_nid_postfix(const char* buffer, int size);
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKit::GuestSAXHandler* sax, void* user_data, const char* chunk, int size, const char* filename);

@@ -9,12 +9,12 @@
 extern "C" {
 
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, true);
 }
 
 
@@ -53,11 +53,6 @@ int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix() {
 
 
 
-
-int APS5_VABI sceNKWebKitRequirementsUnknown_YFlXC_lRh0A_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("YFlXC+lRh0A", sceNKWebKitRequirementsUnknown_YFlXC_lRh0A_nid_no_patch);
 
 int APS5_VABI sceNKWebKitRequirementsUnknown_5i_J_lV6oNw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -103,11 +98,6 @@ int APS5_VABI sceNKWebKitRequirementsUnknown_mpUUmn9tbKs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("mpUUmn9tbKs", sceNKWebKitRequirementsUnknown_mpUUmn9tbKs_nid_no_patch);
-
-int APS5_VABI sceNKWebKitRequirementsUnknown_uVoRmKYYtcI_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("uVoRmKYYtcI", sceNKWebKitRequirementsUnknown_uVoRmKYYtcI_nid_no_patch);
 
 
 

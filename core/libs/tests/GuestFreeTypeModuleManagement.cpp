@@ -5,10 +5,14 @@
 #include FT_MODULE_H
 #include FT_RENDER_H
 
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <stdexcept>
 
 using namespace FreeType;
 
@@ -89,9 +93,40 @@ static void TestAddDefaultModules() {
     FT_Add_Default_Modules_nid_postfix(nullptr);
 }
 
+template <class F>
+static bool Rejects(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+static void TestInvalidGuestPointers() {
+    auto* badLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10});
+    auto* badName = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    Libraries libraries;
+    Require(Rejects([&] { FT_Get_Module_nid_postfix(badLibrary, "truetype"); }));
+    Require(Rejects([&] { FT_Get_Module_nid_postfix(&libraries.guest, badName); }));
+    Require(Rejects([&] { FT_Get_Renderer_nid_postfix(badLibrary, FT_GLYPH_FORMAT_OUTLINE); }));
+    Require(Rejects([&] { FT_Remove_Module_nid_postfix(badLibrary, nullptr); }));
+    Require(Rejects([&] { FT_Add_Default_Modules_nid_postfix(badLibrary); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(Rejects([&] { FT_Get_Module_nid_postfix(misaligned, "truetype"); }));
+    Require(Rejects([&] { FT_Get_Renderer_nid_postfix(misaligned, FT_GLYPH_FORMAT_OUTLINE); }));
+    Require(Rejects([&] { FT_Remove_Module_nid_postfix(misaligned, nullptr); }));
+    Require(Rejects([&] { FT_Add_Default_Modules_nid_postfix(misaligned); }));
+    Require(FT_Get_Module_nid_postfix(&libraries.guest, nullptr) == nullptr);
+    Require(FT_Get_Module_nid_postfix(nullptr, badName) == nullptr);
+}
+
 int main() {
     TestGetModule();
     TestGetRenderer();
     TestRemoveModule();
     TestAddDefaultModules();
+    TestInvalidGuestPointers();
 }

@@ -64,7 +64,11 @@ def repository():
     result = capture(["git", "rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "not a git checkout")
-    return Path(result.stdout.strip())
+    root = Path(result.stdout.strip())
+    if os.name == "nt" and not root.is_dir():
+        relative = capture(["git", "rev-parse", "--show-cdup"]).stdout.strip()
+        root = (Path.cwd() / relative).resolve()
+    return root
 
 
 def validate_arguments(arguments):
@@ -209,7 +213,73 @@ def response_arguments(text):
     return arguments
 
 
-def expand_response_files(arguments, directory, seen=frozenset()):
+def windows_response_text(data):
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data[3:].decode("utf-8")
+    return data.decode("utf-8")
+
+
+def windows_response_arguments(text):
+    if "\0" in text:
+        raise ValueError("unsupported response-file control character")
+    arguments = []
+    token = []
+    state = "init"
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\":
+            end = index
+            while end < len(text) and text[end] == "\\":
+                end += 1
+            if text[end:end + 1] == '"':
+                token.append("\\" * ((end - index) // 2))
+                if (end - index) % 2:
+                    token.append('"')
+                    end += 1
+            else:
+                token.append(text[index:end])
+            if state == "init":
+                state = "unquoted"
+            index = end
+            continue
+        if state == "quoted":
+            if character == '"' and text[index + 1:index + 2] == '"':
+                token.append('"')
+                index += 1
+            elif character == '"':
+                state = "unquoted"
+            else:
+                token.append(character)
+        elif character in " \t\r\n":
+            if state == "unquoted":
+                arguments.append("".join(token))
+                token = []
+                state = "init"
+        elif character == '"':
+            state = "quoted"
+        else:
+            token.append(character)
+            state = "unquoted"
+        index += 1
+    if state != "init":
+        arguments.append("".join(token))
+    return arguments
+
+
+def response_quoting(arguments):
+    quoting = "posix"
+    for argument in arguments:
+        if argument.startswith("--rsp-quoting="):
+            quoting = argument.partition("=")[2]
+            if quoting not in ("posix", "windows"):
+                raise ValueError(f"unsupported response-file quoting {argument}")
+    return quoting
+
+
+def expand_response_files(arguments, directory, seen=frozenset(), windows=False):
     expanded = []
     for argument in arguments:
         if argument.startswith("@") and len(argument) > 1:
@@ -221,8 +291,12 @@ def expand_response_files(arguments, directory, seen=frozenset()):
                 raise ValueError(f"response file cycle at {resolved}")
             if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
                 raise ValueError(f"response file nesting exceeds {MAX_RESPONSE_FILE_DEPTH} levels at {resolved}")
-            nested = response_arguments(response.read_bytes().decode("utf-8"))
-            expanded.extend(expand_response_files(nested, directory, seen | {resolved}))
+            data = response.read_bytes()
+            if windows:
+                nested = windows_response_arguments(windows_response_text(data))
+            else:
+                nested = response_arguments(data.decode("utf-8"))
+            expanded.extend(expand_response_files(nested, directory, seen | {resolved}, windows))
         else:
             expanded.append(argument)
     return expanded
@@ -285,11 +359,13 @@ def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
     if prefix := launcher_prefix(arguments):
         return [*prefix, *syntax_arguments(arguments[len(prefix):], directory, source)]
+    windows = False
     if any(argument.startswith("@") for argument in arguments[1:]):
         compiler = Path(arguments[0]).stem.lower()
-        if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
-            raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
-    arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
+        if compiler in ("cl", "clang-cl") or "--driver-mode=cl" in arguments:
+            raise ValueError("cl-mode compiler response files are unsupported; provide expanded arguments")
+        windows = response_quoting(arguments[1:]) == "windows"
+    arguments = [arguments[0], *expand_response_files(arguments[1:], directory, windows=windows)]
     wanted = real(source)
     trimmed = [arguments[0]]
     index = 1
@@ -370,19 +446,24 @@ def check_source(task):
     return 1, int(failed), "".join(diagnostics)
 
 
+def resolve_source(file, root):
+    try:
+        file.stat()
+    except FileNotFoundError:
+        pass
+    source = real(file)
+    try:
+        name = source.relative_to(real(root)).as_posix()
+    except ValueError:
+        name = source.as_posix()
+    return source, name
+
+
 def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        try:
-            file.stat()
-        except FileNotFoundError:
-            pass
-        source = real(file)
-        try:
-            name = source.relative_to(real(root)).as_posix()
-        except ValueError:
-            name = source.as_posix()
+        source, name = resolve_source(file, root)
         tasks.append((source, name, build, commands.get(name)))
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
@@ -413,6 +494,7 @@ def main(argv=None):
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
     parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
+    parser.add_argument("--dry-run", action="store_true", help="print planned syntax commands as JSON without executing a compiler")
     args = parser.parse_args(argv)
     try:
         root = repository()
@@ -422,8 +504,19 @@ def main(argv=None):
             base = base_ref.resolve(root, args.base)
             files = [root / path for path in changed(root, base)]
             if not files:
-                print(f"no changed translation unit against {base}")
+                print(json.dumps({"translation_units": []}) if args.dry_run else f"no changed translation unit against {base}")
                 return 0
+        if args.dry_run:
+            commands = index(args.build, root)
+            plan = []
+            for file in files:
+                source, name = resolve_source(file, root)
+                configurations = commands.get(name, [])
+                plan.append({"source": str(source), "commands": [
+                    {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
+                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations]})
+            print(json.dumps({"translation_units": plan}, indent=2))
+            return 0 if any(entry["commands"] for entry in plan) else 1
         checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))
