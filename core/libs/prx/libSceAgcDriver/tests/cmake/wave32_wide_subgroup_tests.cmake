@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(wave32_wide_subgroup_tests ${LIBS_INCLUDE_DIR}/tests/Wave32WideSubgroup.cpp)
+    target_link_libraries(wave32_wide_subgroup_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(wave32_wide_subgroup_tests)
+    add_test(NAME wave32_wide_subgroup COMMAND wave32_wide_subgroup_tests)
+    if(WIN32)
+        set_tests_properties(wave32_wide_subgroup PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

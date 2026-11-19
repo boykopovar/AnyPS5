@@ -59,6 +59,7 @@ int main() {
         result = setlocale_nid_postfix(category, "");
         Require(result != nullptr && std::strcmp(result, "C") == 0);
         Require(setlocale_nid_postfix(category, "en_US.UTF-8") == nullptr);
+        Require(setlocale_nid_postfix(category, reinterpret_cast<const char*>(0x10)) == nullptr);
     }
     for (const int category : std::array<int, 4>{-1, 7, 100, 1 << 30}) {
         const char* result = setlocale_nid_postfix(category, "C");
@@ -92,4 +93,12 @@ int main() {
     Require(!isascii_nid_postfix(256));
     Require(toascii_nid_postfix(258) == 2);
     Require(toascii_nid_postfix(-1) == 0x7F);
+    for (int c = EOF; c <= 255; ++c) {
+        Require(bool(isnumber_nid_postfix(c)) == bool(std::isdigit(c)));
+        Require(bool(ishexnumber_nid_postfix(c)) == bool(std::isxdigit(c)));
+        if (c >= '0' && c <= '9') Require(digittoint_nid_postfix(c) == c - '0');
+        else if (c >= 'a' && c <= 'f') Require(digittoint_nid_postfix(c) == c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') Require(digittoint_nid_postfix(c) == c - 'A' + 10);
+        else Require(digittoint_nid_postfix(c) == 0);
+    }
 }

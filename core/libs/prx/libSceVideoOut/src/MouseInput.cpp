@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 
 #include "SDL_mouse.h"
 #include "SDL_video.h"
@@ -10,13 +11,23 @@ void MouseInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     MouseInputEvent input{};
     switch (event.type) {
         case SDL_MOUSEMOTION:
-            if (event.motion.windowID != windowId || !focused) return;
+            if (event.motion.windowID != windowId || !focused || padOwnsMouse || ModalDialogCapturesInput_nid_postfix()) return;
             input.x = scaled(event.motion.xrel, scaleX, remainderX);
             input.y = scaled(event.motion.yrel, scaleY, remainderY);
+            input.countsX = event.motion.xrel;
+            input.countsY = event.motion.yrel;
             break;
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP:
             if (event.button.windowID != windowId || !focused) return;
+            if (padOwnsMouse && event.type == SDL_MOUSEBUTTONDOWN) return;
+            if (ModalDialogCapturesInput_nid_postfix()) {
+                if (suspended) return;
+                suspended = true;
+                input.resetButtons = true;
+                break;
+            }
+            suspended = false;
             switch (event.button.button) {
                 case SDL_BUTTON_LEFT: input.button = 1; break;
                 case SDL_BUTTON_RIGHT: input.button = 2; break;
@@ -26,7 +37,7 @@ void MouseInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
             input.pressed = event.type == SDL_MOUSEBUTTONDOWN;
             break;
         case SDL_MOUSEWHEEL:
-            if (event.wheel.windowID != windowId || !focused) return;
+            if (event.wheel.windowID != windowId || !focused || padOwnsMouse || ModalDialogCapturesInput_nid_postfix()) return;
             input.wheel = event.wheel.y;
             input.tilt = event.wheel.x;
             if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
@@ -75,6 +86,15 @@ std::int32_t MouseInput::scaled(std::int32_t delta, double scale, double& remain
     const double whole = std::trunc(exact);
     remainder = exact - whole;
     return static_cast<std::int32_t>(whole);
+}
+
+void MouseInput::SetPadOwnsMouse(bool owns) {
+    if (owns == padOwnsMouse) return;
+    padOwnsMouse = owns;
+    if (!owns) return;
+    MouseInputEvent release{};
+    release.resetButtons = true;
+    MousePublishInput_nid_no_patch(release);
 }
 
 bool MouseInput::CaptureWanted(bool allowed) const {

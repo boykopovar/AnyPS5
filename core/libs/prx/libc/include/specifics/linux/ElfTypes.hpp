@@ -30,6 +30,7 @@ static constexpr std::uint32_t PT_LOAD = 1;
 static constexpr std::uint32_t PT_GNU_EH_FRAME = 0x6474e550;
 static constexpr std::uint32_t PF_X = 1;
 static constexpr std::uint32_t PF_W = 2;
+static constexpr std::uint32_t PF_R = 4;
 
 #ifdef __APPLE__
 extern "C" int dl_iterate_phdr(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data) __asm__("_dl_iterate_phdr_nid_no_patch");

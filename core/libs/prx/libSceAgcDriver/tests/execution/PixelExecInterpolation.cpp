@@ -28,6 +28,10 @@ alignas(256) constexpr std::array<std::uint32_t, 8> ExecCopyPixelCode{
     0xbefe0a7e, 0xc8080000, 0xbe80047e, 0xbefe0400, 0xc8090001, 0xf800180f, 0x02020202, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 8> RestoredEntryExecPixelCode{
+    0xbe80047e, 0xbefe0a7e, 0xc8080000, 0xc8090001, 0xbefe0400, 0xf800180f, 0x02020202, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> RepeatedWqmPixelCode{
     0xbefe0a7e, 0xc8080000, 0xbefe0a7e, 0xc8090001, 0xf800180f, 0x02020202, 0xbf810000,
 };
@@ -131,7 +135,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
-    for (const auto code : {std::span<const std::uint32_t>(ExecCopyPixelCode), std::span<const std::uint32_t>(RepeatedWqmPixelCode)}) {
+    for (const auto code : {std::span<const std::uint32_t>(ExecCopyPixelCode), std::span<const std::uint32_t>(RepeatedWqmPixelCode), std::span<const std::uint32_t>(RestoredEntryExecPixelCode)}) {
         const auto result = compile(code);
         Require(!result.barycentricEmulation.active, "changing EXEC between v_interp_p1/p2 needed a generated stage");
         Pixels.fill(-7.0f);

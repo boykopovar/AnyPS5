@@ -1,3 +1,4 @@
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -144,5 +145,7 @@ int main() {
     Require(sceKernelLseek(reused, 0, 1) == 5);
     Require(sceKernelLseek(reused, 0, 2) == 0);
     Require(sceKernelClose(reused) == 0);
+    Require(sceKernelClose(reused) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelClose(-1) == SCE_KERNEL_ERROR_EBADF);
     std::filesystem::remove_all(root);
 }

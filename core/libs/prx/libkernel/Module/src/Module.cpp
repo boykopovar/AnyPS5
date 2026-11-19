@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -23,7 +24,7 @@
 #include <dlfcn.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
-#else
+#elif !defined(__EMSCRIPTEN__)
 #include <string_view>
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
@@ -47,7 +48,7 @@ void WriteUnwindInfo(const UnwindImage& image, const std::uint8_t* base, ModuleI
   if (image.hasTables) {
     info->eh_frame_hdr_addr = image.tables.header;
     info->eh_frame_addr = image.tables.frames;
-    info->eh_frame_size = image.tables.framesSize;
+    info->eh_frame_size = image.tables.framesSize + sizeof(std::uint32_t);
     info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
     info->seg0_size = image.size;
   }
@@ -111,7 +112,7 @@ extern "C" void ForgetUnloadedUnwindImages_nid_no_patch() {
   std::lock_guard lock(unwindImagesMutex);
   for (const auto base : unloaded) UnwindImages().erase(base);
 }
-#elif !defined(__APPLE__)
+#elif !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
 
 namespace {
 struct ImageSearch {
@@ -174,14 +175,17 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
  void* found = dlsym_nid_postfix(module, symbol);
  if (handle == 0 && module) dlclose_nid_postfix(module);
  if (!found) return SCE_KERNEL_ERROR_ESRCH;
- *addr = found;
+ if (!GuestCopyOut_nid_no_patch(addr, &found, sizeof(found))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info) {
   (void)flags;
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+  static_cast<void>(addr);
+  NotImplemented_nid_no_patch(__func__);
+#elif defined(_WIN32)
   if (FillKnownUnwindImage(addr, info)) return 0;
   MEMORY_BASIC_INFORMATION mbi{};
   if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) return SCE_KERNEL_ERROR_ESRCH;
@@ -227,6 +231,19 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
     info->eh_frame_hdr_addr = frames != nullptr ? image->dlpi_addr + frames->p_vaddr : 0;
     info->eh_frame_addr = 0;
     info->eh_frame_size = 0;
+    if (frames != nullptr) {
+      const auto loaded = [image](std::uintptr_t begin, std::uint64_t size) {
+        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+          const auto& header = image->dlpi_phdr[index];
+          const std::uintptr_t start = image->dlpi_addr + header.p_vaddr;
+          if (header.p_type == PT_LOAD && begin >= start && begin - start <= header.p_memsz && size <= header.p_memsz - (begin - start)) return true;
+        }
+        return false;
+      };
+      const auto tables = EhFrame::ReadTables(loaded, info->eh_frame_hdr_addr, "sceKernelGetModuleInfoForUnwind");
+      info->eh_frame_addr = tables.frames;
+      info->eh_frame_size = tables.framesSize + sizeof(std::uint32_t);
+    }
     info->seg0_addr = image->dlpi_addr + first->p_vaddr;
     info->seg0_size = first->p_memsz;
     search.found = true;
@@ -267,6 +284,13 @@ namespace {
 thread_local PendingModuleArgs pendingModuleArgs;
 thread_local int pendingModuleInitResult = 0;
 
+bool StoreModuleResult(int* result, int value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 }
 
 extern "C" {
@@ -282,9 +306,8 @@ void __aps5_set_module_init_result_nid_no_patch(int result) {
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
- (void)flags;
- (void)opt;
- if (res) *res = 0;
+ if (flags != 0 || opt != nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
+ if (res && !StoreModuleResult(res, 0)) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
  pendingModuleInitResult = 0;
@@ -293,7 +316,7 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  const int started = pendingModuleInitResult;
  pendingModuleArgs = {};
  pendingModuleInitResult = 0;
- if (res) *res = started;
+ if (res) StoreModuleResult(res, started);
  if (!handle) return static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
  return static_cast<KernelModule>(reinterpret_cast<intptr_t>(handle));
 }
@@ -301,35 +324,33 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
 int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res) {
  (void)args;
  (void)argp;
- (void)flags;
- (void)opt;
- if (res) *res = 0;
- return dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) == 0 ? 0 : SCE_KERNEL_ERROR_ESRCH;
+ if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (res && !GuestWritable_nid_no_patch(res, sizeof(*res))) return SCE_KERNEL_ERROR_EFAULT;
+ if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
+ if (res) StoreModuleResult(res, 0);
+ return 0;
 }
 
 }
 
 extern "C" {
 
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* addr) {
-    if (phdrInfo == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: phdr_info is null");
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr) {
+    if (module == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: module info is null");
+    static_assert(offsetof(ModuleInfoEx, segment_count) == offsetof(ModuleInfoEx, segments) + sizeof(ModuleInfoEx::segments));
+    struct {
+        ModuleSegmentInfo segments[std::size(ModuleInfoEx{}.segments)];
+        std::uint32_t segment_count;
+    } table{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&table, &module->segments, sizeof(table.segments) + sizeof(table.segment_count));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("__elf_phdr_match_addr: module info is unreadable");
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
-
-    const auto* module = reinterpret_cast<const ModuleInfoEx*>(phdrInfo);
-    if (module->st_size == sizeof(ModuleInfoEx)) {
-        for (std::uint32_t i = 0; i < module->segment_count && i < std::size(module->segments); ++i) {
-            const auto& segment = module->segments[i];
-            if ((segment.prot & 4) == 0 || segment.size < sizeof(addr)) continue;
-            if (segment.address <= address && address - segment.address <= segment.size - sizeof(addr)) return 1;
-        }
-        return 0;
-    }
-
-    for (std::uint16_t i = 0; i < phdrInfo->dlpi_phnum; ++i) {
-        const Elf64_Phdr& header = phdrInfo->dlpi_phdr[i];
-        if (header.p_type != PT_LOAD || (header.p_flags & PF_X) == 0) continue;
-        const std::uintptr_t begin = phdrInfo->dlpi_addr + header.p_vaddr;
-        if (begin <= address && address + sizeof(addr) < begin + header.p_memsz) return 1;
+    for (std::uint32_t i = 0; i < table.segment_count && i < std::size(table.segments); ++i) {
+        const auto& segment = table.segments[i];
+        if ((segment.prot & 4) == 0 || segment.size < sizeof(addr)) continue;
+        if (segment.address <= address && address - segment.address <= segment.size - sizeof(addr)) return 1;
     }
     return 0;
 }

@@ -1,6 +1,8 @@
 #include "prx/libSceNetCtlAp/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include "SceTypes.hpp"
@@ -71,12 +73,19 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
     if (!func || !cid) return NET_CTL_AP_ERROR_INVALID_ADDR;
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!g_callbacks[index].func) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
+            errno = savedErrno;
+            if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
             g_callbacks[index] = {func, arg};
-            *cid = index;
             return 0;
         }
     }
-    *cid = -1;
+    const int invalidCid = -1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(cid, &invalidCid, sizeof(invalidCid));
+    errno = savedErrno;
+    if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return NET_CTL_AP_ERROR_CALLBACK_MAX;
 }
 
@@ -94,7 +103,11 @@ int APS5_VABI sceNetCtlApGetResult(int eventType, int* errorCode) {
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (!errorCode) return NET_CTL_AP_ERROR_INVALID_ADDR;
     if (!ValidEventType(eventType)) return NET_CTL_AP_ERROR_INVALID_TYPE;
-    *errorCode = 0;
+    const int zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(errorCode, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -102,7 +115,12 @@ int APS5_VABI sceNetCtlApGetInfo(void* info) {
     std::lock_guard lock(g_lock);
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (!info) return NET_CTL_AP_ERROR_INVALID_ADDR;
-    if (*static_cast<const std::uint64_t*>(info) != NET_CTL_AP_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, info, sizeof(size));
+    errno = savedErrno;
+    if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
+    if (size != NET_CTL_AP_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
     return NET_CTL_AP_ERROR_NOT_STARTED;
 }
 
@@ -110,7 +128,11 @@ int APS5_VABI sceNetCtlApGetState(int* state) {
     std::lock_guard lock(g_lock);
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (!state) return NET_CTL_AP_ERROR_INVALID_ADDR;
-    *state = NET_CTL_AP_STATE_STOPPED;
+    const int stoppedState = NET_CTL_AP_STATE_STOPPED;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &stoppedState, sizeof(stoppedState));
+    errno = savedErrno;
+    if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -123,12 +145,25 @@ int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo) {
     std::lock_guard lock(g_lock);
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
     if (optStr != nullptr) {
-        std::size_t length = 0;
-        while (length < 9 && optStr[length] != 0) ++length;
-        if (length > 8) return NET_CTL_AP_ERROR_INVALID_OPT_STR;
+        const auto address = reinterpret_cast<std::uintptr_t>(optStr);
+        for (std::size_t length = 0; length < 9; ++length) {
+            if (address > std::numeric_limits<std::uintptr_t>::max() - length) return NET_CTL_AP_ERROR_INVALID_ADDR;
+            char value = 0;
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + length), sizeof(value));
+            errno = savedErrno;
+            if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
+            if (value == 0) break;
+            if (length == 8) return NET_CTL_AP_ERROR_INVALID_OPT_STR;
+        }
     }
     if (!connectInfo) return NET_CTL_AP_ERROR_INVALID_ADDR;
-    if (*static_cast<const std::uint64_t*>(connectInfo) != NET_CTL_AP_CONNECT_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, connectInfo, sizeof(size));
+    errno = savedErrno;
+    if (!copied) return NET_CTL_AP_ERROR_INVALID_ADDR;
+    if (size != NET_CTL_AP_CONNECT_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
     return NET_CTL_AP_ERROR_NOT_STARTED;
 }
 

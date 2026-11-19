@@ -23,10 +23,10 @@ constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 22> Code{
+alignas(256) constexpr std::array<std::uint32_t, 23> Code{
     0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0x1e140b04, 0x20160b04, 0xd551000c,
     0x041a0b04, 0xd554000d, 0x041a0b04, 0xd557000e, 0x041a0b04, 0xd50f000f, 0x02020b04, 0xd5100010,
-    0x02020b04, 0xe0781000, 0x80010a03, 0xe0781010, 0x80010e03, 0xbf810000,
+    0x02020b04, 0x20220880, 0xe0781000, 0x80010a03, 0xe0781010, 0x80010e03, 0xbf810000,
 };
 
 constexpr std::uint32_t Rows[128][4] = {
@@ -482,6 +482,10 @@ void Check() {
         for (std::uint32_t i = 0; i < 7; ++i) {
             Expect(Chunk * Threads + tid, out[i], (Ieee ? ExpectedIeee : Expected)[Chunk * Threads + tid][i], Names[i]);
         }
+        const auto magnitude = in[0] & 0x7fffffffu;
+        const bool signaling = magnitude > 0x7f800000u && (in[0] & 0x00400000u) == 0u;
+        const auto zeroMax = Ieee && signaling ? in[0] | 0x00400000u : in[0] <= 0x7f800000u ? in[0] : 0u;
+        Expect(Chunk * Threads + tid, out[7], zeroMax, "v_max_f32 v17, 0, v4");
     }
 }
 

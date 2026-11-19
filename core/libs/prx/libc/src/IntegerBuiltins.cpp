@@ -1,6 +1,8 @@
 #include "prx/libc/include/Api.hpp"
 #include <bit>
+#include <cerrno>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -119,7 +121,15 @@ TSigned MultiplyWithOverflow(TSigned a, TSigned b, int* overflow) {
             overflowed = ((a < 0) == (b < 0)) ? absoluteA > max / absoluteB : absoluteA > -(min / absoluteB);
         }
     }
-    *overflow = overflowed ? 1 : 0;
+    if (overflow != nullptr) {
+        const int value = overflowed ? 1 : 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(overflow, &value, sizeof(value))) {
+            errno = savedErrno;
+            throw std::runtime_error("MultiplyWithOverflow: invalid overflow pointer");
+        }
+        errno = savedErrno;
+    }
     return product;
 }
 
@@ -153,7 +163,15 @@ Int128 Multiply128WithOverflow(Int128 a, Int128 b, int* overflow) {
             overflowed = static_cast<Uint128>(absoluteA) > SonyUdivti3(limit, static_cast<Uint128>(absoluteB));
         }
     }
-    *overflow = overflowed ? 1 : 0;
+    if (overflow != nullptr) {
+        const int value = overflowed ? 1 : 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(overflow, &value, sizeof(value))) {
+            errno = savedErrno;
+            throw std::runtime_error("Multiply128WithOverflow: invalid overflow pointer");
+        }
+        errno = savedErrno;
+    }
     return product;
 }
 
@@ -165,6 +183,12 @@ int CountLeadingZeros128(Uint128 value) {
 int CountTrailingZeros128(Uint128 value) {
     const std::uint64_t low = Low(value);
     return low != 0 ? std::countr_zero(low) : 64 + std::countr_zero(High(value));
+}
+
+template<typename TValue>
+TValue CeilBit(TValue value) {
+    constexpr TValue highest = TValue{1} << (std::numeric_limits<TValue>::digits - 1);
+    return value > highest ? TValue{0} : std::bit_ceil(value);
 }
 
 template<typename TValue>
@@ -197,9 +221,31 @@ Int128 APS5_VABI __lshrti3_nid_postfix(Int128 value, int shift) {
     return static_cast<Int128>(static_cast<Uint128>(value) >> shift);
 }
 
+std::uint32_t APS5_VABI stdc_leading_zeros_uc_nid_postfix(std::uint8_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_us_nid_postfix(std::uint16_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ui_nid_postfix(std::uint32_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ul_nid_postfix(std::uint64_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ull_nid_postfix(std::uint64_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_uc_nid_postfix(std::uint8_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_us_nid_postfix(std::uint16_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ui_nid_postfix(std::uint32_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ul_nid_postfix(std::uint64_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ull_nid_postfix(std::uint64_t value) { return std::countr_zero(value); }
+
 int APS5_VABI __clzsi2_nid_postfix(std::uint32_t value) { return std::countl_zero(value); }
 int APS5_VABI __clzdi2_nid_postfix(std::uint64_t value) { return value == 0 ? 32 : std::countl_zero(value); }
 int APS5_VABI __clzti2_nid_postfix(Uint128 value) { return value == 0 ? 64 : CountLeadingZeros128(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_uc_nid_postfix(std::uint8_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_us_nid_postfix(std::uint16_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ui_nid_postfix(std::uint32_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ul_nid_postfix(std::uint64_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ull_nid_postfix(std::uint64_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_uc_nid_postfix(std::uint8_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_us_nid_postfix(std::uint16_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ui_nid_postfix(std::uint32_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ul_nid_postfix(std::uint64_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ull_nid_postfix(std::uint64_t value) { return std::countr_one(value); }
+
 int APS5_VABI __ctzsi2_nid_postfix(std::uint32_t value) { return std::countr_zero(value); }
 int APS5_VABI __ctzdi2_nid_postfix(std::uint64_t value) { return value == 0 ? 32 : std::countr_zero(value); }
 int APS5_VABI __ctzti2_nid_postfix(Uint128 value) { return value == 0 ? 64 : CountTrailingZeros128(value); }
@@ -211,6 +257,12 @@ int APS5_VABI __ffsdi2_nid_postfix(std::uint64_t value) {
 int APS5_VABI __ffsti2_nid_postfix(Uint128 value) {
     return value == 0 ? 0 : CountTrailingZeros128(value) + 1;
 }
+
+std::uint32_t APS5_VABI stdc_count_zeros_uc_nid_postfix(std::uint8_t value) { return 8 - std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_zeros_us_nid_postfix(std::uint16_t value) { return 16 - std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_zeros_ui_nid_postfix(std::uint32_t value) { return 32 - std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_zeros_ul_nid_postfix(std::uint64_t value) { return 64 - std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_zeros_ull_nid_postfix(std::uint64_t value) { return 64 - std::popcount(value); }
 
 int APS5_VABI __paritysi2_nid_postfix(std::uint32_t value) { return std::popcount(value) & 1; }
 int APS5_VABI __paritydi2_nid_postfix(std::uint64_t value) { return std::popcount(value) & 1; }
@@ -225,6 +277,60 @@ int APS5_VABI __popcountdi2_nid_postfix(std::uint64_t value) { return std::popco
 int APS5_VABI __popcountti2_nid_postfix(Uint128 value) {
     return std::popcount(High(value)) + std::popcount(Low(value));
 }
+
+std::uint32_t APS5_VABI stdc_count_ones_uc_nid_postfix(std::uint8_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_us_nid_postfix(std::uint16_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ui_nid_postfix(std::uint32_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ul_nid_postfix(std::uint64_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ull_nid_postfix(std::uint64_t value) { return std::popcount(value); }
+
+std::uint32_t APS5_VABI stdc_first_leading_zero_uc_nid_postfix(std::uint8_t value) { return value == std::numeric_limits<std::uint8_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_us_nid_postfix(std::uint16_t value) { return value == std::numeric_limits<std::uint16_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ui_nid_postfix(std::uint32_t value) { return value == std::numeric_limits<std::uint32_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ul_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ull_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countl_one(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_leading_one_uc_nid_postfix(std::uint8_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_us_nid_postfix(std::uint16_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ui_nid_postfix(std::uint32_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ul_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ull_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_trailing_zero_uc_nid_postfix(std::uint8_t value) { return value == std::numeric_limits<std::uint8_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_us_nid_postfix(std::uint16_t value) { return value == std::numeric_limits<std::uint16_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ui_nid_postfix(std::uint32_t value) { return value == std::numeric_limits<std::uint32_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ul_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ull_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countr_one(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_trailing_one_uc_nid_postfix(std::uint8_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_us_nid_postfix(std::uint16_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ui_nid_postfix(std::uint32_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ul_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ull_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+
+bool APS5_VABI stdc_has_single_bit_uc_nid_postfix(std::uint8_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_us_nid_postfix(std::uint16_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ui_nid_postfix(std::uint32_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ul_nid_postfix(std::uint64_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ull_nid_postfix(std::uint64_t value) { return std::has_single_bit(value); }
+
+std::uint32_t APS5_VABI stdc_bit_width_uc_nid_postfix(std::uint8_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_us_nid_postfix(std::uint16_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ui_nid_postfix(std::uint32_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ul_nid_postfix(std::uint64_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ull_nid_postfix(std::uint64_t value) { return std::bit_width(value); }
+
+std::uint8_t APS5_VABI stdc_bit_floor_uc_nid_postfix(std::uint8_t value) { return std::bit_floor(value); }
+std::uint16_t APS5_VABI stdc_bit_floor_us_nid_postfix(std::uint16_t value) { return std::bit_floor(value); }
+std::uint32_t APS5_VABI stdc_bit_floor_ui_nid_postfix(std::uint32_t value) { return std::bit_floor(value); }
+std::uint64_t APS5_VABI stdc_bit_floor_ul_nid_postfix(std::uint64_t value) { return std::bit_floor(value); }
+std::uint64_t APS5_VABI stdc_bit_floor_ull_nid_postfix(std::uint64_t value) { return std::bit_floor(value); }
+
+std::uint8_t APS5_VABI stdc_bit_ceil_uc_nid_postfix(std::uint8_t value) { return CeilBit(value); }
+std::uint16_t APS5_VABI stdc_bit_ceil_us_nid_postfix(std::uint16_t value) { return CeilBit(value); }
+std::uint32_t APS5_VABI stdc_bit_ceil_ui_nid_postfix(std::uint32_t value) { return CeilBit(value); }
+std::uint64_t APS5_VABI stdc_bit_ceil_ul_nid_postfix(std::uint64_t value) { return CeilBit(value); }
+std::uint64_t APS5_VABI stdc_bit_ceil_ull_nid_postfix(std::uint64_t value) { return CeilBit(value); }
 
 int APS5_VABI __cmpdi2_nid_postfix(std::int64_t a, std::int64_t b) { return Compare(a, b); }
 int APS5_VABI __cmpti2_nid_postfix(Int128 a, Int128 b) { return Compare(a, b); }
@@ -268,25 +374,57 @@ std::uint64_t APS5_VABI __umoddi3_nid_postfix(std::uint64_t a, std::uint64_t b) 
 
 std::int32_t APS5_VABI __divmodsi4_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* remainder) {
     const std::int32_t quotient = Divide(a, b, "__divmodsi4");
-    *remainder = static_cast<std::int32_t>(static_cast<std::uint32_t>(a) - static_cast<std::uint32_t>(quotient) * static_cast<std::uint32_t>(b));
+    const std::int32_t rest = static_cast<std::int32_t>(static_cast<std::uint32_t>(a) - static_cast<std::uint32_t>(quotient) * static_cast<std::uint32_t>(b));
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__divmodsi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::int64_t APS5_VABI __divmoddi4_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t* remainder) {
     const std::int64_t quotient = Divide(a, b, "__divmoddi4");
-    *remainder = static_cast<std::int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(quotient) * static_cast<std::uint64_t>(b));
+    const std::int64_t rest = static_cast<std::int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(quotient) * static_cast<std::uint64_t>(b));
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__divmoddi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::uint32_t APS5_VABI __udivmodsi4_nid_postfix(std::uint32_t a, std::uint32_t b, std::uint32_t* remainder) {
     const std::uint32_t quotient = UnsignedDivide32(a, b);
-    *remainder = a - quotient * b;
+    const std::uint32_t rest = a - quotient * b;
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmodsi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::uint64_t APS5_VABI __udivmoddi4_nid_postfix(std::uint64_t a, std::uint64_t b, std::uint64_t* remainder) {
     const std::uint64_t quotient = UnsignedDivide(a, b, "__udivmoddi4");
-    if (remainder != nullptr) *remainder = a - quotient * b;
+    if (remainder != nullptr) {
+        const std::uint64_t rest = a - quotient * b;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmoddi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
@@ -294,7 +432,14 @@ Uint128 APS5_VABI __udivmodti4_nid_postfix(Uint128 a, Uint128 b, Uint128* remain
     if (b == 0) DivideByZero("__udivmodti4");
     Uint128 rest = 0;
     const Uint128 quotient = SonyUdivmod128(a, b, &rest);
-    if (remainder != nullptr) *remainder = rest;
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmodti4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 

@@ -1,0 +1,38 @@
+name: Web release tools
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/web-release-tools.yml
+      - demo/web/**
+      - tools/build_web.py
+      - tools/nid_names.py
+      - tools/package_headers.py
+      - tools/package_release.py
+      - tools/test_web.py
+      - tools/tests/test_build_web.py
+      - tools/tests/test_web_release.py
+      - core/relinker/relinker/tests/guest_import_fixtures.py
+      - core/relinker/relinker/tests/test_guest_intel_trampolines.py
+      - core/relinker/relinker/tests/test_guest_module_directories.py
+      - core/relinker/relinker/tests/test_linux_load_alignment.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-release-tools-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  release-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test web library assets
+        run: python3 tools/tests/test_build_web.py
+      - name: Test web release packaging
+        run: python3 tools/tests/test_web_release.py

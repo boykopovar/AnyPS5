@@ -1,0 +1,6 @@
+# libSceTtsEngine technical debt
+
+### Unknown function info
+
+- [11 exports (2 without a known name, bound by NID)](../../../core/libs/prx/libSceTtsEngine/Export.cpp) (libSceTtsEngine) - every function export of `libSceTtsEngine.sprx` from the firmware 13.60 export table, names from aerolib.csv only where `tools/nid_names.py` `compute_nid` reproduces the NID. Signatures and parameter layouts are unknown, and the speech engine is not modelled: `sceTtsEngineInitialize` throws through `NotImplemented_nid_no_patch`, so the library is never initialized.
+- [The uninitialized answers](../../../core/libs/prx/libSceTtsEngine/Export.cpp) (libSceTtsEngine) - only the 32-bit result is claimed. In firmware 13.42's `libSceTtsEngine.sprx` (SHA-256 `d022afb458a3754ab265d848e4101c496c04257cbaaf6717fb69ad22a1d6ee76`), read from disassembly and not run on a console, the other ten exports first test the engine pointer at `0x5ec1a0`, which starts zero (beyond the segment's file data) and is set only inside `sceTtsEngineInitialize` (`0x13c`). With it null, `sceTtsEngineTerminate` (`0x180`) calls `0x22d0`, which frees three pointers that only `0x2120` (called from `sceTtsEngineInitialize` alone) sets, and returns 0; the other nine return `0x81A10004` before reading any argument.

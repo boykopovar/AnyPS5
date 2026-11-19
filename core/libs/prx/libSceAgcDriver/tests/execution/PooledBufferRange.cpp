@@ -1,3 +1,4 @@
+#include "../PortabilitySubset.hpp"
 #include "../CommandBatchFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -197,6 +198,10 @@ public:
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
             device.pEnabledFeatures = &features;
+            std::vector<const char*> extensionsEnabled;
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             RealDeviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             RealCreateBuffer = reinterpret_cast<PFN_vkCreateBuffer>(RealDeviceProc(context.device, "vkCreateBuffer"));
@@ -464,7 +469,7 @@ std::uint32_t ReadPastEnd(const Context& context, AgcDriver::Graphics::Buffer& s
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         AgcDriver::Graphics::CommandBatch batch(context);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(batch.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(batch.Handle(), pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(batch.Handle(), VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(batch.Handle(), 1, 1, 1);
         AgcDriver::Graphics::RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
@@ -483,7 +488,7 @@ std::uint32_t ReadPastEnd(const Context& context, AgcDriver::Graphics::Buffer& s
 
 void RobustReadPastEnd(const Context& context) {
     constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    const auto classBytes = BufferPool::Capacity(RequestedBytes, HostMemory);
+    const auto classBytes = BufferPool::Capacity(RequestedBytes);
     Require(classBytes > (PastEnd + 1) * sizeof(std::uint32_t), "the requested buffer's size class does not reach the word read past its end");
     {
         AgcDriver::Graphics::Buffer earlier(context, classBytes, usage);
@@ -513,10 +518,10 @@ void ExpectCreated(std::initializer_list<VkDeviceSize> sizes, const std::string&
 
 void ExactSizes(const Context& context) {
     constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    const auto hostClass = BufferPool::Capacity(100, HostMemory);
-    const auto deviceClass = BufferPool::Capacity(3000, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Require(BufferPool::Capacity(80, HostMemory) == hostClass && hostClass != 80, "80 and 100 bytes are not one host size class");
-    Require(BufferPool::Capacity(2500, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == deviceClass && deviceClass != 2500, "2500 and 3000 bytes are not one device size class");
+    const auto hostClass = BufferPool::Capacity(100);
+    const auto deviceClass = BufferPool::Capacity(3000);
+    Require(BufferPool::Capacity(80) == hostClass && hostClass != 80, "80 and 100 bytes are not one host size class");
+    Require(BufferPool::Capacity(2500) == deviceClass && deviceClass != 2500, "2500 and 3000 bytes are not one device size class");
     CreatedSizes().clear();
     {
         AgcDriver::Graphics::Buffer fresh(context, 100, usage);

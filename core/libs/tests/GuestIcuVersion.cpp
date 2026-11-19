@@ -1,11 +1,13 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -91,6 +93,129 @@ void UCharsToChars() {
     Require(Rejects([&] { u_UCharsToChars_nid_postfix(units.data(), nullptr, 1); }), "null destination rejected");
 }
 
+void AuStrcpy() {
+    std::array<char, 8> chars;
+    chars.fill('X');
+    Require(u_austrcpy_nid_postfix(chars.data(), u"") == chars.data(), "empty copy returns destination");
+    Require(chars[0] == 0 && chars[1] == 'X', "empty copy writes only terminator");
+
+    chars.fill('X');
+    Require(u_austrcpy_nid_postfix(chars.data(), u"Ab_9") == chars.data(), "ASCII copy returns destination");
+    Require(std::memcmp(chars.data(), "Ab_9\0XXX", chars.size()) == 0, "ASCII characters and terminator copy");
+
+    chars.fill('X');
+    u_austrcpy_nid_postfix(chars.data(), u"A!#$@B");
+    Require(std::memcmp(chars.data(), "A!#$@B\0X", chars.size()) == 0, "punctuation outside the invariant set copies unchanged");
+
+    std::array<char16_t, 128> asciiUnits;
+    for (std::size_t index = 0; index < 127; ++index) asciiUnits[index] = static_cast<char16_t>(index + 1);
+    asciiUnits[127] = 0;
+    std::array<char, 129> asciiChars;
+    asciiChars.fill('X');
+    Require(u_austrcpy_nid_postfix(asciiChars.data(), asciiUnits.data()) == asciiChars.data(), "full ASCII copy returns destination");
+    for (std::size_t index = 0; index < 127; ++index)
+        Require(asciiChars[index] == static_cast<char>(index + 1), "every unit in 0x01-0x7f copies unchanged");
+    Require(asciiChars[127] == 0 && asciiChars[128] == 'X', "full ASCII copy writes terminator without overrun");
+
+    Require(Rejects([&] { u_austrcpy_nid_postfix(nullptr, u"a"); }), "null destination rejected");
+    Require(Rejects([&] { u_austrcpy_nid_postfix(chars.data(), nullptr); }), "null source rejected");
+}
+
+void AuStrncpy() {
+    std::array<char, 8> chars;
+    chars.fill('X');
+    Require(u_austrncpy_nid_postfix(chars.data(), u"Abcdef", 3) == chars.data(), "truncated copy returns destination");
+    Require(std::memcmp(chars.data(), "AbcXXXXX", chars.size()) == 0, "truncated copy omits terminator");
+
+    chars.fill('X');
+    u_austrncpy_nid_postfix(chars.data(), u"Abc", 3);
+    Require(std::memcmp(chars.data(), "AbcXXXXX", chars.size()) == 0, "exact-length copy omits terminator");
+
+    chars.fill('X');
+    u_austrncpy_nid_postfix(chars.data(), u"Abc", 6);
+    Require(std::memcmp(chars.data(), "Abc\0XXXX", chars.size()) == 0, "longer bound writes one terminator without padding");
+
+    chars.fill('X');
+    u_austrncpy_nid_postfix(chars.data(), u"A!#$@", 7);
+    Require(std::memcmp(chars.data(), "A!#$@\0XX", chars.size()) == 0, "non-invariant ASCII units copy unchanged within bound");
+
+    std::array<char16_t, 128> asciiUnits;
+    for (std::size_t index = 0; index < 127; ++index) asciiUnits[index] = static_cast<char16_t>(index + 1);
+    asciiUnits[127] = 0;
+    std::array<char, 129> asciiChars;
+    asciiChars.fill('X');
+    Require(u_austrncpy_nid_postfix(asciiChars.data(), asciiUnits.data(), 128) == asciiChars.data(), "bounded full ASCII copy returns destination");
+    for (std::size_t index = 0; index < 127; ++index)
+        Require(asciiChars[index] == static_cast<char>(index + 1), "every unit in 0x01-0x7f copies unchanged in bounded copy");
+    Require(asciiChars[127] == 0 && asciiChars[128] == 'X', "bounded full ASCII copy writes terminator without overrun");
+
+    const std::array<char16_t, 3> unterminated{u'!', u'$', u'@'};
+    chars.fill('X');
+    u_austrncpy_nid_postfix(chars.data(), unterminated.data(), 3);
+    Require(std::memcmp(chars.data(), "!$@XXXXX", chars.size()) == 0, "bounded copy stops at count without reading past it");
+
+    chars.fill('X');
+    Require(u_austrncpy_nid_postfix(chars.data(), u"Abc", 0) == chars.data(), "zero count returns destination");
+    Require(u_austrncpy_nid_postfix(chars.data(), u"Abc", -2) == chars.data(), "negative count returns destination");
+    Require(chars[0] == 'X', "nonpositive counts write nothing");
+    Require(u_austrncpy_nid_postfix(nullptr, nullptr, 0) == nullptr, "zero count allows null pointers");
+    Require(u_austrncpy_nid_postfix(chars.data(), nullptr, -1) == chars.data(), "negative count allows null source");
+    Require(Rejects([&] { u_austrncpy_nid_postfix(nullptr, u"a", 1); }), "null destination with positive count rejected");
+    Require(Rejects([&] { u_austrncpy_nid_postfix(chars.data(), nullptr, 1); }), "null source with positive count rejected");
+}
+
+void UaStrcpy() {
+    std::array<char16_t, 8> units;
+    units.fill(u'X');
+    Require(u_uastrcpy_nid_postfix(units.data(), "") == units.data(), "empty widening copy returns destination");
+    Require(units[0] == 0 && units[1] == u'X', "empty widening copy writes only terminator");
+
+    units.fill(u'X');
+    u_uastrcpy_nid_postfix(units.data(), "A!#$@B");
+    Require(std::u16string_view(units.data(), 8) == std::u16string_view(u"A!#$@B\0X", 8), "ASCII characters and terminator widen");
+
+    std::array<char, 128> asciiChars;
+    for (std::size_t index = 0; index < 127; ++index) asciiChars[index] = static_cast<char>(index + 1);
+    asciiChars[127] = 0;
+    std::array<char16_t, 129> asciiUnits;
+    asciiUnits.fill(u'X');
+    Require(u_uastrcpy_nid_postfix(asciiUnits.data(), asciiChars.data()) == asciiUnits.data(), "full ASCII widening returns destination");
+    for (std::size_t index = 0; index < 127; ++index)
+        Require(asciiUnits[index] == static_cast<char16_t>(index + 1), "every byte in 0x01-0x7f widens unchanged");
+    Require(asciiUnits[127] == 0 && asciiUnits[128] == u'X', "full ASCII widening writes terminator without overrun");
+
+    Require(Rejects([&] { u_uastrcpy_nid_postfix(nullptr, "a"); }), "null destination rejected");
+    Require(Rejects([&] { u_uastrcpy_nid_postfix(units.data(), nullptr); }), "null source rejected");
+}
+
+void UaStrncpy() {
+    std::array<char16_t, 8> units;
+    units.fill(u'X');
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abcdef", 3) == units.data(), "truncated widening returns destination");
+    Require(std::u16string_view(units.data(), 8) == u"AbcXXXXX", "truncated widening omits terminator");
+
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), "Abc", 3);
+    Require(std::u16string_view(units.data(), 8) == u"AbcXXXXX", "exact-length widening omits terminator");
+
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), "A!$", 6);
+    Require(std::u16string_view(units.data(), 8) == std::u16string_view(u"A!$\0XXXX", 8), "longer bound writes one terminator without padding");
+
+    const std::array<char, 3> unterminated{'!', '$', '@'};
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), unterminated.data(), 3);
+    Require(std::u16string_view(units.data(), 8) == u"!$@XXXXX", "bounded widening stops at count without reading past it");
+
+    units.fill(u'X');
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abc", 0) == units.data(), "zero count returns destination");
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abc", -2) == units.data(), "negative count returns destination");
+    Require(units[0] == u'X', "nonpositive counts write nothing");
+    Require(u_uastrncpy_nid_postfix(nullptr, nullptr, 0) == nullptr, "zero count allows null pointers");
+    Require(Rejects([&] { u_uastrncpy_nid_postfix(nullptr, "a", 1); }), "null destination with positive count rejected");
+    Require(Rejects([&] { u_uastrncpy_nid_postfix(units.data(), nullptr, 1); }), "null source with positive count rejected");
+}
+
 void VersionFromString() {
     Require(FromString("1.2.3.4") == Version{1, 2, 3, 4}, "four parts");
     Require(FromString("65.1") == Version{65, 1, 0, 0}, "missing parts are zero");
@@ -136,6 +261,35 @@ void VersionToString() {
     u_versionToString_nid_postfix(version.data(), nullptr);
 }
 
+void GetVersion() {
+    Version version{9, 9, 9, 9};
+    u_getVersion_nid_postfix(version.data());
+    Require(version == Version{78, 1, 0, 0}, "library version is 78.1.0.0");
+    Require(ToString(version) == "78.1", "library version string");
+    u_getVersion_nid_postfix(nullptr);
+}
+
+void UnreadableBuffers() {
+    const auto* unreadableText = reinterpret_cast<const char*>(0x10);
+    const auto* unreadableUnits = reinterpret_cast<const char16_t*>(0x10);
+    auto* unwritable = reinterpret_cast<std::uint8_t*>(0x10);
+    errno = 71;
+    Version version{9, 9, 9, 9};
+    u_versionFromString_nid_postfix(version.data(), unreadableText);
+    Require(version == Version{0, 0, 0, 0}, "an unreadable string clears the version, as a null one does");
+    version = {9, 9, 9, 9};
+    u_versionFromUString_nid_postfix(version.data(), unreadableUnits);
+    Require(version == Version{9, 9, 9, 9}, "an unreadable UTF-16 string leaves the version unchanged, as a null one does");
+    std::array<char, 4> text{'X', 'X', 'X', 'X'};
+    u_versionToString_nid_postfix(reinterpret_cast<const std::uint8_t*>(0x10), text.data());
+    Require(text[0] == 0 && text[1] == 'X', "an unreadable version writes an empty string, as a null one does");
+    u_versionFromString_nid_postfix(unwritable, "1.2");
+    u_versionToString_nid_postfix(version.data(), reinterpret_cast<char*>(0x10));
+    u_getUnicodeVersion_nid_postfix(unwritable);
+    u_getVersion_nid_postfix(unwritable);
+    Require(errno == 71, "unreadable and unwritable buffers keep errno");
+}
+
 void RoundTrip() {
     const auto written = [](std::uint32_t part) { return part < 100 || part % 100 >= 10; };
     for (std::uint32_t part = 0; part < 256; ++part) {
@@ -150,9 +304,15 @@ void RoundTrip() {
 int main() {
     CharsToUChars();
     UCharsToChars();
+    AuStrcpy();
+    AuStrncpy();
+    UaStrcpy();
+    UaStrncpy();
     VersionFromString();
     VersionFromUString();
     VersionToString();
+    GetVersion();
+    UnreadableBuffers();
     RoundTrip();
     return 0;
 }

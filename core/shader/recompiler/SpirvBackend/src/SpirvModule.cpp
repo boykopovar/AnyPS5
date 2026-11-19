@@ -14,6 +14,9 @@ void AppendInstructionWords(std::vector<std::uint32_t>& section, std::span<const
     if (words.empty()) {
         return;
     }
+    if (words.size() > 0xffffu) {
+        throw std::runtime_error("SpirvModule instruction length exceeds maximum SPIR-V word count");
+    }
     const auto opcode = words[0];
     const auto wordCount = static_cast<std::uint32_t>(words.size());
     section.push_back((wordCount << spv::WordCountShift) | opcode);
@@ -106,8 +109,17 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
     module.insert(module.end(), typeDeclarations.begin(), typeDeclarations.end());
     module.insert(module.end(), declarations.begin(), declarations.end());
     module.insert(module.end(), globalVariables.begin(), globalVariables.end());
+    const auto functionsStart = module.size();
     module.insert(module.end(), functionInstructions.begin(), functionInstructions.end());
     module.insert(module.end(), helperFunctionInstructions.begin(), helperFunctionInstructions.end());
+    if (inlineFunctions) {
+        std::vector<std::uint32_t> entryIds;
+        for (std::size_t offset = 0; offset < entryPoints.size(); offset += entryPoints[offset] >> spv::WordCountShift) entryIds.push_back(entryPoints[offset + 2u]);
+        for (std::size_t offset = functionsStart; offset < module.size(); offset += module[offset] >> spv::WordCountShift) {
+            if ((module[offset] & spv::OpCodeMask) != spv::OpFunction || std::ranges::find(entryIds, module[offset + 2u]) != entryIds.end()) continue;
+            module[offset + 3u] = (module[offset + 3u] & ~static_cast<std::uint32_t>(spv::FunctionControlDontInlineMask)) | static_cast<std::uint32_t>(spv::FunctionControlInlineMask);
+        }
+    }
     return module;
 }
 
@@ -123,6 +135,10 @@ void SpirvModule::EndHelperFunction() {
     std::swap(functionInstructions, helperFunctionInstructions);
     std::swap(ballots, helperBallots);
     inHelperFunction = false;
+}
+
+void SpirvModule::InlineFunctions() {
+    inlineFunctions = true;
 }
 
 void SpirvModule::RequireVersion(std::uint32_t version) {
@@ -271,12 +287,17 @@ SpirvDeferredPhi SpirvModule::AddDeferredPhi(std::uint32_t type, std::uint32_t r
     const SpirvDeferredPhi phi {functionInstructions.size()};
     AddFunction(std::span<const std::uint32_t>(words));
     unpatchedPhiIncomings += incomingCount;
+    pendingDeferredPhis[phi.wordOffset] = {incomingCount, incomingCount};
     return phi;
 }
 
 void SpirvModule::PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent) {
-    const auto incomingCount = ((functionInstructions.at(phi.wordOffset) >> spv::WordCountShift) - 3u) / 2u;
-    if (incoming >= incomingCount || value == 0u || parent == 0u) {
+    const auto it = pendingDeferredPhis.find(phi.wordOffset);
+    if (it == pendingDeferredPhis.end()) {
+        throw std::runtime_error("SpirvModule::PatchDeferredPhi target offset is not a pending deferred phi");
+    }
+    const auto [totalIncomings, remainingIncomings] = it->second;
+    if (incoming >= totalIncomings || value == 0u || parent == 0u) {
         throw std::runtime_error("SpirvModule::PatchDeferredPhi received an invalid incoming index or a zero id");
     }
     const auto valueWord = phi.wordOffset + 3u + incoming * 2u;
@@ -287,6 +308,9 @@ void SpirvModule::PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, s
     functionInstructions[valueWord] = value;
     functionInstructions[parentWord] = parent;
     unpatchedPhiIncomings--;
+    if (--it->second.second == 0) {
+        pendingDeferredPhis.erase(it);
+    }
 }
 
 }

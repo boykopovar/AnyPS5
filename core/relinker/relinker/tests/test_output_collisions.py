@@ -173,6 +173,32 @@ def filesystem_aliases(relinker, work):
             assert not list(case.rglob(".anyps5-output-identity-*"))
 
 
+def directory_outputs(relinker, work):
+    labels = {"module": "Guest module", "registry": "Registry", "module-registry": "Registry",
+              "needed": "Needed libraries", "module-needed": "Needed libraries", "diagnostics": "Windows import diagnostics",
+              "icon": "Icon", "desktop": "Desktop entry", "extra": "Executable"}
+    for windows in (False, True):
+        keys = ("module", "registry", "module-registry", "needed", "module-needed")
+        keys += ("diagnostics",) if windows else ("icon", "desktop")
+        for key in (*keys, "extra"):
+            case = work / f"directory-{windows}-{key}"
+            command, paths, _ = prepare(case, windows)
+            if key == "extra":
+                source = case / "extra/b.bin"
+                source.parent.mkdir()
+                source.write_bytes(main_fixture())
+                paths[key] = case / ("extra.b.bin" + paths["executable"].suffix)
+                command = [*command[:-2], "--executable", "extra/b.bin", command[-2], command[-1]]
+            paths[key].mkdir()
+            before = tree_snapshot(case)
+            result = subprocess.run([str(relinker), *command], cwd=case,
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+            assert result.returncode == 2 and f"FAIL: {labels[key]} output is a directory: " in result.stderr, (
+                windows, key, result.returncode, result.stdout, result.stderr)
+            assert paths[key].name in result.stderr, (windows, key, result.stderr)
+            assert tree_snapshot(case) == before, (windows, key)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     checked = 0
@@ -180,6 +206,7 @@ def main():
         work = Path(directory)
         metadata_checked = metadata_inputs(relinker, work)
         filesystem_aliases(relinker, work)
+        directory_outputs(relinker, work)
         for windows, existing in itertools.product((False, True), repeat=2):
             case = work / f"needed-secondary-{windows}-{existing}"
             case.mkdir()

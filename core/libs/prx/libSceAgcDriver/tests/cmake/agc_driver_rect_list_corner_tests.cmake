@@ -1,0 +1,1 @@
+target_link_libraries(agc_driver_rect_list_corner_tests PRIVATE shader_recompiler_agc_driver)

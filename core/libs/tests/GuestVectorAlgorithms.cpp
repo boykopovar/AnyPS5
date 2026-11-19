@@ -1,14 +1,26 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <type_traits>
 #include <vector>
 
-
 static void Require(bool value) { if (!value) std::abort(); }
+
+template<typename TCall>
+static void RequireRejected(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false);
+}
 
 static void CheckMinValue() {
     const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};
@@ -80,6 +92,80 @@ static void CheckSizedHelpers() {
     Require(__std_max_element_8_nid_postfix(wides, wides + 4, false) == wides);
     Require(__std_max_element_8_nid_postfix(wides, wides + 4, true) == wides + 2);
     Require(__std_max_element_8_nid_postfix(wides, wides, false) == wides);
+
+    const std::int32_t edges[] = {INT32_MIN, INT32_MIN + 1, -0x10001, -0x10000, -1, 0, 1, 0xffff, 0x10000, INT32_MAX - 1, INT32_MAX};
+    for (const auto& left : edges) {
+        Require(__std_max_4i_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::int32_t pair[] = {left, right};
+            Require(__std_max_4i_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint32_t state = 0x6f928da3;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::int32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            std::memcpy(&value, &state, sizeof(value));
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::int32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::int32_t));
+            const auto original = storage;
+            Require(__std_max_4i_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::int32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), INT32_MIN);
+        Require(__std_max_4i_nid_postfix(values.data(), values.data() + count) == INT32_MIN);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = -0x10005;
+            Require(__std_max_4i_nid_postfix(values.data(), values.data() + count) == -0x10005);
+            values[position] = INT32_MIN;
+        }
+    }
+    const std::int32_t repeated[] = {-9, -9, -9, -9};
+    Require(__std_max_4i_nid_postfix(repeated, repeated + 4) == -9);
+}
+
+static void CheckSignedMin64Value() {
+    const std::int64_t edges[] = {INT64_MIN, INT64_MIN + 1, -0x100000001ll, -0x100000000ll, -1, 0, 1, 0x7fffffff, 0xffffffff, 0x100000000, INT64_MAX - 1, INT64_MAX};
+    for (const auto& left : edges) {
+        Require(__std_min_8i_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::int64_t pair[] = {left, right};
+            Require(__std_min_8i_nid_postfix(pair, pair + 2) == std::min(left, right));
+        }
+    }
+    std::uint64_t state = 0xf3c82d51479ab6e1;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::int64_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            std::memcpy(&value, &state, sizeof(value));
+        }
+        const auto expected = *std::min_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::int64_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::int64_t));
+            const auto original = storage;
+            Require(__std_min_8i_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::int64_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), INT64_MAX);
+        Require(__std_min_8i_nid_postfix(values.data(), values.data() + count) == INT64_MAX);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = -0x100000005ll;
+            Require(__std_min_8i_nid_postfix(values.data(), values.data() + count) == -0x100000005ll);
+            values[position] = INT64_MAX;
+        }
+    }
+    const std::int64_t repeated[] = {-9, -9, -9, -9};
+    Require(__std_min_8i_nid_postfix(repeated, repeated + 4) == -9);
 }
 
 static void CheckFindAndCount() {
@@ -93,6 +179,74 @@ static void CheckFindAndCount() {
     words[3] = 42;
     words[12] = 42;
     Require(__std_find_trivial_unsized_4_nid_postfix(words + 8, 42) == words + 12);
+}
+
+static void CheckFindLast() {
+    const std::uint8_t bytes[] = {3, 0xff, 3, 9, 0xff, 7};
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 0xff) == bytes + 4);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 3) == bytes + 2);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 42) == bytes + 6);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes, 3) == bytes);
+    Require(__std_find_last_trivial_1_nid_postfix(nullptr, nullptr, 3) == nullptr);
+
+    const std::uint16_t halves[] = {0x8000, 5, 0x7fff, 5, 0x8000};
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 5) == halves + 3);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 0x8000) == halves + 4);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 0x1234) == halves + 5);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves, 5) == halves);
+    Require(__std_find_last_trivial_2_nid_postfix(nullptr, nullptr, 5) == nullptr);
+
+    const std::uint32_t words[] = {7, 0xfffffff0u, 1, 1, 0xfffffff0u, 9};
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 0xfffffff0u) == words + 4);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 1) == words + 3);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 2) == words + 6);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words, 1) == words);
+    Require(__std_find_last_trivial_4_nid_postfix(nullptr, nullptr, 1) == nullptr);
+
+    const std::uint64_t wides[] = {0x8000000000000000ull, 2, 0x7fffffffffffffffull, 0x8000000000000000ull, 2};
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 0x8000000000000000ull) == wides + 3);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 2) == wides + 4);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 999) == wides + 5);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides, 2) == wides);
+    Require(__std_find_last_trivial_8_nid_postfix(nullptr, nullptr, 2) == nullptr);
+}
+
+static void CheckSignedMax64Value() {
+    const std::int64_t edges[] = {INT64_MIN, INT64_MIN + 1, -0x100000001ll, -0x100000000ll, -1, 0, 1, 0x7fffffff, 0xffffffff, 0x100000000, INT64_MAX - 1, INT64_MAX};
+    for (const auto& left : edges) {
+        Require(__std_max_8i_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::int64_t pair[] = {left, right};
+            Require(__std_max_8i_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint64_t state = 0x2e791fa84d6c530b;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::int64_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            std::memcpy(&value, &state, sizeof(value));
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::int64_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::int64_t));
+            const auto original = storage;
+            Require(__std_max_8i_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::int64_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), INT64_MIN);
+        Require(__std_max_8i_nid_postfix(values.data(), values.data() + count) == INT64_MIN);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = -0x100000005ll;
+            Require(__std_max_8i_nid_postfix(values.data(), values.data() + count) == -0x100000005ll);
+            values[position] = INT64_MIN;
+        }
+    }
+    const std::int64_t repeated[] = {-9, -9, -9, -9};
+    Require(__std_max_8i_nid_postfix(repeated, repeated + 4) == -9);
 }
 
 static void CheckUnsizedRescan() {
@@ -137,6 +291,44 @@ static void CheckUnsizedRescan() {
     Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides + 6);
 }
 
+static void CheckUnsignedMax32Value() {
+    const std::uint32_t edges[] = {0, 1, 0xffff, 0x10000, 0x7fffffff, 0x80000000, 0xfffffffe, 0xffffffff};
+    for (const auto& left : edges) {
+        Require(__std_max_4u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint32_t pair[] = {left, right};
+            Require(__std_max_4u_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint32_t state = 0x8e47396b;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            value = state;
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint32_t));
+            const auto original = storage;
+            Require(__std_max_4u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), 0);
+        Require(__std_max_4u_nid_postfix(values.data(), values.data() + count) == 0);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = 0x10005;
+            Require(__std_max_4u_nid_postfix(values.data(), values.data() + count) == 0x10005);
+            values[position] = 0;
+        }
+    }
+    const std::uint32_t repeated[] = {9, 9, 9, 9};
+    Require(__std_max_4u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
 static void CheckMinMax() {
     const unsigned char bytes[] = {3, 0x80, 1, 0x80, 1, 0xff};
     Require(__std_min_element_1_nid_postfix(bytes, bytes + 6, false) == bytes + 2);
@@ -155,6 +347,99 @@ static void CheckMinMax() {
     Require(single.minimum == wides && single.maximum == wides);
     const MinMaxPointers empty = __std_minmax_element_8_nid_postfix(wides, wides, false);
     Require(empty.minimum == wides && empty.maximum == wides);
+
+    const std::int32_t edges[] = {INT32_MIN, INT32_MIN + 1, -0x10001, -0x10000, -1, 0, 1, 0xffff, 0x10000, INT32_MAX - 1, INT32_MAX};
+    for (const auto& left : edges) {
+        Require(__std_min_4i_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::int32_t pair[] = {left, right};
+            Require(__std_min_4i_nid_postfix(pair, pair + 2) == std::min(left, right));
+        }
+    }
+    std::uint32_t state = 0xa9f28537;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::int32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            std::memcpy(&value, &state, sizeof(value));
+        }
+        const auto expected = *std::min_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::int32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::int32_t));
+            const auto original = storage;
+            Require(__std_min_4i_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::int32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), INT32_MAX);
+        Require(__std_min_4i_nid_postfix(values.data(), values.data() + count) == INT32_MAX);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = -0x10005;
+            Require(__std_min_4i_nid_postfix(values.data(), values.data() + count) == -0x10005);
+            values[position] = INT32_MAX;
+        }
+    }
+    const std::int32_t repeated[] = {-9, -9, -9, -9};
+    Require(__std_min_4i_nid_postfix(repeated, repeated + 4) == -9);
+}
+
+static void CheckUnsignedMin32Value() {
+    const std::uint32_t edges[] = {0, 1, 0xffff, 0x10000, 0x7fffffff, 0x80000000, 0xfffffffe, 0xffffffff};
+    for (const auto& left : edges) {
+        Require(__std_min_4u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint32_t pair[] = {left, right};
+            Require(__std_min_4u_nid_postfix(pair, pair + 2) == std::min(left, right));
+        }
+    }
+    std::uint32_t state = 0x8e47396b;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            value = state;
+        }
+        const auto expected = *std::min_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint32_t));
+            const auto original = storage;
+            Require(__std_min_4u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), UINT32_MAX);
+        Require(__std_min_4u_nid_postfix(values.data(), values.data() + count) == UINT32_MAX);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = 0x10005;
+            Require(__std_min_4u_nid_postfix(values.data(), values.data() + count) == 0x10005);
+            values[position] = UINT32_MAX;
+        }
+    }
+    const std::uint32_t repeated[] = {9, 9, 9, 9};
+    Require(__std_min_4u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
+static void CheckReverseCopyLengthRejected() {
+    unsigned char bytes[16];
+    for (int i = 0; i < 16; ++i) bytes[i] = static_cast<unsigned char>(i);
+    unsigned char out[16];
+    std::memset(out, 0xee, sizeof(out));
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_2_nid_postfix(bytes, bytes + 3, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_4_nid_postfix(bytes, bytes + 3, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_8_nid_postfix(bytes, bytes + 12, out); });
+    RequireRejected([&] { __std_reverse_copy_trivially_copyable_4_nid_postfix(bytes + 8, bytes, out); });
+    for (const unsigned char byte : out) Require(byte == 0xee);
+
+    const std::uint32_t words[] = {1, 2};
+    std::uint32_t reversedWords[2] = {};
+    __std_reverse_copy_trivially_copyable_4_nid_postfix(words, words + 2, reversedWords);
+    Require(reversedWords[0] == 2 && reversedWords[1] == 1);
+    __std_reverse_copy_trivially_copyable_4_nid_postfix(words, words, reversedWords);
+    Require(reversedWords[0] == 2 && reversedWords[1] == 1);
 }
 
 static void CheckReverseAndSwap() {
@@ -177,12 +462,195 @@ static void CheckReverseAndSwap() {
     for (int i = 0; i < 37; ++i) Require(left[i] == 100 + i && right[i] == i);
 }
 
+static void CheckMaxValue() {
+    const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};
+    for (const auto& left : edges) {
+        Require(__std_max_8u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint64_t pair[] = {left, right};
+            Require(__std_max_8u_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint64_t state = 0x7698f1b33a25c04d;
+    for (const std::size_t count : {1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint64_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            value = state;
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 16; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint64_t) + 32, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint64_t));
+            const auto original = storage;
+            Require(__std_max_8u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint64_t)) == expected);
+            Require(storage == original);
+        }
+    }
+    const std::uint64_t repeated[] = {9, 9, 9, 9};
+    Require(__std_max_8u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
+template <typename Function>
+static void RequireInvalidRange(Function function, const void* first, const void* last) {
+    try {
+        function(first, last);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::abort();
+}
+
+template <typename Element, typename Function>
+static void CheckFaultingRanges(Function function) {
+    const Element values[] = {5, 3, 7, 2};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+    RequireInvalidRange(function, values + 2, values + 2);
+    RequireInvalidRange(function, nullptr, nullptr);
+    RequireInvalidRange(function, values + 3, values + 2);
+    RequireInvalidRange(function, values, bytes + 2 * sizeof(Element) + sizeof(Element) / 2);
+    RequireInvalidRange(function, values + 1, bytes + sizeof(Element) + sizeof(Element) - 1);
+    Require(function(values + 1, values + 2) == 3);
+}
+
+template <typename Function, typename Value>
+static void RequireInvalidFindLastRange(Function function, const void* first, const void* last, Value value) {
+    try {
+        function(first, last, value);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::abort();
+}
+
+template <typename Element, typename Function, typename Value>
+static void CheckFaultingFindLastRanges(Function function, Value value) {
+    const Element values[] = {5, 3, 7, 2};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+    RequireInvalidFindLastRange(function, nullptr, values + 1, value);
+    RequireInvalidFindLastRange(function, values + 1, nullptr, value);
+    RequireInvalidFindLastRange(function, values + 3, values + 2, value);
+    if constexpr (sizeof(Element) > 1) {
+        RequireInvalidFindLastRange(function, values, bytes + 2 * sizeof(Element) + 1, value);
+    }
+}
+
+static void CheckInvalidRanges() {
+    CheckFaultingRanges<std::int32_t>(__std_min_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_min_4u_nid_postfix);
+    CheckFaultingRanges<std::int32_t>(__std_max_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_max_4u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_min_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_min_8u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_max_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_max_8u_nid_postfix);
+    CheckFaultingFindLastRanges<std::uint8_t>(__std_find_last_trivial_1_nid_postfix, 3);
+    CheckFaultingFindLastRanges<std::uint16_t>(__std_find_last_trivial_2_nid_postfix, 5);
+    CheckFaultingFindLastRanges<std::uint32_t>(__std_find_last_trivial_4_nid_postfix, 7);
+    CheckFaultingFindLastRanges<std::uint64_t>(__std_find_last_trivial_8_nid_postfix, 9);
+}
+
+template<typename TUnsigned, auto Minimum, auto Maximum, auto Both, auto Reverse>
+static void CheckElementOracle() {
+    using TSigned = std::make_signed_t<TUnsigned>;
+    constexpr TUnsigned all = static_cast<TUnsigned>(~TUnsigned{0});
+    constexpr TUnsigned top = static_cast<TUnsigned>(all ^ (all >> 1));
+    const TUnsigned pool[] = {0, 1, 2, static_cast<TUnsigned>(top - 1), top, static_cast<TUnsigned>(top + 1), static_cast<TUnsigned>(all - 1), all};
+    std::uint64_t state = 0x9e3779b97f4a7c15 ^ sizeof(TUnsigned);
+    for (std::size_t count = 0; count <= 140; ++count) {
+        for (int trial = 0; trial < 6; ++trial) {
+            std::vector<TUnsigned> values(count);
+            for (auto& value : values) {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                value = trial < 3 ? pool[state % std::size(pool)] : static_cast<TUnsigned>(state >> 3);
+            }
+            std::vector<TSigned> signedValues(count);
+            std::transform(values.begin(), values.end(), signedValues.begin(), [](TUnsigned value) { return std::bit_cast<TSigned>(value); });
+            const TUnsigned* first = values.data();
+            const TUnsigned* last = first + count;
+            const auto unsignedBoth = std::minmax_element(values.begin(), values.end());
+            const auto signedBoth = std::minmax_element(signedValues.begin(), signedValues.end());
+            const std::size_t expectedMinimum[] = {
+                static_cast<std::size_t>(std::min_element(values.begin(), values.end()) - values.begin()),
+                static_cast<std::size_t>(std::min_element(signedValues.begin(), signedValues.end()) - signedValues.begin())};
+            const std::size_t expectedMaximum[] = {
+                static_cast<std::size_t>(std::max_element(values.begin(), values.end()) - values.begin()),
+                static_cast<std::size_t>(std::max_element(signedValues.begin(), signedValues.end()) - signedValues.begin())};
+            const std::size_t expectedBoth[2][2] = {
+                {static_cast<std::size_t>(unsignedBoth.first - values.begin()), static_cast<std::size_t>(unsignedBoth.second - values.begin())},
+                {static_cast<std::size_t>(signedBoth.first - signedValues.begin()), static_cast<std::size_t>(signedBoth.second - signedValues.begin())}};
+            for (const bool isSigned : {false, true}) {
+                if constexpr (!std::is_same_v<decltype(Minimum), std::nullptr_t>) Require(Minimum(first, last, isSigned) == first + expectedMinimum[isSigned]);
+                Require(Maximum(first, last, isSigned) == first + expectedMaximum[isSigned]);
+                const MinMaxPointers both = Both(first, last, isSigned);
+                Require(both.minimum == first + expectedBoth[isSigned][0] && both.maximum == first + expectedBoth[isSigned][1]);
+            }
+            std::vector<TUnsigned> guarded(count + 2, static_cast<TUnsigned>(0x5a));
+            std::copy(values.begin(), values.end(), guarded.begin() + 1);
+            Reverse(guarded.data() + 1, guarded.data() + 1 + count);
+            std::reverse(values.begin(), values.end());
+            Require(guarded.front() == static_cast<TUnsigned>(0x5a) && guarded.back() == static_cast<TUnsigned>(0x5a));
+            Require(std::equal(values.begin(), values.end(), guarded.begin() + 1));
+        }
+    }
+}
+
+static void CheckElementTies() {
+    const unsigned char bytes[] = {0x80, 5, 0x80, 0x7f, 0xff, 0x7f, 5, 0xff};
+    const MinMaxPointers signedBytes = __std_minmax_element_1_nid_postfix(bytes, bytes + 8, true);
+    Require(signedBytes.minimum == bytes && signedBytes.maximum == bytes + 5);
+    const MinMaxPointers unsignedBytes = __std_minmax_element_1_nid_postfix(bytes, bytes + 8, false);
+    Require(unsignedBytes.minimum == bytes + 1 && unsignedBytes.maximum == bytes + 7);
+    const MinMaxPointers singleByte = __std_minmax_element_1_nid_postfix(bytes + 3, bytes + 4, true);
+    Require(singleByte.minimum == bytes + 3 && singleByte.maximum == bytes + 3);
+    const MinMaxPointers emptyBytes = __std_minmax_element_1_nid_postfix(bytes + 2, bytes + 2, false);
+    Require(emptyBytes.minimum == bytes + 2 && emptyBytes.maximum == bytes + 2);
+    const std::uint32_t words[] = {0x80000000u, 3, 0x7fffffffu, 0x80000000u, 0xffffffffu, 3, 0x7fffffffu, 0xffffffffu};
+    const MinMaxPointers signedWords = __std_minmax_element_4_nid_postfix(words, words + 8, true);
+    Require(signedWords.minimum == words && signedWords.maximum == words + 6);
+    const MinMaxPointers unsignedWords = __std_minmax_element_4_nid_postfix(words, words + 8, false);
+    Require(unsignedWords.minimum == words + 1 && unsignedWords.maximum == words + 7);
+    const std::uint32_t equal[] = {4, 4, 4, 4, 4};
+    const MinMaxPointers equalWords = __std_minmax_element_4_nid_postfix(equal, equal + 5, true);
+    Require(equalWords.minimum == equal && equalWords.maximum == equal + 4);
+    Require(__std_min_element_4_nid_postfix(equal, equal + 5, false) == equal);
+    Require(__std_max_element_4_nid_postfix(equal, equal + 5, false) == equal);
+    unsigned char odd[] = {1, 2, 3, 4, 5, 6, 7};
+    __std_reverse_trivially_swappable_1_nid_postfix(odd, odd + 7);
+    Require(odd[0] == 7 && odd[1] == 6 && odd[2] == 5 && odd[3] == 4 && odd[4] == 3 && odd[5] == 2 && odd[6] == 1);
+    std::uint32_t even[] = {1, 2, 3, 4};
+    __std_reverse_trivially_swappable_4_nid_postfix(even, even + 4);
+    Require(even[0] == 4 && even[1] == 3 && even[2] == 2 && even[3] == 1);
+    std::uint64_t one[] = {9, 8};
+    __std_reverse_trivially_swappable_8_nid_postfix(one, one + 1);
+    Require(one[0] == 9 && one[1] == 8);
+    __std_reverse_trivially_swappable_8_nid_postfix(one, one);
+    Require(one[0] == 9 && one[1] == 8);
+}
+
 int main() {
     CheckMinValue();
     CheckSizedHelpers();
+    CheckUnsignedMax32Value();
     CheckFindAndCount();
+    CheckFindLast();
+    CheckUnsignedMin32Value();
     CheckUnsizedRescan();
+    CheckSignedMax64Value();
     CheckMinMax();
+    CheckMaxValue();
     CheckReverseAndSwap();
+    CheckReverseCopyLengthRejected();
+    CheckSignedMin64Value();
+    CheckInvalidRanges();
+    CheckElementTies();
+    CheckElementOracle<std::uint8_t, nullptr, __std_max_element_1_nid_postfix, __std_minmax_element_1_nid_postfix, __std_reverse_trivially_swappable_1_nid_postfix>();
+    CheckElementOracle<std::uint16_t, nullptr, __std_max_element_2_nid_postfix, __std_minmax_element_2_nid_postfix, __std_reverse_trivially_swappable_2_nid_postfix>();
+    CheckElementOracle<std::uint32_t, __std_min_element_4_nid_postfix, __std_max_element_4_nid_postfix, __std_minmax_element_4_nid_postfix, __std_reverse_trivially_swappable_4_nid_postfix>();
+    CheckElementOracle<std::uint64_t, __std_min_element_8_nid_postfix, __std_max_element_8_nid_postfix, __std_minmax_element_8_nid_postfix, __std_reverse_trivially_swappable_8_nid_postfix>();
     return 0;
 }

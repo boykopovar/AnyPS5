@@ -1,6 +1,9 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -13,8 +16,11 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
+#include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);
@@ -66,13 +72,19 @@ constexpr uint32_t EventPressEnter = 5;
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
+struct PendingInput {
+    ImeHostInput input;
+    std::u16string paste;
+};
+
 struct Session {
     Param param{};
     ImeExtKeyboardFilter extKeyboardFilter = nullptr;
     std::u16string text;
     std::uint32_t caret = 0;
     std::deque<ImeEvent> events;
-    std::deque<ImeHostInput> hostInputs;
+    std::deque<PendingInput> hostInputs;
+    ImeComposition composition;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -86,6 +98,9 @@ std::set<int32_t> g_openKeyboards;
 std::mutex g_imeMutex;
 std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
+std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
+std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
 void PanelSize(const Param& param, uint32_t* width, uint32_t* height) {
@@ -118,30 +133,8 @@ std::size_t TextLength(const char16_t* text, std::size_t limit) {
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
     std::u16string units;
-    for (std::size_t i = 0; i < size;) {
-        const auto lead = static_cast<unsigned char>(text[i]);
-        std::uint32_t codePoint = 0;
-        std::size_t extra = 0;
-        if (lead < 0x80) codePoint = lead;
-        else if ((lead & 0xe0) == 0xc0) { codePoint = lead & 0x1f; extra = 1; }
-        else if ((lead & 0xf0) == 0xe0) { codePoint = lead & 0x0f; extra = 2; }
-        else if ((lead & 0xf8) == 0xf0) { codePoint = lead & 0x07; extra = 3; }
-        else throw std::invalid_argument("IME host input: invalid UTF-8 lead byte");
-        if (extra != 0 && i + extra >= size) throw std::invalid_argument("IME host input: truncated UTF-8 sequence");
-        for (std::size_t k = 1; k <= extra; ++k) {
-            const auto next = static_cast<unsigned char>(text[i + k]);
-            if ((next & 0xc0) != 0x80) throw std::invalid_argument("IME host input: invalid UTF-8 continuation byte");
-            codePoint = (codePoint << 6) | (next & 0x3f);
-        }
-        i += extra + 1;
-        if (codePoint >= 0x10000) {
-            codePoint -= 0x10000;
-            units.push_back(static_cast<char16_t>(0xd800 + (codePoint >> 10)));
-            units.push_back(static_cast<char16_t>(0xdc00 + (codePoint & 0x3ff)));
-        } else {
-            units.push_back(static_cast<char16_t>(codePoint));
-        }
-    }
+    for (const char32_t point : ImeHostText::DecodeUtf8Lenient(text, size, false))
+        ImeHostText::AppendUtf16(units, point);
     return units;
 }
 
@@ -266,7 +259,15 @@ std::size_t UnitsAfter(const Session& session) {
     return caret + 1 < session.text.size() && IsHighSurrogate(session.text[caret]) && IsLowSurrogate(session.text[caret + 1]) ? 2 : 1;
 }
 
-std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input) {
+std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
+    const ImeHostInput& input = pending.input;
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        return std::nullopt;
+    }
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -321,38 +322,64 @@ std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input)
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
+        case ImeHostInputKind::Paste:
+            return Insert(session, pending.paste);
+        case ImeHostInputKind::Preedit:
+            return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
 }
 
-int ValidateOpen(const Param* param, const ExtendedParam* extended) {
+int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr, ExtendedParam* outExt = nullptr, std::u16string* outText = nullptr) {
     if (!param) return ErrorInvalidAddress;
-    if (param->user_id == UserIdInvalid) return ErrorInvalidUserId;
-    if (param->type > TypeNumber) return ErrorInvalidType;
-    if (param->enter_label > EnterLabelLast) return ErrorInvalidEnterLabel;
-    if (param->input_method != 0) return ErrorInvalidInputMethod;
-    if ((param->option & ~ValidOptions) != 0) return ErrorInvalidOption;
-    if (param->max_text_length == 0 || param->max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
-    if (!param->input_text_buffer) return ErrorInvalidInputTextBuffer;
-    const float maxX = (param->option & OptionUseOver2K) != 0 ? 3840.0f : 1920.0f;
-    const float maxY = (param->option & OptionUseOver2K) != 0 ? 2160.0f : 1080.0f;
-    if (!(param->posx >= 0.0f && param->posx < maxX)) return ErrorInvalidPosX;
-    if (!(param->posy >= 0.0f && param->posy < maxY)) return ErrorInvalidPosY;
-    if (param->horizontal_alignment > AlignmentLast) return ErrorInvalidHorizontalAlignment;
-    if (param->vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
+    Param localParam{};
+    const int savedErrno = errno;
+    const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copiedParam) return ErrorInvalidAddress;
+    if (localParam.user_id == UserIdInvalid) return ErrorInvalidUserId;
+    if (localParam.type > TypeNumber) return ErrorInvalidType;
+    if (localParam.enter_label > EnterLabelLast) return ErrorInvalidEnterLabel;
+    if (localParam.input_method != 0) return ErrorInvalidInputMethod;
+    if ((localParam.option & ~ValidOptions) != 0) return ErrorInvalidOption;
+    if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
+    if (!localParam.input_text_buffer) return ErrorInvalidInputTextBuffer;
+    const float maxX = (localParam.option & OptionUseOver2K) != 0 ? 3840.0f : 1920.0f;
+    const float maxY = (localParam.option & OptionUseOver2K) != 0 ? 2160.0f : 1080.0f;
+    if (!(localParam.posx >= 0.0f && localParam.posx < maxX)) return ErrorInvalidPosX;
+    if (!(localParam.posy >= 0.0f && localParam.posy < maxY)) return ErrorInvalidPosY;
+    if (localParam.horizontal_alignment > AlignmentLast) return ErrorInvalidHorizontalAlignment;
+    if (localParam.vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
+    ExtendedParam localExt{};
     if (extended) {
-        if (extended->priority > PanelPriorityLast) return ErrorInvalidExtended;
-        for (const std::int8_t byte : extended->reserved) {
+        const int extErrno = errno;
+        const bool copiedExt = GuestCopyIn_nid_no_patch(&localExt, extended, sizeof(localExt));
+        errno = extErrno;
+        if (!copiedExt) return ErrorInvalidAddress;
+        if (localExt.priority > PanelPriorityLast) return ErrorInvalidExtended;
+        for (const std::int8_t byte : localExt.reserved) {
             if (byte != 0) return ErrorInvalidExtended;
         }
     }
-    if (!param->work || (reinterpret_cast<std::uintptr_t>(param->work) & 3u) != 0) return ErrorInvalidWork;
-    if (!param->handler) return ErrorInvalidHandler;
-    for (const std::int8_t byte : param->reserved) {
+    if (!localParam.work || (reinterpret_cast<std::uintptr_t>(localParam.work) & 3u) != 0) return ErrorInvalidWork;
+    if (!localParam.handler) return ErrorInvalidHandler;
+    for (const std::int8_t byte : localParam.reserved) {
         if (byte != 0) return ErrorInvalidReserved;
     }
-    const std::size_t length = TextLength(param->input_text_buffer, param->max_text_length);
-    if (!ValidText(param->input_text_buffer, length, (param->option & OptionMultiline) != 0)) return ErrorInvalidText;
+    std::u16string localText;
+    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
+        char16_t unit = u'\0';
+        const int textErrno = errno;
+        const bool copiedUnit = GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit));
+        errno = textErrno;
+        if (!copiedUnit) return ErrorInvalidAddress;
+        if (unit == u'\0') break;
+        localText.push_back(unit);
+    }
+    if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
+    if (outParam) *outParam = localParam;
+    if (outExt) *outExt = localExt;
+    if (outText) *outText = std::move(localText);
     return 0;
 }
 
@@ -364,9 +391,18 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
-            g_session->hostInputs.push_back(input);
+            g_session->hostInputs.push_back({input, {}});
             return;
         }
+    }
+    if (input.kind == ImeHostInputKind::Preedit) {
+        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
+        if (preeditSink == nullptr) return;
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
+        preeditSink(units.data(), units.size(), input.start, input.length);
+        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -379,6 +415,26 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     sink(input.kind, units.data(), units.size());
 }
 
+void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
+    if (text == nullptr) return;
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            std::u16string units = ImeHostText::ClipboardUnits(text, size, (g_session->param.option & OptionMultiline) != 0);
+            if (units.empty()) return;
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Paste;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostTextSink sink = g_textSink.load();
+    if (sink == nullptr) return;
+    const std::u16string units = ImeHostText::ClipboardUnits(text, size, false);
+    if (units.empty()) return;
+    sink(ImeHostInputKind::Paste, units.data(), units.size());
+}
+
 bool ImeCapturesKeyboard_nid_postfix() {
     std::lock_guard lock(g_imeMutex);
     return g_session.has_value() || g_textSink.load() != nullptr;
@@ -388,22 +444,50 @@ void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink) {
     g_textSink = sink;
 }
 
+void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink) {
+    g_preeditSink = sink;
+}
+
+bool ImeCapturesPad_nid_postfix() {
+    return g_padSink.load() != nullptr;
+}
+
+void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
+    if (const ImeHostPadSink sink = g_padSink.load()) sink(pad);
+}
+
+void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
+    g_padSink = sink;
+}
+
+void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {
+    g_viewProvider = provider;
+}
+
+bool ImeReadKeyboardView_nid_postfix(ImeKeyboardView& view) {
+    const ImeKeyboardViewProvider provider = g_viewProvider.load();
+    return provider != nullptr && provider(view);
+}
+
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
     std::lock_guard lock(g_imeMutex);
     if (g_session) return ErrorBusy;
-    if (const int error = ValidateOpen(param, extended)) return error;
+    Param localParam{};
+    ExtendedParam localExt{};
+    std::u16string localText;
+    if (const int error = ValidateOpen(param, extended, &localParam, &localExt, &localText)) return error;
     Session session;
     session.id = ++g_nextSessionId;
-    session.param = *param;
-    session.extKeyboardFilter = extended ? extended->ext_keyboard_filter : nullptr;
-    session.text.assign(param->input_text_buffer, TextLength(param->input_text_buffer, param->max_text_length));
+    session.param = localParam;
+    session.extKeyboardFilter = extended ? localExt.ext_keyboard_filter : nullptr;
+    session.text = std::move(localText);
     session.caret = static_cast<uint32_t>(session.text.size());
     SyncBuffers(session);
     ImeEvent open{};
     open.id = EventOpen;
-    open.param.rect.x = param->posx;
-    open.param.rect.y = param->posy;
-    PanelSize(*param, &open.param.rect.width, &open.param.rect.height);
+    open.param.rect.x = localParam.posx;
+    open.param.rect.y = localParam.posy;
+    PanelSize(localParam, &open.param.rect.width, &open.param.rect.height);
     session.events.push_back(open);
     g_session = std::move(session);
     return 0;
@@ -421,22 +505,29 @@ int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form) {
     if (!g_session) return ErrorNotOpened;
     if (!form) return ErrorInvalidAddress;
     const Param& param = g_session->param;
-    *form = {};
-    form->type = param.type;
-    form->posx = param.posx;
-    form->posy = param.posy;
-    form->horizontal_alignment = param.horizontal_alignment;
-    form->vertical_alignment = param.vertical_alignment;
-    PanelSize(param, &form->width, &form->height);
+    PositionAndForm localForm{};
+    localForm.type = param.type;
+    localForm.posx = param.posx;
+    localForm.posy = param.posy;
+    localForm.horizontal_alignment = param.horizontal_alignment;
+    localForm.vertical_alignment = param.vertical_alignment;
+    PanelSize(param, &localForm.width, &localForm.height);
+    if (!GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm))) return ErrorInvalidAddress;
     return 0;
 }
 
 int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
- if (!param || !width || !height) return ErrorInvalidAddress;
- if (param->type > TypeNumber) return ErrorInvalidType;
- if ((param->option & ~ValidOptions) != 0) return ErrorInvalidOption;
- PanelSize(*param, width, height);
- return 0;
+    Param localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
+    if (!width || !height) return ErrorInvalidAddress;
+    if (localParam.type > TypeNumber) return ErrorInvalidType;
+    if ((localParam.option & ~ValidOptions) != 0) return ErrorInvalidOption;
+    uint32_t localWidth = 0;
+    uint32_t localHeight = 0;
+    PanelSize(localParam, &localWidth, &localHeight);
+    if (!GuestCopyOut_nid_no_patch(width, &localWidth, sizeof(localWidth))) return ErrorInvalidAddress;
+    if (!GuestCopyOut_nid_no_patch(height, &localHeight, sizeof(localHeight))) return ErrorInvalidAddress;
+    return 0;
 }
 
 int APS5_VABI sceImeKeyboardClose(int32_t user_id) {
@@ -453,16 +544,20 @@ int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info) {
 }
 
 int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids) {
- if (!resource_ids) return ErrorInvalidAddress;
- if (user_id == UserIdInvalid) return ErrorInvalidUserId;
- *resource_ids = {};
- resource_ids->user_id = user_id;
- std::lock_guard lock(g_keyboardMutex);
- return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
+    {
+        std::lock_guard lock(g_keyboardMutex);
+        if (!g_openKeyboards.contains(user_id)) return ErrorNotOpened;
+    }
+    if (!resource_ids) return ErrorInvalidAddress;
+    KeyboardResourceIdArray localIds{};
+    localIds.user_id = user_id;
+    if (!GuestCopyOut_nid_no_patch(resource_ids, &localIds, sizeof(localIds))) return ErrorInvalidAddress;
+    return ErrorConnectionFailed;
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
  if (!param) return ErrorInvalidAddress;
+ if (user_id == UserIdInvalid) return ErrorInvalidUserId;
  std::lock_guard lock(g_keyboardMutex);
  if (!g_openKeyboards.insert(user_id).second) return ErrorBusy;
  return 0;
@@ -486,24 +581,30 @@ int APS5_VABI sceImeCheckFilterText(const void* param) {
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {
- if (!param) return;
- std::memset(param, 0, sizeof(*param));
- param->user_id = -1;
+    if (!param) return;
+    Param localParam{};
+    localParam.user_id = -1;
+    GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam));
 }
 
 int APS5_VABI sceImeSetCaret(const Caret* caret) {
     std::lock_guard lock(g_imeMutex);
     if (!g_session) return ErrorNotOpened;
     if (!caret) return ErrorInvalidAddress;
-    if (caret->index > g_session->text.size()) return ErrorInvalidParam;
-    g_session->caret = caret->index;
+    Caret localCaret{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localCaret, caret, sizeof(localCaret));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidAddress;
+    if (localCaret.index > g_session->text.size()) return ErrorInvalidParam;
+    g_session->caret = localCaret.index;
+    NormalizeCaret(*g_session);
     ++g_session->revision;
     return 0;
 }
 
 int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(std::uint8_t enabled) {
     (void)enabled;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -516,7 +617,7 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
     session.text.assign(text, count);
     ++session.revision;
-    if (session.caret > session.text.size()) session.caret = static_cast<uint32_t>(session.text.size());
+    NormalizeCaret(session);
     SyncBuffers(session);
     return 0;
 }
@@ -530,6 +631,15 @@ int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geome
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
+    bool keyboardOpen;
+    {
+        std::lock_guard lock(g_keyboardMutex);
+        keyboardOpen = !g_openKeyboards.empty();
+    }
+    if (!keyboardOpen) {
+        std::lock_guard lock(g_imeMutex);
+        if (!g_session) return ErrorNotOpened;
+    }
     if (!handler) return ErrorInvalidHandler;
     for (;;) {
         ImeEvent event{};
@@ -547,9 +657,9 @@ int APS5_VABI sceImeUpdate(EventHandler handler) {
             std::lock_guard lock(g_imeMutex);
             if (!g_session || g_session->param.handler != handler) return 0;
             if (!g_session->hostInputs.empty()) {
-                const ImeHostInput input = g_session->hostInputs.front();
+                const PendingInput pending = std::move(g_session->hostInputs.front());
                 g_session->hostInputs.pop_front();
-                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, input)) {
+                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, pending)) {
                     runFilter = true;
                     filter = g_session->param.filter;
                     filterText = g_session->text;
@@ -663,6 +773,8 @@ int APS5_VABI sceImeConfirmCandidate(std::int32_t index) {
 }
 
 int APS5_VABI sceImeDisableController(void) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return ErrorNotOpened;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -809,5 +921,19 @@ int APS5_VABI InitializeImeModule_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NbbzN9GRg+c", libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch);
+
+int APS5_VABI libSceImeUnknown_aChMGUoc7QI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aChMGUoc7QI", libSceImeUnknown_aChMGUoc7QI_nid_no_patch);
 
 }

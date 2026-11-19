@@ -1,6 +1,5 @@
-add_library(libSceSaveDataDialog.native SHARED EXCLUDE_FROM_ALL Export.cpp)
-target_include_directories(libSceSaveDataDialog.native PRIVATE ${LIBS_INCLUDE_DIR})
-configure_windows_unwind(libSceSaveDataDialog.native)
+include(${CMAKE_CURRENT_SOURCE_DIR}/SaveDataDialogLibrary.cmake)
+add_sce_savedata_dialog_library(libSceSaveDataDialog.native)
 
 if(BUILD_TESTING)
     add_test_executable(guest_savedata_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataDialog.cpp)

@@ -149,10 +149,42 @@ static void CloseWhileWaitingOnFile() {
     Require(std::filesystem::remove(path));
 }
 
+static void Dup2OntoWatchedFile() {
+    const std::string path = "anyps5-equeue-dup2-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int created = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(created >= 0);
+    Require(close_nid_postfix(created) == 0);
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "dup2") == SCE_OK);
+    std::atomic<bool> stop{false};
+    std::thread waiter([eq, &stop] {
+        const KernelUseconds timeout = 1000;
+        std::array<KernelEvent, 4> events{};
+        int count = 0;
+        while (!stop.load()) {
+            Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+        }
+    });
+    for (int i = 0; i < 2000; ++i) {
+        const int watched = open_nid_postfix(path.c_str(), 0x0002, 0);
+        const int replacement = open_nid_postfix(path.c_str(), 0x0002, 0);
+        Require(watched >= 0 && replacement >= 0);
+        Require(sceKernelAddReadEvent(eq, watched, 0, nullptr) == SCE_OK);
+        Require(dup2_nid_postfix(replacement, watched) == watched);
+        Require(close_nid_postfix(replacement) == 0);
+        Require(close_nid_postfix(watched) == 0);
+    }
+    stop.store(true);
+    waiter.join();
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(std::filesystem::remove(path));
+}
+
 int main() {
     PipeReadEvents();
     RegularFileEvents();
     CloseWhileWaitingOnFile();
+    Dup2OntoWatchedFile();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};

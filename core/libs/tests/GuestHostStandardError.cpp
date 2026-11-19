@@ -15,6 +15,9 @@
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#elif defined(__APPLE__)
+#include <new>
+#include <typeinfo>
 #endif
 
 extern "C" {
@@ -64,7 +67,13 @@ static Outcome Run(Redirect redirect, const std::filesystem::path& probe, bool t
         std::fputs("host\n", stderr);
         if (terminate) {
             SkipCrashHandler();
+#ifdef __APPLE__
+            void* object = __cxa_allocate_exception_nid_postfix(sizeof(std::runtime_error));
+            new (object) std::runtime_error("report kept");
+            __cxa_throw_nid_postfix(object, const_cast<std::type_info*>(&typeid(std::runtime_error)), [](void* thrown) { static_cast<std::runtime_error*>(thrown)->~runtime_error(); });
+#else
             throw std::runtime_error("report kept");
+#endif
         }
         if (redirect == Redirect::Reopen && fflush_nid_postfix(__stderrp_nid_postfix) != 0) ::_exit(71);
         ::_exit(0);
@@ -140,8 +149,9 @@ int main() {
                 if (fprintf_nid_postfix(__stderrp_nid_postfix, "guest-fprintf\n") < 0) ::_exit(73);
                 *__error_nid_postfix() = 2;
                 perror_nid_postfix("guest-perror");
+                perror_nid_postfix(reinterpret_cast<const char*>(0x10));
                 if (fflush_nid_postfix(__stderrp_nid_postfix) != 0) ::_exit(73);
-                expected = "guest-fprintf\nguest-perror: No such file or directory\n";
+                expected = "guest-fprintf\nguest-perror: No such file or directory\nNo such file or directory\n";
             }
             std::string got;
             char buffer[64];

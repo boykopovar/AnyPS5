@@ -1,8 +1,14 @@
 # libSceNpCommerce technical debt
 
+### Functional
+
+- [sceNpCommerceDialogOpen, sceNpCommerceDialogOpen2](../../../core/libs/prx/libSceNpCommerce/Export.cpp) - returning `0x80B8000D` (`COMMON_DIALOG_ERROR_ARG_NULL`) for an unmapped or unreadable parameter pointer is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
-- [libSceNpCommerce](../../../core/libs/prx/libSceNpCommerce/Export.cpp) - the PS Store icon show/hide calls and `sceNpCommerceSetPsStoreIconLayout` do nothing
+- [sceNpCommerceDialogGetResult](../../../core/libs/prx/libSceNpCommerce/Export.cpp) (libSceNpCommerce) - Firmware 13.42 checks only for null and accesses the structure directly (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns COMMON_DIALOG_ERROR_INVALID_ARGUMENT instead.
+- [sceNpCommerceDialogOpen, sceNpCommerceDialogOpen2](../../../core/libs/prx/libSceNpCommerce/Export.cpp) (libSceNpCommerce) - with `ANYPS5_PSN_DIALOGS=show`, a successful open shows AnyPS5's notice that the feature needs PlayStation Network; the console's own display without PlayStation Network is not measured, and the notice wording is AnyPS5's.
+- [sceNpCommerceShowPsStoreIcon, sceNpCommerceHidePsStoreIcon, sceNpCommerceSetPsStoreIconLayout](../../../core/libs/prx/libSceNpCommerce/Export.cpp) (libSceNpCommerce) - return 0 and show, hide or lay out no icon. Of the 38 titles relinked here, four import them: Ghost of Tsushima (PPSA02225) sets layout 2 once and then shows the icon at position 0, and Borderlands 4 (PPSA01494), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) pass a position read from a structure field and set no layout; each of the four calls `sceNpCommerceHidePsStoreIcon` once
 
 ### Unknown function info
 

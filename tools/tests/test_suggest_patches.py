@@ -6,7 +6,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
+from types import SimpleNamespace
 import unittest
+import errno
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,9 +21,9 @@ VERIFIED = "Verified 1 patches: 1 ok, 0 not-checked, 0 mismatch\n"
 
 class PatchAdvisorTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(prefix="patch advisor-")
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.catalog = self.root / "catalog"
         self.catalog.mkdir()
         self.input = self.root / "eboot.bin"
@@ -130,6 +133,57 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertEqual(self.advise(), 1)
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_json_is_a_usage_error(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        nested = "[" * (depth + 128) + "]" * (depth + 128)
+        for target in (self.param, self.catalog / "index.json"):
+            with self.subTest(target=target.name):
+                original = target.read_text(encoding="utf-8")
+                try:
+                    target.write_text(nested, encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(self.advise(), 2)
+                    self.assertTrue(stderr.getvalue().startswith("Patch advisor: "), stderr.getvalue())
+                    self.assertNotIn("param.json must be an object", stderr.getvalue())
+                    self.assertNotIn("catalog must have format 1", stderr.getvalue())
+                    run.assert_not_called()
+                finally:
+                    target.write_text(original, encoding="utf-8")
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_patch_file_rejects_only_its_entry(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                tomllib.loads("a = " + "[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("TOML decoder accepted every bounded nesting probe")
+        (self.catalog / "deep.toml").write_text("a = " + "[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+        deep = dict(self.entry, patch="deep.toml")
+        self.write_index([deep, self.entry])
+        run.return_value.returncode = 0
+        run.return_value.stdout = VERIFIED
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("Catalog entry 1 ('deep.toml'): rejected: ", stdout.getvalue())
+        self.assertIn("Recommended: " + str(self.catalog / "patch.toml"), stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(run.call_args.args[0][2], str(self.catalog / "patch.toml"))
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_catalog_cannot_escape_directory(self, run):
         self.entry["patch"] = "../outside.toml"
         self.write_index()
@@ -175,6 +229,45 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_called_once()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_catalog_keys_cannot_produce_a_recommendation(self, run):
+        entry = json.dumps(self.entry)
+        duplicate_patch = entry.replace('"patch": "patch.toml"',
+                                        '"patch": "missing.toml", "patch": "patch.toml"')
+        catalogs = (
+            '{"format": 0, "format": 1, "entries": [' + entry + ']}',
+            '{"format": 1, "entries": [' + duplicate_patch + ']}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for catalog in catalogs:
+            with self.subTest(catalog=catalog):
+                run.reset_mock()
+                (self.catalog / "index.json").write_text(catalog, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_param_keys_cannot_produce_a_recommendation(self, run):
+        params = (
+            '{"titleId": "OTHER0001", "titleId": "TEST00001", "contentVersion": "01.000.000"}',
+            '{"titleId": "TEST00001", "contentVersion": "00.000.000", "contentVersion": "01.000.000"}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for metadata in params:
+            with self.subTest(metadata=metadata):
+                run.reset_mock()
+                self.param.write_text(metadata, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
         self.entry["patch"] = "missing.toml"
         self.write_index()
@@ -214,6 +307,51 @@ class PatchAdvisorTests(unittest.TestCase):
             self.assertEqual(self.advise(), 0)
         self.assertIn("Catalog entry 1 ('loop-target.toml'): rejected", output.getvalue())
         run.assert_called_once()
+
+    def test_resolve_path_reports_symlink_loops(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        with self.assertRaises(ValueError) as error:
+            suggest_patches.resolve_path(first)
+        self.assertRegex(str(error.exception), r"Symlink loop|Too many levels of symbolic links")
+
+    def test_resolve_path_reports_windows_symlink_loops(self):
+        unresolvable = OSError(22, "The name of the file cannot be resolved by the system", "loop")
+        unresolvable.winerror = 1921
+        missing = OSError(2, "No such file or directory", "missing")
+        for failure, expected in ((unresolvable, True), (missing, False)):
+            with self.subTest(winerror=getattr(failure, "winerror", None)), \
+                    patch.object(suggest_patches.Path, "resolve", side_effect=failure):
+                with self.assertRaises(ValueError) as error:
+                    suggest_patches.resolve_path(self.root / "loop")
+                self.assertEqual("Symlink loop" in str(error.exception), expected, str(error.exception))
+
+    def test_cli_path_symlink_loops_are_reported_without_traceback(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        tool = Path(suggest_patches.__file__)
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        cases = (
+            ("catalog", ["--catalog", str(first), "--relinker", str(self.relinker)]),
+            ("module parent", ["--catalog", str(self.catalog), "--sce-module-path", str(first), "--relinker", str(self.relinker)]),
+        )
+        for label, arguments in cases:
+            with self.subTest(label=label):
+                result = subprocess.run(
+                    [sys.executable, str(tool), *arguments, "--param-json", str(self.param), "--input", str(self.input),
+                     "--module-dir", "Media/Modules"],
+                    capture_output=True, text=True, timeout=30, env=env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertRegex(result.stderr, r"Symlink loop|Too many levels of symbolic links")
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_timeout_is_not_a_recommendation(self, run):
@@ -317,6 +455,87 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertNotIn("Recommended:", output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_optional_catalog_metadata_is_displayed_after_verification(self, run):
+        self.entry.update({"id": "missing_module_fix", "name": "Missing module fix", "category": "compatibility",
+                           "description": "Removes an unused dependency", "notes": "Review before converting",
+                           "contributors": ["Ada", "Ben"], "source": "https://example.org/patches/test00001",
+                           "revision": 2, "tested": [{"stage": "verification", "result": "passed",
+                                                     "evidence": "One synthetic patch verified", "environment": "Linux",
+                                                     "date": "2026-10-26"},
+                                                    {"stage": "launch", "result": "partial",
+                                                     "evidence": "Reached the title screen"}]})
+        self.write_index()
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for options, heading in (((), "Recommended:"), (("--list-verified",), "Verified catalog entries: 1")):
+            with self.subTest(options=options):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(self.advise(*options), 0)
+                self.assertIn(heading, output.getvalue())
+                for detail in ("ID: missing_module_fix", "Name: Missing module fix", "Category: compatibility",
+                               "Description: Removes an unused dependency", "Notes: Review before converting",
+                               "Contributor: Ada", "Contributor: Ben", "Source: https://example.org/patches/test00001",
+                               "Revision: 2", "Tested: verification passed on Linux (2026-10-26): One synthetic patch verified",
+                               "Tested: launch partial: Reached the title screen"):
+                    self.assertIn(detail, output.getvalue())
+        self.assertEqual(run.call_count, 2)
+        self.module.write_bytes(b"different module")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise("--list-verified"), 1)
+        self.assertNotIn("Name: Missing module fix", output.getvalue())
+        self.assertEqual(run.call_count, 2)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_invalid_optional_metadata_does_not_hide_valid_entry(self, run):
+        invalid = (("id", "Bad ID", "id must match"), ("name", "line\nbreak", "name must be"),
+                   ("category", ["fps"], "invalid category"), ("description", 7, "description must be"),
+                   ("tested", [{"stage": "gameplay", "result": "passed"}], "invalid tested record fields"),
+                   ("tested", [{"stage": "gameplay", "result": "passed", "evidence": "ran", "date": "2026-02-30"}], "tested date must be a valid calendar date"),
+                   ("notes", "", "notes must be"), ("contributors", ["Ada", "ada"], "duplicate contributor"),
+                   ("source", "file:///tmp/patch", "source must be an HTTPS URL"),
+                   ("revision", True, "revision must be a positive integer"),
+                   ("unexpected", "value", "invalid fields"))
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for field, value, error in invalid:
+            with self.subTest(field=field, value=value):
+                bad = dict(self.entry, **{field: value})
+                self.write_index([bad, self.entry])
+                run.reset_mock()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(self.advise("--list-verified"), 0)
+                self.assertIn(f"Catalog entry 1 ('patch.toml'): rejected: {error}", output.getvalue())
+                self.assertIn("Verified catalog entries: 1", output.getvalue())
+                self.assertIn(f"Catalog entry 2: {self.catalog / 'patch.toml'}", output.getvalue())
+                run.assert_called_once()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_verified_ids_are_rejected_without_blocking_other_ids(self, run):
+        first = dict(self.entry, id="shared")
+        second = dict(self.entry, id="shared")
+        third = dict(self.entry, id="other")
+        self.write_index([first, second, third])
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise("--list-verified"), 0)
+        self.assertIn("Catalog entry 1 ('patch.toml'): rejected: duplicate verified id 'shared'", output.getvalue())
+        self.assertIn("Catalog entry 2 ('patch.toml'): rejected: duplicate verified id 'shared'", output.getvalue())
+        self.assertIn("Verified catalog entries: 1", output.getvalue())
+        self.assertIn(f"Catalog entry 3: {self.catalog / 'patch.toml'}", output.getvalue())
+        self.assertNotIn(f"Catalog entry 1: {self.catalog / 'patch.toml'}", output.getvalue())
+        self.assertEqual(run.call_count, 3)
+        other_version = dict(second, contentVersion="02.000.000")
+        self.write_index([first, other_version])
+        run.reset_mock()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("ID: shared", output.getvalue())
+        run.assert_called_once()
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_list_verified_skips_individual_errors(self, run):
         bad = dict(self.entry, patch="missing.toml")
         wrong_hash = dict(self.entry, targets={"Media/Modules/module.prx": "0" * 64})
@@ -387,7 +606,7 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertIn("--patches", output.getvalue())
         self.assertIn("--module-dir Media/Modules", output.getvalue())
         self.assertIn("--executable picker/picker.bin", output.getvalue())
-        self.assertIn(f"--sce-module-path {self.root}", output.getvalue())
+        self.assertIn(suggest_patches.command_line(["--sce-module-path", str(self.root)]), output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_no_entries_for_title_is_distinct(self, run):
@@ -402,6 +621,224 @@ class PatchAdvisorTests(unittest.TestCase):
     def test_invalid_timeout_is_rejected_before_relinker(self, run):
         self.assertEqual(self.advise("--timeout-seconds", "0"), 2)
         run.assert_not_called()
+
+
+    def test_relative_path_rejects_unsafe_names(self):
+        self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
+        for name in ("", "/abs/x", "../x", "a/../x", "a\\b", "C:/x", None, "a\x00b"):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                suggest_patches.relative_path(name)
+
+
+    def test_unique_json_keys_rejects_duplicate_keys(self):
+        self.assertEqual(suggest_patches.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
+
+
+    def test_confined_keeps_files_under_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "inside.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
+            with self.assertRaises(ValueError):
+                suggest_patches.confined(root, "../outside.txt")
+
+class PathErrorTests(unittest.TestCase):
+    def test_symlink_loop_error_names_the_path(self):
+        error = suggest_patches.path_error("a/b", OSError(errno.ELOOP, "too many levels"))
+        self.assertIsInstance(error, ValueError)
+        self.assertTrue(str(error).startswith("Symlink loop from 'a/b': "))
+
+    def test_other_errors_keep_their_own_text(self):
+        original = OSError(errno.ENOENT, "missing file")
+        error = suggest_patches.path_error("a/b", original)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), str(original))
+
+    def test_windows_symlink_loop_code_is_a_loop(self):
+        original = OSError(errno.EINVAL, "loop")
+        original.winerror = 1921
+        self.assertTrue(str(suggest_patches.path_error("p", original)).startswith("Symlink loop from 'p'"))
+
+
+class ConversionArgumentsTests(unittest.TestCase):
+    def test_minimal_arguments_only_name_the_patch_file(self):
+        args = SimpleNamespace(skip_sce_module=False, sce_module_path=None, module_dir=[], executable=[])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), ["--patches", "p.toml"])
+
+    def test_every_option_is_forwarded_in_order(self):
+        args = SimpleNamespace(skip_sce_module=True, sce_module_path=Path("sce"), module_dir=["m1", "m2"], executable=["e1"])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), [
+            "--patches", "p.toml", "--skip-sce-module", "--sce-module-path", "sce",
+            "--module-dir", "m1", "--module-dir", "m2", "--executable", "e1"])
+
+
+class ReadCatalogTests(unittest.TestCase):
+    def write(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_the_entries_of_a_format_one_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, '{"format": 1, "entries": [{"a": 1}]}')
+            self.assertEqual(suggest_patches.read_catalog(root), [{"a": 1}])
+
+    def test_wrong_shape_or_format_is_refused(self):
+        for text in ("[]", '{"format": 1}', '{"format": 2, "entries": []}', '{"format": true, "entries": []}',
+                     '{"format": 1, "entries": {}}', '{"format": 1, "entries": [], "extra": 1}'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "format 1 and an entries array"):
+                    suggest_patches.read_catalog(self.write(directory, text))
+
+    def test_strict_numbers_refuse_non_finite_constants(self):
+        text = '{"format": 1, "entries": [{"x": NaN}]}'
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, text)
+            self.assertEqual(len(suggest_patches.read_catalog(root)), 1)
+            with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                suggest_patches.read_catalog(root, strict_numbers=True)
+
+    def test_missing_index_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "file missing or outside directory"):
+                suggest_patches.read_catalog(Path(directory))
+
+
+class LoadCatalogTests(unittest.TestCase):
+    def catalog(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_numbered_entries_for_the_title_and_version(self):
+        text = json.dumps({"format": 1, "entries": [
+            {"titleId": "PPSA00001", "contentVersion": "01.00"},
+            {"titleId": "PPSA00002", "contentVersion": "01.00"},
+            "not an entry",
+            {"titleId": "PPSA00001", "contentVersion": "01.01"},
+            {"titleId": "PPSA00001", "contentVersion": "01.00", "id": "second"},
+        ]})
+        with tempfile.TemporaryDirectory() as directory:
+            entries = suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+        self.assertEqual([number for number, _ in entries], [1, 5])
+        self.assertEqual(entries[1][1]["id"], "second")
+
+    def test_no_match_gives_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.catalog(directory, '{"format": 1, "entries": []}')
+            self.assertEqual(suggest_patches.load_catalog(root, "PPSA00001", "01.00"), [])
+
+    def test_duplicate_keys_and_non_finite_numbers_are_refused(self):
+        for text, message in (('{"format": 1, "entries": [{"a": 1, "a": 2}]}', "duplicate JSON key"),
+                              ('{"format": 1, "entries": [{"a": Infinity}]}', "non-finite JSON number")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+
+
+class PrintMetadataTests(unittest.TestCase):
+    def render(self, metadata):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            suggest_patches.print_metadata(metadata)
+        return output.getvalue()
+
+    def test_empty_metadata_prints_nothing(self):
+        self.assertEqual(self.render({}), "")
+
+    def test_fields_are_printed_in_a_fixed_order(self):
+        metadata = {"source": "https://example.com", "notes": "n", "revision": 2, "description": "d", "category": "fix", "name": "N", "id": "i"}
+        self.assertEqual(self.render(metadata), "  ID: i\n  Name: N\n  Category: fix\n  Description: d\n  Revision: 2\n  Notes: n\n  Source: https://example.com\n")
+
+    def test_contributors_and_tested_records_get_their_own_lines(self):
+        metadata = {"contributors": ["a", "b"], "tested": [
+            {"stage": "load", "result": "pass", "evidence": "log"},
+            {"stage": "run", "result": "fail", "evidence": "video", "environment": "linux", "date": "2026-01-02"}]}
+        self.assertEqual(self.render(metadata), "  Contributor: a\n  Contributor: b\n  Tested: load pass: log\n  Tested: run fail on linux (2026-01-02): video\n")
+
+
+class ValidateMetadataTests(unittest.TestCase):
+    def valid(self):
+        return {
+            "id": "fps-unlock", "name": "FPS unlock", "category": "fps", "description": "d", "notes": "n",
+            "source": "https://example.com/patch", "revision": 2, "contributors": ["Ada", "Grace"],
+            "tested": [{"stage": "launch", "result": "passed", "evidence": "log", "environment": "linux", "date": "2026-02-28"}],
+        }
+
+    def test_valid_metadata_is_returned_without_entry_core_fields(self):
+        entry = {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {}, **self.valid()}
+        self.assertEqual(suggest_patches.validate_metadata(entry), self.valid())
+        self.assertEqual(suggest_patches.validate_metadata({"titleId": "PPSA00001"}), {})
+
+    def test_each_invalid_field_is_refused_with_its_message(self):
+        cases = (
+            ({"id": "Bad Id"}, "id must match"),
+            ({"id": 3}, "id must match"),
+            ({"name": "two\nlines"}, "name must be nonempty single-line text"),
+            ({"category": "nope"}, "invalid category"),
+            ({"source": "http://example.com"}, "source must be an HTTPS URL"),
+            ({"source": "https://"}, "source must be an HTTPS URL"),
+            ({"revision": 0}, "revision must be a positive integer"),
+            ({"revision": True}, "revision must be a positive integer"),
+            ({"contributors": []}, "contributors must be a nonempty array"),
+            ({"contributors": ["Ada", "ada"]}, "duplicate contributor"),
+            ({"tested": []}, "tested must be a nonempty array"),
+            ({"tested": [{"stage": "launch", "result": "passed"}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "extra": 1}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "nope", "result": "passed", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "nope", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-1-1"}]}, "tested date must be YYYY-MM-DD"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-02-30"}]}, "valid calendar date"),
+        )
+        for change, message in cases:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                suggest_patches.validate_metadata(change)
+
+
+class ValidateEntryTests(unittest.TestCase):
+    DIGEST = "A" * 64
+
+    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+        (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
+        return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
+
+    def test_valid_entry_returns_the_patch_lowercase_digests_and_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            entry["name"] = "Name"
+            patch, targets, metadata = suggest_patches.validate_entry(Path(directory), entry)
+            self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
+            self.assertEqual(targets, {"eboot.bin": "a" * 64})
+            self.assertEqual(metadata, {"name": "Name"})
+
+    def test_missing_or_unknown_fields_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            del entry["targets"]
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+            entry = self.setup(directory)
+            entry["surprise"] = 1
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_targets_must_be_a_nonempty_object_of_sha256_digests(self):
+        for targets, message in (({}, "targets must be a nonempty object"), ([], "targets must be a nonempty object"),
+                                 ({"eboot.bin": "abc"}, "invalid target digest"), ({"eboot.bin": 5}, "invalid target digest")):
+            with self.subTest(targets=targets), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory)
+                entry["targets"] = targets
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_patch_file_must_name_targets_that_match_the_digests(self):
+        for text, message in (("", "patch file has no valid targets"), ("patch = [1]\n", "patch file has no valid targets"),
+                              ('[[patch]]\ntarget = "other.bin"\n', "target hashes must cover exactly the patch targets"),
+                              ('[[patch]]\ntarget = "eboot.bin"\n[[patch]]\ntarget = "extra.bin"\n', "target hashes must cover exactly the patch targets")):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, text)
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
 
 
 if __name__ == "__main__":

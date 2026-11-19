@@ -1,15 +1,22 @@
 #include "prx/libSceFiber/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <xmmintrin.h>
 #ifdef _WIN32
 #include <windows.h>
+#endif
+#ifdef __APPLE__
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <sys/mman.h>
 #endif
 
 using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
@@ -61,6 +68,9 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     Require(argOnInitialize == 11 && argOnRun == 100, "first fiber arguments");
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == 0 && self == g_first, "first fiber self");
+    errno = 71;
+    Require(sceFiberGetSelf(reinterpret_cast<FiberObject**>(0x10)) == FiberErrorNull, "unwritable self pointer");
+    Require(errno == 71, "errno preserved");
     CheckActiveContext(g_first, g_firstContext.size());
     std::uint64_t framePointer = 0;
     Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "frame pointer null");
@@ -68,6 +78,8 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     framePointer = 0;
     Require(_sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "underscore frame pointer null");
     Require(_sceFiberGetThreadFramePointerAddress(&framePointer) == 0 && framePointer == g_threadFramePointer, "underscore thread frame pointer");
+    errno = 71;
+    Require(sceFiberGetThreadFramePointerAddress(reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid && errno == 71, "unwritable frame pointer");
     volatile double carried = 1.5;
     std::uint64_t received = 0;
     Require(sceFiberSwitch(g_second, 200, &received) == 0, "switch to second fiber");
@@ -104,6 +116,12 @@ alignas(16) std::array<unsigned char, 64 * 1024> g_smallArea;
 FiberStorage g_smallStorage;
 
 void APS5_VABI SmallEntry(std::uint64_t, std::uint64_t) {
+    auto* small = reinterpret_cast<FiberObject*>(&g_smallStorage);
+    auto* context = g_smallArea.data() + g_smallArea.size() - SmallContextSize;
+    Require(_sceFiberInitializeImpl_nid_postfix(small, "small", SmallEntry, 0, context, SmallContextSize, nullptr, 0) == FiberErrorState, "a running fiber cannot be initialized over its own stack");
+    FiberInfo info{};
+    info.size = sizeof(info);
+    Require(sceFiberGetInfo(small, &info) == 0 && std::strcmp(info.name, "small") == 0, "a refused initialize keeps the running fiber");
     std::uint64_t received = 0;
     for (;;) sceFiberReturnToThread(0, &received);
 }
@@ -268,6 +286,23 @@ void RunAttachedContext() {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(g_attached, &info) == 0 && info.addr_context == nullptr && info.size_context == 0, "fiber without a context reports none");
+    errno = 71;
+    Require(sceFiberGetInfo(g_attached, reinterpret_cast<FiberInfo*>(0x10)) == FiberErrorInvalid && errno == 71, "unwritable fiber info");
+    alignas(16) unsigned char notFiber[512] = {};
+    Require(sceFiberRename(nullptr, "renamed") == FiberErrorNull, "rename a null fiber");
+    Require(sceFiberRename(g_attached, nullptr) == FiberErrorNull, "rename to a null name");
+    errno = 71;
+    Require(sceFiberRename(g_attached, reinterpret_cast<const char*>(0x10)) == FiberErrorInvalid && errno == 71, "rename to an unreadable name");
+    Require(sceFiberRename(reinterpret_cast<FiberObject*>(notFiber), "renamed") == FiberErrorInvalid, "rename an object that is not a fiber");
+    Require(sceFiberRename(g_attached, "renamed") == 0, "rename a fiber");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "renamed") == 0, "the new name is reported");
+    const std::string longName(FIBER_MAX_NAME_LENGTH + 8, 'n');
+    Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
+    Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
+    errno = 71;
+    Require(_sceFiberInitializeImpl_nid_postfix(g_attached, reinterpret_cast<const char*>(0x10), AttachedEntry, 34, nullptr, 0, nullptr, 0) == FiberErrorInvalid && errno == 71, "initialize with an unreadable name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "attached") == 0 && info.arg_on_initialize == 33, "an unreadable name leaves the fiber unchanged");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");
@@ -288,6 +323,8 @@ void RunAttachedContext() {
 void RunInternalOptions() {
     auto* fiber = reinterpret_cast<FiberObject*>(&g_checkedStorage);
     Require(_sceFiberInitializeWithInternalOptionImpl(nullptr, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorNull, "internal option null fiber");
+    errno = 71;
+    Require(_sceFiberInitializeWithInternalOptionImpl(fiber, reinterpret_cast<const char*>(0x10), CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorInvalid && errno == 71, "internal option unreadable name");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), 256, nullptr, 0, 0) == FiberErrorRange, "internal option small context");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0x1, 0) == 0, "internal option without object registration");
     FiberInfo info{};
@@ -507,6 +544,71 @@ void RunContextlessOptions() {
     return result;
 }
 
+#ifdef __APPLE__
+std::uint64_t CollectedBytes(void* region, std::size_t bytes) {
+    std::uint64_t total = 0;
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(region), bytes, [](void* count, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::uint64_t*>(count) += end - begin; }, &total), "collect the watched region");
+    return total;
+}
+
+void CheckContextLeavesWriteWatch() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t bytes = 64 * 1024;
+    void* region = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    Require(region != MAP_FAILED, "map the watched region");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(region, bytes);
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "an armed region reports no writes");
+    FiberStorage storage{};
+    auto* fiber = reinterpret_cast<FiberObject*>(&storage);
+    Require(_sceFiberInitializeImpl_nid_postfix(fiber, "watched", SmallEntry, 0, region, bytes, nullptr, 0) == 0, "initialize a fiber on the watched region");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is reported as written");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is not armed again while the fiber exists");
+    Require(sceFiberFinalize(fiber) == 0, "finalize the fiber");
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "the region is armed again after the fiber is finalized");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(region, bytes);
+    munmap(region, bytes);
+}
+#endif
+
+FiberStorage g_unwritableAStorage;
+FiberStorage g_unwritableBStorage;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableAContext;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableBContext;
+
+void APS5_VABI UnwritableEntryA(std::uint64_t, std::uint64_t) {
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    errno = 71;
+    Require(sceFiberSwitch(b, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable switch output pointer");
+    Require(errno == 71, "errno preserved");
+    errno = 71;
+    Require(sceFiberReturnToThread(0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable return output pointer");
+    Require(errno == 71, "errno preserved");
+    std::uint64_t received = 0;
+    sceFiberReturnToThread(42, &received);
+}
+
+void APS5_VABI UnwritableEntryB(std::uint64_t, std::uint64_t) {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    std::uint64_t received = 0;
+    Require(sceFiberSwitch(a, 0, &received) == 0, "switch back to fiber A");
+}
+
+void RunUnwritablePointerCheck() {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    Require(_sceFiberInitializeImpl_nid_postfix(a, "unwritableA", UnwritableEntryA, 0, g_unwritableAContext.data(), g_unwritableAContext.size(), nullptr, 0) == 0, "init A");
+    Require(_sceFiberInitializeImpl_nid_postfix(b, "unwritableB", UnwritableEntryB, 0, g_unwritableBContext.data(), g_unwritableBContext.size(), nullptr, 0) == 0, "init B");
+    std::uint64_t returned = 0;
+    errno = 71;
+    Require(sceFiberRun_nid_postfix(a, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable run output pointer");
+    Require(errno == 71, "errno preserved");
+    Require(sceFiberRun_nid_postfix(a, 0, &returned) == 0 && returned == 42, "run A successfully");
+    Require(sceFiberFinalize(a) == 0, "finalize A");
+    Require(sceFiberFinalize(b) == 0, "finalize B");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -517,8 +619,45 @@ int main(int argc, char** argv) {
     }
     Require(argc == 1, "known test arguments");
     RunSmallContextFirst();
+#ifdef __APPLE__
+    CheckContextLeavesWriteWatch();
+#endif
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
+    Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "null opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x10)) == FiberErrorInvalid, "unwritable opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x1)) == FiberErrorAlignment, "misaligned opt param");
+    struct alignas(8) AlignedOptParamBuffer {
+        std::uint8_t bytes[0x80 + 0x40];
+        std::uint32_t sentinel = 0x5a5a5a5a;
+    } storage;
+    constexpr std::size_t OptParamSize = 0x80;
+    constexpr std::uint8_t OptParamMagic[4] = {0x4d, 0xe6, 0x40, 0xbb};
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{8}, std::size_t{16}, std::size_t{32}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == 0, "initialize opt param");
+        Require(std::memcmp(storage.bytes + offset, OptParamMagic, sizeof(OptParamMagic)) == 0, "opt param magic");
+        bool restZero = true;
+        for (std::size_t i = sizeof(OptParamMagic); i < OptParamSize; ++i) {
+            if (storage.bytes[offset + i] != 0) restZero = false;
+        }
+        Require(restZero, "opt param bytes 4..127 cleared");
+        bool outsideIntact = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if ((i < offset || i >= offset + OptParamSize) && storage.bytes[i] != 0xA5) outsideIntact = false;
+        }
+        Require(outsideIntact, "bytes outside the opt param intact");
+        Require(storage.sentinel == 0x5a5a5a5a, "sentinel intact");
+    }
+    for (const std::size_t offset : {std::size_t{1}, std::size_t{2}, std::size_t{4}}) {
+        std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+        Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(storage.bytes + offset)) == FiberErrorAlignment, "misaligned opt param offset");
+        bool untouched = true;
+        for (std::size_t i = 0; i < sizeof(storage.bytes); ++i) {
+            if (storage.bytes[i] != 0xA5) untouched = false;
+        }
+        Require(untouched, "misaligned opt param writes nothing");
+    }
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
     Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
     const auto threadCsr = _mm_getcsr();
@@ -558,4 +697,5 @@ int main(int argc, char** argv) {
     RunOnLargeContext();
     RunAttachedContext();
     RunInternalOptions();
+    RunUnwritablePointerCheck();
 }

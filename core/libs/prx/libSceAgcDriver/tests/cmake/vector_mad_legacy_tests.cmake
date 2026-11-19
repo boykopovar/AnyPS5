@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(vector_mad_legacy_tests ${LIBS_INCLUDE_DIR}/tests/VectorMadLegacy.cpp)
+    target_link_libraries(vector_mad_legacy_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(vector_mad_legacy_tests)
+    add_test(NAME vector_mad_legacy COMMAND vector_mad_legacy_tests)
+    if(WIN32)
+        set_tests_properties(vector_mad_legacy PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

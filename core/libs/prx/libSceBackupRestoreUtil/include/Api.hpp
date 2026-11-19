@@ -20,5 +20,10 @@ int APS5_VABI sceBackupRestoreUtilInitialize();
 int APS5_VABI sceBackupRestoreUtilPrepareBackup();
 int APS5_VABI sceBackupRestoreUtilRestoreData();
 int APS5_VABI sceBackupRestoreUtilTerminate();
+int APS5_VABI sceBackupRestoreUtilCalcRequiredSize();
+int APS5_VABI sceBackupRestoreUtilCancelCalcRequiredSize();
+int APS5_VABI sceBackupRestoreUtilGetBackupTelemetryInfo();
+int APS5_VABI sceBackupRestoreUtilGetRestoreFailedTitles();
+int APS5_VABI sceBackupRestoreUtilGetRestoreTelemetryInfo();
 
 }

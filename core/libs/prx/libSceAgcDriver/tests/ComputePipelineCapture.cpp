@@ -4,6 +4,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -46,6 +52,21 @@ public:
     std::filesystem::path path;
 };
 
+void CreateSizedFile(const std::filesystem::path& path, std::uintmax_t bytes) {
+#ifdef _WIN32
+    const auto file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(file != INVALID_HANDLE_VALUE, "cannot create sized file");
+    LARGE_INTEGER size{};
+    size.QuadPart = static_cast<LONGLONG>(bytes);
+    const bool sized = SetFilePointerEx(file, size, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+    CloseHandle(file);
+    Require(sized, "cannot size file");
+#else
+    Require(std::ofstream(path, std::ios::binary).good(), "cannot create sized file");
+    std::filesystem::resize_file(path, bytes);
+#endif
+}
+
 void CheckRoundTrip() {
     auto capture = AgcDriver::ComputePipelineFixture();
     capture.deviceName = "test GPU \"name\"";
@@ -78,6 +99,9 @@ void CheckRoundTrip() {
     changed.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
     Require(AgcDriver::ComputePipelineCapture::Decode(changed.Encode()).stageFlags == changed.stageFlags, "full subgroups were lost in the capture");
     Require(changed.Identity() != capture.Identity(), "full subgroups did not affect capture identity");
+    changed.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT | VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT;
+    changed.requiredSubgroupSize = 0;
+    Require(AgcDriver::ComputePipelineCapture::Decode(changed.Encode()).stageFlags == changed.stageFlags, "full subgroups of any size were lost in the capture");
     Directory directory;
     const auto file = capture.Write(directory.path);
     Require(AgcDriver::ComputePipelineCapture::Read(file).Encode() == encoded, "capture file changed pipeline inputs");
@@ -165,6 +189,10 @@ void CheckMalformedRecords() {
         copy.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
         copy.requiredSubgroupSize = 0;
     });
+    invalid([](auto& copy) {
+        copy.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT | VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT;
+        copy.requiredSubgroupSize = 32;
+    });
     invalid([](auto& copy) { copy.requiredSubgroupSize = 3; });
     invalid([](auto& copy) { copy.specialization.push_back(copy.specialization[0]); });
     invalid([](auto& copy) { copy.pushConstants = {{VK_SHADER_STAGE_VERTEX_BIT, 0, 4}}; });
@@ -200,14 +228,11 @@ void CheckOptionalByteCap() {
     Directory directory;
     auto capture = AgcDriver::ComputePipelineFixture();
     const auto smallBytes = capture.Encode().size();
-    constexpr std::size_t chunkBytes = 32u * 1024u * 1024u;
+    constexpr std::uintmax_t chunkBytes = 32u * 1024u * 1024u;
     for (std::uint32_t index = 0; index < 8u; ++index) {
-        auto large = capture;
-        large.specialization[0].value = index;
-        const auto bytes = chunkBytes - (index == 7u ? smallBytes : 0u);
-        Require(bytes >= smallBytes && (bytes - smallBytes) % 4u == 0u, "byte-cap fixture size is not representable");
-        large.spirv.insert(large.spirv.end() - 2, (bytes - smallBytes) / 4u, 0x00010000u);
-        Require(std::filesystem::file_size(large.Write(directory.path)) == bytes, "byte-cap fixture size differs");
+        const auto record = directory.path / ("compute-" + std::to_string(index));
+        Require(std::filesystem::create_directory(record), "cannot create byte-cap fixture record");
+        CreateSizedFile(record / "capture.aps5cp", chunkBytes - (index == 7u ? smallBytes : 0u));
     }
     capture.specialization[0].value = 8u;
     Require(!capture.WriteOptional(directory.path).empty() && AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture refused exactly 256 MiB");

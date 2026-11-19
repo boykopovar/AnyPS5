@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace AgcDriver::DriverDetail {
 
@@ -16,8 +17,10 @@ inline constexpr std::chrono::microseconds PollTryInterval{1000};
 
 struct LabelStore {
     std::uint64_t stamp = 0;
+    std::uint64_t generation = 0;
     std::uint32_t value = 0;
     std::uint32_t queue = 0xffffffffu;
+    bool ordered = true;
 };
 
 struct WriteRecord {
@@ -42,10 +45,12 @@ struct WaitOutcomes {
 };
 
 struct EpochBumps {
-    std::uint64_t submissions = 0, waits = 0, drains = 0, reaps = 0, packets = 0;
+    std::uint64_t submissions = 0, waits = 0, drains = 0, reaps = 0, packets = 0, waitsOrdered = 0;
 };
 
 void PollSleep();
+
+bool OwnStoreRejects(std::span<const std::uint32_t> packet, std::uint64_t awaited, std::size_t bytes, std::uint32_t queue);
 
 }
 

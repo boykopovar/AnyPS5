@@ -75,6 +75,11 @@ std::uint8_t APS5_VABI _Fetch_xor_seq_cst_1_nid_postfix(volatile std::uint8_t* t
 std::uint16_t APS5_VABI _Fetch_xor_seq_cst_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 std::uint32_t APS5_VABI _Fetch_xor_seq_cst_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 
+std::uint64_t APS5_VABI _Fetch_add_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_and_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_or_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_xor_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+
 void APS5_VABI _Atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { Store(target, value); }
 void APS5_VABI _Atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { Store(target, value); }
 void APS5_VABI _Atomic_store_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { Store(target, value); }
@@ -158,6 +163,12 @@ void APS5_VABI _Atomic_thread_fence_nid_postfix(int order) {
 
 void APS5_VABI _Atomic_signal_fence_nid_postfix(int) {
 }
+
+static volatile unsigned char SharedPtrSpinLock = 0;
+
+void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix() { LockFlag(&SharedPtrSpinLock); }
+
+void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix() { UnlockFlag(&SharedPtrSpinLock); }
 
 void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, const volatile void* source, int) {
     LockFlag(flag);

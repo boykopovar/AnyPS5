@@ -2,6 +2,10 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#if defined(__x86_64__)
+#include "prx/libc/include/ExtendedPrecisionParts.hpp"
+#endif
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -18,6 +22,7 @@
 #include <type_traits>
 
 extern "C" std::FILE* GuestStandardOutputFile_nid_no_patch();
+extern "C" std::FILE* GuestStandardOutputForWriting_nid_no_patch();
 
 namespace LibcDetail {
 
@@ -86,9 +91,13 @@ private:
                 args.overflow_arg_area = static_cast<char*>(args.overflow_arg_area) + 8;
             }
         }
-        T value;
-        std::memcpy(&value, address, sizeof(value));
-        return value;
+        if constexpr (std::is_same_v<T, long double>) {
+            return GuestLongDoubleLoad(address);
+        } else {
+            T value;
+            std::memcpy(&value, address, sizeof(value));
+            return value;
+        }
     }
 
 };
@@ -171,6 +180,14 @@ struct FloatSpec {
     std::size_t width = 0;
     int precision = -1;
 };
+
+inline std::string ApplicableLength(const std::string& length, char conversion) {
+    if (std::strchr("diouxXn", conversion)) return length == "L" ? std::string() : length;
+    if (std::strchr("aAeEfFgG", conversion)) return length == "L" ? length : std::string();
+    if (conversion == 'c' || conversion == 's') return length == "l" ? length : std::string();
+    if (conversion == 'p' || conversion == 'S') return std::string();
+    return length;
+}
 
 inline FloatSpec ParseFloatSpec(const std::string& spec) {
     FloatSpec result;
@@ -391,6 +408,81 @@ inline DecimalDigits RoundDecimal(const DecimalDigits& value, long long count) {
     return result;
 }
 
+#if defined(__x86_64__)
+inline DecimalDigits GeneratedDigits(long double value, char lower, long long precision) {
+    static constexpr long double Tenth[3] = {0x19999999p-32L, 0x99999999p-64L, 0x99999999p-96L};
+    DecimalDigits result;
+    if (value == 0) return result;
+    ExtendedWords words = WordsOf(value);
+    words.signExponent &= 0x7fff;
+    long double magnitude = 0;
+    StoreWords(magnitude, words);
+    long double fraction = magnitude;
+    short binary = 0;
+    UnscaleExtended(binary, fraction);
+    std::array<long double, 3> parts{}, factor{}, copy{};
+    std::array<long double, 6> scratch{};
+    SetWide(parts.data(), 3, magnitude);
+    long long exponent = static_cast<long long>(binary) * 30103 / 100000;
+    long long steps = 0;
+    if (exponent <= 3) {
+        steps = (7 - exponent) & ~3LL;
+        exponent = -steps;
+        if (steps != 0) SetWide(factor.data(), 3, 10.0L);
+    } else {
+        exponent = (exponent - 4) & ~3LL;
+        steps = exponent;
+        if (steps != 0) std::copy_n(Tenth, 3, factor.begin());
+    }
+    for (; steps > 0; steps >>= 1) {
+        if ((steps & 1) != 0) MultiplyWide(parts.data(), 3, factor.data(), 3, scratch.data());
+        if (steps < 2) break;
+        copy = factor;
+        MultiplyWide(factor.data(), 3, copy.data(), 3, scratch.data());
+    }
+    std::string text;
+    for (long long generate = std::min(precision + (lower == 'f' ? exponent + 11 : 7), 22LL); generate > 0; generate -= 8) {
+        std::int64_t chunk = 0;
+        while (parts[0] >= 1.0L) {
+            const auto whole = static_cast<std::int64_t>(parts[0]);
+            chunk += whole;
+            AddHalf(parts.data(), 3, -static_cast<long double>(whole));
+        }
+        if (generate >= 9) MultiplyHalf(parts.data(), 3, 100000000.0L);
+        const std::string block = std::to_string(chunk % 100000000);
+        text.append(8 - block.size(), '0').append(block);
+    }
+    exponent += 7;
+    const std::size_t leading = std::min(text.find_first_not_of('0'), text.size());
+    text.erase(0, leading);
+    exponent -= static_cast<long long>(leading);
+    long long count = std::min(precision + (lower == 'f' ? exponent + 1 : lower == 'e' ? 1 : 0), static_cast<long long>(text.size()));
+    if (count >= 0) {
+        const bool up = count < static_cast<long long>(text.size()) && text[static_cast<std::size_t>(count)] >= '5';
+        while (count > 0 && text[static_cast<std::size_t>(count) - 1] == (up ? '9' : '0')) --count;
+        if (up && count > 0) {
+            ++text[static_cast<std::size_t>(count) - 1];
+        } else if (up) {
+            text.insert(0, 1, '1');
+            count = 1;
+            ++exponent;
+        }
+    }
+    text.resize(static_cast<std::size_t>(std::max(count, 0LL)));
+    result.digits = std::move(text);
+    result.exponent = exponent;
+    return result;
+}
+#endif
+
+inline DecimalDigits RoundedDigits(long double value, char lower, long long precision) {
+#if defined(__x86_64__)
+    if (std::numeric_limits<long double>::digits == 64) return GeneratedDigits(value, lower, precision);
+#endif
+    const DecimalDigits exact = ConsoleDecimalDigits(value);
+    return RoundDecimal(exact, lower == 'g' ? precision : lower == 'e' ? precision + 1 : exact.exponent + 1 + precision);
+}
+
 inline char DigitAt(const DecimalDigits& value, long long position) {
     const long long index = value.exponent - position;
     if (value.digits.empty() || index < 0 || index >= static_cast<long long>(value.digits.size())) return '0';
@@ -399,21 +491,19 @@ inline char DigitAt(const DecimalDigits& value, long long position) {
 
 inline std::string DecimalFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
     const FloatSpec parsed = ParseFloatSpec(spec);
-    const DecimalDigits exact = ConsoleDecimalDigits(value);
     const bool upper = conversion == 'E' || conversion == 'G';
     const char lower = static_cast<char>(conversion | 0x20);
     long long precision = parsed.precision < 0 ? 6 : parsed.precision;
+    if (lower == 'g' && precision == 0) precision = 1;
+    const DecimalDigits rounded = RoundedDigits(value, lower, precision);
+    const long long exponent = rounded.digits.empty() ? 0 : rounded.exponent;
     bool exponential = lower == 'e';
     bool strip = false;
     if (lower == 'g') {
-        if (precision == 0) precision = 1;
-        const long long exponent = exact.digits.empty() ? 0 : RoundDecimal(exact, precision).exponent;
         exponential = !(precision > exponent && exponent >= -4);
         precision = exponential ? precision - 1 : precision - 1 - exponent;
         strip = !parsed.alternate;
     }
-    const DecimalDigits rounded = RoundDecimal(exact, exponential ? precision + 1 : exact.exponent + 1 + precision);
-    const long long exponent = rounded.digits.empty() ? 0 : rounded.exponent;
     if (strip) {
         const long long last = rounded.digits.empty() ? 0 : rounded.exponent - static_cast<long long>(rounded.digits.size()) + 1;
         long long needed = exponential ? exponent - last : -last;
@@ -496,7 +586,7 @@ inline std::string FormatPointer(const std::string& spec, const void* pointer) {
     return std::string(padding, ' ') + digits;
 }
 
-inline constexpr char KnownConversions[] = "diouxXeEfFgGaAcCsSpn";
+inline constexpr char KnownConversions[] = "diouxXeEfFgGaAcsSpn";
 constexpr size_t maximumArgumentPosition = 65535;
 
 inline size_t ArgumentPosition(const char*& format) {
@@ -512,7 +602,7 @@ inline size_t ArgumentPosition(const char*& format) {
     return position;
 }
 
-inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
+inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format, bool wide = false) {
     if (!std::strchr(format, '$')) return {};
     std::vector<ArgumentClass> classes;
     bool numbered = false;
@@ -531,7 +621,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
             next = position;
             numbered = true;
         }
-        while (*format && std::strchr("-+ #0'123456789.*", *format)) {
+        while (*format && std::strchr("-+ #0123456789.*", *format)) {
             if (*format++ != '*') continue;
             const size_t position = ArgumentPosition(format);
             if (position) numbered = true;
@@ -543,7 +633,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
         if (!conversion) break;
         ++format;
         if (std::strchr("aAeEfFgG", conversion)) take(next++, longDouble ? ArgumentClass::LongDouble : ArgumentClass::Double);
-        else if (std::strchr("diouxXcCsSpn", conversion)) take(next++, ArgumentClass::Integer);
+        else if (std::strchr(wide ? "diouxXcspn" : "diouxXcsSpn", conversion)) take(next++, ArgumentClass::Integer);
     }
     if (!numbered) classes.clear();
     return classes;
@@ -571,24 +661,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         }
         if (const size_t position = ArgumentPosition(format)) args.Seek(position);
         std::string spec = "%";
-        bool unmeasuredUnknownFlag = false;
-        bool zeroFlag = false;
-        for (; *format && std::strchr("-+ #0'", *format); ++format) {
-            if (*format != '\'') spec += *format;
-            if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
-            if (*format == '0') zeroFlag = true;
-        }
-        bool widthGiven = false;
+        for (; *format && std::strchr("-+ #0", *format); ++format) spec += *format;
         if (*format == '*') {
             ++format;
             const int width = star();
             if (width < 0) spec += '-';
             spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
-            widthGiven = true;
         } else {
-            for (; *format >= '0' && *format <= '9'; widthGiven = true) spec += *format++;
+            while (*format >= '0' && *format <= '9') spec += *format++;
         }
-        if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
@@ -620,12 +701,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         if (!std::strchr(KnownConversions, conversion)) {
-            if (secure || unmeasuredUnknownFlag)
-                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
             const char text[] = {'%', conversion, '\0'};
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
+        length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -654,8 +734,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
-                static_assert(sizeof(long double) == 16);
-                static_assert(std::numeric_limits<long double>::digits == 64);
                 const long double value = args.Next<long double>();
                 if (std::isnan(value)) {
                     output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
@@ -683,19 +761,21 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
             output.Value(spec + conversion, args.Next<int>());
-        } else if ((conversion == 'c' && length == "l") || (conversion == 'C' && length.empty())) {
+        } else if (conversion == 'c' && length == "l") {
             std::string utf8;
             AppendUtf8(utf8, static_cast<char16_t>(args.Next<unsigned int>()));
-            if (utf8[0] == 0) output.Value(spec + 'c', 0);
-            else output.Value(spec + 's', utf8.c_str());
+            if (utf8[0] != 0) output.Value(spec.substr(0, spec.find('.')) + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
-            if (!value) value = "(null)";
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %s argument");
+            if (!value) {
+                value = "(null)";
+                spec = spec.substr(0, spec.find('.'));
+            }
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %ls argument");
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
@@ -712,7 +792,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             const std::string text = FormatPointer(spec, args.Next<void*>());
             output.Append(text.data(), text.size());
         } else if (conversion == 'n' && secure) {
-            throw FormatConstraintViolation("Format count conversion");
+            throw FormatConstraintViolation("printf_s: %n disallowed");
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
@@ -729,9 +809,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
 }
 
 inline int PrintWindows(const char* format, const void* args) {
+    auto* output = GuestStandardOutputForWriting_nid_no_patch();
+    if (!output) return -1;
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
-    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), GuestStandardOutputFile_nid_no_patch()) != static_cast<size_t>(size))
+    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), output) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;
 }

@@ -1,0 +1,11 @@
+set(revision unknown)
+if(GIT)
+    execute_process(COMMAND "${GIT}" -C "${SOURCE}" describe --tags --always --dirty
+            OUTPUT_VARIABLE described RESULT_VARIABLE failed OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(failed EQUAL 0 AND NOT described STREQUAL "")
+        set(revision ${described})
+    endif()
+endif()
+file(WRITE "${OUTPUT}.new" "#pragma once\n#define ANYPS5_RELINKER_REVISION \"${revision}\"\n")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OUTPUT}.new" "${OUTPUT}")
+file(REMOVE "${OUTPUT}.new")

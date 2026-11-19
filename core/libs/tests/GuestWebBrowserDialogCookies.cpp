@@ -42,6 +42,10 @@ void CheckSetCookieParameters() {
     auto wrongSize = valid;
     wrongSize.size = sizeof(WebBrowserDialogResetCookieParam);
     Require(sceWebBrowserDialogSetCookie(&wrongSize) == PARAM_INVALID, "SetCookie size");
+    wrongSize.size = 0;
+    Require(sceWebBrowserDialogSetCookie(&wrongSize) == PARAM_INVALID, "SetCookie zero size");
+    wrongSize.size = sizeof(WebBrowserDialogCookieParam) - 1;
+    Require(sceWebBrowserDialogSetCookie(&wrongSize) == PARAM_INVALID, "SetCookie undersized");
     auto noUrl = Cookie(nullptr, "a=b");
     Require(sceWebBrowserDialogSetCookie(&noUrl) == PARAM_INVALID, "SetCookie null url");
     auto emptyUrl = Cookie("", "a=b");
@@ -66,8 +70,11 @@ void CheckSetCookieParameters() {
     Require(sceWebBrowserDialogSetCookie(&tooLongValue) == PARAM_INVALID, "SetCookie 4096-byte cookie");
 
     auto reserved = valid;
+    reserved.reserved[0] = 1;
+    Require(sceWebBrowserDialogSetCookie(&reserved) == PARAM_INVALID, "SetCookie reserved[0]");
+    reserved = valid;
     reserved.reserved[255] = 1;
-    Require(sceWebBrowserDialogSetCookie(&reserved) == PARAM_INVALID, "SetCookie reserved");
+    Require(sceWebBrowserDialogSetCookie(&reserved) == PARAM_INVALID, "SetCookie reserved[255]");
 }
 
 void CheckResetCookieParameters() {
@@ -77,9 +84,16 @@ void CheckResetCookieParameters() {
     auto wrongSize = valid;
     wrongSize.size = sizeof(WebBrowserDialogCookieParam);
     Require(sceWebBrowserDialogResetCookie(&wrongSize) == PARAM_INVALID, "ResetCookie size");
+    wrongSize.size = 0;
+    Require(sceWebBrowserDialogResetCookie(&wrongSize) == PARAM_INVALID, "ResetCookie zero size");
+    wrongSize.size = sizeof(WebBrowserDialogResetCookieParam) - 1;
+    Require(sceWebBrowserDialogResetCookie(&wrongSize) == PARAM_INVALID, "ResetCookie undersized");
     auto reserved = valid;
     reserved.reserved[0] = 1;
-    Require(sceWebBrowserDialogResetCookie(&reserved) == PARAM_INVALID, "ResetCookie reserved");
+    Require(sceWebBrowserDialogResetCookie(&reserved) == PARAM_INVALID, "ResetCookie reserved[0]");
+    reserved = valid;
+    reserved.reserved[127] = 1;
+    Require(sceWebBrowserDialogResetCookie(&reserved) == PARAM_INVALID, "ResetCookie reserved[127]");
 }
 
 void CheckOpenDialog() {
@@ -114,12 +128,23 @@ int main() {
     Require(sceWebBrowserDialogSetCookie(nullptr) == NOT_INITIALIZED, "SetCookie null before Initialize");
     Require(sceWebBrowserDialogResetCookie(&reset) == NOT_INITIALIZED, "ResetCookie before Initialize");
     Require(sceWebBrowserDialogResetCookie(nullptr) == NOT_INITIALIZED, "ResetCookie null before Initialize");
+    Require(sceWebBrowserDialogClose() == NOT_INITIALIZED, "Close before Initialize");
+    Require(sceWebBrowserDialogOpen(nullptr) == NOT_INITIALIZED, "Open before Initialize");
+    Require(sceWebBrowserDialogGetStatus() == 0, "GetStatus before Initialize");
 
     Require(sceWebBrowserDialogInitialize() == 0, "Initialize");
     CheckSetCookieParameters();
     CheckResetCookieParameters();
     CheckOpenDialog();
     Require(sceWebBrowserDialogTerminate() == 0, "final Terminate");
+    Require(sceWebBrowserDialogTerminate() == NOT_INITIALIZED, "Terminate when uninitialized");
+    Require(sceWebBrowserDialogSetCookie(&cookie) == NOT_INITIALIZED, "SetCookie after Terminate");
+    Require(sceWebBrowserDialogSetCookie(nullptr) == NOT_INITIALIZED, "SetCookie null after Terminate");
+    Require(sceWebBrowserDialogResetCookie(&reset) == NOT_INITIALIZED, "ResetCookie after Terminate");
+    Require(sceWebBrowserDialogResetCookie(nullptr) == NOT_INITIALIZED, "ResetCookie null after Terminate");
+    Require(sceWebBrowserDialogClose() == NOT_INITIALIZED, "Close after Terminate");
+    Require(sceWebBrowserDialogOpen(nullptr) == NOT_INITIALIZED, "Open after Terminate");
+    Require(sceWebBrowserDialogGetStatus() == 0, "GetStatus after Terminate");
     std::puts("guest web browser dialog cookies: PASS");
     return 0;
 }

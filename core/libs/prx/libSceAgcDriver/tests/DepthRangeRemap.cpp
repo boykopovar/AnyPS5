@@ -75,11 +75,13 @@ ModuleFacts inspect(const ShaderRecompiler::RecompileResult& result) {
 }
 
 constexpr std::array<std::uint32_t, 3> PositionExport{0xf80008cfu, 0u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 5> DomainPositionExport{0xf8000941u, 0u, 0xf80008cfu, 0x06050605u, 0xbf810000u};
 
-ShaderRecompiler::RecompileRequest baseRequest(bool remap) {
+ShaderRecompiler::RecompileRequest baseRequest(bool remap, ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Vertex) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
-    request.shader = {ShaderStage::Vertex, 0x10000u, PositionExport, 0, {}};
+    const auto code = stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(DomainPositionExport) : std::span<const std::uint32_t>(PositionExport);
+    request.shader = {stage, 0x10000u, code, 0, {}};
     request.context.waveSize = 64;
     ShaderVertexStageInfo vertex{};
     vertex.depthRemapMode = 2u;
@@ -87,9 +89,13 @@ ShaderRecompiler::RecompileRequest baseRequest(bool remap) {
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = 64;
-    static constexpr std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityClipDistance};
+    static constexpr std::array<std::uint32_t, 3> capabilities{spv::CapabilityShader, spv::CapabilityClipDistance, spv::CapabilityTessellation};
     request.target.supportedCapabilities = capabilities;
     request.target.depthRangeRemap = remap;
+    if (stage == ShaderStage::TessellationEvaluation) {
+        request.target.tessellation = TessellationTargetLimits{32u, 128u, 128u, 128u, 4096u, 128u, 128u};
+        request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {0u, 3u, 0u, 1u}};
+    }
     request.layout.pushConstantSizeBytes = ShaderRecompiler::DepthRemapPushOffsetBytes;
     request.useCache = false;
     return request;
@@ -99,9 +105,9 @@ void require(bool condition, const char* what) {
     if (!condition) throw std::runtime_error(what);
 }
 
-void preparedTransformTests() {
+void preparedTransformTests(ShaderRecompiler::ShaderStage stage) {
     using namespace ShaderRecompiler;
-    auto request = baseRequest(true);
+    auto request = baseRequest(true, stage);
     request.useCache = true;
     const auto handle = PrepareShader(request);
     const auto materialize = [&](std::uint32_t mode) {
@@ -120,15 +126,15 @@ void preparedTransformTests() {
     require(!PreparedShaderInvocation::TryCreate(other, handle).has_value(), "a prepared vertex shader matched a request of another depth remap mode");
 }
 
-void pushedTransformTests() {
+void pushedTransformTests(ShaderRecompiler::ShaderStage stage) {
     using namespace ShaderRecompiler;
-    const auto remapped = Recompile(baseRequest(true));
-    const auto plain = Recompile(baseRequest(false));
+    const auto remapped = Recompile(baseRequest(true, stage));
+    const auto plain = Recompile(baseRequest(false, stage));
     const auto facts = inspect(remapped);
     require(!facts.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase + 1u) && !facts.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase + 2u), "the depth remap scale or offset is a specialization constant");
     require(facts.pushConstantVariable && facts.pushDwordLoads.contains(DepthRemapPushOffsetBytes / 4u) && facts.pushDwordLoads.contains(DepthRemapPushOffsetBytes / 4u + 1u), "the remapped vertex shader does not read the scale and offset from the push block");
     require(!inspect(plain).pushConstantVariable, "a vertex shader without a depth remap gained a push constant block");
-    auto crowded = baseRequest(true);
+    auto crowded = baseRequest(true, stage);
     crowded.layout.pushConstantSizeBytes = DepthRemapPushOffsetBytes + 4u;
     bool refused = false;
     try {
@@ -139,18 +145,41 @@ void pushedTransformTests() {
     require(refused, "a remapped vertex shader with push data over the depth remap words was accepted");
 }
 
+void clipDistanceCapacityTests(ShaderRecompiler::ShaderStage stage) {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> vertex{0xf80008cfu, 0u, 0xf80008dfu, 0u, 0xf80008efu, 0u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 9> domain{0xf8000941u, 0u, 0xf80008cfu, 0x05050505u, 0xf80008dfu, 0x05050505u, 0xf80008efu, 0x05050505u, 0xbf810000u};
+    auto request = baseRequest(true, stage);
+    request.shader.code = stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(domain) : std::span<const std::uint32_t>(vertex);
+    request.context.vertex->paClVsOutCntl = 0xc0003fu;
+    require(inspect(Recompile(request)).clipDistanceLength == 8u, "the remap did not preserve six guest clip distances beside its two planes");
+    for (const auto control : {0xc0007fu, 0xc0403fu, 0xc000ffu}) {
+        request.context.vertex->paClVsOutCntl = control;
+        bool refused = false;
+        try {
+            static_cast<void>(Recompile(request));
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find("two free clip-distance components") != std::string::npos;
+        }
+        require(refused, "a remap that exceeds the combined clip and cull distance capacity was accepted");
+    }
+}
+
 }
 
 int main() {
     using namespace ShaderRecompiler;
     try {
-        const auto remapped = inspect(Recompile(baseRequest(true)));
-        const auto plain = inspect(Recompile(baseRequest(false)));
-        require(remapped.clipDistanceBuiltIn && remapped.clipDistanceLength == plain.clipDistanceLength + 2u, "the remap did not add its two clip distances");
-        require(remapped.multiplies >= plain.multiplies + 2u, "the remap does not scale the clip z and offset it by w");
-        require(!plain.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase) && !remapped.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase + 3u), "unexpected specialization constants");
-        preparedTransformTests();
-        pushedTransformTests();
+        for (const auto stage : {ShaderStage::Vertex, ShaderStage::TessellationEvaluation}) {
+            const auto remapped = inspect(Recompile(baseRequest(true, stage)));
+            const auto plain = inspect(Recompile(baseRequest(false, stage)));
+            require(remapped.clipDistanceBuiltIn && remapped.clipDistanceLength == plain.clipDistanceLength + 2u, "the remap did not add its two clip distances");
+            require(remapped.multiplies >= plain.multiplies + 2u, "the remap does not scale the clip z and offset it by w");
+            require(!plain.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase) && !remapped.specializationDefaults.contains(PipelineSpecialization::DepthRemapBase + 3u), "unexpected specialization constants");
+            preparedTransformTests(stage);
+            pushedTransformTests(stage);
+            clipDistanceCapacityTests(stage);
+        }
         std::cout << "Depth range remap tests passed\n";
         return 0;
     } catch (const std::exception& error) {

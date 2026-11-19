@@ -8,11 +8,15 @@ let active;
 let visible = [];
 let focused = 0;
 
+export function normalizeSearch(value) {
+    return value.normalize('NFD').replace(/(\p{Script=Latin})\p{M}+/gu, '$1').toLowerCase().normalize('NFC');
+}
+
 function renderOptions() {
-    const query = search.value.trim().toLocaleLowerCase();
-    visible = active.choices.filter(item => `${item.label} ${item.value}`.toLocaleLowerCase().includes(query));
+    const query = normalizeSearch(search.value.trim());
+    visible = active.choices.filter(item => normalizeSearch(`${item.label} ${item.value}`).includes(query));
     list.replaceChildren();
-    const exactMatch = query ? visible.findIndex(item => item.label.toLocaleLowerCase() === query || item.value.toLocaleLowerCase() === query) : -1;
+    const exactMatch = query ? visible.findIndex(item => normalizeSearch(item.label) === query || normalizeSearch(item.value) === query) : -1;
     focused = Math.max(0, exactMatch >= 0 ? exactMatch : visible.findIndex(item => item.value === active.select.value));
     visible.forEach((item, index) => {
         const option = document.createElement('button');
@@ -24,7 +28,7 @@ function renderOptions() {
         option.textContent = item.label;
         if (item.lang) option.lang = item.lang;
         option.dir = item.direction || active.direction;
-        option.addEventListener('click', () => choose(item));
+        option.addEventListener('click', () => choose(active, item.value));
         option.addEventListener('focus', () => { focused = index; });
         list.append(option);
     });
@@ -32,10 +36,10 @@ function renderOptions() {
     if (dialog.open) list.children[focused]?.scrollIntoView({block: 'nearest'});
 }
 
-function choose(item) {
-    const current = active;
-    current.setValue(item.value);
+export function choose(current, value) {
     dialog.close();
+    if (value === current.select.value) return;
+    current.setValue(value);
     current.select.dispatchEvent(new Event('change', {bubbles: true}));
 }
 
@@ -93,7 +97,7 @@ dialog.addEventListener('keydown', event => {
         focusOption(event.key === 'Home' ? 0 : visible.length - 1);
     } else if (event.target === search && event.key === 'Enter' && visible.length) {
         event.preventDefault();
-        choose(visible[focused]);
+        choose(active, visible[focused].value);
     }
 });
 close.addEventListener('click', () => dialog.close());

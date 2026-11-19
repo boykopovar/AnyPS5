@@ -1,7 +1,7 @@
 add_library(libSceHttpCache SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceHttpCache PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttpCache)
-target_link_libraries(libSceHttpCache PRIVATE libSceUserService libSceRtc)
+target_link_libraries(libSceHttpCache PRIVATE libSceUserService libSceRtc libc)
 
 if(BUILD_TESTING)
     add_test_executable(guest_http_cache_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpCache.cpp)

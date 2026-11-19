@@ -15,7 +15,7 @@ function(add_sce_font_library target)
             ${fontDir}/src/WritingLine.cpp
     )
     target_include_directories(${target} PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(${target} PRIVATE freetype libc)
+    target_link_libraries(${target} PRIVATE freetype libc libkernel)
     set_target_properties(${target} PROPERTIES
             CXX_EXTENSIONS OFF
             CXX_VISIBILITY_PRESET hidden

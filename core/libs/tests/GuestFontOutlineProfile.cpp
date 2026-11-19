@@ -3,6 +3,7 @@
 #include "prx/libSceFontFt/libSceFontFt.hpp"
 #include "tests/FontFixture.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -91,6 +92,9 @@ int main() {
     auto* nativeFont = reinterpret_cast<Font::FontHandleNative*>(profiled);
     nativeFont->open_info.fontset_record = record.data();
     Require(sceFontGetFontGlyphsOutlineProfile(profiled, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetFontGlyphsOutlineProfile(profiled, reinterpret_cast<FontOutlineProfile*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     nativeFont->open_info.fontset_record = nullptr;
     Fill(profile);
     Require(sceFontGetFontGlyphsOutlineProfile(profiled, &profile) == SCE_FONT_OK && profile.maxPoints == 120);
@@ -114,6 +118,12 @@ int main() {
     Require(sceFontGetFontGlyphsOutlineProfile(plain, &profile) == SCE_FONT_OK && Zero(profile));
 
     for (FontHandle font : {profiled, plain, shortMaxp}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
+    Require(sceFontDestroyLibrary(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontLibrary nullLib = nullptr;
+    Require(sceFontDestroyLibrary(&nullLib) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontMemoryTerm(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontMemory badMem{};
+    Require(sceFontMemoryTerm(&badMem) == SCE_FONT_ERROR_INVALID_MEMORY);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
     std::puts("Font outline profile tests passed");

@@ -228,7 +228,7 @@ inline Registers BuildInitialContextRegisters() {
         {0x105, 0}, {0x106, 0}, {0x107, 0}, {0x108, 0},
         {0x10b, 0}, {0x10c, 0}, {0x10d, 0},
         {0x1b1, 0}, {0x1b3, 0}, {0x1b4, 0}, {0x1b6, 0}, {0x1c3, 0}, {0x1c4, 0}, {0x1c5, 0},
-        {0x1ff, 0}, {0x280, 0x00080008}, {0x281, 0xffff0000}, {0x292, 2}, {0x293, 0}, {0x29b, 0},
+        {0x1ff, 0}, {0x280, 0x00080008}, {0x281, 0xffff0000}, {0x282, 0x00000008}, {0x292, 2}, {0x293, 0}, {0x29b, 0},
         {0x2ce, 0}, {0x2d3, 0}, {0x2d5, 0}, {0x2d6, 0}, {0x2db, 0},
         {0x2dc, 0xaa00}, {0x2df, 0}, {0x2e4, 0}, {0x2f8, 0}, {0x2f9, 0x2d},
         {0x30e, 0xffffffff}, {0x30f, 0xffffffff}, {0x313, 0x6000},
@@ -251,15 +251,40 @@ inline Registers BuildInitialContextRegisters() {
     return result;
 }
 
-inline Registers InitialContextRegisters() {
+inline const Registers& InitialContextRegisterSet() {
     static const Registers& initial = *new Registers(BuildInitialContextRegisters());
     return initial;
 }
+
+inline Registers InitialContextRegisters() {
+    return InitialContextRegisterSet();
+}
+
+struct SpareRegisters {
+    Registers registers;
+    SpareRegisters() = default;
+    SpareRegisters(const SpareRegisters&) {}
+    SpareRegisters& operator=(const SpareRegisters&) { return *this; }
+    SpareRegisters(SpareRegisters&&) noexcept = default;
+    SpareRegisters& operator=(SpareRegisters&&) noexcept = default;
+};
+
+inline Registers ClearStateContextRegisters() {
+    static const Registers& cleared = *new Registers([] {
+        auto registers = BuildInitialContextRegisters();
+        registers[0x1b6] = 2;
+        return registers;
+    }());
+    return cleared;
+}
+
+inline constexpr std::uint32_t AllSampleDumpBlocks = 0xffffu;
 
 struct Predication {
     std::uint64_t address = 0;
     std::uint32_t operation = 0;
     bool executeWhenSet = false;
+    bool runWhenUnwritten = false;
 };
 
 struct QueueState {
@@ -268,6 +293,7 @@ struct QueueState {
     Registers context = InitialContextRegisters();
     Registers userConfig{{0x24a, 0}, {0x24b, 0}};
     std::optional<Registers> savedContext;
+    SpareRegisters spareContext;
     std::vector<std::uint32_t> constantRam;
     std::uint64_t indexBase = 0;
     std::uint64_t drawIndirectBase = 0;
@@ -277,9 +303,21 @@ struct QueueState {
     std::uint32_t instanceCount = 1;
     std::vector<std::string> markers;
     Predication predication;
+    std::uint32_t sampleDumpBlocks = AllSampleDumpBlocks;
 
     void ClearContext() {
-        context = InitialContextRegisters();
+        context = ClearStateContextRegisters();
+    }
+
+    void PushContext() {
+        spareContext.registers = context;
+        savedContext.emplace(std::move(spareContext.registers));
+    }
+
+    void PopContext() {
+        std::swap(context, *savedContext);
+        spareContext.registers = std::move(*savedContext);
+        savedContext.reset();
     }
 
     std::span<const std::uint32_t> ConstantRam() const {

@@ -1,0 +1,13 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv(void);
+int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser21gvMp4ParserInitializeEv(void);
+int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser23gvMp4ParserReadMetadataERKSsRKNS_8MetadataERS3_(void);
+int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser24gvMp4ParserWriteMetadataERKSsRKNS_8MetadataE(void);
+int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser27gvMp4ParserExtractThumbnailERKSsRNS_9ThumbnailE(void);
+
+}

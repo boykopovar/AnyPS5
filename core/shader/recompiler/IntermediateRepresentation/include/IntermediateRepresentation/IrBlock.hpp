@@ -6,6 +6,7 @@
 #include <array>
 #include <list>
 #include <memory>
+#include <memory_resource>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -36,17 +37,20 @@ private:
     std::unique_ptr<std::array<IrValue*, Size>> storage;
 };
 
+using IrInstructionList = std::pmr::list<IrValue*>;
+
 class IrBlock {
 public:
     explicit IrBlock(std::uint32_t id);
+    IrBlock(std::uint32_t id, std::shared_ptr<std::pmr::memory_resource> instructionNodes);
     IrBlock(const IrBlock& other) = delete;
     IrBlock& operator=(const IrBlock& other) = delete;
     IrBlock(IrBlock&& other) = delete;
     IrBlock& operator=(IrBlock&& other) = delete;
 
     [[nodiscard]] std::uint32_t Id() const;
-    [[nodiscard]] std::list<IrValue*>& Instructions();
-    [[nodiscard]] const std::list<IrValue*>& Instructions() const;
+    [[nodiscard]] IrInstructionList& Instructions();
+    [[nodiscard]] const IrInstructionList& Instructions() const;
     [[nodiscard]] std::vector<IrBlock*>& Predecessors();
     [[nodiscard]] std::vector<IrBlock*>& Successors();
 
@@ -69,9 +73,10 @@ public:
     [[nodiscard]] bool Empty() const;
 
 private:
+    std::shared_ptr<std::pmr::memory_resource> instructionNodes;
     bool ssaSealed = false;
     std::uint32_t id;
-    std::list<IrValue*> instructions;
+    IrInstructionList instructions;
     std::vector<IrBlock*> predecessors;
     std::vector<IrBlock*> successors;
 };

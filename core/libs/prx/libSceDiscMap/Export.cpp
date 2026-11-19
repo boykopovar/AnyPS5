@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceDiscMap/include/InventoryExports.hpp"
 #include "prx/libSceDiscMap/include/Api.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -30,9 +32,31 @@ std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int6
     return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO;
 }
 
-int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, int* ret1, int* ret2) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+APS5_EXPORT("fJgP+wqifno", sceDiscMapUnknown_fJgP_plus_wqifno);
+std::int32_t APS5_VABI sceDiscMapUnknown_fJgP_plus_wqifno(const char* path, std::int64_t offset, std::int64_t size, std::int64_t* location, std::int64_t* lba, std::int64_t* lbaCount) {
+    (void)path;
+    (void)offset;
+    (void)size;
+    (void)location;
+    (void)lba;
+    (void)lbaCount;
+    return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO;
 }
+
+int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, std::uint64_t* ret1, std::uint64_t* ret2) {
+    (void)fflags;
+    (void)ret1;
+    (void)ret2;
+    return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5+vOlukvkfg", libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch);
 
 }

@@ -6,8 +6,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PatchVertexLayer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -16,14 +18,21 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
+#include <stdexcept>
+#include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -56,7 +65,7 @@ bool LogicOpFormat(VkFormat format) {
 
 }
 
-void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline) {
+void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders) {
     if (!context.pipelineExecutableInfo) return;
     const auto getProperties = context.Function<PFN_vkGetPipelineExecutablePropertiesKHR>("vkGetPipelineExecutablePropertiesKHR");
     const auto getStatistics = context.Function<PFN_vkGetPipelineExecutableStatisticsKHR>("vkGetPipelineExecutableStatisticsKHR");
@@ -67,6 +76,17 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
     std::vector<VkPipelineExecutablePropertiesKHR> properties(count, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
     Check(getProperties(context.device, &pipelineInfo, &count, properties.data()), "vkGetPipelineExecutablePropertiesKHR");
     properties.resize(count);
+    std::string report;
+    const auto append = [&report](const char* format, auto... values) {
+        std::array<char, 1024> line{};
+        std::snprintf(line.data(), line.size(), format, values...);
+        report += line.data();
+    };
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) continue;
+        const auto identity = shader.program->Identity();
+        append("[pipeline-source] stage=0x%x variant=0x%llx pipelineVariant=0x%llx identity=%016llx%016llx\n", VulkanStage(shader.stage), static_cast<unsigned long long>(shader.program->variantId), static_cast<unsigned long long>(shader.program->PipelineVariantId()), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low));
+    }
     for (std::uint32_t index = 0; index < properties.size(); ++index) {
         VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
         executable.pipeline = pipeline;
@@ -77,28 +97,27 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
         Check(getStatistics(context.device, &executable, &count, statistics.data()), "vkGetPipelineExecutableStatisticsKHR");
         statistics.resize(count);
         const auto& property = properties[index];
-        std::fprintf(stderr, "[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
+        append("[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
         for (const auto& statistic : statistics) {
-            std::fprintf(stderr, "[pipeline-stats] executable=%u %s=", index, statistic.name);
             switch (statistic.format) {
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
-                std::fprintf(stderr, "%s", statistic.value.b32 ? "true" : "false");
+                append("[pipeline-stats] executable=%u %s=%s (%s)\n", index, statistic.name, statistic.value.b32 ? "true" : "false", statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
-                std::fprintf(stderr, "%lld", static_cast<long long>(statistic.value.i64));
+                append("[pipeline-stats] executable=%u %s=%lld (%s)\n", index, statistic.name, static_cast<long long>(statistic.value.i64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
-                std::fprintf(stderr, "%llu", static_cast<unsigned long long>(statistic.value.u64));
+                append("[pipeline-stats] executable=%u %s=%llu (%s)\n", index, statistic.name, static_cast<unsigned long long>(statistic.value.u64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
-                std::fprintf(stderr, "%.17g", statistic.value.f64);
+                append("[pipeline-stats] executable=%u %s=%.17g (%s)\n", index, statistic.name, statistic.value.f64, statistic.description);
                 break;
             default:
                 throw std::runtime_error("unsupported pipeline statistic format");
             }
-            std::fprintf(stderr, " (%s)\n", statistic.description);
         }
     }
+    std::fputs(report.c_str(), stderr);
 }
 
 bool HasStencil(VkFormat format) {
@@ -231,9 +250,12 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     });
     if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    for (const auto& shader : shaders) {
+        if (shader.stage != ShaderRecompiler::ShaderStage::Fragment || shader.program == nullptr) continue;
+        Require(std::none_of(shader.program->fragmentParameters.begin(), shader.program->fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat && parameter.custom; }), "last provoking vertex is unsupported for a pass-through input read only at P0, which takes the first vertex's value as a flat input");
+    }
     const bool meshPrimitives = state.stages.path == ShaderPath::Geometry && state.stages.mesh;
     Require(!state.stages.tessellation && (meshPrimitives || (state.stages.path == ShaderPath::Vertex && !state.stages.mesh)), "last provoking vertex is unsupported for generated primitive pipelines");
-    Require(!meshPrimitives || state.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for triangle fans assembled for a geometry program");
     Require(state.rectList || state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for this primitive topology");
     for (const auto& shader : shaders) {
         if (shader.stage != ShaderRecompiler::ShaderStage::Fragment) continue;
@@ -251,6 +273,27 @@ bool ValidateSampleLocations(const Context& context, const State& state) {
     return enabled;
 }
 
+void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t invocations) {
+    const auto& limits = context.meshLimits;
+    Require(invocations <= limits.maxMeshWorkGroupInvocations && invocations <= limits.maxMeshWorkGroupSize[0], "mesh workgroup of " + std::to_string(invocations) + " invocations exceeds device limits (" + std::to_string(limits.maxMeshWorkGroupInvocations) + " invocations, " + std::to_string(limits.maxMeshWorkGroupSize[0]) + " wide)");
+    Require(mesh.maxVertices <= limits.maxMeshOutputVertices, "mesh output vertices " + std::to_string(mesh.maxVertices) + " exceed the device limit " + std::to_string(limits.maxMeshOutputVertices));
+    Require(mesh.maxPrimitives <= limits.maxMeshOutputPrimitives, "mesh output primitives " + std::to_string(mesh.maxPrimitives) + " exceed the device limit " + std::to_string(limits.maxMeshOutputPrimitives));
+    const auto sharedBytes = static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4;
+    Require(sharedBytes <= limits.maxMeshSharedMemorySize, "mesh LDS " + std::to_string(sharedBytes) + " bytes exceeds the device shared memory limit " + std::to_string(limits.maxMeshSharedMemorySize));
+}
+
+void ValidateLineWidth(const Context& context, float width) {
+    if (width == 1.0f) return;
+    Require(context.wideLines, "a line polygon mode wider or narrower than one pixel needs the wideLines feature");
+    const auto low = context.limits.lineWidthRange[0];
+    const auto high = context.limits.lineWidthRange[1];
+    const auto granularity = context.limits.lineWidthGranularity;
+    const auto describe = [&] { return "line width " + std::to_string(width) + " against lineWidthRange [" + std::to_string(low) + ", " + std::to_string(high) + "] and lineWidthGranularity " + std::to_string(granularity); };
+    Require(width >= low && width <= high, "a line polygon mode needs a width the device supports: " + describe() + " is outside the range");
+    const auto steps = granularity > 0.0f ? (width - low) / granularity : 0.0f;
+    Require(granularity > 0.0f ? std::abs(steps - std::round(steps)) <= 1.0e-3f : width == low, "a line polygon mode needs a width the device supports: " + describe() + " is not a whole number of granularity steps from the range's low end");
+}
+
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
     Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
@@ -261,7 +304,7 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 }
 
 bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
-    const auto any = [](const std::vector<bool>& written, std::uint32_t count) { return written.size() < count || std::ranges::any_of(written, [](bool element) { return element; }); };
+    const auto any = [](const ShaderRecompiler::ElementFlags& written, std::uint32_t count) { return written.size() < count || std::ranges::any_of(written, [](bool element) { return element; }); };
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) continue;
         for (const auto& binding : shader.program->bindings) {
@@ -312,6 +355,37 @@ VkShaderStageFlags pushStagesOf(const Context& context) {
     return PreRasterizationPushStages(context.meshShader, context.tessellationShader, context.geometryShader);
 }
 
+constexpr std::size_t MaxColorWriteMasks = 8;
+
+using ColorWriteMasks = std::array<VkColorComponentFlags, MaxColorWriteMasks>;
+
+ColorWriteMasks channelWriteMasks(const State& state, std::span<const VkPipelineColorBlendAttachmentState> blends, bool secondChannel) {
+    Require(blends.size() == state.blends.size() && blends.size() <= MaxColorWriteMasks, "color write masks disagree with the color attachments");
+    ColorWriteMasks masks{};
+    const bool alternateAlpha = SplitsAlternateAlpha(state);
+    for (std::size_t index = 0; index < blends.size(); ++index) {
+        auto mask = blends[index].colorWriteMask;
+        if (alternateAlpha) {
+            const bool split = index < state.colors.size() && state.colors[index].componentMapping == 0xecu && state.blends[index].blendEnable;
+            const VkColorComponentFlags green = VK_COLOR_COMPONENT_G_BIT;
+            if (!split) mask = secondChannel ? 0u : mask;
+            else mask &= secondChannel ? green : ~green;
+        }
+        masks[index] = mask;
+    }
+    for (const auto& merged : state.colors) {
+        if (merged.partialWriteMask != UnclampedBlendMask) continue;
+        Require(merged.exportIndex < state.blends.size(), "color export without a blend attachment");
+        masks[merged.exportIndex] = 0;
+    }
+    return masks;
+}
+
+VkPipelineColorBlendAttachmentState keyedBlend(const Context& context, VkPipelineColorBlendAttachmentState blend) {
+    if (context.dynamicColorWriteMask) blend.colorWriteMask = 0;
+    return blend;
+}
+
 template<typename TValue>
 void appendKey(std::vector<std::byte>& key, const TValue& value) {
     static_assert(std::is_trivially_copyable_v<TValue>);
@@ -321,7 +395,7 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
 
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || FragmentInterlock(shaders)) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || FragmentInterlock(shaders)) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -330,7 +404,9 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.stage);
         appendKey(key, identity.low);
         appendKey(key, identity.high);
-        appendKey(key, shader.pushConstantOffset);
+        appendKey(key, KeyedPushOffset(shader));
+        appendKey(key, state.meshLayerBase);
+        appendKey(key, state.meshLayerCount);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             for (const auto& binding : shader.program->bindings) {
@@ -359,7 +435,9 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     appendKey(keys.vertexInput, state.topology);
     appendKey(keys.vertexInput, state.primitiveRestart);
     appendKey(keys.preRasterization, state.provokingVertexMode);
+    appendKey(keys.preRasterization, ViewportCount(state));
     appendKey(keys.preRasterization, state.polygonMode);
+    appendKey(keys.preRasterization, state.lineWidth);
     appendKey(keys.preRasterization, state.negativeOneToOne);
     appendKey(keys.preRasterization, state.depthClamp && context.depthClamp);
     appendKey(keys.preRasterization, state.conservativeRasterization);
@@ -390,7 +468,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             }
         }
     }
-    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, blend);
+    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context, blend));
     appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
@@ -469,7 +547,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     ValidateProvokingVertex(context, state, shaders);
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     const bool barycentricPatches = BarycentricPatches(state, shaders);
-    if (barycentricPatches) Require(context.tessellationShader && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) && !state.primitiveRestart, "emulated barycentrics through tessellation require a triangle list or strip without primitive restart");
+    if (barycentricPatches) Require(context.tessellationShader && ((state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !context.primitiveListRestart)) || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP), "emulated barycentrics through tessellation require a triangle list or strip, with primitive restart in a list only on a device without VK_EXT_primitive_topology_list_restart");
     if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; })) Require(context.geometryShader, "device does not support geometry shaders");
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
@@ -479,8 +557,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(context.meshShader, "device does not support VK_EXT_mesh_shader");
         const auto& mesh = *state.stages.mesh;
         const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
-        Require(invocations <= context.meshLimits.maxMeshWorkGroupInvocations && invocations <= context.meshLimits.maxMeshWorkGroupSize[0], "mesh workgroup exceeds device limits");
-        Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
+        ValidateMeshLimits(context, mesh, invocations);
     }
     const auto pushStages = PushConstantStages(shaders);
     Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PushBlockBytes(dynamicRendering), "graphics push constant range exceeds device limit");
@@ -494,14 +571,16 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            _modules[i] = CreateShaderModule(context, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
+            const auto demoted = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
+            const auto words = demoted.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(demoted);
+            _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[i].stage = stage;
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
-            specializations.emplace_back(shader);
+            specializations.emplace_back(shader, context.atomicLockTable, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -513,13 +592,14 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
         const bool pixelLds = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; });
-        const auto pixelLdsLayouts = pixelLds ? PixelFunctionLdsSetLayouts(context) : PixelFunctionLdsLayouts{};
-        const std::array<VkDescriptorSetLayout, 3> setLayouts{resources.main, pixelLds && !resources.split ? pixelLdsLayouts.empty : resources.fragment, pixelLdsLayouts.buffer};
+        const bool meshWindow = UsesMeshWindow(shaders);
+        const auto pixelLdsLayouts = pixelLds || meshWindow ? PixelFunctionLdsSetLayouts(context) : PixelFunctionLdsLayouts{};
+        const std::array<VkDescriptorSetLayout, 4> setLayouts{resources.main, (pixelLds || meshWindow) && !resources.split ? pixelLdsLayouts.empty : resources.fragment, pixelLds ? pixelLdsLayouts.buffer : pixelLdsLayouts.empty, meshWindow ? MeshWindowSetLayout(context) : VK_NULL_HANDLE};
         const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
         const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.flags = pixelLds || !resources.split ? 0 : VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
-        layoutInfo.setLayoutCount = pixelLds ? 3u : resources.split ? 2u : 1u;
+        layoutInfo.flags = pixelLds || meshWindow || !resources.split ? 0 : VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
+        layoutInfo.setLayoutCount = meshWindow ? 4u : pixelLds ? 3u : resources.split ? 2u : 1u;
         layoutInfo.pSetLayouts = setLayouts.data();
         layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;
@@ -596,17 +676,19 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(vertexInput.attributes.size());
         input.pVertexAttributeDescriptions = vertexInput.attributes.data();
         VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = BarycentricPatches(state, shaders) ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
+        const bool patches = BarycentricPatches(state, shaders);
+        assembly.topology = patches ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        assembly.primitiveRestartEnable = state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
+        assembly.primitiveRestartEnable = !patches && state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
         // Viewport and scissor are set per draw (Begin), so they do not multiply pipelines; the depth
         // clip control stays baked in.
         VkPipelineViewportStateCreateInfo viewports{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
         VkPipelineViewportDepthClipControlCreateInfoEXT depthClip{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT};
         depthClip.negativeOneToOne = state.negativeOneToOne;
         if (state.negativeOneToOne) viewports.pNext = &depthClip;
-        viewports.viewportCount = 1;
-        viewports.scissorCount = 1;
+        Require(!patches || state.extraViewports.empty(), "a viewport index through the barycentric patch stages is unsupported");
+        viewports.viewportCount = ViewportCount(state);
+        viewports.scissorCount = ViewportCount(state);
         PipelineLibraryKeys keys;
         libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -614,12 +696,15 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
+        if (context.dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
+        dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
         dynamic.pDynamicStates = dynamicStates.data();
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         Require(state.polygonMode == VK_POLYGON_MODE_FILL || context.fillModeNonSolid, "a point or line polygon mode needs the fillModeNonSolid feature");
         Require(state.polygonMode != VK_POLYGON_MODE_POINT || context.maintenance5, "a point polygon mode needs VK_KHR_maintenance5 for its one-pixel point size");
+        ValidateLineWidth(context, state.lineWidth);
         raster.polygonMode = state.polygonMode;
         raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
@@ -627,7 +712,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
         raster.frontFace = state.frontFace;
         raster.depthBiasEnable = depthBias;
-        raster.lineWidth = 1;
+        raster.lineWidth = state.lineWidth;
         VkPipelineRasterizationConservativeStateCreateInfoEXT conservative{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT};
         conservative.conservativeRasterizationMode = state.conservativeRasterization;
         if (state.conservativeRasterization != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT) raster.pNext = &conservative;
@@ -667,22 +752,27 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const bool alternateAlpha = SplitsAlternateAlpha(state);
         std::vector<VkPipelineColorBlendAttachmentState> firstChannels(state.blends.begin(), state.blends.end());
         std::vector<VkPipelineColorBlendAttachmentState> secondChannels(state.blends.begin(), state.blends.end());
+        for (const auto& merged : state.colors) {
+            if (merged.partialWriteMask != UnclampedBlendMask) continue;
+            for (auto* channels : {&firstChannels, &secondChannels}) channels->at(merged.exportIndex) = {};
+        }
         if (alternateAlpha) {
             const auto keepsStencil = [](const VkStencilOpState& face) { return face.writeMask == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
-            Require(!(state.depth && (state.depthWrite || (state.stencilTest && (!keepsStencil(state.stencilFront) || !keepsStencil(state.stencilBack))))) && !state.depthBiasPerFace, "blending into an 8_8 color target with the alternate component order and a separate alpha blend from a draw that writes depth or stencil is not implemented");
-            Require(!ShadersWriteMemory(shaders), "blending into an 8_8 color target with the alternate component order and a separate alpha blend from a draw whose shaders write memory is not implemented");
+            Require(!(state.depth && (state.depthWrite || (state.stencilTest && (!keepsStencil(state.stencilFront) || !keepsStencil(state.stencilBack))))) && !state.depthBiasPerFace, "blending into a two-channel color target with the alternate component order and a separate alpha blend from a draw that writes depth or stencil is not implemented");
+            Require(!ShadersWriteMemory(shaders), "blending into a two-channel color target with the alternate component order and a separate alpha blend from a draw whose shaders write memory is not implemented");
             for (std::size_t index = 0; index < secondChannels.size(); ++index) {
                 const bool split = index < state.colors.size() && state.colors[index].componentMapping == 0xecu && state.blends[index].blendEnable;
-                if (!split) {
-                    secondChannels[index].colorWriteMask = 0;
-                    continue;
-                }
-                firstChannels[index].colorWriteMask &= ~VK_COLOR_COMPONENT_G_BIT;
-                secondChannels[index].colorWriteMask &= VK_COLOR_COMPONENT_G_BIT;
+                if (!split) continue;
                 secondChannels[index].srcColorBlendFactor = state.blends[index].srcAlphaBlendFactor;
                 secondChannels[index].dstColorBlendFactor = state.blends[index].dstAlphaBlendFactor;
                 secondChannels[index].colorBlendOp = state.blends[index].alphaBlendOp;
             }
+        }
+        const auto firstMasks = channelWriteMasks(state, state.blends, false);
+        const auto secondMasks = channelWriteMasks(state, state.blends, true);
+        for (std::size_t index = 0; index < firstChannels.size(); ++index) {
+            firstChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : firstMasks[index];
+            secondChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : secondMasks[index];
         }
         if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
             blend.logicOpEnable = VK_TRUE;
@@ -724,7 +814,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             prebuilt = true;
             return;
         }
-        const VkPipelineCache pipelineCache = state.stages.tessellation && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
+        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches || state.rectList) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
         if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
@@ -744,7 +834,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         _modules.clear();
         timing.Mark("create");
         PerformanceCounters::CountPipeline();
-        LogPipelineStatistics_nid_no_patch(context, pipeline);
+        LogPipelineStatistics_nid_no_patch(context, pipeline, shaders);
     } catch (...) {
         release();
         throw;
@@ -858,7 +948,8 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     return framebuffer;
 }
 
-void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state) const {
+void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked) const {
+    const auto commands = recording.Commands();
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
         Require(views.size() == attachments, "render targets do not match the pipeline's attachments");
@@ -886,7 +977,7 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
         context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
-        Continue(commands, state);
+        Continue(recording, state, masked);
         return;
     }
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -905,58 +996,84 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     sampleLocations.pPostSubpassSampleLocations = &post;
     if (sampleLocationsEnabled) begin.pNext = &sampleLocations;
     context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    Continue(commands, state);
+    Continue(recording, state, masked);
 }
 
-void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
-    if (optimized != nullptr) optimized->Schedule();
-    const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
-    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
-    if (state.stencilReplayReference) context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);
-    if (libraries) {
-        setLibraryState(commands, state);
+void Pipeline::setViewports(CommandState& recording, const State& state) const {
+    if (state.extraViewports.empty()) {
+        recording.SetViewport(context, state.viewport);
+        recording.SetScissor(context, state.scissor);
         return;
     }
-    if (depthBias) context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
+    Require(state.viewportScissors.size() == ViewportCount(state), "every viewport needs a scissor");
+    std::array<VkViewport, MaxViewports> viewports{};
+    viewports[0] = state.viewport;
+    std::copy(state.extraViewports.begin(), state.extraViewports.end(), viewports.begin() + 1);
+    recording.SetViewports(context, std::span(viewports.data(), ViewportCount(state)), state.viewportScissors);
+}
+
+void Pipeline::Continue(CommandState& recording, const State& state, const State* masked) const {
+    if (optimized != nullptr) optimized->Schedule();
+    const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
+    recording.BindPipeline(context, best != VK_NULL_HANDLE ? best : pipeline, dynamicSlots);
+    setViewports(recording, state);
+    setColorWriteMasks(recording, state, masked, false);
+    if (state.stencilReplayReference) recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);
+    if (libraries) {
+        setLibraryState(recording, state);
+        return;
+    }
+    if (depthBias) recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
 }
 
-void Pipeline::setLibraryState(VkCommandBuffer commands, const State& state) const {
+void Pipeline::setLibraryState(CommandState& recording, const State& state) const {
     const bool depth = state.depth.has_value();
-    context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, state.cullMode);
-    context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, state.frontFace);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
-    context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, depth && state.depthTest);
-    context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, depth && state.depthWrite);
-    context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, depthBounds);
-    context.Resolved(&DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, depth && state.stencilTest);
+    recording.SetCullMode(context, state.cullMode);
+    recording.SetFrontFace(context, state.frontFace);
+    recording.SetDepthBias(context, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
+    recording.SetDepthBounds(context, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
+    recording.SetDepthTestEnable(context, depth && state.depthTest);
+    recording.SetDepthWriteEnable(context, depth && state.depthWrite);
+    recording.SetDepthCompareOp(context, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
+    recording.SetDepthBoundsTestEnable(context, depthBounds);
+    recording.SetStencilTestEnable(context, depth && state.stencilTest);
     const auto stencil = [&](VkStencilFaceFlags face, const VkStencilOpState& op) {
-        context.Resolved(&DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, face, op.failOp, op.passOp, op.depthFailOp, op.compareOp);
-        context.Resolved(&DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, face, op.compareMask);
-        context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, face, op.writeMask);
-        context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, face, op.reference);
+        recording.SetStencilOp(context, face, op.failOp, op.passOp, op.depthFailOp, op.compareOp);
+        recording.SetStencilCompareMask(context, face, op.compareMask);
+        recording.SetStencilWriteMask(context, face, op.writeMask);
+        recording.SetStencilReference(context, face, op.reference);
     };
-    stencil(VK_STENCIL_FACE_FRONT_BIT, depth ? state.stencilFront : VkStencilOpState{});
-    stencil(VK_STENCIL_FACE_BACK_BIT, depth ? state.stencilBack : VkStencilOpState{});
+    const auto front = depth ? state.stencilFront : VkStencilOpState{};
+    const auto back = depth ? state.stencilBack : VkStencilOpState{};
+    if (std::memcmp(&front, &back, sizeof(front)) == 0) {
+        stencil(VK_STENCIL_FACE_FRONT_AND_BACK, front);
+        return;
+    }
+    stencil(VK_STENCIL_FACE_FRONT_BIT, front);
+    stencil(VK_STENCIL_FACE_BACK_BIT, back);
 }
 
-void Pipeline::ContinueSecondChannel(VkCommandBuffer commands) const {
+void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state, const State* masked) const {
     Require(secondChannel != VK_NULL_HANDLE, "the pipeline blends every channel in one pass");
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, secondChannel);
+    recording.BindPipeline(context, secondChannel, dynamicSlots);
+    setColorWriteMasks(recording, state, masked, true);
 }
 
-void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state) const {
+void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
+    if (!context.dynamicColorWriteMask || state.blends.empty()) return;
+    const auto masks = channelWriteMasks(state, masked != nullptr ? std::span(masked->blends) : std::span(state.blends), secondChannel);
+    recording.SetColorWriteMasks(context, std::span(masks).first(state.blends.size()));
+}
+
+void Pipeline::ContinueBackFaces(CommandState& recording, const State& state, const State* masked) const {
     Require(backFaces != VK_NULL_HANDLE, "the pipeline draws both faces in one pass");
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, backFaces);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
-    context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
-    if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    recording.BindPipeline(context, backFaces, dynamicSlots);
+    setColorWriteMasks(recording, state, masked, false);
+    setViewports(recording, state);
+    recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
+    if (depthBounds) recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
 }
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
@@ -971,11 +1088,44 @@ void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages
 
 namespace {
 
+class KeyWriter {
+public:
+    KeyWriter(std::vector<std::byte>& storage, std::size_t capacity) {
+        if (storage.size() < capacity) storage.resize(capacity);
+        begin = out = storage.data();
+        end = begin + capacity;
+    }
+
+    template<typename TValue>
+    void Put(const TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        reserve(sizeof(TValue));
+        std::memcpy(out, &value, sizeof(TValue));
+        out += sizeof(TValue);
+    }
+
+    void PutBytes(const void* data, std::size_t bytes) {
+        if (bytes == 0) return;
+        reserve(bytes);
+        std::memcpy(out, data, bytes);
+        out += bytes;
+    }
+
+    std::size_t Length() const { return static_cast<std::size_t>(out - begin); }
+
+private:
+    void reserve(std::size_t bytes) const {
+        if (bytes > static_cast<std::size_t>(end - out)) [[unlikely]] throw std::length_error("pipeline key larger than its buffer");
+    }
+
+    std::byte* begin;
+    std::byte* out;
+    std::byte* end;
+};
+
 template<typename TValue>
-void append(std::vector<std::byte>& key, const TValue& value) {
-    static_assert(std::is_trivially_copyable_v<TValue>);
-    const auto bytes = std::as_bytes(std::span(&value, 1));
-    key.insert(key.end(), bytes.begin(), bytes.end());
+void append(KeyWriter& key, const TValue& value) {
+    key.Put(value);
 }
 
 // Everything the Pipeline objects are built from, or empty when a stage's result has no module
@@ -984,57 +1134,52 @@ void append(std::vector<std::byte>& key, const TValue& value) {
 // replay insert an entry a later draw finds; a generated stage (rect-list pair, geometry) is keyed
 // by its identity like the others, so a replayed pipeline built from another device's generated
 // module is missed rather than used.
-void pipelineKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
-    key.clear();
+std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    const auto capacity = 512 + sizeof(State) + sizeof(Context) + shaders.size() * 64 + input.bindings.size() * sizeof(VkVertexInputBindingDescription) + input.attributes.size() * sizeof(VkVertexInputAttributeDescription) + resources.mainKey.size_bytes() + resources.fragmentKey.size_bytes() + state.blends.size() * sizeof(VkPipelineColorBlendAttachmentState) + state.colors.size() * 64;
+    KeyWriter key(storage, capacity);
     append(key, context.device);
     append(key, attachmentLayout);
     append(key, shaders.size());
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const auto identity = shader.program->Identity();
-        if (identity.Empty()) {
-            key.clear();
-            return;
-        }
+        if (identity.Empty()) return 0;
         append(key, shader.stage);
         append(key, identity.low);
         append(key, identity.high);
         // Where the stage's push constants sit in the block (AssemblePushConstants).
-        append(key, shader.pushConstantOffset);
+        append(key, KeyedPushOffset(shader));
     }
+    append(key, state.meshLayerBase);
+    append(key, state.meshLayerCount);
     append(key, PushConstantStages(shaders));
     append(key, input.bindings.size());
-    for (const auto& binding : input.bindings) {
-        append(key, binding.binding);
-        append(key, binding.stride);
-        append(key, binding.inputRate);
-    }
+    static_assert(sizeof(VkVertexInputBindingDescription) == 3 * sizeof(std::uint32_t) && offsetof(VkVertexInputBindingDescription, binding) == 0 && offsetof(VkVertexInputBindingDescription, stride) == 4 && offsetof(VkVertexInputBindingDescription, inputRate) == 8 && sizeof(VkVertexInputRate) == sizeof(std::uint32_t));
+    key.PutBytes(input.bindings.data(), input.bindings.size() * sizeof(VkVertexInputBindingDescription));
     append(key, input.attributes.size());
-    for (const auto& attribute : input.attributes) {
-        append(key, attribute.location);
-        append(key, attribute.binding);
-        append(key, attribute.format);
-        append(key, attribute.offset);
-    }
+    static_assert(sizeof(VkVertexInputAttributeDescription) == 4 * sizeof(std::uint32_t) && offsetof(VkVertexInputAttributeDescription, location) == 0 && offsetof(VkVertexInputAttributeDescription, binding) == 4 && offsetof(VkVertexInputAttributeDescription, format) == 8 && offsetof(VkVertexInputAttributeDescription, offset) == 12 && sizeof(VkFormat) == sizeof(std::uint32_t));
+    key.PutBytes(input.attributes.data(), input.attributes.size() * sizeof(VkVertexInputAttributeDescription));
     append(key, resources.mainKey.size());
-    for (const auto word : resources.mainKey) append(key, word);
+    key.PutBytes(resources.mainKey.data(), resources.mainKey.size_bytes());
     append(key, resources.fragmentKey.size());
-    for (const auto word : resources.fragmentKey) append(key, word);
+    key.PutBytes(resources.fragmentKey.data(), resources.fragmentKey.size_bytes());
     append(key, state.hasColorTarget);
     append(key, state.rectList);
     append(key, state.topology);
     append(key, state.primitiveRestart);
     append(key, state.cullMode);
     append(key, state.polygonMode);
+    append(key, state.lineWidth);
     append(key, state.frontFace);
     append(key, state.provokingVertexMode);
+    append(key, ViewportCount(state));
     append(key, state.negativeOneToOne);
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
-    for (const auto& blend : state.blends) append(key, blend);
-    append(key, state.colorRop);
-    for (const auto value : state.blendConstants) append(key, value);
+    for (const auto& blend : state.blends) append(key, keyedBlend(context, blend));
+    key.Put(state.colorRop);
+    key.PutBytes(state.blendConstants.data(), sizeof(state.blendConstants));
     append(key, state.samples);
     append(key, state.perSampleShading);
     append(key, state.mergedCoverage);
@@ -1103,9 +1248,10 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, context.sampleLocationGridSampleCounts);
     append(key, context.storageImageMultisample);
     append(key, context.shaderStencilExport);
+    return key.Length();
 }
 
-std::uint64_t hashKey(const std::vector<std::byte>& key) {
+std::uint64_t hashKey(std::span<const std::byte> key) {
     return std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(key.data()), key.size()));
 }
 
@@ -1220,14 +1366,16 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created, std::uint64_t* storeHash) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (created != nullptr) *created = false;
+    if (storeHash != nullptr) *storeHash = 0;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
     struct PipelineKeyStorage {};
-    auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
-    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+    auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const std::span<const std::byte> key(storage.data(), length);
     if (key.empty()) {
         std::lock_guard lock(store.mutex);
         ++store.uncached;
@@ -1242,7 +1390,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         const auto found = store.index.find(hash);
         if (found == store.index.end()) return nullptr;
         const auto it = found->second;
-        if (it->key != key) {
+        if (it->key.size() != key.size() || std::memcmp(it->key.data(), key.data(), key.size()) != 0) {
             collision = true;
             return nullptr;
         }
@@ -1262,6 +1410,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         if (auto pipeline = lookup(collision)) {
             ++store.hits;
             ++store.totals.hits;
+            if (storeHash != nullptr) *storeHash = hash;
             return pipeline;
         }
         if (collision) {
@@ -1282,7 +1431,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     {
         std::lock_guard lock(store.mutex);
         bool collision = false;
-        if (auto raced = lookup(collision)) return raced;
+        if (auto raced = lookup(collision)) {
+            if (storeHash != nullptr) *storeHash = hash;
+            return raced;
+        }
         if (collision) {
             ++store.uncached;
             ++store.totals.uncached;
@@ -1300,10 +1452,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.capacity = std::min(store.capacity * 2u, PipelineStore::MaximumEntries);
         }
         if (replaying) {
-            store.entries.push_front({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
+            store.entries.push_front({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key.begin(), key.end()), pipeline});
             store.index[hash] = store.entries.begin();
         } else {
-            store.entries.push_back({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
+            store.entries.push_back({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key.begin(), key.end()), pipeline});
             store.index[hash] = std::prev(store.entries.end());
         }
         while (store.entries.size() > storeBound(store)) {
@@ -1317,14 +1469,194 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             ++store.evicted;
             ++store.totals.evicted;
         }
+        if (storeHash != nullptr && store.index.contains(hash)) *storeHash = hash;
     }
     if (created != nullptr) *created = true;
     if (PipelineJournalEnabled() && !PipelineJournalReplaying() && state.tessellationCapture == nullptr) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
     return pipeline;
 }
 
+std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected) {
+    auto& store = Pipelines();
+    std::lock_guard lock(store.mutex);
+    reportPipelines(store);
+    const auto found = store.index.find(hash);
+    if (found == store.index.end()) return nullptr;
+    const auto it = found->second;
+    if (it->pipeline.owner_before(expected) || expected.owner_before(it->pipeline) || !alive(*it, context)) return nullptr;
+    store.entries.splice(store.entries.end(), store.entries, it);
+    ++store.hits;
+    ++store.totals.hits;
+    return it->pipeline;
+}
+
+namespace {
+
+struct DeferredPipelineBuild {
+    Context context;
+    State state;
+    VertexInputLayout vertexInput;
+    VkDescriptorSetLayout mainLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout fragmentLayout = VK_NULL_HANDLE;
+    bool split = false;
+    std::vector<std::uint32_t> mainKey;
+    std::vector<std::uint32_t> fragmentKey;
+    std::deque<ShaderRecompiler::RecompileResult> programs;
+    std::deque<std::vector<ShaderRecompiler::RegisteredImageView>> views;
+    std::vector<CompiledShader> shaders;
+    VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    std::uint64_t hash = 0;
+};
+
+struct DeferredPipelineBuilds {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::condition_variable idle;
+    std::deque<std::unique_ptr<DeferredPipelineBuild>> queue;
+    std::unordered_set<std::uint64_t> pending;
+    std::unordered_set<std::uint64_t> failed;
+    unsigned running = 0;
+    bool started = false;
+};
+
+DeferredPipelineBuilds& deferredBuilds() {
+    static auto* builds = new DeferredPipelineBuilds();
+    return *builds;
+}
+
+bool profileDeferredBuilds() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return profile;
+}
+
+std::size_t deferredPipelineWords() {
+    static const std::size_t words = [] {
+        const char* value = std::getenv("APS5_ASYNC_PIPELINE_WORDS");
+        return value != nullptr ? static_cast<std::size_t>(std::strtoull(value, nullptr, 10)) : std::size_t{0};
+    }();
+    return words;
+}
+
+void runDeferredBuilds() {
+    auto& builds = deferredBuilds();
+    for (;;) {
+        std::unique_ptr<DeferredPipelineBuild> job;
+        {
+            std::unique_lock lock(builds.mutex);
+            builds.wake.wait(lock, [&] { return !builds.queue.empty(); });
+            job = std::move(builds.queue.front());
+            builds.queue.pop_front();
+            ++builds.running;
+        }
+        bool failed = false;
+        const auto started = std::chrono::steady_clock::now();
+        try {
+            const PipelineSetLayouts layouts{job->mainLayout, job->fragmentLayout, job->split, job->mainKey, job->fragmentKey};
+            static_cast<void>(CachedPipeline(job->context, job->state, job->vertexInput, layouts, job->shaders, job->attachmentLayout));
+        } catch (const std::exception& error) {
+            failed = true;
+            if (profileDeferredBuilds()) AgcDriver::ProfilePrint_nid_no_patch("[pipecache] deferred build 0x%016llx failed: %s\n", static_cast<unsigned long long>(job->hash), error.what());
+        }
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        if (profileDeferredBuilds()) AgcDriver::ProfilePrint_nid_no_patch("[pipecache] deferred build 0x%016llx finished in %.0f ms\n", static_cast<unsigned long long>(job->hash), elapsed);
+        {
+            std::lock_guard lock(builds.mutex);
+            builds.pending.erase(job->hash);
+            if (failed) builds.failed.insert(job->hash);
+            job.reset();
+            --builds.running;
+        }
+        builds.idle.notify_all();
+    }
+}
+
+void awaitDeferredBuilds(VkDevice device) {
+    auto& builds = deferredBuilds();
+    std::unique_lock lock(builds.mutex);
+    for (auto it = builds.queue.begin(); it != builds.queue.end();) {
+        if ((*it)->context.device != device) {
+            ++it;
+            continue;
+        }
+        builds.pending.erase((*it)->hash);
+        it = builds.queue.erase(it);
+    }
+    builds.idle.wait(lock, [&] { return builds.running == 0; });
+    builds.failed.clear();
+}
+
+}
+
+bool DefersPipelineBuild(std::span<const CompiledShader> shaders) {
+    const auto threshold = deferredPipelineWords();
+    if (threshold == 0) return false;
+    std::size_t words = 0;
+    for (const auto& shader : shaders) {
+        if (shader.program != nullptr) words += shader.program->spirv.size();
+    }
+    return words >= threshold;
+}
+
+std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash) {
+    if (storeHash != nullptr) *storeHash = 0;
+    static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    struct DeferredKeyStorage {};
+    auto& storage = HostThreadLocal<std::vector<std::byte>, DeferredKeyStorage>();
+    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const std::span<const std::byte> key(storage.data(), length);
+    if (disabled || key.empty()) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
+    const auto hash = hashKey(key);
+    bool synchronous = false;
+    {
+        auto& store = Pipelines();
+        std::lock_guard lock(store.mutex);
+        const auto found = store.index.find(hash);
+        synchronous = found != store.index.end() && (found->second->key.size() != key.size() || std::memcmp(found->second->key.data(), key.data(), key.size()) != 0 || alive(*found->second, context));
+    }
+    auto& builds = deferredBuilds();
+    if (!synchronous) {
+        std::lock_guard lock(builds.mutex);
+        if (builds.pending.contains(hash)) return nullptr;
+        synchronous = builds.failed.erase(hash) != 0;
+    }
+    if (synchronous) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
+    auto job = std::make_unique<DeferredPipelineBuild>();
+    job->context = context;
+    job->state = state;
+    job->vertexInput = vertexInput;
+    job->mainLayout = resources.main;
+    job->fragmentLayout = resources.fragment;
+    job->split = resources.split;
+    job->mainKey.assign(resources.mainKey.begin(), resources.mainKey.end());
+    job->fragmentKey.assign(resources.fragmentKey.begin(), resources.fragmentKey.end());
+    job->attachmentLayout = attachmentLayout;
+    job->hash = hash;
+    for (const auto& shader : shaders) {
+        auto copy = shader;
+        if (shader.program != nullptr) copy.program = &job->programs.emplace_back(*shader.program);
+        if (shader.registeredImageViews != nullptr) copy.registeredImageViews = &job->views.emplace_back(*shader.registeredImageViews);
+        job->shaders.push_back(copy);
+    }
+    {
+        std::lock_guard lock(builds.mutex);
+        if (!builds.pending.insert(hash).second) return nullptr;
+        builds.queue.push_back(std::move(job));
+        if (!builds.started) {
+            builds.started = true;
+            const auto workers = std::max(2u, std::thread::hardware_concurrency() / 4u);
+            for (unsigned worker = 0; worker < workers; ++worker) std::thread(runDeferredBuilds).detach();
+        }
+    }
+    builds.wake.notify_one();
+    if (profileDeferredBuilds()) AgcDriver::ProfilePrint_nid_no_patch("[pipecache] deferred build 0x%016llx queued, its draws are skipped until it is resident\n", static_cast<unsigned long long>(hash));
+    return nullptr;
+}
+
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
-    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+    struct PipelineScratchStorage {};
+    auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineScratchStorage>();
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    key.assign(storage.begin(), storage.begin() + static_cast<std::ptrdiff_t>(length));
 }
 
 PipelineStoreCounters PipelineStoreTotals() {
@@ -1343,6 +1675,7 @@ bool PipelineStoreCanGrow() {
 }
 
 void ClearCachedPipelines(VkDevice device) {
+    awaitDeferredBuilds(device);
     auto& store = Pipelines();
     std::lock_guard lock(store.mutex);
     for (auto it = store.entries.begin(); it != store.entries.end();) {
@@ -1362,6 +1695,7 @@ void ClearCachedPipelines(VkDevice device) {
     }
     ClearPipelineLibraries(device);
     ReleasePixelFunctionLds(device);
+    ReleaseMeshWindow(device);
 }
 
 }

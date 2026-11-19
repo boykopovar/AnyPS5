@@ -13,4 +13,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_vr_tracker2 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker2>")
     endif()
+
+    add_test_executable(guest_vr_tracker2_unnamed_tests tests/UninitializedNamedAnswers.cpp)
+    target_include_directories(guest_vr_tracker2_unnamed_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vr_tracker2_unnamed_tests PRIVATE libSceVrTracker2 libkernel libc)
+    configure_windows_unwind(guest_vr_tracker2_unnamed_tests)
+    add_test(NAME guest_vr_tracker2_unnamed COMMAND guest_vr_tracker2_unnamed_tests)
+    set_tests_properties(guest_vr_tracker2_unnamed PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_vr_tracker2_unnamed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker2>")
+    endif()
 endif()
