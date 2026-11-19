@@ -84,6 +84,10 @@ static void RestoreSizeTest() {
     state.Toggle();
     state.Toggle();
     Require(!window.fullscreen && window.sizeCalls == 1 && window.size == HostWindowSize{1280, 720}, "a window that stays at the desktop size was not restored");
+    window.size = {0, 0};
+    state.Toggle();
+    state.Toggle();
+    Require(!window.fullscreen && window.sizeCalls == 2 && window.size == HostWindowSize{1280, 720}, "a minimized toggle overwrote the adopted windowed size");
 }
 
 static void AdoptTest() {
@@ -106,8 +110,10 @@ static void AdoptTest() {
 
 static void FailureTest() {
     FakeWindow window;
+    window.restoresSize = false;
     HostFullscreenState state(window);
     state.Adopt(HostFullscreenMode::Windowed, window.size);
+    window.size = {800, 600};
     window.failTransition = true;
     bool thrown = false;
     try {
@@ -117,8 +123,11 @@ static void FailureTest() {
     }
     Require(thrown && !window.fullscreen, "a refused transition was swallowed");
     window.failTransition = false;
+    window.size = {0, 0};
     state.Toggle();
     Require(window.fullscreen, "toggle did not work after a refused transition");
+    state.Toggle();
+    Require(!window.fullscreen && window.size == HostWindowSize{1280, 720}, "a refused transition overwrote the saved windowed size");
 }
 
 static void CursorTest() {
@@ -196,6 +205,12 @@ static void ParseTest() {
     const std::string warning = HostFullscreenWarning("yes please");
     Require(warning.find("ANYPS5_FULLSCREEN") != std::string::npos && warning.find("'yes please'") != std::string::npos, "the warning did not name the variable and the value");
     Require(warning.find('\n') == std::string::npos, "the warning was not one line");
+    const std::string nullWarning = HostFullscreenWarning(nullptr);
+    Require(nullWarning.find("ANYPS5_FULLSCREEN=''") != std::string::npos, "a null warning did not sanitize to empty");
+    Require(nullWarning.find('\r') == std::string::npos && nullWarning.find('\n') == std::string::npos, "a null warning was not one line");
+    const std::string multilineWarning = HostFullscreenWarning("1\r\nborderless");
+    Require(multilineWarning.find("ANYPS5_FULLSCREEN='1\\r\\nborderless'") != std::string::npos, "the warning did not escape control characters");
+    Require(multilineWarning.find('\r') == std::string::npos && multilineWarning.find('\n') == std::string::npos, "the warning contained raw line breaks");
 }
 
 static bool Fullscreen(const DisplayWindow& window) {

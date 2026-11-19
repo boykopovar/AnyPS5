@@ -674,6 +674,14 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(capture.stacks, {stack: 5})
         self.assertEqual(capture.self_counts, {})
 
+    def test_collapsed_stack_rejects_empty_frames(self):
+        samples = self.root / "worker.collapsed.txt"
+        for stack in (";draw", "worker;", "worker;;draw", "worker; \t ;draw"):
+            with self.subTest(stack=stack):
+                samples.write_text(f"# samples=5\n{stack} 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"worker\.collapsed\.txt:2:.*empty frame"):
+                    symbolize_samples.load(samples)
+
     def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
         samples = self.root / "mixed.txt"
         for collapsed_count, address_count in ((3, 7), (0, 7), (3, 0), (0, 0)):
@@ -1250,6 +1258,16 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 self.assertEqual(json.loads("\n".join(lines))["modules"], [
                     {"name": "libSceAgcDriver.prx", "candidate_accepted": timestamp == TIMESTAMP,
                      "identity_recorded": True, "identity_matches": timestamp == TIMESTAMP}])
+
+    def test_hex_and_ascii_digit_predicates(self):
+        for value in ("0", "ff", "0x1F", "0XaB", "DEADbeef"):
+            self.assertTrue(symbolize_samples.is_hex(value), value)
+        for value in ("", "0x", "g1", "-1", "1 2", "1\n", "0x0x1"):
+            self.assertFalse(symbolize_samples.is_hex(value), value)
+        for value in ("0", "0123456789"):
+            self.assertTrue(symbolize_samples.is_ascii_digits(value), value)
+        for value in ("", "1a", "-1", "1.5", "١", "²"):
+            self.assertFalse(symbolize_samples.is_ascii_digits(value), value)
 
 
 class CandidateModuleTests(unittest.TestCase):
