@@ -25,8 +25,8 @@ bool indirectRecordsDraw(const Pm4::DrawParameters::IndirectDraw& indirect) {
 
 QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass& copy) {
     const bool multisampled = copy.source.samples != 1u;
-    const auto address = DepthCopyPixelProgramAddress(multisampled);
-    const auto words = Graphics::DepthCopySourceWords(copy.source);
+    const auto address = copy.stencil ? StencilCopyPixelProgramAddress(multisampled) : DepthCopyPixelProgramAddress(multisampled);
+    const auto words = Graphics::DepthCopySourceWords(copy.source, copy.stencil);
     QueueState draw = queue;
     draw.context.insert_or_assign(0x000u, 0u);
     draw.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(address >> 8u));
@@ -39,8 +39,8 @@ QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass&
     draw.context.insert_or_assign(0x1b4u, 0x8002u);
     draw.context.insert_or_assign(0x1b6u, 0u);
     draw.context.insert_or_assign(0x1c4u, 0u);
-    draw.context.insert_or_assign(0x1c5u, 1u);
-    draw.context.insert_or_assign(0x08fu, 1u);
+    draw.context.insert_or_assign(0x1c5u, copy.stencil ? 2u : 1u);
+    draw.context.insert_or_assign(0x08fu, copy.stencil ? 3u : 1u);
     draw.context.insert_or_assign(0x203u, 0u);
     if (const auto alpha = draw.context.find(0x2dcu); alpha != draw.context.end()) draw.context.insert_or_assign(0x2dcu, alpha->second & ~1u);
     return draw;
@@ -110,9 +110,11 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     traceIndirect = traceIndirectEnabled;
     if (traceIndirect && drawParameters.indirect) std::fprintf(stderr, "[draw] indirect packet %s args 0x%llx count %u reached\n", Pm4::Name(packet[0]).c_str(), static_cast<unsigned long long>(drawParameters.indirect->arguments), drawParameters.indirect->count);
     {
+        const auto colorControl = queue.context.find(0x202);
+        const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
         const auto targetMask = queue.context.find(0x8e);
         const auto shaderMask = queue.context.find(0x8f);
-        const bool colorWrites = targetMask != queue.context.end() && shaderMask != queue.context.end() && Graphics::ColorWriteMask(queue.context) != 0;
+        const bool colorWrites = !colorDisabled && targetMask != queue.context.end() && shaderMask != queue.context.end() && Graphics::ColorWriteMask(queue.context) != 0;
         if (!colorWrites && !queue.shader.contains(0x8)) {
             const auto word = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0u : it->second; };
             if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) return DrawVerdict::Nothing;

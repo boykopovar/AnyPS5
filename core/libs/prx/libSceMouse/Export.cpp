@@ -13,7 +13,13 @@ int APS5_VABI sceMouseInit() {
 }
 
 int APS5_VABI sceMouseOpen(int userId, std::int32_t type, std::int32_t index, const void* param) {
-    return Mouse::Open(userId, type, index, static_cast<const MouseOpenParam*>(param));
+    if (param == nullptr || !Mouse::IsInitialized() || userId < 0 || type != 0 || index != 0) return Mouse::Open(userId, type, index, nullptr);
+    MouseOpenParam local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return MOUSE_ERROR_INVALID_ARG;
+    return Mouse::Open(userId, type, index, &local);
 }
 
 int APS5_VABI sceMouseClose(std::int32_t handle) {
@@ -78,17 +84,11 @@ int APS5_VABI sceMouseMbusInit() {
 }
 
 int APS5_VABI sceMouseSetHandType(std::int32_t handle, std::uint32_t type) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (type > MOUSE_MAX_HAND_TYPE) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::SetHandType(handle, type);
 }
 
 int APS5_VABI sceMouseSetPointerSpeed(std::int32_t handle, std::uint32_t speed) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (speed > MOUSE_MAX_POINTER_SPEED) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::SetPointerSpeed(handle, speed);
 }
 
 int APS5_VABI sceMouseSetProcessPrivilege() {

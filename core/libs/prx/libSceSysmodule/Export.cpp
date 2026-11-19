@@ -11,7 +11,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include "prx/libc/include/General.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -185,8 +187,15 @@ int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, 
     if (!info) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
     }
-    if (!fillModuleInfoForUnwind(addr, info)) {
+    ModuleInfoForUnwind localInfo{};
+    if (!fillModuleInfoForUnwind(addr, &localInfo)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: invalid info pointer");
     }
     return 0;
 }
@@ -386,8 +395,30 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleIsCalledFromSysModule() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSysmoduleIsCalledFromSysModule(const void* address) {
+    ModuleInfoEx info{};
+    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uint64_t>(address), 1, &info) != 0) return 0;
+    const auto value = reinterpret_cast<std::uint64_t>(address);
+    bool executable = false;
+    for (std::uint32_t index = 0; index < info.segment_count; ++index) {
+        const auto& segment = info.segments[index];
+        if ((segment.prot & 4) != 0 && value >= segment.address && value - segment.address < segment.size) {
+            executable = true;
+            break;
+        }
+    }
+    if (!executable) return 0;
+    const std::string_view module(info.name);
+    std::lock_guard lock(gMutex);
+    for (const auto& [id, count] : gLoadCount) {
+        if (count < 1) continue;
+        const char* name = findModuleName(id);
+        if (name == nullptr) continue;
+        const std::string_view expected(name);
+        if (module == expected ||
+            (module.size() == expected.size() + 4 && module.starts_with(expected) && module.ends_with(".prx")) ||
+            (module.size() == expected.size() + 10 && module.starts_with(expected) && module.ends_with(".guest.prx"))) return 1;
+    }
     return 0;
 }
 
@@ -398,11 +429,19 @@ int APS5_VABI sceSysmoduleIsCameraPreloaded() {
 
 KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
     if (fname == nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
-    const char* sandbox = sceKernelGetFsSandboxRandomWord();
     char path[0x100];
+    std::string name;
+    const int copyError = CopyGuestString_nid_no_patch(fname, sizeof(path), name);
+    if (copyError == 63) {
+        name.resize(sizeof(path));
+        if (!GuestCopyIn_nid_no_patch(name.data(), fname, sizeof(path))) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
+    } else if (copyError != 0) {
+        return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
+    }
+    const char* sandbox = sceKernelGetFsSandboxRandomWord();
     KernelModule result = static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
     const auto attempt = [&](const char* root, const char* tier, const char* ext) {
-        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, fname, ext);
+        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, name.c_str(), ext);
         result = sceKernelLoadStartModule(path, args, argp, flags, nullptr, res);
         return result > 0;
     };

@@ -47,14 +47,18 @@ SUMMARY = {"commit": "abc", "dirty": False, "env": {"APS5_TRACE_FRAMES": "600:3"
 STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll+0x1;a.prx+0x10;a.prx+0x20 3\nntdll.dll+0x1;a.prx+0x10;a.prx+0x30 1\n[truncated];a.prx+0x40;a.prx+0x30 1\n"
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 @lru_cache(maxsize=2)
 def excessive_trace_json(opening, closing):
     depth = sys.getrecursionlimit() + 64
     for _ in range(8):
         value = opening * depth + "0" + closing * depth
-        try:
-            json.loads(value)
-        except RecursionError:
+        if child_decoder_rejects(value):
             return opening * (depth + 128) + "0" + closing * (depth + 128)
         depth *= 2
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
@@ -133,6 +137,23 @@ class GpuOccupancyTests(unittest.TestCase):
                 self.assertAlmostEqual(gpu["busy_pct"], expected / 15 * 100)
                 self.assertAlmostEqual(gpu["untraced_ms_per_frame"], 15 - expected)
                 self.assertEqual(gpu["wait_ms_per_frame"], 0)
+
+    def test_markdown_batch_ids_and_present_values_cannot_create_report_sections(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                  {"name": "thread_name", "ph": "M", "tid": 2, "args": {"name": "worker"}},
+                  {"name": "present", "ph": "i", "ts": 0, "args": {"present": "1\n\n## Fake present"}},
+                  {"name": "present", "ph": "i", "ts": 15000, "args": {"present": 2}},
+                  dict(complete(1, "batch", 0, 10000), args={"batch": "7\n\n# Fake batch\n\n| a |\n|---|"}),
+                  complete(2, "Driver.wait", 1000, 4000)]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["largest_gpu_batches"][0]["batch"], "7\n\n# Fake batch\n\n| a |\n|---|")
+        self.assertEqual(result["longest_waits"][0]["present"], "1\n\n## Fake present")
+        lines = trace_digest.markdown(result).splitlines()
+        self.assertFalse([line for line in lines if line.startswith(("#", "| a", "|---|:"))])
+        present = "present 1<br><br>## Fake present"
+        self.assertTrue(any(line.startswith(f"- {present}: ") for line in lines))
+        self.assertTrue(any(line.startswith("- Driver.wait (worker) ") and line.endswith(f", {present}") for line in lines))
+        self.assertTrue(any(line.startswith("- batch 7<br><br># Fake batch<br><br>&#124; a &#124;<br>&#124;---&#124;: ") and f", {present}: GPU " in line for line in lines))
 
     def test_overlap_keeps_individual_batch_and_inclusive_slice_durations(self):
         result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)]))
@@ -381,6 +402,21 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_cli_rejects_invalid_summary_windows(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        invalid = [(None, "window must be an object"), ([], "window must be an object")]
+        invalid += [({"ms": value}, "window.ms") for value in (None, True, "40", -1, float("inf"), 1e308)]
+        for window, message in invalid:
+            with self.subTest(window=window):
+                record = dict(SUMMARY, window=window)
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), "--json"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         explicit = summary.with_name("explicit-\u03a9.jsonl")
@@ -466,6 +502,28 @@ class TraceDigestTests(unittest.TestCase):
         self.assertIn("OwnedDraw.arm_attempt", text)
         self.assertIn("| 2 | 1 | 0 |", text)
         first["owned_draw_counts"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
+
+    def test_graphics_track_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["graphics_track"] = {
+            "Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 120,
+            "Graphics.RenderPass.Close.label": 3, "Graphics.RenderPass.Close.raw": 9,
+            "Graphics.Barrier.draw": 240, "Graphics.BarrierMerged.draw": 60,
+            "Graphics.Copy": 4, "Graphics.Copy.bytes": 2 * 1024 * 1024,
+        }
+        second["graphics_track"] = {"Graphics.RenderPass": 6, "Graphics.Copy.bytes": 512 * 1024}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["graphics_track"], first["graphics_track"])
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("top close reason", text)
+        self.assertIn("| 1 | 12 | 120 | 12 | raw | 240 | 60 | 4 | 2.0 |", text)
+        self.assertIn("| 2 | 6 | 0 | 0 | - | 0 | 0 | 0 | 0.5 |", text)
+        first["graphics_track"] = {"bad": -1}
         with self.assertRaises(ValueError):
             trace_digest.validate_interval(first)
 
@@ -1009,6 +1067,15 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertIn(str(self.stacks) + ":2:", errors.getvalue())
                 self.assertNotIn("Traceback", errors.getvalue())
 
+    def test_stack_weights_are_plain_decimal_digits(self):
+        for count in ("1_0", "+5", "٥"):
+            with self.subTest(count=count):
+                self.stacks.write_text("# header\nworker;draw " + count + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, ":2: sample count must be a positive integer"):
+                    trace_digest.load_stacks(self.stacks)
+        self.stacks.write_text("# header\nworker;draw 010\n", encoding="utf-8")
+        self.assertEqual(trace_digest.load_stacks(self.stacks), [(["worker", "draw"], 10)])
+
 
     def test_stacks_self_and_total(self):
         stacks = self.result()["stacks"]
@@ -1477,6 +1544,19 @@ class IntervalSchemaTests(unittest.TestCase):
                     self.write(record)
                     with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
                         trace_digest.load_intervals(self.path)
+
+    def test_missing_interval_bound_is_rejected_by_both_cli_reports(self):
+        for field in ("interval_start_s", "interval_end_s"):
+            record = interval_line(0, 1, 20, 1)
+            del record[field]
+            self.write(record)
+            for script in (trace_digest.__file__, Path(trace_digest.__file__).with_name("trace_intervals_csv.py")):
+                with self.subTest(field=field, script=script):
+                    result = subprocess.run([sys.executable, str(script), str(self.path)],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"summary.jsonl:4: {field} must be", result.stderr)
+                    self.assertEqual(result.stdout, "")
 
     def test_out_of_order_percentiles_are_rejected_by_both_cli_reports(self):
         for frames in (dict(p50=2, p90=1, p99=3, max=4), dict(p50=1, p90=3, p99=2, max=4),

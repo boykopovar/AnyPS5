@@ -2,6 +2,8 @@
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -22,10 +24,10 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetTimeZone(const char* zone) {
 #ifdef _WIN32
-    _putenv_s("TZ", zone);
+    Require(_putenv_s("TZ", zone) == 0);
     _tzset();
 #else
-    setenv("TZ", zone, 1);
+    Require(setenv("TZ", zone, 1) == 0);
     tzset();
 #endif
 }
@@ -78,6 +80,42 @@ static void EnterTitleDirectory(const char* titleId) {
     file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << titleId << std::string("\0\0\0", 3);
 }
 
+static constexpr int setConfInvalid = static_cast<int>(0x80020016u);
+
+static bool TimezoneIs(std::int32_t minutesWest, std::int32_t daylightTime) {
+    KernelTimezone zone{-123, -123};
+    return sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == minutesWest && zone.tz_dsttime == daylightTime;
+}
+
+static void SetConfFollowsTheMeasuredContract() {
+    ResetGuestTimezone_nid_no_patch();
+    SetTimeZone("EST5EDT");
+    KernelTimezone host{-123, -123};
+    Require(sceKernelGettimezone(&host) == 0 && host.tz_minuteswest == -300);
+    Require(sceRtcSetConf(0, 0, 0, -2) == setConfInvalid);
+    Require(TimezoneIs(host.tz_minuteswest, host.tz_dsttime));
+    Require(sceRtcSetConf(0, 0, -60, 1) == 0 && TimezoneIs(-60, 1));
+    Require(sceRtcSetConf(123456, 789, 60, 2) == 0 && TimezoneIs(60, 2));
+    Require(sceRtcSetConf(INT32_MIN, INT32_MAX, -300, 1) == 0 && TimezoneIs(-300, 1));
+    Require(sceRtcSetConf(INT32_MAX, INT32_MIN, 330, 0) == 0 && TimezoneIs(330, 0));
+    Require(sceRtcSetConf(0, 0, 123456789, INT32_MAX) == 0 && TimezoneIs(123456789, INT32_MAX));
+    Require(sceRtcSetConf(0, 0, INT32_MIN, 1) == 0 && TimezoneIs(INT32_MIN, 1));
+    Require(sceRtcSetConf(0, 0, INT32_MAX, 0) == 0 && TimezoneIs(INT32_MAX, 0));
+    Require(sceRtcSetConf(0, 0, 720, -1) == 0 && TimezoneIs(720, 0));
+    Require(sceRtcSetConf(0, 0, 99, 5) == 0 && sceRtcSetConf(7, 7, 42, -2) == setConfInvalid && TimezoneIs(99, 5));
+    Require(sceRtcSetConf(0, 0, 42, INT32_MIN) == setConfInvalid && TimezoneIs(99, 5));
+    Require(sceRtcSetConf(0, 0, 42, -3) == setConfInvalid && TimezoneIs(99, 5));
+    for (int index = 0; index < 1000; index++) {
+        Require(sceRtcSetConf(index, -index, index - 500, index % 3) == 0 && TimezoneIs(index - 500, index % 3));
+    }
+    for (int index = 0; index < 1000; index++) {
+        Require(sceRtcSetConf(0, 0, index, -2) == setConfInvalid && TimezoneIs(499, 0));
+    }
+    ResetGuestTimezone_nid_no_patch();
+    Require(TimezoneIs(host.tz_minuteswest, host.tz_dsttime));
+    SetTimeZone("UTC0");
+}
+
 int main(int argc, char** argv) {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
@@ -106,6 +144,15 @@ int main(int argc, char** argv) {
         const RtcTick westBound{3600000000ull}, westBelow{3599999999ull};
         Require(sceRtcFormatRFC3339Precise(text, &westBound, -60, 6) == 0 && std::strcmp(text, "0001-01-01T00:00:00.000000-01:00") == 0);
         Require(sceRtcFormatRFC3339Precise(text, &westBelow, -60, 6) == static_cast<int>(0x80B50003));
+        const RtcTick yearOneStart{1000000ull}, year2026{63902822400000000ull};
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, 840) == 0 && std::strcmp(text, "0001-01-01T14:00:01.00+14:00") == 0);
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, -720) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, 2000) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339(text, &yearOneStart, -2000) == static_cast<int>(0x80B50003));
+        for (const int zone : {0x7fffffff, static_cast<int>(0x80000000), 1000000, -1000000}) {
+            Require(sceRtcFormatRFC3339Precise(text, &year2026, zone, 6) == static_cast<int>(0x80B50003));
+            Require(sceRtcFormatRFC3339Precise(text, &tick, zone, 6) == static_cast<int>(0x80B50003));
+        }
         return 0;
     }
     EnterTitleDirectory("CUSA00000");
@@ -171,6 +218,7 @@ int main(int argc, char** argv) {
     Require(sceRtcGetCurrentClockLocalTime(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
     Require(sceRtcGetCurrentClockUtc(nullptr) == invalidPointer);
     Require(sceRtcGetCurrentClockUtc(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
+    SetConfFollowsTheMeasuredContract();
 
     RtcDateTime epoch{1970, 1, 1, 0, 0, 0, 0};
     std::int64_t seconds = -1;
@@ -867,6 +915,16 @@ int main(int argc, char** argv) {
     }
     SetTimeZone("UTC0");
 
+    for (const std::uint64_t value : {unixEpochTick - 1, maxTick, unixEpochTick}) {
+        const RtcTick input{value};
+        RtcTick output{};
+        errno = 71;
+        Require(sceRtcConvertUtcToLocalTime(&input, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+        Require(sceRtcConvertLocalTimeToUtc(&output, &output) == 0 && output.tick == value);
+        Require(errno == 71);
+    }
+
 #ifndef _WIN32
     SetTimeZone("STD0DST,J1/0,J2/0");
     const std::time_t beforeTransition = -1;
@@ -930,7 +988,9 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 0, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999Z") == 0);
         Require(sceRtcFormatRFC3339Precise(precise, &nines, 0, 1) == 0 && std::strcmp(precise, "2026-10-02T13:05:09.9Z") == 0);
         std::memset(precise, '#', sizeof(precise));
-        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidValue && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &huge, 1, 6) == 0 && std::strcmp(precise, "0001-01-01T00:00:59.999999+00:01") == 0);
+        std::memset(precise, '#', sizeof(precise));
         Require(sceRtcFormatRFC3339Precise(precise, &maximum, 60, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, 0, 6) == invalidYear && precise[0] == '#');
         Require(sceRtcFormatRFC3339Precise(precise, &huge, 0, 6) == invalidYear && precise[0] == '#');
@@ -979,9 +1039,15 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
+    const RtcTick lastTick{UINT64_MAX};
+    char sdkBoundary[40]{};
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == 0);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
     SetCompiledSdkVersion(process.data(), 0x03000000);
+    Require(sceRtcFormatRFC3339Precise(sdkBoundary, &lastTick, 1, 6) == invalidValue);
+    Require(std::strcmp(sdkBoundary, "0001-01-01T00:00:59.999999+00:01") == 0);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 1, 1) == invalidYear);
     SetCompiledSdkVersion(process.data(), 0x05050001);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(2024, 0, 1) == invalidMonth);

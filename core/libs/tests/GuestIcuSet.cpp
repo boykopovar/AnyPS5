@@ -1,13 +1,24 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -54,6 +65,16 @@ void Empty() {
     std::int32_t start = 3, end = 4, error = Success;
     Require(uset_getItem_nid_postfix(set, 0, &start, &end, nullptr, 0, &error) == -1 && error == IndexOutOfBounds && start == 3 && end == 4, "no items");
     uset_close_nid_postfix(set);
+    USet* item = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(item, 0x41, 0x5a);
+    auto* const unmapped = reinterpret_cast<std::int32_t*>(0x10);
+    error = Success;
+    errno = 71;
+    Require(Rejects([&] { uset_getItem_nid_postfix(item, 0, unmapped, &end, nullptr, 0, &error); }), "an unwritable start is rejected");
+    Require(Rejects([&] { uset_getItem_nid_postfix(item, 0, &start, unmapped, nullptr, 0, &error); }), "an unwritable end is rejected");
+    Require(errno == 71 && error == Success, "unwritable item outputs keep errno and the status");
+    Require(uset_getItem_nid_postfix(item, 0, &start, &end, nullptr, 0, &error) == 0 && start == 0x41 && end == 0x5a, "the range is still read");
+    uset_close_nid_postfix(item);
 }
 
 void BinaryPropertySet() {
@@ -76,6 +97,73 @@ void BinaryPropertySet() {
     Require(u_getBinaryPropertySet_nid_postfix(-1, &error) == nullptr && error == IllegalArgument, "invalid property");
     Require(u_getBinaryPropertySet_nid_postfix(alphabetic, &error) == nullptr && error == IllegalArgument,
             "incoming error is preserved");
+}
+
+void DataFilePropertySets() {
+    constexpr std::int32_t emoji = 57;
+    constexpr std::int32_t extendedPictographic = 64;
+    constexpr std::int32_t changesWhenNfkcCasefolded = 56;
+    std::int32_t error = Success;
+    const auto* set = u_getBinaryPropertySet_nid_postfix(emoji, &error);
+    Require(set != nullptr && error == Success, "emoji property set");
+    Require(uset_contains_nid_postfix(set, 0x1f600) && uset_contains_nid_postfix(set, 0x23), "emoji membership");
+    Require(!uset_contains_nid_postfix(set, 'A'), "letter is not emoji");
+    set = u_getBinaryPropertySet_nid_postfix(extendedPictographic, &error);
+    Require(set != nullptr && error == Success && uset_contains_nid_postfix(set, 0xa9) && !uset_contains_nid_postfix(set, 0x23),
+            "extended pictographic property set");
+    set = u_getBinaryPropertySet_nid_postfix(changesWhenNfkcCasefolded, &error);
+    Require(set != nullptr && error == Success && uset_contains_nid_postfix(set, 'A') && !uset_contains_nid_postfix(set, 'a'),
+            "NFKC casefold property set");
+}
+
+template<class F>
+void RequiresRuntimeErrorKeepingErrno(F call, const char* message) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, message);
+}
+
+void BinaryPropertySetGuestPointers() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "allocate status page");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "allocate status page");
+#endif
+    const std::int32_t failing = IllegalArgument;
+    std::memset(page, 0, pageSize);
+    std::memcpy(static_cast<char*>(page) + 16, &failing, sizeof(failing));
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect status page");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "protect status page");
+#endif
+    auto* readOnlyZero = static_cast<std::int32_t*>(page);
+    auto* readOnlyFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(page) + 16);
+    auto* unmapped = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    constexpr std::int32_t alphabetic = 0;
+
+    RequiresRuntimeErrorKeepingErrno([&] { u_getBinaryPropertySet_nid_postfix(alphabetic, unmapped); },
+                                     "unreadable error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { u_getBinaryPropertySet_nid_postfix(-1, readOnlyZero); },
+                                     "unwritable error throws and keeps errno");
+    Require(u_getBinaryPropertySet_nid_postfix(-1, readOnlyFailing) == nullptr, "read-only incoming error returns immediately");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, readOnlyZero) != nullptr, "success does not write the error");
+
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 void SingleCodePoints() {
@@ -227,6 +315,8 @@ void Random() {
 int main() {
     Empty();
     BinaryPropertySet();
+    DataFilePropertySets();
+    BinaryPropertySetGuestPointers();
     SingleCodePoints();
     CodePointRanges();
     Union();

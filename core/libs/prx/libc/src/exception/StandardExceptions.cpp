@@ -2,6 +2,7 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <regex>
@@ -96,7 +97,9 @@ static void APS5_VABI DestroyGuestMessage_nid_no_patch(void* object) {
 }
 void DeleteMessage(ExceptionObject* object) { DestroyMessage(object); std::free(object); }
 const char* PlainWhat(const ExceptionObject* object) {
-    auto* table = static_cast<const ExceptionVtable*>(object->vtable);
+    const void* vtable = nullptr;
+    std::memcpy(&vtable, object, sizeof(vtable));
+    auto* table = static_cast<const ExceptionVtable*>(vtable);
     auto* complete = reinterpret_cast<const ExceptionVtable*>(reinterpret_cast<const unsigned char*>(table) - offsetof(ExceptionVtable, destroy));
     const char* name = complete->type->name;
     if (std::strcmp(name, "St9exception") == 0) return "std::exception";
@@ -137,8 +140,9 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
         reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
 [[noreturn]] void ThrowPlain(const ExceptionVtable& table) {
-    auto* object = static_cast<ExceptionObject*>(__cxa_allocate_exception_nid_postfix(sizeof(void*)));
-    object->vtable = &table.destroy;
+    void* object = __cxa_allocate_exception_nid_postfix(sizeof(void*));
+    const void* vtable = &table.destroy;
+    std::memcpy(object, &vtable, sizeof(vtable));
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)), [](void* p) { DestroyPlain(static_cast<ExceptionObject*>(p)); });
 }
 
@@ -936,11 +940,17 @@ const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestD
     what += ErrorCodeMessage(code);
     auto* object = static_cast<FilesystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(FilesystemErrorObject)));
     *object = {};
-    Construct(&object->base.base, table, what.c_str());
-    object->base.code = code;
-    object->code = code;
-    object->path1 = CopyGuestString(path1);
-    object->path2 = CopyGuestString(path2);
+    try {
+        Construct(&object->base.base, table, what.c_str());
+        object->base.code = code;
+        object->code = code;
+        object->path1 = CopyGuestString(path1);
+        object->path2 = CopyGuestString(path2);
+    } catch (...) {
+        DestroyFilesystemError(&object->base.base);
+        __cxa_free_exception_nid_postfix(object);
+        throw;
+    }
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyThrownFilesystemError_nid_no_patch));
 }

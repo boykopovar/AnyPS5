@@ -1,14 +1,24 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/DirectMemory/MemoryPool.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <new>
 #include <stdexcept>
+#include <thread>
+#include <utility>
+#include <vector>
 
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
+bool DirectMemoryClaimRelease(int64_t start, size_t len, bool requireAllocated);
+void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept;
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);
 
@@ -20,6 +30,9 @@ constexpr uint64_t kPool = static_cast<uint64_t>(DIRECT_MEMORY_SIZE);
 enum class Fault { None, BackingBadAlloc, BackingRuntimeError, ForgetRuntimeError };
 Fault g_fault = Fault::None;
 long g_newBudget = -1;
+std::map<uint64_t, uint64_t> g_releaseClaims;
+std::mutex g_mapHoldLock;
+std::vector<std::pair<uint64_t, uint64_t>> g_mapHolds;
 
 int g_failures = 0;
 
@@ -149,6 +162,58 @@ void free_partial_and_spanning() {
     CHECK(PoolEmpty());
 }
 
+void alloc_skips_a_claimed_release() {
+    int64_t a = -1, b = -1;
+    CHECK(DirectMemoryAlloc(0, kPool, kPage, 0, 1, &a) == 0 && a == 0);
+    CHECK(DirectMemoryClaimRelease(0, 4 * kPage, false));
+    CHECK(DirectMemoryAlloc(0, 4 * kPage, kPage, 0, 1, &b) == SCE_KERNEL_ERROR_EAGAIN);
+    CHECK(DirectMemoryAlloc(0, 5 * kPage, kPage, 0, 1, &b) == 0 && b == static_cast<int64_t>(4 * kPage));
+    DirectMemoryAbandonRelease(0, 4 * kPage);
+    CHECK(DirectMemoryAlloc(0, 4 * kPage, kPage, 0, 1, &b) == 0 && b == static_cast<int64_t>(kPage));
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
+}
+
+void HoldMap(uint64_t first, uint64_t last) {
+    std::lock_guard<std::mutex> lock(g_mapHoldLock);
+    g_mapHolds.emplace_back(first, last);
+}
+
+void EndMapHold(uint64_t first, uint64_t last) {
+    {
+        std::lock_guard<std::mutex> lock(g_mapHoldLock);
+        g_mapHolds.erase(std::find(g_mapHolds.begin(), g_mapHolds.end(), std::make_pair(first, last)));
+    }
+    DirectMemoryWakeReleaseClaims();
+}
+
+void claims_wait_for_map_holds() {
+    int64_t a = -1;
+    CHECK(DirectMemoryAlloc(0, kPool, 4 * kPage, 0, 1, &a) == 0 && a == 0);
+    for (const bool requireAllocated : {false, true}) {
+        HoldMap(kPage, 2 * kPage);
+        std::atomic<bool> claimed{false};
+        bool result = false;
+        std::thread claimer([&] {
+            result = DirectMemoryClaimRelease(0, 4 * kPage, requireAllocated);
+            claimed = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(!claimed);
+        CHECK(!DirectMemoryReleaseClaimed(0, 4 * kPage, nullptr));
+        EndMapHold(kPage, 2 * kPage);
+        claimer.join();
+        CHECK(result && DirectMemoryReleaseClaimed(0, 4 * kPage, nullptr));
+        DirectMemoryAbandonRelease(0, 4 * kPage);
+    }
+    HoldMap(4 * kPage, 5 * kPage);
+    CHECK(DirectMemoryClaimRelease(0, 4 * kPage, false));
+    DirectMemoryAbandonRelease(0, 4 * kPage);
+    EndMapHold(4 * kPage, 5 * kPage);
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
+}
+
 void retype_splits_and_skips_gaps() {
     int64_t a;
     CHECK(DirectMemoryAlloc(2 * kPage, kPool, 4 * kPage, 0, 1, &a) == 0 && a == static_cast<int64_t>(2 * kPage));
@@ -163,6 +228,27 @@ void retype_splits_and_skips_gaps() {
     int t;
     CHECK(!BlockAt(0, s, e, t) && !BlockAt(6 * kPage, s, e, t));
     DirectMemoryFree(0, kPool);
+}
+
+void retype_locked_needs_the_pool_lock() {
+    int64_t a;
+    CHECK(DirectMemoryAlloc(0, kPool, 2 * kPage, 0, 1, &a) == 0 && a == 0);
+    std::mutex other;
+    bool refused = false;
+    try {
+        std::unique_lock<std::mutex> foreign(other);
+        DirectMemoryRetypeLocked(foreign, 0, kPage, 9);
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+    CHECK(refused && BlockIs(0, 0, 2 * kPage, 1));
+    {
+        const auto pool = DirectMemoryPoolLock();
+        DirectMemoryRetypeLocked(pool, static_cast<int64_t>(kPage), kPage, 9);
+    }
+    CHECK(BlockIs(0, 0, kPage, 1) && BlockIs(kPage, kPage, 2 * kPage, 9));
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
 }
 
 void alloc_backing_bad_alloc_rolls_back() {
@@ -284,7 +370,10 @@ const Case kCases[] = {
     {"free_out_of_range_is_ignored", free_out_of_range_is_ignored},
     {"retype_out_of_range_is_ignored", retype_out_of_range_is_ignored},
     {"free_partial_and_spanning", free_partial_and_spanning},
+    {"alloc_skips_a_claimed_release", alloc_skips_a_claimed_release},
+    {"claims_wait_for_map_holds", claims_wait_for_map_holds},
     {"retype_splits_and_skips_gaps", retype_splits_and_skips_gaps},
+    {"retype_locked_needs_the_pool_lock", retype_locked_needs_the_pool_lock},
     {"alloc_backing_bad_alloc_rolls_back", alloc_backing_bad_alloc_rolls_back},
     {"alloc_node_bad_alloc_rolls_back", alloc_node_bad_alloc_rolls_back},
     {"alloc_unexpected_exception_propagates", alloc_unexpected_exception_propagates},
@@ -295,10 +384,28 @@ const Case kCases[] = {
 
 }
 
-void CreateDirectMemoryBacking(int64_t, size_t, int) {
+void CreateDirectMemoryBacking(int64_t, size_t) {
     if (g_fault == Fault::BackingBadAlloc) throw std::bad_alloc();
     if (g_fault == Fault::BackingRuntimeError) throw std::runtime_error("backing");
 }
+
+bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd) {
+    auto claim = g_releaseClaims.lower_bound(last);
+    if (claim == g_releaseClaims.begin()) return false;
+    --claim;
+    if (claim->second <= first) return false;
+    if (claimEnd) *claimEnd = claim->second;
+    return true;
+}
+
+bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
+    std::lock_guard<std::mutex> lock(g_mapHoldLock);
+    if (std::any_of(g_mapHolds.begin(), g_mapHolds.end(), [&](const auto& hold) { return hold.first < last && first < hold.second; })) return false;
+    g_releaseClaims.emplace(first, last);
+    return true;
+}
+
+void DirectMemoryRemoveReleaseClaim(std::uint64_t first) { g_releaseClaims.erase(first); }
 
 void ForgetDirectMemory(int64_t, size_t) {
     if (g_fault == Fault::ForgetRuntimeError) throw std::runtime_error("forget");
