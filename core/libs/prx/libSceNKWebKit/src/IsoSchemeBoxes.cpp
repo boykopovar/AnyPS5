@@ -252,6 +252,8 @@ bool ParseHeader(ProtectionSystemSpecificHeaderBox& box, const DataView& view, u
         std::uint32_t keyIDCount = 0;
         if (!ReadU32(view, offset, keyIDCount))
             return false;
+        if (offset > BufferByteLength(buffer))
+            return false;
         if (BufferByteLength(buffer) - offset < static_cast<std::uint32_t>(keyIDCount * 16))
             return false;
         if (!TryReserveKeyIDs(box.keyIDs, keyIDCount))
@@ -270,6 +272,8 @@ bool ParseHeader(ProtectionSystemSpecificHeaderBox& box, const DataView& view, u
 
     std::uint32_t dataSize = 0;
     if (!ReadU32(view, offset, dataSize))
+        return false;
+    if (offset > BufferByteLength(buffer))
         return false;
     if (BufferByteLength(buffer) - offset < dataSize)
         return false;
@@ -453,18 +457,21 @@ OptionalByteVector APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBox12
     auto peekResult = PeekBox(data, offset);
     if (!peekResult.engaged || peekResult.type != FourCC("pssh"))
         return result;
-    alignas(ProtectionSystemSpecificHeaderBox) unsigned char storage[sizeof(ProtectionSystemSpecificHeaderBox)];
-    auto* psshBox = reinterpret_cast<ProtectionSystemSpecificHeaderBox*>(storage);
-    ConstructHeader(*psshBox);
-    try {
-        ParseHeader(*psshBox, data, offset);
-    } catch (...) {
-        DestroyHeader(*psshBox);
-        throw;
-    }
-    new (&result.value) ByteVector(psshBox->systemID);
+    struct HeaderStorage {
+        alignas(ProtectionSystemSpecificHeaderBox) unsigned char bytes[sizeof(ProtectionSystemSpecificHeaderBox)];
+        ProtectionSystemSpecificHeaderBox* box;
+        HeaderStorage() : box(reinterpret_cast<ProtectionSystemSpecificHeaderBox*>(bytes)) {
+            ConstructHeader(*box);
+        }
+        ~HeaderStorage() {
+            DestroyHeader(*box);
+        }
+        HeaderStorage(const HeaderStorage&) = delete;
+        HeaderStorage& operator=(const HeaderStorage&) = delete;
+    } header;
+    ParseHeader(*header.box, data, offset);
+    new (&result.value) ByteVector(header.box->systemID);
     result.engaged = true;
-    DestroyHeader(*psshBox);
     return result;
 }
 
