@@ -55,6 +55,10 @@ class RedactTests(unittest.TestCase):
         out = bug_report.redact("Home is /home/ana. Sibling is /home/ana.old.", home="/home/ana", user="", host="")
         self.assertEqual(out, "Home is ~. Sibling is /home/ana.old.")
 
+    def test_posix_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact("opened /home/ana/title.elf", home="/home/ana/", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf")
+
     def test_short_or_empty_identities_are_not_replaced(self):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")

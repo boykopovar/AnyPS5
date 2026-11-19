@@ -19,8 +19,8 @@ def redact(text, *, home, user, host):
             parts = re.split(r"[\\/]", home.rstrip("\\/"))
             pattern = r"[\\/]".join(re.escape(part) for part in parts)
             text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
-        else:
-            text = re.sub(re.escape(home) + r"(?![\w-]|\.+[\w-])", "~", text)
+        elif home.rstrip("/"):
+            text = re.sub(re.escape(home.rstrip("/")) + r"(?![\w-]|\.+[\w-])", "~", text)
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
