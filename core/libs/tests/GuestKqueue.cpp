@@ -232,7 +232,6 @@ static void CreateAndClose() {
     Require(other >= 0 && other != kq);
     KernelEvent event{};
     Require(Poll(kq, &event, 1) == 0);
-    Require(Throws([kq] { dup_nid_postfix(kq); }));
     Require(close_nid_postfix(kq) == 0);
     RequireFailure(Poll(kq, &event, 1), GuestEbadf);
     Require(close_nid_postfix(other) == 0);
@@ -240,6 +239,39 @@ static void CreateAndClose() {
     Require(pipe_nid_postfix(pipe) == 0);
     RequireFailure(Poll(pipe[0], &event, 1), GuestEbadf);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void DuplicateKqueue() {
+    const int original = kqueue_nid_postfix();
+    Require(original >= 0);
+    Require(Apply(original, Change(71, EvfiltUser, EvAdd | EvClear)) == 0);
+    const int alias = dup_nid_postfix(original);
+    Require(alias >= 0 && alias != original);
+    Require(dup2_nid_postfix(alias, alias) == alias);
+    RequireFailure(Apply(alias, Change(original, EvfiltRead, EvAdd)), GuestEinval);
+    Require(Apply(alias, Change(71, EvfiltUser, 0, NoteTrigger)) == 0);
+    KernelEvent event{};
+    Require(Poll(original, &event, 1) == 1 && event.ident == 71);
+    Require(Poll(alias, &event, 1) == 0);
+    Require(close_nid_postfix(original) == 0);
+    RequireFailure(Poll(original, &event, 1), GuestEbadf);
+
+    const int target = kqueue_nid_postfix();
+    Require(target >= 0);
+    Require(Apply(target, Change(72, EvfiltUser, EvAdd | EvClear)) == 0);
+    const int previous = dup_nid_postfix(target);
+    Require(previous >= 0);
+    RequireFailure(dup2_nid_postfix(-1, target), GuestEbadf);
+    Require(Apply(target, Change(72, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(dup2_nid_postfix(alias, target) == target);
+    Require(Poll(previous, &event, 1) == 1 && event.ident == 72);
+    RequireFailure(Apply(target, Change(72, EvfiltUser, EvDelete)), GuestEnoent);
+    Require(dup2_nid_postfix(alias, target) == target);
+    Require(close_nid_postfix(alias) == 0);
+    Require(Apply(target, Change(71, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(target, &event, 1) == 1 && event.ident == 71);
+    Require(close_nid_postfix(previous) == 0 && close_nid_postfix(target) == 0);
+    RequireFailure(Poll(target, &event, 1), GuestEbadf);
 }
 
 static void SocketReplacesDescriptor() {
@@ -550,12 +582,15 @@ static void SignalEvents() {
     Require(Poll(kq, events, 4) == 0);
     Require(kill_nid_postfix(self, 0) == 0);
     Require(Poll(kq, events, 4) == 0);
+    const int alias = dup_nid_postfix(kq);
+    Require(alias >= 0);
     Require(raise_nid_postfix(Sigusr1) == 0);
     Require(kill_nid_postfix(self, Sigusr1) == 0);
     Require(pthread_kill_nid_postfix(scePthreadSelf(), Sigusr1) == 0);
     Require(Poll(kq, events, 4) == 1);
     Require(events[0].ident == usr1 && events[0].filter == EvfiltSignal && events[0].flags == EvClear);
     Require(events[0].fflags == 0 && events[0].data == 3 && events[0].udata == &marker);
+    Require(close_nid_postfix(alias) == 0);
     Require(Poll(kq, events, 4) == 0);
     Require(Apply(kq, Change(usr1, EvfiltSignal, EvDisable)) == 0);
     Require(raise_nid_postfix(Sigusr1) == 0);
@@ -1908,6 +1943,10 @@ static void KqueueDescriptorOperations() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "dup-only") {
+        DuplicateKqueue();
+        return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "cleared-race") {
         ClearedKqueueKeepsConcurrentActivations();
         return 0;
@@ -1915,6 +1954,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    DuplicateKqueue();
     EqueueIsKqueueDescriptor();
     SocketReplacesDescriptor();
     KqueueDescriptorOperations();

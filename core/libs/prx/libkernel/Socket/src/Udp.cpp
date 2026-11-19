@@ -588,7 +588,6 @@ void GuestSockets::Forget(int descriptor) {
         sockets.erase(found);
         closeOnExecDescriptors.erase(descriptor);
     }
-    EqueueDescriptorClosed(descriptor);
 }
 
 std::uintptr_t GuestSockets::CurrentWaker() {

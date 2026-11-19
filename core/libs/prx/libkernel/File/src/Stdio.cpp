@@ -850,7 +850,7 @@ int File::DuplicateFrom(int fd, int start) {
     for (const int descriptor : below) close_nid_postfix(descriptor);
     return duplicate < 0 ? PosixFailure(error) : duplicate;
 #else
-    const int duplicate = ::fcntl(fd, F_DUPFD, start);
+    const int duplicate = DuplicateWithKqueue(fd, [=] { return ::fcntl(fd, F_DUPFD, start); });
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::DuplicateDirectoryDescriptor(fd, duplicate);
     if (File::IsRandomDevice(fd)) File::RememberRandomDevice(duplicate);
@@ -1021,13 +1021,12 @@ extern "C" {
 int APS5_VABI dup_nid_postfix(int d) {
     if (GuestSockets::IsOpen(d)) return GuestSockets::Duplicate(d);
     if (d < 0) return PosixFailure(GUEST_EBADF);
-    if (IsKqueueDescriptor_nid_no_patch(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
     if (IsKsemDescriptor(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
-    const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
+    const int duplicate = DuplicateWithKqueue(d, [d] { return WithoutParameterHandler([d] { return ::_dup(d); }); });
     if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
 #else
-    const int duplicate = ::dup(d);
+    const int duplicate = DuplicateWithKqueue(d, [d] { return ::dup(d); });
 #endif
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::DuplicateDirectoryDescriptor(d, duplicate);
@@ -1052,21 +1051,23 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 #endif
         return to;
     }
+    KernelEqueueRef retired;
     const bool sourceIsRandom = File::IsRandomDevice(from);
-    if (from != to && IsKqueueDescriptor_nid_no_patch(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
     if (from != to && IsKsemDescriptor(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
     if (WithoutParameterHandler([from] { return ::_get_osfhandle(from) == -1 ? -1 : 0; }) != 0) return PosixFailure(GUEST_EBADF);
     if (from == to) return to;
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
-    EqueueDescriptorClosed(to);
     auto positioned = File::LockPositionedTransfer(to);
     auto* const standard = HostStandardHandle_nid_no_patch(to);
-    int duplicated = File::ReplaceSharedMemoryDescriptor_nid_no_patch(from, to);
-    if (duplicated == -2) duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
+    const int duplicated = DuplicateWithKqueue(from, [from, to] {
+        int result = File::ReplaceSharedMemoryDescriptor_nid_no_patch(from, to);
+        if (result == -2) result = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
+        return result == 0 ? to : -1;
+    }, &retired);
     KeepStandardHandle_nid_no_patch(to, standard);
-    if (duplicated != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    if (duplicated < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     GuestSockets::Forget(to);
     File::ForgetDirectoryDescriptor(to);
     File::DuplicateDirectoryDescriptor(from, to);
@@ -1076,6 +1077,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     File::DuplicateSharedMemoryDescriptor_nid_no_patch(from, to);
     if (sourceIsRandom) File::RememberRandomDevice(to);
     positioned.unlock();
+    EqueueDescriptorReplaced(to, retired);
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
     return to;
@@ -1086,12 +1088,12 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     }
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
-    const int result = ::dup2(from, to);
+    const int result = DuplicateWithKqueue(from, [from, to] { return ::dup2(from, to); }, &retired);
     if (result < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::ForgetDirectoryDescriptor(to);
     File::DuplicateDirectoryDescriptor(from, to);
-    EqueueDescriptorClosed(to);
     GuestSockets::Forget(to);
+    EqueueDescriptorReplaced(to, retired);
     File::ForgetRandomDevice(to);
     if (sourceIsRandom) File::RememberRandomDevice(to);
     File::ShareDescriptor(from, to);

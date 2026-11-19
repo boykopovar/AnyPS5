@@ -141,7 +141,10 @@ private:
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
 void EqueueDescriptorClosed(int descriptor);
-void KqueueDescriptorClosed(int descriptor);
+void EqueueDescriptorReplaced(int descriptor, const KernelEqueueRef& retired);
+KernelEqueueRef DetachKqueueDescriptor(int descriptor);
+int DuplicateWithKqueue(int from, const std::function<int()>& duplicate, KernelEqueueRef* retired = nullptr);
+void RemoveKqueueDescriptorEvents(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
 void KqueueSignalSent(int guest);

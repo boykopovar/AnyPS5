@@ -1060,7 +1060,12 @@ static void NotifyDescriptorCloseObservers(int descriptor) {
 }
 
 void EqueueDescriptorClosed(int descriptor) {
-    KqueueDescriptorClosed(descriptor);
+    EqueueDescriptorReplaced(descriptor, DetachKqueueDescriptor(descriptor));
+}
+
+void EqueueDescriptorReplaced(int descriptor, const KernelEqueueRef& retired) {
+    if (retired) retired->Close();
+    RemoveKqueueDescriptorEvents(descriptor);
     NotifyDescriptorCloseObservers(descriptor);
 }
 
