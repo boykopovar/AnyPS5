@@ -1377,6 +1377,28 @@ std::string StripScenario(int ssl, int version, Mode mode, int inflate, int stri
     return block;
 }
 
+void GzipByDefault(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip inflated by default scenario\n");
+    for (const int version : {1, 2, 3}) {
+        for (const auto mode : version == 3 ? std::vector<Mode>{Mode::Gzip} : std::vector<Mode>{Mode::Http11Gzip, Mode::Http11GzipChunked}) {
+            Server server(mode);
+            Client client(ssl, version == 3 ? 4 : 1, 0, version);
+            client.Create(server.Url());
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "default gzip send");
+            std::string body;
+            std::array<char, 64> buffer;
+            for (;;) {
+                const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+                Require(count >= 0, "default gzip read");
+                if (!count) break;
+                body.append(buffer.data(), static_cast<std::size_t>(count));
+            }
+            Require(body == "response body", "a new template inflates gzip responses");
+            server.Join();
+        }
+    }
+}
+
 void StripGzipHeaders(int ssl) {
     std::fprintf(stderr, "HTTP2 strip gzip headers scenario\n");
     Require(sceHttp2SetStripGZIPHeadersEnabled(0x7fffffff, 1) == static_cast<int>(0x817b1100), "strip option on an unknown id");
@@ -2282,6 +2304,8 @@ int main(int argc, char** argv) {
         Http1Gzip(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--strip-gzip-headers") {
         StripGzipHeaders(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-default") {
+        GzipByDefault(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--http1") {
         Http1GzipPolicy(ssl);
         Http1Transport(ssl);
