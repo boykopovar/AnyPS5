@@ -5,6 +5,10 @@
 #include "SceTypes.hpp"
 #ifdef _WIN32
 #include "prx/libc/include/GuestCpu.hpp"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 #include <atomic>
 #include <chrono>
@@ -130,11 +134,31 @@ static void ProcessClocksNameOnlyTheGuest() {
     }
 }
 
-static int DistinctReadingsWhileBurning(int clockId) {
+static bool HostHasInvariantTsc() {
+#ifdef _WIN32
+    return GuestCpu::Cpuid(0x80000000u, 0)[0] >= 0x80000007u && (GuestCpu::Cpuid(0x80000007u, 0)[3] & (1u << 8u)) != 0;
+#else
+    return true;
+#endif
+}
+
+static std::int64_t ProcessCpuNanos() {
+#ifdef _WIN32
+    if (HostHasInvariantTsc()) {
+        ULONG64 cycles = 0;
+        Require(QueryProcessCycleTime(GetCurrentProcess(), &cycles) != 0);
+        const std::uint64_t frequency = HostTscFrequency_nid_no_patch();
+        return static_cast<std::int64_t>(cycles / frequency * 1000000000ULL + cycles % frequency * 1000000000ULL / frequency);
+    }
+#endif
     constexpr int processCpuClock = 2;
+    return Nanos(processCpuClock);
+}
+
+static int DistinctReadingsWhileBurning(int clockId) {
     constexpr std::int64_t coarseClockStep = 15625000;
     const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
-    const std::int64_t processStart = Nanos(processCpuClock);
+    const std::int64_t processStart = ProcessCpuNanos();
     const std::int64_t start = Nanos(clockId);
     std::int64_t previous = start;
     int distinct = 0;
@@ -149,19 +173,11 @@ static int DistinctReadingsWhileBurning(int clockId) {
             ++distinct;
         previous = now;
     }
-    const std::int64_t process = Nanos(processCpuClock) - processStart;
+    const std::int64_t process = ProcessCpuNanos() - processStart;
     const std::int64_t wall = Nanos(GUEST_CLOCK_MONOTONIC) - wallStart;
     Require(previous - start <= wall + wall / 50 + 2 * NANOS_PER_MILLISECOND);
     Require(previous - start >= process - process / 10 - 2 * coarseClockStep);
     return distinct;
-}
-
-static bool HostHasInvariantTsc() {
-#ifdef _WIN32
-    return GuestCpu::Cpuid(0x80000000u, 0)[0] >= 0x80000007u && (GuestCpu::Cpuid(0x80000007u, 0)[3] & (1u << 8u)) != 0;
-#else
-    return true;
-#endif
 }
 
 static void ThreadClocksAdvanceInSmallSteps() {
