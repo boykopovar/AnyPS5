@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <limits>
 #include <stdexcept>
-#include <vector>
 
 namespace {
 
@@ -14,10 +13,7 @@ void RequireGuestArrayRange(const void* source, void* destination, std::size_t c
         bool accessible = false;
         if (size <= std::numeric_limits<std::size_t>::max() / count) {
             const auto bytes = count * size;
-            try {
-                std::vector<unsigned char> probe(bytes);
-                accessible = GuestCopyIn_nid_no_patch(probe.data(), source, bytes) && GuestWritable_nid_no_patch(destination, bytes);
-            } catch (const std::bad_alloc&) {}
+            accessible = GuestReadable_nid_no_patch(source, bytes) && GuestWritable_nid_no_patch(destination, bytes);
         }
         errno = savedErrno;
         if (!accessible) throw std::invalid_argument("guest array range is not accessible");
