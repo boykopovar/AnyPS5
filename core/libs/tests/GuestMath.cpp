@@ -4984,6 +4984,47 @@ static void CheckLog1pDomainEnvironment() {
     _mm_setcsr(savedCsr);
 }
 
+template<typename Call>
+static bool RejectsKeepingErrno(Call call) {
+    errno = 71;
+    bool caught = false;
+    try { call(); }
+    catch (const std::invalid_argument&) { caught = true; }
+    return caught && errno == 71;
+}
+
+static void CheckFrexpModfGuestPointers() {
+    static const int readOnlyExponent = 7;
+    static const double readOnlyDouble = 7.0;
+    static const float readOnlyFloat = 7.0f;
+    auto* const unmappedExponent = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    auto* const lockedExponent = const_cast<int*>(&readOnlyExponent);
+    Require(RejectsKeepingErrno([&] { frexp_nid_postfix(12.0, unmappedExponent); }));
+    Require(RejectsKeepingErrno([&] { frexp_nid_postfix(0.0, lockedExponent); }));
+    Require(RejectsKeepingErrno([&] { frexpf_nid_postfix(12.0f, unmappedExponent); }));
+    Require(RejectsKeepingErrno([&] { frexpf_nid_postfix(INFINITY, lockedExponent); }));
+    Require(RejectsKeepingErrno([&] { modf_nid_postfix(2.5, reinterpret_cast<double*>(std::uintptr_t{0x10})); }));
+    Require(RejectsKeepingErrno([&] { modf_nid_postfix(0.5, const_cast<double*>(&readOnlyDouble)); }));
+    Require(RejectsKeepingErrno([&] { modff_nid_postfix(2.5f, reinterpret_cast<float*>(std::uintptr_t{0x10})); }));
+    Require(RejectsKeepingErrno([&] { modff_nid_postfix(0x1p30f, const_cast<float*>(&readOnlyFloat)); }));
+    const unsigned savedCsr = _mm_getcsr();
+    _mm_setcsr(savedCsr & ~63u);
+    Require(RejectsKeepingErrno([&] { modff_nid_postfix(std::bit_cast<float>(0x7fa00000u), reinterpret_cast<float*>(std::uintptr_t{0x10})); }));
+    const unsigned rejectedCsr = _mm_getcsr();
+    _mm_setcsr(savedCsr);
+    Require((rejectedCsr & 63u) == 0);
+    Require(*static_cast<const volatile int*>(&readOnlyExponent) == 7);
+    Require(*static_cast<const volatile double*>(&readOnlyDouble) == 7.0);
+    Require(*static_cast<const volatile float*>(&readOnlyFloat) == 7.0f);
+    int exponent = 0;
+    Require(frexp_nid_postfix(12.0, &exponent) == 0.75 && exponent == 4);
+    Require(frexpf_nid_postfix(12.0f, &exponent) == 0.75f && exponent == 4);
+    double whole = 0.0;
+    Require(modf_nid_postfix(-2.5, &whole) == -0.5 && whole == -2.0);
+    float wholeFloat = 0.0f;
+    Require(modff_nid_postfix(-2.5f, &wholeFloat) == -0.5f && wholeFloat == -2.0f);
+}
+
 int main() {
     CheckFdimFlags();
     CheckRoundFlagsAndSignalingNans();
@@ -5628,4 +5669,5 @@ int main() {
     CheckLongDoubleErf();
     CheckDinkumwareFloatCharacteristics();
     CheckFrexpfEnvironment();
+    CheckFrexpModfGuestPointers();
 }

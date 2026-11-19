@@ -1173,34 +1173,42 @@ double APS5_VABI significand_nid_postfix(double x) { return x == 0.0 || !std::is
 double APS5_VABI frexp_nid_postfix(double x, int* exponent) {
     auto bits = std::bit_cast<std::uint64_t>(x);
     auto magnitude = bits & 0x7fffffffffffffffull;
-    *exponent = 0;
-    if (magnitude == 0 || magnitude >= 0x7ff0000000000000ull) return x;
-    int adjustment = 0;
-    if (magnitude < 0x0010000000000000ull) {
-        volatile double subnormal = x;
-        x = subnormal * 0x1p54;
-        bits = std::bit_cast<std::uint64_t>(x);
-        magnitude = bits & 0x7fffffffffffffffull;
-        adjustment = -54;
+    int scale = 0;
+    double result = x;
+    if (magnitude != 0 && magnitude < 0x7ff0000000000000ull) {
+        int adjustment = 0;
+        if (magnitude < 0x0010000000000000ull) {
+            volatile double subnormal = x;
+            x = subnormal * 0x1p54;
+            bits = std::bit_cast<std::uint64_t>(x);
+            magnitude = bits & 0x7fffffffffffffffull;
+            adjustment = -54;
+        }
+        scale = static_cast<int>(magnitude >> 52) - 1022 + adjustment;
+        result = std::bit_cast<double>((bits & 0x800fffffffffffffull) | 0x3fe0000000000000ull);
     }
-    *exponent = static_cast<int>(magnitude >> 52) - 1022 + adjustment;
-    return std::bit_cast<double>((bits & 0x800fffffffffffffull) | 0x3fe0000000000000ull);
+    if (!GuestCopyOut_nid_no_patch(exponent, &scale, sizeof(scale))) throw std::invalid_argument("frexp: unwritable exponent");
+    return result;
 }
 float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
     auto bits = std::bit_cast<std::uint32_t>(x);
     auto magnitude = bits & 0x7fffffffu;
-    *exponent = 0;
-    if (magnitude == 0 || magnitude >= 0x7f800000u) return x;
-    int adjustment = 0;
-    if (magnitude < 0x00800000u) {
-        volatile float subnormal = x;
-        x = subnormal * 0x1p25f;
-        bits = std::bit_cast<std::uint32_t>(x);
-        magnitude = bits & 0x7fffffffu;
-        adjustment = -25;
+    int scale = 0;
+    float result = x;
+    if (magnitude != 0 && magnitude < 0x7f800000u) {
+        int adjustment = 0;
+        if (magnitude < 0x00800000u) {
+            volatile float subnormal = x;
+            x = subnormal * 0x1p25f;
+            bits = std::bit_cast<std::uint32_t>(x);
+            magnitude = bits & 0x7fffffffu;
+            adjustment = -25;
+        }
+        scale = static_cast<int>(magnitude >> 23) - 126 + adjustment;
+        result = std::bit_cast<float>((bits & 0x807fffffu) | 0x3f000000u);
     }
-    *exponent = static_cast<int>(magnitude >> 23) - 126 + adjustment;
-    return std::bit_cast<float>((bits & 0x807fffffu) | 0x3f000000u);
+    if (!GuestCopyOut_nid_no_patch(exponent, &scale, sizeof(scale))) throw std::invalid_argument("frexpf: unwritable exponent");
+    return result;
 }
 // Guest long is 64-bit, including on Windows where native long is 32-bit.
 std::int64_t APS5_VABI lround_nid_postfix(double x) { return NudgedToInt64<double, std::uint64_t, 52>(x, 0x1.fffffffffffffp-2); }
@@ -5472,37 +5480,42 @@ double APS5_VABI modf_nid_postfix(double x, double* integral) {
     const auto bits = std::bit_cast<std::uint64_t>(x);
     const auto exponent = (bits >> 52u) & 0x7ffull;
     const auto zero = std::bit_cast<double>(bits & 0x8000000000000000ull);
+    double whole = x;
+    double fraction = zero;
     if (exponent < 1023u) {
-        *integral = zero;
-        return x;
+        whole = zero;
+        fraction = x;
+    } else if (exponent >= 1075u) {
+        if (exponent == 0x7ffu && (bits & 0xfffffffffffffull) != 0) fraction = x;
+    } else {
+        const auto mask = (std::uint64_t{1} << (1075u - exponent)) - 1u;
+        whole = std::bit_cast<double>(bits & ~mask);
+        if ((bits & mask) != 0) fraction = x - whole;
     }
-    if (exponent >= 1075u) {
-        *integral = x;
-        return exponent == 0x7ffu && (bits & 0xfffffffffffffull) != 0 ? x : zero;
-    }
-    const auto mask = (std::uint64_t{1} << (1075u - exponent)) - 1u;
-    *integral = std::bit_cast<double>(bits & ~mask);
-    return (bits & mask) == 0 ? zero : x - *integral;
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modf: unwritable integral");
+    return fraction;
 }
 float APS5_VABI modff_nid_postfix(float x, float* integral) {
     const auto bits = std::bit_cast<std::uint32_t>(x);
     const auto exponent = (bits >> 23u) & 0xffu;
     const auto zero = std::bit_cast<float>(bits & 0x80000000u);
+    float whole = x;
+    float fraction = zero;
+    bool signaling = false;
     if (exponent < 127u) {
-        *integral = zero;
-        return x;
+        whole = zero;
+        fraction = x;
+    } else if (exponent >= 150u) {
+        signaling = exponent == 0xffu && (bits & 0x7fffffu) != 0;
+        if (signaling) fraction = x;
+    } else {
+        const auto mask = (std::uint32_t{1} << (150u - exponent)) - 1u;
+        whole = std::bit_cast<float>(bits & ~mask);
+        if ((bits & mask) != 0) fraction = x - whole;
     }
-    if (exponent >= 150u) {
-        *integral = x;
-        if (exponent == 0xffu && (bits & 0x7fffffu) != 0) {
-            GuestCpu::RaiseInvalidForSignalingNan(x);
-            return x;
-        }
-        return zero;
-    }
-    const auto mask = (std::uint32_t{1} << (150u - exponent)) - 1u;
-    *integral = std::bit_cast<float>(bits & ~mask);
-    return (bits & mask) == 0 ? zero : x - *integral;
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modff: unwritable integral");
+    if (signaling) GuestCpu::RaiseInvalidForSignalingNan(x);
+    return fraction;
 }
 double APS5_VABI tanh_nid_postfix(double x) {
     const double huge = 1.0e300;
