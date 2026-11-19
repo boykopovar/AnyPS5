@@ -10,18 +10,13 @@
 #include <type_traits>
 #include <vector>
 
-extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
-    throw std::runtime_error(name);
-}
-
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TCall>
 static void RequireRejected(TCall call) {
     try {
         call();
-    } catch (const std::runtime_error&) {
+    } catch (const std::invalid_argument&) {
         return;
     }
     Require(false);

@@ -14,10 +14,6 @@
 #include <stdexcept>
 #include <string>
 
-extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
-    throw std::runtime_error(name);
-}
-
 namespace {
 
 void require(bool condition) {
@@ -28,7 +24,7 @@ template<typename TCall>
 void requireRejected(TCall call) {
     try {
         call();
-    } catch (const std::runtime_error&) {
+    } catch (const std::invalid_argument&) {
         return;
     }
     require(false);
