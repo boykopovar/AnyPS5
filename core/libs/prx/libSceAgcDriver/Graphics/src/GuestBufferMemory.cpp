@@ -6523,6 +6523,8 @@ struct ResidentRange {
     std::vector<std::byte> shadow;
     std::uint64_t syncGeneration = 0;
     std::uint64_t forgetStamp = 0;
+    std::uint64_t ownNote = 0;
+    std::uint64_t ownRecorder = 0;
     bool boundInWindow = true;
 };
 
@@ -6602,13 +6604,13 @@ std::shared_ptr<Buffer> residentBuffer(const Context& context, std::uint64_t beg
     if (++residents.heat[key] < ResidentPromoteAfter || residents.ranges.size() >= ResidentLimit || residentBytes(residents) + (end - begin) > ResidentBudgetBytes) return nullptr;
     auto buffer = stagingBuffer(context, static_cast<std::size_t>(end - begin), gpuCopyUsage(context, true));
     if (buffer == nullptr) return nullptr;
-    residents.ranges[key] = ResidentRange{buffer, {}, 0, forget, true};
+    residents.ranges[key] = ResidentRange{buffer, {}, 0, forget, 0, 0, true};
     ++residents.promoted;
     ++residents.bound;
     return buffer;
 }
 
-bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer) {
+bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer, const Recorder& recorder, bool pendingWriter) {
     if (RuntimeSwitches::Set(RuntimeSwitch::NoResidentRanges)) return false;
     auto& residents = Residents();
     std::lock_guard lock(residents.mutex);
@@ -6618,11 +6620,19 @@ bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_p
     const auto bytes = static_cast<std::size_t>(end - begin);
     auto& range = found->second;
     if (range.forgetStamp != GuestMemory::ForgetStamp(begin, bytes)) return false;
+    if (pendingWriter && (range.ownRecorder != recorder.Id() || recorder.NewestWriteNote(begin, bytes) != range.ownNote)) {
+        ++residents.invalidated;
+        range.syncGeneration = 0;
+        range.shadow.clear();
+        range.ownNote = 0;
+        return false;
+    }
     if (range.syncGeneration == 0) {
         if (range.shadow.empty()) return false;
         if (range.shadow.size() != bytes || std::memcmp(range.shadow.data(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(begin)), bytes) != 0) {
             ++residents.invalidated;
             range.shadow.clear();
+            range.ownNote = 0;
             return false;
         }
     } else {
@@ -6630,6 +6640,7 @@ bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_p
         if (!GuestMemory::UnchangedSince(begin, bytes, range.syncGeneration)) {
             ++residents.invalidated;
             range.syncGeneration = 0;
+            range.ownNote = 0;
             return false;
         }
     }
@@ -6664,6 +6675,7 @@ void residentStagedWrite(std::uint64_t begin, std::uint64_t end, const std::shar
     if (!GuestMemory::UnchangedSinceCollected(begin, static_cast<std::size_t>(end - begin), found->second.syncGeneration)) {
         found->second.syncGeneration = 0;
         found->second.shadow.clear();
+        found->second.ownNote = 0;
         ++residents.invalidated;
         return;
     }
@@ -7640,7 +7652,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             }
         }
         recorder->Keep(region->buffer);
-        if (region->resident && region->deviceLocal && residentCurrent(region->begin, region->end, region->buffer)) {
+        if (region->resident && region->deviceLocal && residentCurrent(region->begin, region->end, region->buffer, *recorder, pendingWriter)) {
             copiedBytes -= bytes;
             region->snapshot.clear();
             if (residentCopyHook != nullptr) residentCopyHook(region->begin, region->end, false);
@@ -8120,7 +8132,7 @@ void GuestBufferMemory::MarkStagedWrites() const {
     }
 }
 
-void GuestBufferMemory::MarkDirectWrites() const {
+void GuestBufferMemory::MarkDirectWrites(const Recorder& recorder) const {
     struct ResidentMark {
         const Region* region;
         bool current;
@@ -8161,9 +8173,12 @@ void GuestBufferMemory::MarkDirectWrites() const {
             if (found->second.syncGeneration != 0) ++residents.invalidated;
             found->second.syncGeneration = 0;
             found->second.shadow.clear();
-        } else if (found->second.syncGeneration != 0 && marked != 0) {
-            found->second.syncGeneration = std::max(found->second.syncGeneration, marked);
+            found->second.ownNote = 0;
+            continue;
         }
+        if (found->second.syncGeneration != 0 && marked != 0) found->second.syncGeneration = std::max(found->second.syncGeneration, marked);
+        found->second.ownNote = recorder.NewestWriteNote(region->begin, bytes);
+        found->second.ownRecorder = recorder.Id();
     }
 }
 
