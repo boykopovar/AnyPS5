@@ -3649,17 +3649,41 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
 int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     constexpr std::uint32_t nonblockingRequest = 0x8004667e;
     constexpr std::uint32_t readableRequest = 0x4004667f;
+    constexpr std::uint32_t requestIn = 0x80000000u;
+    constexpr std::uint32_t requestOut = 0x40000000u;
+    constexpr std::uint32_t requestVoid = 0x20000000u;
+    constexpr std::array<std::uint32_t, 3> socketRequests{0x40047307u, 0x80047308u, 0x40047309u};
     std::shared_ptr<NativeSocketHandle> native;
+    int family = 0;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(socketId);
-        if (it != g_socks.end()) native = it->second.native;
+        if (it != g_socks.end()) {
+            native = it->second.native;
+            family = it->second.family;
+        }
     }
     if (!native) {
         if (!GuestSocketIsOpen_nid_no_patch(socketId)) return fail(NET_EBADF);
         return ioctl_nid_postfix(socketId, command, argument) == 0 ? 0 : fail(*__error_nid_postfix());
     }
-    if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
+    if (command != nonblockingRequest && command != readableRequest) {
+        const std::uint32_t length = (command >> 16) & 0x1fff;
+        if ((command & (requestIn | requestOut | requestVoid)) == 0 || ((command & (requestIn | requestOut)) != 0 && length == 0) ||
+            ((command & requestVoid) != 0 && length != 0 && length != sizeof(int)))
+            return fail(NET_ENOTTY);
+        if ((command & requestIn) != 0 && (command & requestVoid) == 0) {
+            std::vector<unsigned char> input(length);
+            if (!GuestCopyIn_nid_no_patch(input.data(), argument, length)) return fail(NET_EFAULT);
+        }
+        const char group = static_cast<char>((command >> 8) & 0xff);
+        const std::uint32_t number = command & 0xff;
+        if (group == 'i' || group == 'r' || group == 'f' || std::find(socketRequests.begin(), socketRequests.end(), command) != socketRequests.end())
+            return fail(NET_ENOTTY);
+        if (family == NET_AF_INET) return fail(NET_EADDRNOTAVAIL);
+        if (family != NET_AF_INET6 || (group == 'u' && number >= 106 && number <= 109)) return fail(NET_ENOTTY);
+        return fail(NET_EOPNOTSUPP);
+    }
     if (!argument) return fail(NET_EFAULT);
     if (command == nonblockingRequest) {
         int enable = 0;
