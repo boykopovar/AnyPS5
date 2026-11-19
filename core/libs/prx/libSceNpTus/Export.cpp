@@ -37,6 +37,9 @@ static constexpr std::int32_t VARIABLE_SORTTYPE_ASCENDING_VALUE = 4;
 static constexpr std::uint64_t VARIABLE_ENTRY_SIZE = 0x78;
 static constexpr std::uint64_t DATA_STATUS_ENTRY_SIZE = 0x1F0;
 static constexpr std::uint64_t DATA_STATUS_ENTRY_SIZE_LONG = 0x210;
+static constexpr int RESOLVE_TIMEOUT_MIN = 1000000;
+static constexpr int TRANSFER_TIMEOUT_MIN = 10000000;
+static constexpr std::uint32_t SAVE_DATA_OWNER_MODE_MAX = 3;
 
 namespace {
 struct Request {
@@ -121,6 +124,16 @@ bool IsEmpty(const NpOnlineId* user) {
     const bool copied = GuestCopyIn_nid_no_patch(&first, user->data, sizeof(first));
     errno = savedErrno;
     return !copied || first == 0;
+}
+
+int TssOptionError(const void* option) {
+    if (!option) return 0;
+    TssGetDataOptParam localOption{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return localOption.size == sizeof(TssGetDataOptParam) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
 }
 
 int StartOffline(int reqId) {
@@ -269,14 +282,20 @@ int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecre
     return CreateTitleContext();
 }
 
-int APS5_VABI sceNpTusSetTimeout(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusSetTimeout(int id, int resolveRetry, int resolveTimeout, int connTimeout, int sendTimeout, int recvTimeout) {
+    if (resolveRetry < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (resolveTimeout != 0 && resolveTimeout < RESOLVE_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (connTimeout != 0 && connTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (recvTimeout != 0 && recvTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (sendTimeout != 0 && sendTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(tusMutex);
+    return titleContexts.contains(id) || requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(int id, std::uint32_t mode) {
+    if (mode > SAVE_DATA_OWNER_MODE_MAX) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(tusMutex);
+    return titleContexts.contains(id) || requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceNpTusWaitAsync(int reqId, int* result) {
@@ -470,14 +489,7 @@ int APS5_VABI sceNpTusGetFriendsDataStatusForCrossSave(int reqId, std::int32_t s
 int APS5_VABI sceNpTssGetDataAsync(int reqId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, const void* option) {
     (void)data;
     (void)recvSize;
-    if (option) {
-        TssGetDataOptParam localOption{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        if (localOption.size != sizeof(TssGetDataOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
-    }
+    if (const int error = TssOptionError(option)) return error;
     if (dataStatus && dataStatusSize != 0x18) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
     if (slotId < 0 || slotId > TSS_MAX_SLOT_ID) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
@@ -490,7 +502,7 @@ int APS5_VABI sceNpTssGetData(int reqId, std::int32_t slotId, void* dataStatus, 
 int APS5_VABI sceNpTssGetSmallStorageAsync(int reqId, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, void* option) {
     (void)data;
     (void)contentLength;
-    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (const int error = TssOptionError(option)) return error;
     if (maxSize > TSS_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }

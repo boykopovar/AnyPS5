@@ -1,5 +1,6 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
 #include "prx/libSceRegMgr/include/InventoryExports.hpp"
+#include <vector>
 #include <initializer_list>
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -19,6 +20,16 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
+static bool ThrowsWithMessage(const char* message, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == message;
+    }
+    return false;
+}
+
+template <typename TCall>
 static bool ReportsNotImplemented(const char* name, TCall call) {
     try {
         call();
@@ -26,6 +37,39 @@ static bool ReportsNotImplemented(const char* name, TCall call) {
         return std::string(error.what()) == std::string(name) + " not implemented";
     }
     return false;
+}
+
+static void CheckBoundedBinaryInput() {
+    constexpr std::size_t limit = 1024 * 1024;
+    constexpr int bad = static_cast<int>(0x80820001u);
+    constexpr int missing = static_cast<int>(0x80820002u);
+    const std::uint8_t tiny[] = {0x63, 0x82};
+    std::uint8_t output[2]{};
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2020, tiny, 256 * limit) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetBin(0x2020, output, sizeof(output)) == missing);
+    Require(sceRegMgrIsChange(0x2020, 0x0d010001u) == 0);
+
+    Require(sceRegMgrSetBin(0x2021, tiny, sizeof(tiny)) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 1);
+    std::vector<std::uint8_t> oversized(limit + 1, 0x33);
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2021, oversized.data(), oversized.size()) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetBin(0x2021, output, sizeof(output)) == 0);
+    Require(std::memcmp(tiny, output, sizeof(tiny)) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 0);
+
+    std::vector<std::uint8_t> bytes(limit, 0x5a);
+    bytes[0] = 0x45;
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 1);
+    std::vector<std::uint8_t> restored(limit);
+    Require(sceRegMgrGetBin(0x2022, restored.data(), static_cast<int>(restored.size())) == 0);
+    Require(restored == bytes);
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 0);
 }
 
 using SizeCheck = decltype(&libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch);
@@ -141,10 +185,33 @@ static void CheckStringLengthCap() {
     Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
 }
 
+static void CheckZeroLengthCalls() {
+    char text[8] = {};
+    std::uint8_t bytes[4] = {};
+    const std::uint8_t payload[] = {0x11, 0x22};
+    Require(sceRegMgrSetStr(0x2050, "keep", 5) == 0);
+    std::strcpy(text, "CANARY");
+    Require(sceRegMgrGetStr(0x2050, text, 0) == static_cast<int>(0x80820004));
+    Require(std::strcmp(text, "CANARY") == 0);
+    Require(sceRegMgrSetBin(0x2051, payload, sizeof(payload)) == 0);
+    bytes[0] = 0x77;
+    Require(sceRegMgrGetBin(0x2051, bytes, 0) == static_cast<int>(0x80820004));
+    Require(bytes[0] == 0x77);
+    Require(sceRegMgrGetStr(0x2052, text, 0) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(0x2052, bytes, 0) == static_cast<int>(0x80820002));
+    Require(ThrowsWithMessage("sceRegMgrSetStr: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetStr(0x2050, "gone", 0); }));
+    Require(ThrowsWithMessage("sceRegMgrSetBin: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetBin(0x2051, payload, 0); }));
+    Require(sceRegMgrGetStr(0x2050, text, sizeof(text)) == 0 && std::strcmp(text, "keep") == 0);
+    Require(sceRegMgrGetBin(0x2051, bytes, sizeof(bytes)) == 0 && bytes[0] == 0x11 && bytes[1] == 0x22);
+}
+
 int main() {
     CheckRemovedRangeKeys();
     CheckStringPageBoundary();
     CheckStringLengthCap();
+    CheckZeroLengthCalls();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
@@ -318,5 +385,6 @@ int main() {
     Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
 
+    CheckBoundedBinaryInput();
     return 0;
 }

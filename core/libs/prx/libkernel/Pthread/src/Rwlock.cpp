@@ -92,7 +92,10 @@ int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockatt
     if (!rwlock) throw std::runtime_error("scePthreadRwlockInit: null rwlock");
     auto* p = new (std::nothrow) PthreadRwlockPrivate();
     if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    *rwlock = p;
+    if (!GuestCopyOut_nid_no_patch(rwlock, &p, sizeof(p))) {
+        delete p;
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return SCE_OK;
 }
 

@@ -35,6 +35,7 @@ constexpr std::uint32_t kLoadSegment = 1;
 constexpr std::uint32_t kExecutableSegment = 1;
 constexpr std::uint8_t kLea = 0x8D;
 constexpr std::uint64_t kIslandSearchBytes = 0x100;
+constexpr std::size_t kFlagScanBytes = 0x80;
 
 struct Placement {
     std::vector<TrampolineSite> Sites;
@@ -370,7 +371,9 @@ void Amd64OnlyConverter::_convertSegment(
     for (std::size_t index = 0; index < matches.size(); ++index) {
         if (progress && index != 0 && index % 4096 == 0) progress(completed + segSize + matches[index].Offset, total);
         const auto& match = matches[index];
-        auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
+        const auto next = match.Offset + match.Length;
+        const std::span<const std::uint8_t> following(seg.data() + next, next < seg.size() ? std::min<std::size_t>(seg.size() - next, kFlagScanBytes) : 0);
+        auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length, {}, following); });
         if (substitution.has_value())
             pending.push_back({index, match, std::move(*substitution)});
     }

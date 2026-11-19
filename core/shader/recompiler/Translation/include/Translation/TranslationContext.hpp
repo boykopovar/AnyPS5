@@ -17,6 +17,7 @@ public:
 
     void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
+    void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
@@ -25,7 +26,7 @@ public:
         rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeTrackedBits : ModeUndeclaredSeed), 0u};
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
-    void SetNativeFloat16(bool enabled, bool fma) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; }
+    void SetNativeFloat16(bool enabled, bool fma, bool hostNans) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; float16HostNans = enabled && hostNans; }
     void SetNativeInteger16(bool enabled) { nativeInteger16 = enabled; }
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
@@ -82,6 +83,7 @@ private:
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
     bool fp16Overflow() const { return floatMode.has_value() && floatMode->fp16Overflow; }
     bool nativeFloat16Mode() const { return nativeFloat16 && (!floatMode.has_value() || (floatMode->floatMode & 0xccu) == 0xc0u); }
+    bool hostFloat16Nans(const RdnaInstruction& inst, std::uint32_t count, bool accumulator);
     IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
@@ -112,6 +114,7 @@ private:
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
     std::array<IrU32, 2> flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit);
     IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
+    IrValue& nanResultF64(IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
     IrU64 readF64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false, bool nanPayloadUnused = false);
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
@@ -397,6 +400,7 @@ private:
     bool emitInterpolation(const RdnaInstruction& inst);
     bool emitMemory(const RdnaInstruction& inst);
 
+    std::uint32_t bufferLdsBytes = 0u;
     IrProgram& program;
     const ShaderPixelInputInfo* pixelInput = nullptr;
     bool fragmentShaderBarycentricEnabled = false;
@@ -406,6 +410,7 @@ private:
     bool ieeeMode = false;
     bool nativeFloat16 = false;
     bool nativeFloat16Fma = false;
+    bool float16HostNans = false;
     bool nativeInteger16 = false;
     IrBuilder ir;
     IrBlock& block;

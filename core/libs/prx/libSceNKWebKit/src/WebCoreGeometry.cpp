@@ -1,5 +1,53 @@
+// Derived from Source/WebCore/platform/graphics/GeometryUtilities.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013 Google Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from Source/WebCore/platform/graphics/texmap/TextureMapperBackingStore.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
+
+ This library is free software; you can redistribute it and/or
+ modify it under the terms of the GNU Library General Public
+ License as published by the Free Software Foundation; either
+ version 2 of the License, or (at your option) any later version.
+
+ This library is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ Library General Public License for more details.
+
+ You should have received a copy of the GNU Library General Public License
+ along with this library; see the file COPYING.LIB.  If not, write to
+ the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ Boston, MA 02110-1301, USA.
+ */
+
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -11,28 +59,8 @@ namespace WebCore {
 
 namespace {
 
-int ClampToInteger(float value) {
-    if (value >= static_cast<float>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<float>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
 int TruncateToIntegerOrMin(float value) {
     if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
-int ClampToInteger(double value) {
-    if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<double>(std::numeric_limits<int>::min()))) {
         return std::numeric_limits<int>::min();
     }
     return static_cast<int>(value);
@@ -280,14 +308,6 @@ bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKS0_(const WebCore::FloatRect* s
         && self->m_location.m_x + self->m_size.m_width >= other.m_location.m_x + other.m_size.m_width
         && self->m_location.m_y <= other.m_location.m_y
         && self->m_location.m_y + self->m_size.m_height >= other.m_location.m_y + other.m_size.m_height;
-}
-
-WebCore::FloatRect APS5_VABI _ZNK7WebCore9FloatQuad11boundingBoxEv(const WebCore::FloatQuad* self) {
-    float left = std::min({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float top = std::min({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    float right = std::max({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float bottom = std::max({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    return WebCore::FloatRect{{left, top}, {right - left, bottom - top}};
 }
 
 bool APS5_VABI _ZNK7WebCore9FloatQuad12containsQuadERKS0_(const WebCore::FloatQuad* self, const WebCore::FloatQuad& other) {
@@ -578,6 +598,33 @@ bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(
         }
     }
     return true;
+}
+
+WebCore::FloatRect APS5_VABI _ZN7WebCore9unionRectERKN3WTF6VectorINS_9FloatRectELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(
+    const NKWebKit::WtfAbi::Vector<WebCore::FloatRect>& rects) {
+    WebCore::FloatRect result;
+    for (const auto& rect : rects) {
+        _ZN7WebCore9FloatRect5uniteERKS0_(&result, rect);
+    }
+    return result;
+}
+
+unsigned APS5_VABI _ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(
+    const WebCore::FloatRect& totalRect, const WebCore::FloatRect& tileRect) {
+    unsigned exposedEdges = WebCore::TextureMapper::NoEdges;
+    if (!tileRect.x()) {
+        exposedEdges |= WebCore::TextureMapper::LeftEdge;
+    }
+    if (!tileRect.y()) {
+        exposedEdges |= WebCore::TextureMapper::TopEdge;
+    }
+    if (tileRect.width() + tileRect.x() >= totalRect.width()) {
+        exposedEdges |= WebCore::TextureMapper::RightEdge;
+    }
+    if (tileRect.height() + tileRect.y() >= totalRect.height()) {
+        exposedEdges |= WebCore::TextureMapper::BottomEdge;
+    }
+    return exposedEdges;
 }
 
 }

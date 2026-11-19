@@ -14,7 +14,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -55,9 +55,11 @@ static constexpr int SCE_NET_CTL_ERROR_INVALID_ID = static_cast<int>(0x80412105)
 static constexpr int SCE_NET_CTL_ERROR_INVALID_CODE = static_cast<int>(0x80412106);
 static constexpr int SCE_NET_CTL_ERROR_INVALID_ADDR = static_cast<int>(0x80412107);
 static constexpr int SCE_NET_CTL_ERROR_NOT_CONNECTED = static_cast<int>(0x80412108);
+static constexpr int SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED = static_cast<int>(0x8041210F);
 static constexpr int NET_CTL_STATE_DISCONNECTED = 0;
 static constexpr int NET_CTL_STATE_IPOBTAINED = 3;
 static constexpr int NET_CTL_EVENT_DISCONNECTED = 1;
+static constexpr int NET_CTL_EVENT_DISCONNECT_REQ_FINISHED = 2;
 static constexpr int NET_CTL_EVENT_IPOBTAINED = 3;
 static constexpr int NET_CTL_STUN_STATUS_FAILED = 1;
 static constexpr int NET_CTL_STUN_STATUS_OK = 2;
@@ -702,6 +704,7 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) return false;
         const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+#ifdef _WIN32
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(descriptor, &readSet);
@@ -709,10 +712,10 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         tv.tv_sec = static_cast<long>(remainingUs / 1000000);
         tv.tv_usec = static_cast<long>(remainingUs % 1000000);
         if (tv.tv_sec == 0 && tv.tv_usec == 0) tv.tv_usec = 1000;
-#ifdef _WIN32
         const int ready = select(0, &readSet, nullptr, nullptr, &tv);
 #else
-        const int ready = select(descriptor + 1, &readSet, nullptr, nullptr, &tv);
+        pollfd entry{descriptor, POLLIN, 0};
+        const int ready = poll(&entry, 1, static_cast<int>((remainingUs + 999) / 1000));
 #endif
         if (ready <= 0) return false;
         std::uint8_t buffer[512];
@@ -1160,9 +1163,11 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
+    if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (event == NET_CTL_EVENT_DISCONNECT_REQ_FINISHED || event == NET_CTL_EVENT_IPOBTAINED) return SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED;
     const int val = 0;
-    if (!result || !GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
+    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (event != NET_CTL_EVENT_DISCONNECTED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
     return 0;

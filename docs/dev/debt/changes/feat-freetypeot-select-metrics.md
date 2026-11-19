@@ -1,0 +1,5 @@
+# libSceFreeTypeOt
+
+## change [FT_Select_Metrics, FT_Request_Metrics, FT_Match_Size]
+
+- [FT_Select_Metrics, FT_Request_Metrics, FT_Match_Size](../../../core/libs/prx/libSceFreeTypeOt/src/SizeMetrics.cpp) (libSceFreeTypeOt) - console prototypes and FreeType version are unverified. `FT_Match_Size` follows pinned FreeType 2.15.0 [ftobjs.c](https://github.com/freetype/freetype/blob/37515cf56ba3349656049edbed89ffc6f6466f2d/src/base/ftobjs.c#L3118-L3169), including rejection of a zero size, while the provider is dated to 2.4.11-2.4.12 and [2.4.12 accepts it](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftobjs.c#L2490-L2543). Null pointers that FreeType dereferences and signed overflow throw. `FT_Select_Metrics` and `FT_Request_Metrics` use bundled 2.15.0; against 2.4.12, the latter returns nothing and handles zero dimensions, oversized ppem and the CELL rule differently. With system dependencies `FT_Request_Metrics` throws, while the other two work from public structures.

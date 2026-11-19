@@ -1,4 +1,5 @@
 #include "prx/libSceM4aacEnc/libSceM4aacEnc.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -6,6 +7,10 @@
 #include <initializer_list>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int32_t ErrorEncoderState = static_cast<int32_t>(0x80A90001u);
 constexpr int32_t ErrorInvalidPointer = static_cast<int32_t>(0x80A90002u);
@@ -140,14 +145,26 @@ void CheckContextCalls() {
     errno = 71;
     Require(libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(context, reinterpret_cast<int32_t*>(0x10)) == ErrorInvalidPointer, "dyjd6gEaAXw: unmapped value");
     Require(errno == 71, "dyjd6gEaAXw: errno preserved on unmapped value");
+    context[0] = 7;
+    context[1] = -1;
+    errno = 71;
+    Require(sceM4aacEncDeleteEncoderEx(context, &error) == ErrorEncoderState, "DeleteEx: valid context");
+    Require(errno == 71, "DeleteEx: errno preserved on valid context");
+    errno = 71;
+    Require(libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(context, &value) == 0 && value == 7, "dyjd6gEaAXw: valid read and write");
+    Require(errno == 71, "dyjd6gEaAXw: errno preserved on valid read and write");
 }
 
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckCreate();
     CheckEncodeAndFlush();
     CheckContextCalls();
     std::puts("M4aacEnc tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

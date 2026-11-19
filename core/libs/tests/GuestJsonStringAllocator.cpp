@@ -43,6 +43,43 @@ static void CheckText(const String& text, const char* bytes, std::size_t length,
     Require(_ZNK3sce4Json6String4sizeEv(&text) == length && _ZNK3sce4Json6String8capacityEv(&text) == capacity &&
             std::memcmp(_ZNK3sce4Json6String5c_strEv(&text), bytes, length + 1) == 0, "String bytes, length and capacity must match the reference");
 }
+static void CheckBooleanAndEmpty(StringTrace& trace) {
+    const auto baseline = trace.live;
+    String text{};
+    _ZN3sce4Json6StringC1Ev(&text);
+    Require(_ZNK3sce4Json6String5emptyEv(&text), "A default string must be empty");
+    for (const char* bytes : {"short", "a longer string that requires allocator-backed character storage"}) {
+        _ZN3sce4Json6String6appendEPKcm(&text, bytes, std::strlen(bytes));
+        Require(!_ZNK3sce4Json6String5emptyEv(&text), "Populated strings must not be empty");
+        _ZN3sce4Json6String5clearEv(&text);
+        Require(_ZNK3sce4Json6String5emptyEv(&text), "Clearing a string must make it empty");
+    }
+    const char binary[]{0, 'x'};
+    _ZN3sce4Json6String6appendEPKcm(&text, binary, sizeof(binary));
+    const auto before = *text.text;
+    const auto requests = trace.requests.size();
+    Require(!_ZNK3sce4Json6String5emptyEv(&text),
+            "A leading zero byte must not hide a nonzero stored length");
+    Require(std::memcmp(&before, text.text, sizeof(before)) == 0 && trace.requests.size() == requests,
+            "Testing emptiness must preserve the text header and allocate nothing");
+    _ZN3sce4Json6StringD1Ev(&text);
+    Require(trace.live == baseline, "Emptiness checks must leave no owned string storage");
+    for (bool state : {true, false}) {
+        Value value{};
+        _ZN3sce4Json5ValueC1EPKc(&value, "owned string replaced by a boolean");
+        Require(value.type == TypeString && trace.live.size() > baseline.size(),
+                "Construct an owned string value");
+        const auto allocations = trace.requests.size();
+        _ZN3sce4Json5Value3setEb(&value, state);
+        Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeBoolean &&
+                    *_ZNK3sce4Json5Value10getBooleanEv(&value) == state,
+                "Boolean setting must replace an owned string value");
+        Require(trace.live == baseline && trace.requests.size() == allocations,
+                "Boolean setting must release the old string without allocating");
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live == baseline, "Destroying the boolean must not release the old string twice");
+    }
+}
 int main() {
     Value beforeInitialization{};
     _ZN3sce4Json5ValueC1Ev(&beforeInitialization);
@@ -54,6 +91,7 @@ int main() {
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize string allocation contract");
     const auto baseline = trace.live.size();
+    CheckBooleanAndEmpty(trace);
     for (int budget : {0, 1}) {
         trace.budget = budget;
         String failed{}; _ZN3sce4Json6StringC1EPKc(&failed, "abc");
@@ -78,6 +116,19 @@ int main() {
     _ZN3sce4Json6String5clearEv(&text); CheckText(text, "", 0, 0);
     const char binary[]{'a', 0, 'b', 0};
     _ZN3sce4Json6String6appendEPKcm(&text, binary, 3); CheckText(text, binary, 3, 20);
+    String slice{};
+    Require(_ZNK3sce4Json6String6substrEmm(&slice, &text, 1, _ZN3sce4Json6String4nposE) == &slice,
+            "Substring extraction must return the constructed result");
+    CheckText(slice, binary + 1, 2, 3);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    const char zeroByte[]{0, 0};
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 1);
+    CheckText(slice, zeroByte, 1, 2);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 0);
+    CheckText(slice, "", 0, 0);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    CheckText(text, binary, 3, 20);
     String copy{}; _ZN3sce4Json6StringC1ERKS1_(&copy, &text); CheckText(copy, binary, 3, 4);
     String appended{}; _ZN3sce4Json6StringC1EPKc(&appended, nullptr);
     _ZN3sce4Json6String6appendERKS1_(&appended, &text); CheckText(appended, "a", 1, 18);

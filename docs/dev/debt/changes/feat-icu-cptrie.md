@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Functional
+
+- [Code point tries](../../../core/libs/prx/libSceIcu/CodePointTrie.cpp) have no console ABI or behavior verification. Twenty-two `ucptrie_*` (all but `ucptrie_swap`), `ucpmap_*` and `umutablecptrie_*` exports take the signatures of ICU 68.2's [ucptrie.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/unicode/ucptrie.h), [ucpmap.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/unicode/ucpmap.h) and [umutablecptrie.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/unicode/umutablecptrie.h) and call bundled ICU 78.1, whose `UCPTrie` layout and serialized form match 68.2. Their memory comes from the host allocator, not from functions installed with `u_setMemoryFunctions`. A null trie, map, status, UTF-8 pointer or binary buffer with a length throws where ICU dereferences it. Closes when: compared with the console.
