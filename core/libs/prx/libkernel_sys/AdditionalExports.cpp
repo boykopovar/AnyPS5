@@ -548,12 +548,12 @@ int APS5_VABI libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(KernelModule handle,
     info.st_size = sizeof(info);
     if (sceKernelGetModuleInfo(handle, &info) != 0) return 0;
     const auto value = reinterpret_cast<std::uintptr_t>(address);
+    const ModuleSegmentInfo* code = nullptr;
     for (std::uint32_t index = 0; index < info.segment_count; ++index) {
         const auto& segment = info.segments[index];
-        if ((segment.prot & 4) == 0) continue;
-        return value >= segment.address && value - segment.address < segment.size ? 1 : 0;
+        if ((segment.prot & 4) != 0) code = &segment;
     }
-    return 0;
+    return code != nullptr && value >= code->address && value - code->address < code->size ? 1 : 0;
 }
 
 APS5_EXPORT("2xg4JXvaJ6k", libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch);
