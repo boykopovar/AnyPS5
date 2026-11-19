@@ -693,5 +693,20 @@ class SymlinkPrivilegeLimitationTests(unittest.TestCase):
         self.assertFalse(check_skips.symlink_privilege_limitation(name, "test skipped, Windows symbolic-link privileges unavailable"))
 
 
+class EnvironmentLoaderRetentionTests(unittest.TestCase):
+    def test_single_exact_skip_line_is_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertTrue(check_skips.environment_loader_retention("ok\n  " + reason + "  \nok\n"))
+
+    def test_other_or_extra_skips_are_not_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\n" + reason))
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\nskipping another check"))
+        self.assertFalse(check_skips.environment_loader_retention("skipped for another reason"))
+
+    def test_no_skip_is_not_a_limitation(self):
+        self.assertFalse(check_skips.environment_loader_retention("all passed\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
