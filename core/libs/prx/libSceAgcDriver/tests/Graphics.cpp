@@ -4627,6 +4627,9 @@ void multisampleTests() {
     setCmaskAddress(queue);
     const auto compressed = DecodeState(queue).colors[0];
     Require(compressed.cmaskAddress == cmaskAddress && !compressed.cmaskFastClear && compressed.cmaskBytes == 0x1000, "a multisampled COMPRESSION target did not decode its CMASK at the metablock size");
+    queue.context[0x31f] = 0;
+    queue.context[0x398] = 0;
+    expectFailure([&] { DecodeState(queue); }, "without a CMASK address");
     queue = multisampled();
     queue.context[0x31c] |= 0x2000;
     queue.context[0x31f] = 0;
