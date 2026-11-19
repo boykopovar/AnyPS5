@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Older callable exports
+
+- [EmptyFrameLoaderClient legacy callbacks](../../../core/libs/prx/libSceNKWebKit/src/EmptyLoaderLegacyCallbacks.cpp) (libSceNKWebKit) - not compared with a console module, and the argument conventions are unverified; none of the five reads its arguments. These signatures predate the pinned PS5 WebKit 11.x source, so they follow WebKit [Safari-611.1.1 EmptyFrameLoaderClient.h](https://github.com/WebKit/WebKit/blob/Safari-611.1.1/Source/WebCore/loader/EmptyFrameLoaderClient.h) and [EmptyClients.cpp](https://github.com/WebKit/WebKit/blob/Safari-611.1.1/Source/WebCore/loader/EmptyClients.cpp), the first tag checked whose declarations match all of them. `committedLoad(DocumentLoader*, const char*, int)` and the two-`Optional` `dispatchDidCommitLoad` do nothing, `dispatchCreatePage(const NavigationAction&)` returns null, `generatedMIMETypeForURLScheme(const String&)` returns the empty string, and `createJavaAppletWidget` returns a null `RefPtr` in memory.
