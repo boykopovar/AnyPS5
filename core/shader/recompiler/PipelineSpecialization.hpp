@@ -51,6 +51,7 @@ inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+inline constexpr std::uint32_t UnnormalizedScaledBase = 57472u;
 inline constexpr std::uint32_t MirrorUnnormalizedBase = 57536u;
 inline constexpr std::uint32_t MinLodBase = 57600u;
 inline constexpr std::uint32_t SamplerLodBiasBase = 57728u;
