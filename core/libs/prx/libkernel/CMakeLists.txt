@@ -1285,9 +1285,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_clock_pause_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_clock_pause_tests)
     add_test(NAME guest_clock_pause COMMAND guest_clock_pause_tests)
-    set_tests_properties(guest_clock_pause PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_clock_pause_scaled COMMAND guest_clock_pause_tests)
+    set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_clock_pause_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
     if(WIN32)
-        set_tests_properties(guest_clock_pause PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_nanosleep_long_request_tests ${LIBS_INCLUDE_DIR}/tests/GuestNanosleepLongRequest.cpp)

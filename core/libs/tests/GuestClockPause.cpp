@@ -29,8 +29,8 @@ static void PausedTimeIsNotCounted() {
     KernelResumeGuestClock_nid_no_patch();
     const auto resumed = sceKernelGetProcessTime();
     Require(resumed >= paused && resumed - paused < 30000);
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    Require(sceKernelGetProcessTime() - resumed >= 25000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    Require(sceKernelGetProcessTime() - resumed >= 15000);
     KernelResumeGuestClock_nid_no_patch();
     const auto unbalanced = sceKernelGetProcessTime();
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
