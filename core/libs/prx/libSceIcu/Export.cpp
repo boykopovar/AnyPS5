@@ -78,14 +78,6 @@ int APS5_VABI u_enumCharNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_getDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI ubrk_close() {
     NotImplemented_nid_no_patch(__func__);
@@ -160,10 +152,6 @@ int APS5_VABI ucnv_convertEx() {
 }
 
 int APS5_VABI ucnv_fromUnicode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_getCanonicalName() {
     NotImplemented_nid_no_patch(__func__);
 }
 

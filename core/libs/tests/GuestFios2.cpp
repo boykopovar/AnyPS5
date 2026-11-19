@@ -921,13 +921,18 @@ static void CheckOverlayResolve(const std::string& directory) {
     const std::string source = directory + "/ovlsrc";
     std::filesystem::create_directories(base);
     std::filesystem::create_directories(source);
-    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
-    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(base + name) << "base";
     const auto now = std::filesystem::last_write_time(source + "/a.txt");
     std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(source + "/older.txt", now);
     std::filesystem::last_write_time(base + "/newer.txt", now);
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(base + "/same.txt", now);
+    std::filesystem::last_write_time(source + "/same.txt", now);
+    const auto epoch = std::chrono::clock_cast<std::filesystem::file_time_type::clock>(std::chrono::sys_seconds{});
+    std::filesystem::last_write_time(base + "/epoch.txt", epoch);
+    std::filesystem::last_write_time(source + "/epoch.txt", epoch);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
@@ -970,6 +975,8 @@ static void CheckOverlayResolve(const std::string& directory) {
         REQUIRE(Resolve(1, base + "/b.txt") == (type == 3 ? source : base) + "/b.txt");
         REQUIRE(Resolve(0, base + "/older.txt") == source + "/older.txt");
         REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
+        REQUIRE(Resolve(0, base + "/same.txt") == (type == 2 ? base : source) + "/same.txt");
+        REQUIRE(Resolve(0, base + "/epoch.txt") == source + "/epoch.txt");
         REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
     }
 }

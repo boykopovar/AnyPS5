@@ -1651,6 +1651,26 @@ class ModuleFileTests(unittest.TestCase):
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
 
+class CheckFilesTests(unittest.TestCase):
+    def test_valid_text_and_content_entries_pass(self):
+        title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
+        title_run.check_files({})
+
+    def test_destination_must_be_a_relative_path_under_a_file_root(self):
+        for destination in ("a.txt", "other/a.txt", "../app0/a.txt", "/app0/a.txt", "app0\\a.txt"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "must be a relative path under"):
+                title_run.check_files({destination: {"text": "x"}})
+
+    def test_source_must_be_a_single_text_or_content_string(self):
+        for source in ("text", {}, {"text": 1}, {"other": "x"}, {"text": "x", "content": "y"}):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "must be"):
+                title_run.check_files({"app0/a.txt": source})
+
+    def test_content_must_stay_inside_the_content_directory(self):
+        for content in ("../x", "/x", "a\\b", "c:x"):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
+                title_run.check_files({"app0/a.txt": {"content": content}})
+
 
 if __name__ == "__main__":
     unittest.main()
