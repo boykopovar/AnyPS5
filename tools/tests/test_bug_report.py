@@ -192,6 +192,18 @@ class MainTests(unittest.TestCase):
             self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
 
+    def test_colliding_redacted_keys_refuse_the_bundle(self):
+        first, second = "192.0.2.1", "192.0.2.2"
+        self.report.write_text(json.dumps({"addresses": [{first: 1, second: 2}]}), encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, out, err = self.run_main(["--report", str(self.report), "--out", str(target)])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("duplicate JSON object keys after redaction", err)
+        self.assertNotIn(first, err)
+        self.assertNotIn(second, err)
+        self.assertFalse(target.exists())
+
     def test_missing_report_is_an_error(self):
         code, _, err = self.run_main(["--report", str(self.root / "absent.json"), "--out", str(self.root / "b.zip")])
         self.assertEqual(code, 1)
