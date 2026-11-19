@@ -27,6 +27,9 @@ struct Codec {
 
 void TestShellCalls(std::intptr_t expectedHandle) {
     Require(sceShellCoreUtilActivateInit(7, nullptr) == shellInvalidArgument);
+    errno = 71;
+    Require(sceShellCoreUtilActivateInit(7, reinterpret_cast<std::intptr_t*>(0x10)) == shellInvalidArgument);
+    Require(errno == 71);
     std::intptr_t handle = 0;
     Require(sceShellCoreUtilActivateInit(7, &handle) == 0 && handle == expectedHandle);
     std::int32_t status = static_cast<std::int32_t>(untouchedStatus);
@@ -34,6 +37,10 @@ void TestShellCalls(std::intptr_t expectedHandle) {
     Require(sceShellCoreUtilActivateGetStatus(0, nullptr, &result) == shellInvalidArgument && result == untouchedResult);
     Require(sceShellCoreUtilActivateGetStatus(0, &status, nullptr) == shellInvalidArgument && status == static_cast<std::int32_t>(untouchedStatus));
     Require(sceShellCoreUtilActivateGetStatus(0, &status, &result) == 0 && status == 2 && result == 0);
+    errno = 71;
+    Require(sceShellCoreUtilActivateGetStatus(0, reinterpret_cast<std::int32_t*>(0x10), &result) == shellInvalidArgument);
+    Require(sceShellCoreUtilActivateGetStatus(0, &status, reinterpret_cast<std::int32_t*>(0x10)) == shellInvalidArgument);
+    Require(errno == 71);
     Require(sceShellCoreUtilActivateIsActivated(7, nullptr) == shellInvalidArgument);
     errno = 71;
     Require(sceShellCoreUtilActivateIsActivated(7, reinterpret_cast<bool*>(0x10)) == shellInvalidArgument);

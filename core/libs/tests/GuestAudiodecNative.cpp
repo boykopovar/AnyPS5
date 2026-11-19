@@ -2,10 +2,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/ExportLookup.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <type_traits>
 
@@ -130,9 +132,20 @@ int main(int argc, char** argv) {
 
     Require(sceAudiodecCreateDecoderEx(nullptr, &ctrl, 1) == ErrorArgument, "CreateDecoderEx null context");
     Require(sceAudiodecCreateDecoderEx(context, nullptr, 1) == ErrorInvalidCtrlPointer, "CreateDecoderEx null ctrl");
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, reinterpret_cast<AudiodecCtrl*>(0x10), 1) == ErrorInvalidCtrlPointer && errno == 71, "CreateDecoderEx unreadable ctrl");
     Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidParamPointer, "CreateDecoderEx null param");
+    ctrl.pParam = reinterpret_cast<void*>(0x10);
+    ctrl.pBsiInfo = bsiInfoBuffer;
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidParamPointer && errno == 71, "CreateDecoderEx unreadable param");
     ctrl.pParam = paramBuffer;
+    ctrl.pBsiInfo = nullptr;
     Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidBsiInfoPointer, "CreateDecoderEx null bsi");
+    ctrl.pBsiInfo = reinterpret_cast<void*>(0x10);
+    paramBuffer[0] = 0xC;
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidBsiInfoPointer && errno == 71, "CreateDecoderEx unreadable bsi");
     ctrl.pBsiInfo = bsiInfoBuffer;
     for (std::uint32_t invalidType : {0u, 5u, 7u, 8u, 9u, 13u, 20u}) {
         Require(sceAudiodecCreateDecoderEx(context, &ctrl, invalidType) == ErrorInvalidType, "CreateDecoderEx invalid type");

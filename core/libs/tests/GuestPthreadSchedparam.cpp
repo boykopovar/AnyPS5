@@ -86,6 +86,10 @@ static void* APS5_VABI Run(void*) {
     Require(PosixSet(GUEST_SCHED_FIFO, 700) == 0);
     RequireSched(GUEST_SCHED_FIFO, 700);
     Require(scePthreadSetschedparam(scePthreadSelf(), GUEST_SCHED_FIFO, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetschedparam(scePthreadSelf(), GUEST_SCHED_RR, reinterpret_cast<const KernelSchedParam*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    RequireSched(GUEST_SCHED_FIFO, 700);
+    Require(scePthreadGetschedparam(scePthreadSelf(), reinterpret_cast<int*>(0x10), &param) == SCE_KERNEL_ERROR_EFAULT);
+    Require(scePthreadGetschedparam(scePthreadSelf(), &policy, reinterpret_cast<KernelSchedParam*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     return nullptr;
 }
 

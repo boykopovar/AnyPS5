@@ -7,11 +7,7 @@
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
-
-#define STB_IMAGE_WRITE_STATIC
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STBI_WRITE_NO_STDIO
-#include "stb_image_write.h"
+#include "zlib.h"
 
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
@@ -250,11 +246,13 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
         }
     }
 
-    int compressedSize = 0;
-    const std::unique_ptr<unsigned char, void (*)(unsigned char*)> compressed(
-        stbi_zlib_compress(filtered.data(), static_cast<int>(filtered.size()), &compressedSize, options.compressionLevel),
-        [](unsigned char* memory) { STBIW_FREE(memory); });
-    if (!compressed) throw std::runtime_error("Png::Encode: encoding failed");
+    const auto inputSize = static_cast<uLong>(filtered.size());
+    uLongf compressedSize = compressBound(inputSize);
+    const auto compressed = std::make_unique<std::uint8_t[]>(compressedSize);
+    if (compress2(compressed.get(), &compressedSize, filtered.data(), inputSize, options.compressionLevel) != Z_OK) {
+        throw std::runtime_error("Png::Encode: encoding failed");
+    }
+    if (compressedSize > INT_MAX) throw std::runtime_error("Png::Encode: PNG chunk is too large");
 
     std::vector<std::uint8_t> header;
     appendBigEndian32(header, width);

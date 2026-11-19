@@ -32,5 +32,7 @@ int main() {
     Require(AllZero(&error, sizeof(error)));
 
     Require(sceAjmBatchErrorDump(reinterpret_cast<const AjmBatchInfo*>(0x10), nullptr) == 0);
+    constexpr int kInvalidParameter = static_cast<int>(0x80930005);
+    Require(sceAjmBatchErrorDump(&info, reinterpret_cast<AjmBatchError*>(0x10)) == kInvalidParameter);
     return 0;
 }
