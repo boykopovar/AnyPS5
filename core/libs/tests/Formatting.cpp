@@ -152,7 +152,9 @@ static void CheckDanglingExponentScan() {
     };
     const Case cases[]{{"1e", "%lf%n", 2, 1.0}, {"1ee", "%lf%n", 2, 1.0}, {"1e+", "%lf%n", 3, 1.0}, {"1e-x", "%lf%n", 3, 1.0}, {"1.e", "%lf%n", 3, 1.0},
         {"0e", "%lf%n", 2, 0.0}, {"-2.5E", "%lf%n", 5, -2.5}, {"0x1p", "%lf%n", 4, 1.0}, {"0x1.8p+", "%lf%n", 7, 1.5}, {"1E5", "%2lf%n", 2, 1.0},
-        {"1e-400", "%3lf%n", 3, 1.0}, {"1.e3", "%3lf%n", 3, 1.0}, {"1e5", "%lf%n", 3, 100000.0}, {"1e+2", "%3lf%n", 3, 1.0}, {" 1e", "%lf%n", 3, 1.0}, {"\t-1E+", "%lf%n", 5, -1.0}};
+        {"1e-400", "%3lf%n", 3, 1.0}, {"1.e3", "%3lf%n", 3, 1.0}, {"1e5", "%lf%n", 3, 100000.0}, {"1e+2", "%3lf%n", 3, 1.0}, {" 1e", "%lf%n", 3, 1.0}, {"\t-1E+", "%lf%n", 5, -1.0},
+        {" \t\n\v\f\r1e+", "%lf%n", 9, 1.0}, {" \t1E5", "%2lf%n", 4, 1.0}, {" \t1E5", "%1lf%n", 3, 1.0},
+        {"\n0x1.8p+", "%6lf%n", 7, 1.5}, {" 1e+2", "%lf%n", 5, 100.0}};
     for (const Case& test : cases) {
         double value = -9.0;
         int consumed = -1;
@@ -169,12 +171,19 @@ static void CheckDanglingExponentScan() {
     using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
     for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
         for (const auto& [input, format, value, character, consumed] : {std::tuple{"1ez", "%lf%c%n", 1.0, 'z', 3}, std::tuple{"1e+ x", "%lf %c%n", 1.0, 'x', 5},
-                 std::tuple{"0x1pq", "%lf%c%n", 1.0, 'q', 5}, std::tuple{"1E5", "%2lf%c%n", 1.0, '5', 3}}) {
+                 std::tuple{"0x1pq", "%lf%c%n", 1.0, 'q', 5}, std::tuple{"1E5", "%2lf%c%n", 1.0, '5', 3},
+                 std::tuple{" \t1e+x", "%lf%c%n", 1.0, 'x', 6}, std::tuple{"\n0x1.8p+q", "%lf%c%n", 1.5, 'q', 9},
+                 std::tuple{" \t1E5", "%2lf%c%n", 1.0, '5', 5}}) {
             double scanned = -9.0;
             char next = '?';
             int count = -7;
             Require(scan(input, format, &scanned, &next, &count) == 2 && scanned == value && next == character && count == consumed);
         }
+    }
+    for (const Scanner scan : {Scanner{sscanf_s_nid_postfix}, Scanner{ScanListS}}) {
+        int value = -9;
+        int consumed = -1;
+        Require(scan(" \t1e+42", "%*3lf%d%n", &value, &consumed) == 1 && value == 42 && consumed == 7);
     }
     for (const char* input : {"e5", ".e1", "."}) {
         double value = -9.0;
