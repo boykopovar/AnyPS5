@@ -1925,11 +1925,11 @@ int InitialReuse(AgcDriver::VulkanDevice& device) {
 
 int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, bool automatic) {
     using namespace AgcDriver::Graphics;
-    Require(cause == "live" || cause == "claimed" || cause == "written", "unknown publication reuse case");
+    Require(cause == "live" || cause == "claimed" || cause == "written" || cause == "same_cpu" || cause == "same_driver" || cause == "same_gpu" || cause == "adjacent_driver", "unknown publication reuse case");
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
     Block block(2u * BlockBytes, true);
-    if (cause == "written" && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return VulkanTestSkipped;
+    if ((cause == "written" || cause.starts_with("same_") || cause == "adjacent_driver") && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return VulkanTestSkipped;
     const auto color = DecodeTarget(block);
     StoreInitial(block, Samples, 0u, false);
     Draw(device, TargetState(color));
@@ -1940,10 +1940,24 @@ int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, b
     if (cause == "written") Require(AgcDriver::GuestMemory::Watched(block.Address(), colorBytes), "the publication reuse target lost write watching");
     if (cause == "claimed") ClaimMultisampleTargetMemory(color.address, colorBytes);
     if (cause == "written") std::memset(block.data + colorBytes - 256u, 0x5a, 256u);
+    const auto tail = block.Address() + colorBytes - 16u;
+    if (cause == "same_cpu") {
+        auto* destination = reinterpret_cast<volatile std::uint8_t*>(tail);
+        *destination = *destination;
+    }
+    if (cause == "same_driver") {
+        const auto* data = reinterpret_cast<const std::byte*>(tail);
+        const std::vector<std::byte> current(data, data + 16u);
+        auto original = current;
+        original.front() ^= std::byte{1u};
+        AgcDriver::GuestMemory::WriteChanged(tail, current, original);
+    }
+    if (cause == "same_gpu") AgcDriver::GuestMemory::MarkWritten(tail, 16u);
+    if (cause == "adjacent_driver") AgcDriver::GuestMemory::MarkWritten(block.Address() + colorBytes, 16u);
     const auto* begin = reinterpret_cast<const std::byte*>(block.data);
     const std::vector<std::byte> before(begin, begin + block.bytes);
     auto expected = before;
-    if (cause == "live") {
+    if (cause == "live" || cause == "adjacent_driver") {
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, color.elementBytes, Samples, Side, Side, 1u, 0u);
         layout.Tile(HalfSamples(loaded), std::span(expected).first(colorBytes));
         Require(expected != before, "the live publication control has no changed native samples");

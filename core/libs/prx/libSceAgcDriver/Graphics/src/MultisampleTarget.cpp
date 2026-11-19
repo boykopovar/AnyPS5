@@ -733,6 +733,8 @@ public:
         Require(!Recorder::SnapshotWriteOverlaps(target.address, bytes), "pending guest writes overlap native color publication");
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> ranges{{{target.address, end}}};
         Require(!StorageTexture::AnyPendingOverlaps(ranges), "pending storage image results overlap native color publication");
+        const auto used = use->writes.load(std::memory_order_acquire);
+        Require(used == 0 || !GuestMemory::Watched(target.address, bytes) || (GuestMemory::UnchangedSinceCollected(target.address, bytes, used) && !GuestMemory::StoredOver(target.address, bytes, used)), "guest color was written before native multisample publication");
         GuestMemory::StoreOwnBytes(target.address, bytes, [&] {
             Require(active->load(std::memory_order_acquire), "multisampled color target was retired before publication");
             Require(GuestMemory::CompareMapped(target.address, snapshot.original) == GuestMemory::Compare::Equal, "guest color changed before native multisample publication");
@@ -1999,7 +2001,7 @@ void PublishMultisampleTargetColor_nid_no_patch(const Context& context, const Co
         Require(colorBytes <= std::numeric_limits<std::size_t>::max() && colorBytes <= std::numeric_limits<std::uint64_t>::max() - target.address, "reused color publication range overflows");
         const auto bytes = static_cast<std::size_t>(colorBytes);
         const auto used = owner->use->writes.load(std::memory_order_acquire);
-        if (!owner->use->claimed.load(std::memory_order_acquire) && (used == 0 || !GuestMemory::Watched(target.address, bytes) || GuestMemory::UnchangedSinceCollected(target.address, bytes, used))) return false;
+        if (!owner->use->claimed.load(std::memory_order_acquire) && (used == 0 || !GuestMemory::Watched(target.address, bytes) || (GuestMemory::UnchangedSinceCollected(target.address, bytes, used) && !GuestMemory::StoredOver(target.address, bytes, used)))) return false;
         {
             std::unique_lock lock(guardedMutex());
             owner->active->store(false, std::memory_order_release);
@@ -2336,8 +2338,8 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
     return changed ? std::optional(std::move(filtered)) : std::nullopt;
 }
 
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
-    RequireNoResidentDepthRead_nid_no_patch(address, bytes);
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause) {
+    RequireNoResidentDepthRead_nid_no_patch(address, bytes, std::nullopt, true, cause);
     RequireNoMultisampleColorTarget(address, bytes, access);
 }
 
