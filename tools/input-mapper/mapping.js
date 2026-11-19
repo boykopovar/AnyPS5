@@ -25,6 +25,28 @@ export const defaults = {
     ToggleMouse: ['KEY:F7', 'MOUSE:Middle'], ToggleFullscreen: ['KEY:F11'], TogglePerformanceOverlay: ['KEY:F10'], Screenshot: ['KEY:F12'], ShowPadStatus: ['KEY:F9'], VolumeUp: ['KEY:F6'], VolumeDown: ['KEY:F5'], ToggleMute: ['KEY:F8'], ReloadInputMapping: ['KEY:F1']
 };
 
+export function actionsForInput(search, bindings) {
+    const query = search.trim().toLowerCase();
+    if (!query) return new Set();
+    const keyboardQuery = `key:${query}`;
+    return new Set(actions.filter(action => {
+        const custom = bindings.filter(binding => binding.action === action);
+        const sources = custom.length
+            ? custom.filter(binding => binding.value).map(({type, value}) => `${type}:${value}`)
+            : defaults[action];
+        return sources.some(source => {
+            const input = source.toLowerCase();
+            return input === query || input === keyboardQuery;
+        });
+    }));
+}
+
+export function inputFilename(titleId) {
+    if (titleId === '') return 'anyps5-input.ini';
+    if (typeof titleId !== 'string' || titleId.length > 32 || /[^A-Za-z0-9_-]/u.test(titleId)) return undefined;
+    return `anyps5-input.${titleId}.ini`;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
     if (emulatorActions.includes(action)) return ['KEY', 'PAD'];

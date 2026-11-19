@@ -2315,4 +2315,8 @@ void APS5_VABI WKPreferencesSetApplicationChromeModeEnabled(const void* preferen
     PreferencesFromRef(preferencesRef, __func__)->Set(u"ApplicationChromeModeEnabled", enabled);
 }
 
+bool APS5_VABI WKPreferencesGetApplicationChromeModeEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"ApplicationChromeModeEnabled");
+}
+
 }

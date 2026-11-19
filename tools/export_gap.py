@@ -165,6 +165,8 @@ def strip_disambig(name):
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
+        if any(part.lower() in {"test", "tests"} for part in path.relative_to(module_dir).parts[:-1]):
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in (".cpp", ".c", ".cc", ".h", ".hpp", ".hh"):
@@ -219,6 +221,9 @@ def collect_source_exports(texts):
             record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
+        if nid_names.NID_POSTFIX in text:
+            for name in nid_names.source_data_definitions(text):
+                record_provided(provided, name, "defined as data")
         for nid, helper in nid_names.source_aliases(text):
             if nid not in provided:
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"

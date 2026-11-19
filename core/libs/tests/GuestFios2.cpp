@@ -302,6 +302,16 @@ static void CheckOpWaitUntilDelegation(const std::string& file) {
     REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
     sceFiosOpDelete(op);
     REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_ERROR_BAD_OP);
+
+    sceFiosSuspend();
+    const SceFiosOp pending = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(pending > 0);
+    const auto start = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) REQUIRE(sceFiosOpWaitUntil(pending, sceFiosTimeGetCurrent() + 1000000) == SCE_FIOS_ERROR_TIMEOUT);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+    sceFiosOpDelete(pending);
+    sceFiosResume();
 }
 
 static void CheckOperationLifecycle(const std::string& file) {
@@ -936,6 +946,22 @@ static void CheckOverlayResolve(const std::string& directory) {
     REQUIRE(Resolve(0, "/app0/ovltest") == base);
     REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
     REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
+
+    const std::int32_t rootDestination = AddOverlay(0, 0, "/", source);
+    REQUIRE(Resolve(0, "/") == source);
+    REQUIRE(Resolve(0, "/app0//./asset.bin") == source + "/app0/asset.bin");
+    REQUIRE(Resolve(0, "app0/asset.bin") == "app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootDestination) == SCE_FIOS_OK);
+
+    const std::int32_t rootSource = AddOverlay(0, 0, "/virtual/", "/");
+    REQUIRE(Resolve(0, "/virtual") == "/");
+    REQUIRE(Resolve(0, "/virtual/asset.bin") == "/asset.bin");
+    REQUIRE(Resolve(0, "/virtualized/asset.bin") == "/virtualized/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootSource) == SCE_FIOS_OK);
+
+    const std::int32_t rootToRoot = AddOverlay(0, 0, "/", "/");
+    REQUIRE(Resolve(0, "//app0/./asset.bin") == "/app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootToRoot) == SCE_FIOS_OK);
 
     for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
         const std::int32_t id = AddOverlay(type, 0, base, source);
