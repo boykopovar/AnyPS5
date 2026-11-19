@@ -1088,7 +1088,8 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     const auto baseLevel = FloatClamp(state, imageMinLevel, ZeroF32(state), lastLevel);
     const auto level = Select(state, i32, mipNone, Unary(state, spv::OpConvertFToS, i32, baseLevel), Unary(state, spv::OpConvertFToS, i32, nearest));
     const auto size = state.module.AllocateId();
-    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 2), size, image, level);
+    const bool arrayed = access.image.dimension == RdnaImageDimension::Dim2DArray;
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, arrayed ? 3u : 2u), size, image, level);
     std::uint32_t extent[2] = {};
     std::uint32_t first[2] = {};
     for (std::uint32_t axis = 0; axis < 2u; axis++) {
@@ -1105,6 +1106,17 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
         state.module.AddFunction(spv::OpExtInst, f32, floored, GlslStd450(state), GLSLstd450Floor, scaled);
         first[axis] = Unary(state, spv::OpConvertFToS, i32, FloatClamp(state, floored, ConstantF32(state, 0xcb800000u), ConstantF32(state, 0x4b800000u)));
     }
+    std::uint32_t layer = 0;
+    if (arrayed) {
+        const auto layers = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, i32, layers, size, 2u);
+        const auto slice = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, f32, slice, setup.coord, 2u);
+        const auto rounded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, rounded, GlslStd450(state), GLSLstd450RoundEven, slice);
+        layer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, i32, layer, GlslStd450(state), GLSLstd450SClamp, Unary(state, spv::OpConvertFToS, i32, rounded), ConstantI32(state, 0), Binary(state, spv::OpISub, i32, layers, ConstantI32(state, 1)));
+    }
     const auto vectorType = ImageVectorType(state, setup.numericClass, 4);
     const auto scalarType = ImageScalarType(state, setup.numericClass);
     const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
@@ -1114,7 +1126,11 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
         const auto x = GatherAddress(state, field(24u, 7u), Binary(state, spv::OpIAdd, i32, first[0], ConstantI32(state, corners[index][0])), extent[0]);
         const auto y = GatherAddress(state, field(27u, 7u), Binary(state, spv::OpIAdd, i32, first[1], ConstantI32(state, corners[index][1])), extent[1]);
         const auto texelCoord = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 2), texelCoord, x, y);
+        if (arrayed) {
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 3), texelCoord, x, y, layer);
+        } else {
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 2), texelCoord, x, y);
+        }
         const auto texel = state.module.AllocateId();
         state.module.AddFunction(spv::OpImageFetch, vectorType, texel, image, texelCoord, spv::ImageOperandsLodMask, level);
         values[index] = state.module.AllocateId();
@@ -1835,7 +1851,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         gathered = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
     }
-    if (HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.lod != NoImageComponent && !setup.dref && dimension == RdnaImageDimension::Dim2D && !access.image.cube && !access.image.remappedDepth1D && setup.layout.offset == NoImageComponent && !HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) && state.program.Info().images.at(mem.resource).table == NoTable && state.program.Info().samplers.at(mem.sampler).table == NoTable) {
+    if (HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.lod != NoImageComponent && !setup.dref && (dimension == RdnaImageDimension::Dim2D || dimension == RdnaImageDimension::Dim2DArray) && !access.image.cube && !access.image.remappedDepth1D && setup.layout.offset == NoImageComponent && !HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) && state.program.Info().images.at(mem.resource).table == NoTable && state.program.Info().samplers.at(mem.sampler).table == NoTable) {
         const auto fetched = EmitTwoDimensionalGatherLod(ctx, access, setup);
         const auto supported = GatherLodSupported(state, mem.sampler);
         const auto scalarType = ImageScalarType(state, resultNumericClass);
