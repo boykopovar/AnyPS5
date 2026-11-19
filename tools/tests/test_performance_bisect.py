@@ -372,7 +372,7 @@ state = (build.parent / 'state').read_text(encoding='utf-8')
 fps = 54.0 if state in ('step-5', 'step-6', 'step-7') else 60.0
 target = out / 'run' / 'summary.json'
 target.parent.mkdir(parents=True)
-target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps}]}}}), encoding='utf-8')
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps, 'native': {'summary': [{'commit': commit, 'dirty': False}]}}]}}}), encoding='utf-8')
 """, encoding="utf-8")
         recipe = {"title_id": "PPSA00000", "games": [], "titles": str(root / "titles.json"),
                   "seconds": 20, "content": None, "build_dir": "build", "repetitions": 3,
