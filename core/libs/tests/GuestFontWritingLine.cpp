@@ -36,6 +36,7 @@ struct AllocationState {
     std::size_t live = 0;
     std::uint32_t lastSize = 0;
     bool fail = false;
+    FontMemory* clearOnAlloc = nullptr;
 };
 
 static void* APS5_VABI Allocate(void* object, std::uint32_t size) {
@@ -43,7 +44,13 @@ static void* APS5_VABI Allocate(void* object, std::uint32_t size) {
     state.lastSize = size;
     if (state.fail) return nullptr;
     void* allocation = std::malloc(size);
-    if (allocation) ++state.live;
+    if (allocation) {
+        ++state.live;
+        if (state.clearOnAlloc) {
+            state.clearOnAlloc->iface = nullptr;
+            state.clearOnAlloc->mspace_handle = nullptr;
+        }
+    }
     return allocation;
 }
 
@@ -169,7 +176,15 @@ int main() {
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     errno = 71;
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
-    Require(errno == 71);
+    Require(errno == 71 && allocations.live == 0);
+    {
+        FontMemory mutableMemory = memory;
+        allocations.clearOnAlloc = &mutableMemory;
+        errno = 71;
+        Require(sceFontCreateWritingLine(&mutableMemory, 0x12, nullptr, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+        Require(errno == 71 && allocations.live == 0 && mutableMemory.iface == nullptr && mutableMemory.mspace_handle == nullptr);
+        allocations.clearOnAlloc = nullptr;
+    }
     for (int form : {0, 0x10, 0x13}) Require(sceFontCreateWritingLine(&memory, form, nullptr, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
     std::uint16_t detail = 0x0FD5;
     Require(sceFontCreateWritingLine(&memory, 0x12, &detail, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
