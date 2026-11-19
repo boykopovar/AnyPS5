@@ -65,6 +65,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -166,6 +167,11 @@ if(BUILD_TESTING)
     target_link_libraries(permute_lowering_tests PRIVATE relinker_core)
     add_test(NAME permute_lowering COMMAND permute_lowering_tests)
     set_tests_properties(permute_lowering PROPERTIES TIMEOUT 120)
+
+    add_test_executable(gather_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/GatherLoweringTests.cpp)
+    target_link_libraries(gather_lowering_tests PRIVATE relinker_core)
+    add_test(NAME gather_lowering COMMAND gather_lowering_tests)
+    set_tests_properties(gather_lowering PROPERTIES TIMEOUT 120)
 
     add_test_executable(widen_broadcast_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/WidenBroadcastLoweringTests.cpp)
     target_link_libraries(widen_broadcast_lowering_tests PRIVATE relinker_core)
@@ -340,6 +346,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
     )
     target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
@@ -664,6 +671,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/GatherLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
