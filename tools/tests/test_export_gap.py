@@ -1006,5 +1006,25 @@ class RecordProvidedTests(unittest.TestCase):
         self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
 
 
+class LoadConsoleNidsTests(unittest.TestCase):
+    def test_export_table_that_is_not_a_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "tables"
+            with self.assertRaisesRegex(export_gap.GapError, "not a directory"):
+                export_gap.load_console_nids([MODULE], str(missing), None)
+
+    def test_module_without_a_table_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(export_gap.GapError, "export table not found"):
+                export_gap.load_console_nids([MODULE], directory, None)
+
+    def test_without_a_table_directory_every_module_gets_a_copy_of_the_nids_file(self):
+        with patch.object(export_gap, "parse_nids_file", return_value=["AAAAAAAAAAA", "BBBBBBBBBBB"]) as parse:
+            console = export_gap.load_console_nids(["libA", "libB"], None, "nids.txt")
+        parse.assert_called_once_with("nids.txt")
+        self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
+        self.assertIsNot(console["libA"], console["libB"])
+
+
 if __name__ == "__main__":
     unittest.main()
