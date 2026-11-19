@@ -327,4 +327,10 @@ int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* val
     return 1;
 }
 
+void* APS5_VABI SSL_get_ex_data_nid_postfix(const LibreSslSsl* ssl, int index) {
+    const auto* const stack = static_cast<const LibreSslStack*>(Internal(ssl, __func__).exData.stack);
+    if (!stack || index >= sk_num_nid_postfix(stack)) return nullptr;
+    return sk_value_nid_postfix(stack, index);
+}
+
 }

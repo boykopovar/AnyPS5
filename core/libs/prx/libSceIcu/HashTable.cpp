@@ -259,16 +259,6 @@ char AsciiLower(char c) {
     return c;
 }
 
-template <typename Character, typename Value>
-std::int32_t StringHash(const Character* string, std::int32_t length, Value value) {
-    std::uint32_t hash = 0;
-    if (string) {
-        std::int32_t increment = ((length - 32) / 32) + 1;
-        for (std::int64_t index = 0; index < length; index += increment) hash = (hash * 37) + value(string[index]);
-    }
-    return static_cast<std::int32_t>(hash);
-}
-
 template <typename Character, typename Equal>
 std::int8_t CompareStrings(UHashTok key1, UHashTok key2, Equal equal) {
     const auto* p1 = static_cast<const Character*>(key1.pointer);
@@ -437,7 +427,7 @@ std::int32_t APS5_VABI uhash_hashUChars_nid_postfix(UHashTok key) {
     if (!string) return 0;
     std::int32_t length = 0;
     while (string[length] != 0) ++length;
-    return ustr_hashUCharsN_nid_postfix(string, length);
+    return ustr_hashUCharsN_nid_postfix(reinterpret_cast<const std::uint16_t*>(string), length);
 }
 
 std::int32_t APS5_VABI uhash_hashChars_nid_postfix(UHashTok key) {
@@ -488,18 +478,6 @@ std::int8_t APS5_VABI uhash_equals_nid_postfix(const UHashtable* hash1, const UH
         if (!hash1->valueComparator(element->value, Lookup(hash2, element->key)->value)) return 0;
     }
     return 1;
-}
-
-std::int32_t APS5_VABI ustr_hashUCharsN_nid_postfix(const char16_t* string, std::int32_t length) {
-    return StringHash(string, length, [](char16_t c) { return static_cast<std::uint32_t>(c); });
-}
-
-std::int32_t APS5_VABI ustr_hashCharsN_nid_postfix(const char* string, std::int32_t length) {
-    return StringHash(string, length, [](char c) { return static_cast<std::uint32_t>(static_cast<std::uint8_t>(c)); });
-}
-
-std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char* string, std::int32_t length) {
-    return StringHash(string, length, [](char c) { return static_cast<std::uint32_t>(static_cast<std::uint8_t>(AsciiLower(c))); });
 }
 
 }

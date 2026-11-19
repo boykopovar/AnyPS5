@@ -148,7 +148,7 @@ void Strings() {
         std::u16string wide;
         for (char c : text) wide.push_back(static_cast<char16_t>(static_cast<unsigned char>(c) * 251u));
         Require(uhash_hashUChars_nid_postfix(Pointer(wide.c_str())) == ReferenceHashUChars(wide.c_str()), "uhash_hashUChars matches ICU");
-        Require(ustr_hashUCharsN_nid_postfix(wide.c_str(), length) == ReferenceHashUCharsN(wide.c_str(), length), "ustr_hashUCharsN matches ICU");
+        Require(ustr_hashUCharsN_nid_postfix(reinterpret_cast<const std::uint16_t*>(wide.c_str()), length) == ReferenceHashUCharsN(wide.c_str(), length), "ustr_hashUCharsN matches ICU");
     }
     Require(uhash_hashChars_nid_postfix(Pointer("abc")) == static_cast<std::int32_t>(('a' * 37 + 'b') * 37 + 'c'), "short strings hash every character");
     Require(uhash_hashIChars_nid_postfix(Pointer("AbC")) == uhash_hashChars_nid_postfix(Pointer("abc")), "the caseless hash lowercases ASCII");

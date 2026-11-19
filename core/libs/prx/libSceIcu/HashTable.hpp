@@ -84,7 +84,4 @@ std::int32_t APS5_VABI uhash_hashLong_nid_postfix(UHashTok);
 std::int8_t APS5_VABI uhash_compareLong_nid_postfix(UHashTok, UHashTok);
 void APS5_VABI uhash_deleteHashtable_nid_postfix(void*);
 std::int8_t APS5_VABI uhash_equals_nid_postfix(const UHashtable*, const UHashtable*);
-std::int32_t APS5_VABI ustr_hashUCharsN_nid_postfix(const char16_t*, std::int32_t);
-std::int32_t APS5_VABI ustr_hashCharsN_nid_postfix(const char*, std::int32_t);
-std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char*, std::int32_t);
 }

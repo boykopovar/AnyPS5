@@ -21,6 +21,7 @@
 #include <source_location>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -46,6 +47,9 @@ struct Source {
     std::string bytes;
     size_t position = 0;
     int reads = 0;
+    int seeks = 0;
+    std::int64_t lastSeekOffset = -1;
+    int lastSeekOrigin = -1;
     int frees = 0;
     bool abortOnRead = false;
 };
@@ -67,6 +71,9 @@ static size_t APS5_VABI SourceRead(char* buffer, size_t size, size_t count, void
 
 static int APS5_VABI SourceSeek(void* opaque, std::int64_t offset, int origin) {
     auto* source = static_cast<Source*>(opaque);
+    ++source->seeks;
+    source->lastSeekOffset = offset;
+    source->lastSeekOrigin = origin;
     if (origin != SEEK_SET || offset < 0 || static_cast<size_t>(offset) > source->bytes.size()) return CURL_SEEKFUNC_FAIL;
     source->position = static_cast<size_t>(offset);
     return CURL_SEEKFUNC_OK;
@@ -88,13 +95,14 @@ class Server {
 public:
     unsigned short port = 0;
 
-    Server() {
+    explicit Server(std::vector<std::string> serverResponses = {"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n"})
+        : responses(std::move(serverResponses)) {
         Require(listener != static_cast<Socket>(-1));
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         Require(bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
-        Require(listen(listener, 1) == 0);
+        Require(listen(listener, 4) == 0);
         socklen_t length = sizeof(address);
         Require(getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0);
         port = ntohs(address.sin_port);
@@ -102,72 +110,97 @@ public:
     }
 
     ~Server() {
-        Request();
+        Requests();
         CloseSocket(listener);
     }
 
     const std::string& Request() {
+        Requests();
+        return requests.empty() ? emptyRequest : requests.front();
+    }
+
+    const std::vector<std::string>& Requests() {
         if (thread.joinable()) thread.join();
-        return request;
+        return requests;
     }
 
 private:
     Socket listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    std::string request;
+    std::vector<std::string> responses;
+    std::vector<std::string> requests;
+    std::string emptyRequest;
     std::thread thread;
 
-    void Serve() {
-        fd_set readable;
-        FD_ZERO(&readable);
+    static void SendAll(Socket client, const std::string& response) {
+        std::size_t sent = 0;
+        while (sent < response.size()) {
 #ifdef _WIN32
-        constexpr int descriptorCount = 0;
+            const auto count = send(client, response.data() + sent, static_cast<int>(response.size() - sent), 0);
+#elif defined(MSG_NOSIGNAL)
+            const auto count = send(client, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
 #else
-        Require(listener < FD_SETSIZE);
-        const int descriptorCount = listener + 1;
+            const auto count = send(client, response.data() + sent, response.size() - sent, 0);
 #endif
-        FD_SET(listener, &readable);
-        timeval acceptTimeout{5, 0};
-        if (select(descriptorCount, &readable, nullptr, nullptr, &acceptTimeout) <= 0) return;
-        const Socket client = accept(listener, nullptr, nullptr);
-        if (client == static_cast<Socket>(-1)) return;
-#ifdef _WIN32
-        const DWORD timeout = 5000;
-        Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0);
-#else
-        const timeval timeout{5, 0};
-        Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
-#ifdef SO_NOSIGPIPE
-        const int noSigPipe = 1;
-        Require(setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe)) == 0);
-#endif
-#endif
-        char buffer[4096];
-        std::size_t headerEnd = std::string::npos;
-        std::size_t total = 0;
-        while (true) {
-            if (headerEnd == std::string::npos) {
-                headerEnd = request.find("\r\n\r\n");
-                if (headerEnd != std::string::npos) {
-                    std::string headers = request.substr(0, headerEnd);
-                    std::transform(headers.begin(), headers.end(), headers.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-                    const auto field = headers.find("content-length:");
-                    total = headerEnd + 4 + (field == std::string::npos ? 0 : std::strtoul(headers.c_str() + field + 15, nullptr, 10));
-                }
-            }
-            if (headerEnd != std::string::npos && request.size() >= total) {
-                const char response[] = "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n";
-#ifdef MSG_NOSIGNAL
-                send(client, response, sizeof(response) - 1, MSG_NOSIGNAL);
-#else
-                send(client, response, sizeof(response) - 1, 0);
-#endif
-                break;
-            }
-            const auto received = recv(client, buffer, sizeof(buffer), 0);
-            if (received <= 0) break;
-            request.append(buffer, static_cast<std::size_t>(received));
+            if (count <= 0) break;
+            sent += static_cast<std::size_t>(count);
         }
-        CloseSocket(client);
+    }
+
+    void Serve() {
+        for (const auto& response : responses) {
+            fd_set readable;
+            FD_ZERO(&readable);
+#ifdef _WIN32
+            constexpr int descriptorCount = 0;
+#else
+            Require(listener < FD_SETSIZE);
+            const int descriptorCount = listener + 1;
+#endif
+            FD_SET(listener, &readable);
+            timeval acceptTimeout{5, 0};
+            if (select(descriptorCount, &readable, nullptr, nullptr, &acceptTimeout) <= 0) return;
+            const Socket client = accept(listener, nullptr, nullptr);
+            if (client == static_cast<Socket>(-1)) return;
+#ifdef _WIN32
+            const DWORD timeout = 5000;
+            Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0);
+#else
+            const timeval timeout{5, 0};
+            Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+#ifdef SO_NOSIGPIPE
+            const int noSigPipe = 1;
+            Require(setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe)) == 0);
+#endif
+#endif
+            std::string request;
+            char buffer[4096];
+            std::size_t headerEnd = std::string::npos;
+            std::size_t total = 0;
+            while (true) {
+                if (headerEnd == std::string::npos) {
+                    headerEnd = request.find("\r\n\r\n");
+                    if (headerEnd != std::string::npos) {
+                        std::string headers = request.substr(0, headerEnd);
+                        std::transform(headers.begin(), headers.end(), headers.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                        const auto field = headers.find("content-length:");
+                        total = headerEnd + 4 + (field == std::string::npos ? 0 : std::strtoul(headers.c_str() + field + 15, nullptr, 10));
+                    }
+                }
+                if (headerEnd != std::string::npos && request.size() >= total) {
+                    SendAll(client, response);
+                    requests.push_back(std::move(request));
+                    break;
+                }
+                const auto received = recv(client, buffer, sizeof(buffer), 0);
+                if (received <= 0) {
+                    requests.push_back(std::move(request));
+                    CloseSocket(client);
+                    return;
+                }
+                request.append(buffer, static_cast<std::size_t>(received));
+            }
+            CloseSocket(client);
+        }
     }
 };
 
@@ -424,6 +457,59 @@ static std::string PerformLoopbackMimeUpload(CURL* easy) {
     return server.Request();
 }
 
+static void Test307RedirectRewindsMimeCallback() {
+    Source source;
+    source.bytes = "redirected guest callback body";
+
+    Server server({
+        "HTTP/1.1 307 Temporary Redirect\r\nLocation: /redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    });
+    const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/initial";
+
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    auto* mime = curl_mime_init_nid_postfix(easy);
+    Require(mime != nullptr);
+    AddCallbackPart(mime, source);
+    ConfigureLoopbackMimeEasy(easy, mime);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_FOLLOWLOCATION, std::int64_t{1}) == CURLE_OK);
+
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
+
+    std::int64_t responseCode = 0;
+    Require(curl_easy_getinfo_nid_postfix(easy, CURLINFO_RESPONSE_CODE, &responseCode) == CURLE_OK);
+    Require(responseCode == 200);
+    std::int64_t redirectCount = 0;
+    Require(curl_easy_getinfo_nid_postfix(easy, CURLINFO_REDIRECT_COUNT, &redirectCount) == CURLE_OK);
+    Require(redirectCount == 1);
+
+    Require(source.reads >= 2);
+    Require(source.seeks == 1);
+    Require(source.lastSeekOffset == 0);
+    Require(source.lastSeekOrigin == SEEK_SET);
+    Require(source.position == source.bytes.size());
+    Require(source.frees == 0);
+
+    const auto& requests = server.Requests();
+    Require(requests.size() == 2);
+    Require(requests[0].starts_with("POST /initial "));
+    Require(requests[1].starts_with("POST /redirected "));
+    const auto firstHeaderEnd = requests[0].find("\r\n\r\n");
+    const auto secondHeaderEnd = requests[1].find("\r\n\r\n");
+    Require(firstHeaderEnd != std::string::npos && secondHeaderEnd != std::string::npos);
+    const auto firstBody = requests[0].substr(firstHeaderEnd + 4);
+    const auto secondBody = requests[1].substr(secondHeaderEnd + 4);
+    Require(firstBody == secondBody);
+    Require(firstBody.find("\r\n\r\n" + source.bytes + "\r\n--") != std::string::npos);
+
+    curl_mime_free_nid_postfix(mime);
+    Require(source.frees == 1);
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(source.frees == 1);
+}
+
 static void TestMimeHeadersBorrowed() {
     const auto baseline = headerTracker.Snapshot();
 
@@ -530,6 +616,7 @@ int main() {
     TestSubpartsFreeTheirCallbacks();
     TestNullReadFunctionKeepsNoCallbacks();
     TestReadAbortAndSubsequentValidUpload();
+    Test307RedirectRewindsMimeCallback();
     curl_global_cleanup_nid_postfix();
 
     Require(curl_global_init_mem_nid_postfix(
