@@ -1155,6 +1155,45 @@ void CheckStoreWhileArming() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+void CheckSmallBufferOverArmedFaults() {
+    Mappings::SetArmGate([] { return true; });
+    struct Gate {
+        ~Gate() { Mappings::SetArmGate(nullptr); }
+    } gate;
+    constexpr std::size_t Block = 0x10000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Block));
+    Require(memory != nullptr, "small buffer reservation failed");
+    mappings.Commit(memory, Block, PAGE_READWRITE, Block, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto collect = [&](std::size_t capacity) {
+        std::set<std::size_t> result;
+        std::array<void*, 16> pages{};
+        std::size_t count = capacity;
+        Require(mappings.Collect(address, Block, pages.data(), &count, true), "small buffer collection failed");
+        Require(count <= capacity, "a collect reported more pages than its buffer holds");
+        for (std::size_t i = 0; i < count; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        return result;
+    };
+    for (int walk = 0; walk < 4; ++walk) Require(collect(16).empty(), "a clean private block reported writes");
+    Require(RegionAt(memory).Protect == PAGE_READONLY, "the clean private block was not armed");
+    const auto faultsBefore = faults.load();
+    static_cast<volatile unsigned char*>(memory)[9 * Small] = 1;
+    Require(faults.load() == faultsBefore + 1, "a write to an armed private block did not fault once");
+    static_cast<volatile unsigned char*>(memory)[2 * Small] = 1;
+    static_cast<volatile unsigned char*>(memory)[14 * Small] = 1;
+    std::set<std::size_t> reported;
+    for (int call = 0; call < 8; ++call) {
+        const auto pages = collect(1);
+        if (pages.empty()) break;
+        reported.insert(pages.begin(), pages.end());
+    }
+    Require(reported == std::set<std::size_t>{2, 9, 14}, "a one-page buffer lost a write to a faulted armed block");
+    Require(collect(16).empty(), "a one-page buffer left a write to a faulted armed block behind");
+    mappings.Reset(memory, Block);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckArmedResidentRun() {
     Mappings::SetArmGate([] { return true; });
     struct Gate {
@@ -1236,6 +1275,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroFirstReads();
         CheckArmedPrivateBlocks();
         CheckStoreWhileArming();
+        CheckSmallBufferOverArmedFaults();
         CheckArmedResidentRun();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
