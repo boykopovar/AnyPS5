@@ -84,3 +84,4 @@
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/LiftedLeafFunctionsExports.hpp"
+#include "prx/libSceNKWebKit/include/LiftedBranchingFunctionsExports.hpp"
