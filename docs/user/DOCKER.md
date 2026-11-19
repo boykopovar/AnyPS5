@@ -16,7 +16,7 @@ The default build parallelism is four jobs. Set `$env:ANYPS5_BUILD_JOBS = '2'` f
 
 ## First run
 
-1. Extract the source ZIP or clone this fork. Open PowerShell in the source folder.
+1. Extract the source ZIP or clone this fork. Double-click **Check-My-PC.cmd** in the source folder. It checks 64-bit Windows, WSL, Docker Desktop, Linux containers, the Compose version and the web app's port, and says how to fix each problem. It also reports Docker's processors and memory and the free space on the folder's drive. Then open PowerShell in the source folder.
 2. Run `docker compose up --build`. The engine compiles, verifies and exports its Windows bundle, then exits with code **0**. An exited engine service is normal. A short `setup` service creates the web app's state and pairing credential, then also exits. The web service starts without waiting for the engine export and shows its progress; if the export fails, the page shows the reason.
 3. Open [http://127.0.0.1:8766](http://127.0.0.1:8766). The public **About** tab explains capabilities, limitations and the build's exact upstream revision.
 4. Download the engine/helper ZIP from the setup panel, extract it completely and run **Install-Helper.cmd**. Choose the source folder containing `compose.yaml` if asked. Alternatively, run `Install-Helper.cmd` directly from the source folder after export.
