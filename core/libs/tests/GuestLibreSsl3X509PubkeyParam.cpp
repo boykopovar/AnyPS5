@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -76,11 +77,13 @@ private:
 
 template <typename TAction>
 static void Rejects(TAction action, std::source_location location = std::source_location::current()) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = EINVAL;
     bool threw = false;
     try { action(); } catch (const std::runtime_error&) { threw = true; }
     Require(threw, location);
     Require(errno == EINVAL, location);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, location);
 }
 
 int main() {

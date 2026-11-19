@@ -22,7 +22,7 @@ T CopyInPreservingErrno(const void* guest, const char* caller) {
     PreservedErrno guard;
     T value{};
     if (!GuestCopyIn_nid_no_patch(&value, guest, sizeof(value)))
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unreadable object");
     return value;
 }
 
@@ -30,14 +30,14 @@ template <typename T>
 void EnsureWritablePreservingErrno(T* guest, const char* caller) {
     PreservedErrno guard;
     if (!GuestWritable_nid_no_patch(guest, sizeof(*guest)))
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unwritable output");
 }
 
 template <typename T>
 void CopyOutPreservingErrno(T* guest, const T& value, const char* caller) {
     PreservedErrno guard;
     if (!GuestCopyOut_nid_no_patch(guest, &value, sizeof(value)))
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unwritable output");
 }
 
 LibreSsl3X509Pubkey CopyCheckedPubkey(const void* pub, const char* function) {

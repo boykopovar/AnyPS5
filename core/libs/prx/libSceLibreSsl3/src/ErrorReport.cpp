@@ -4,9 +4,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 extern "C" void APS5_VABI ERR_print_errors_cb_nid_postfix(LibreSsl3ErrorCallback callback, void* userData) {
-    if (!callback && ERR_peek_error_nid_postfix() != 0) NotImplemented_nid_no_patch(__func__);
+    if (!callback && ERR_peek_error_nid_postfix() != 0) throw std::invalid_argument("ERR_print_errors_cb: null callback");
     const auto threadId = reinterpret_cast<std::uintptr_t>(pthread_self_nid_postfix());
 
     for (;;) {

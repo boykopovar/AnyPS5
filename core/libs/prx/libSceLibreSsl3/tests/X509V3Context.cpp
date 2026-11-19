@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -67,6 +69,7 @@ private:
 
 template <typename TCall>
 void Rejects(TCall call) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = EINVAL;
     bool threw = false;
     try {
@@ -76,6 +79,7 @@ void Rejects(TCall call) {
     }
     Require(threw);
     Require(errno == EINVAL);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 void GuestPointers(LibreSslX509* issuer, LibreSslX509* subject, void* request, void* crl) {

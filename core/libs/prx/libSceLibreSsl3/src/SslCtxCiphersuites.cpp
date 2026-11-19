@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -40,7 +41,7 @@ std::string ReadGuestText(const char* text, const char* caller) {
     int error = CopyGuestString_nid_no_patch(text, 65536, copied);
     if (error == 63) error = CopyGuestString_nid_no_patch(text, 1u << 20, copied);
     errno = savedErrno;
-    if (error != 0) NotImplemented_nid_no_patch(caller);
+    if (error != 0) throw std::runtime_error(std::string(caller) + ": unreadable text");
     return copied;
 }
 
@@ -50,7 +51,7 @@ LibreSsl3SslCtx ValidateWritableContext(LibreSsl3SslCtx* context, const char* ca
     const bool valid = GuestCopyIn_nid_no_patch(&copy, context, sizeof(copy)) &&
         GuestWritable_nid_no_patch(&context->cipherListTls13, sizeof(context->cipherListTls13));
     errno = savedErrno;
-    if (!valid) NotImplemented_nid_no_patch(caller);
+    if (!valid) throw std::runtime_error(std::string(caller) + ": unreadable or unwritable context");
     return copy;
 }
 
@@ -60,7 +61,7 @@ void WriteCipherList(LibreSsl3SslCtx* context, LibreSslStack* stack, const char*
     errno = savedErrno;
     if (!written) {
         sk_free_nid_postfix(stack);
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unwritable context");
     }
 }
 

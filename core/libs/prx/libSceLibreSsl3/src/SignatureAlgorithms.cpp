@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -76,11 +78,11 @@ int APS5_VABI OBJ_find_sigid_algs_nid_postfix(int signatureNid, int* digestNid, 
     int previousDigest = 0;
     const bool hadDigest = digestNid && CopyGuestInPreservingErrno(previousDigest, digestNid);
     if (digestNid && !CopyGuestOutPreservingErrno(digestNid, (*found)[1]))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unwritable digest output");
     if (keyNid && !CopyGuestOutPreservingErrno(keyNid, (*found)[2])) {
         if (hadDigest)
             CopyGuestOutPreservingErrno(digestNid, previousDigest);
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unwritable key output");
     }
     return 1;
 }

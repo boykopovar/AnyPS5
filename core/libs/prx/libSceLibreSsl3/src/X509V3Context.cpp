@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -34,14 +35,14 @@ private:
 void EnsureWritablePreservingErrno(void* guest, std::size_t size, const char* caller) {
     PreservedErrno guard;
     if (!GuestWritable_nid_no_patch(guest, size))
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unwritable context");
 }
 
 template <typename T>
 void CopyOutPreservingErrno(void* guest, const T& value, const char* caller) {
     PreservedErrno guard;
     if (!GuestCopyOut_nid_no_patch(guest, &value, sizeof(value)))
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unwritable context");
 }
 
 }

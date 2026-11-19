@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -70,6 +72,7 @@ private:
 
 template <typename TException, typename TCall>
 void Rejects(TCall call) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool rejected = false;
     try {
@@ -78,6 +81,7 @@ void Rejects(TCall call) {
         rejected = errno == 71;
     }
     Require(rejected);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 int object = 0;

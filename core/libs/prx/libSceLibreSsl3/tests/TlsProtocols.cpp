@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -228,6 +229,7 @@ private:
 
 template <typename TCall>
 void Rejects(TCall call) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool rejected = false;
     try {
@@ -236,6 +238,7 @@ void Rejects(TCall call) {
         rejected = errno == 71;
     }
     Require(rejected);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 void GuestPointers() {

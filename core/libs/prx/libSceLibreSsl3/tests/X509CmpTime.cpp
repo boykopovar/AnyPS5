@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -18,6 +19,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 template <typename TCall>
 void RejectsRuntime(TCall call, std::source_location location = std::source_location::current()) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool rejected = false;
     try {
@@ -26,6 +28,7 @@ void RejectsRuntime(TCall call, std::source_location location = std::source_loca
         rejected = errno == 71;
     }
     Require(rejected, location);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, location);
 }
 
 int Compare(std::string_view text, int type) {

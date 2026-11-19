@@ -1,10 +1,13 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -104,6 +107,20 @@ void CheckThreads(const std::string& prefix) {
     Require(ERR_get_error_nid_postfix() == 0x03064041);
 }
 
+void CheckNullCallback() {
+    LibreSslPutError_nid_no_patch(3, 100, 65, "null.c", 5);
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        ERR_print_errors_cb_nid_postfix(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
+    Require(ERR_get_error_nid_postfix() == 0x03064041 && ERR_get_error_nid_postfix() == 0);
+}
+
 } // namespace
 
 int main() {
@@ -114,6 +131,7 @@ int main() {
         CheckGuestProducer(prefix);
         CheckTruncation(prefix);
         CheckThreads(prefix);
+        CheckNullCallback();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -293,6 +295,29 @@ static void TestGuestPointers() {
     Require(errno == 73 && first == Unset);
 }
 
+static void TestRsaFactorGuards() {
+    LibreSsl3Rsa rsa = FilledRsa();
+    ReadOnlyPage roOut(&Unset, sizeof(Unset));
+    const void** const badPtr = roOut.As<const void*>();
+    const void* first = Unset;
+    const void* second = Unset;
+    const void* third = Unset;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    errno = 73;
+    RequireNotImplemented([&] { RSA_get0_factors_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &first, &second); });
+    Require(errno == 73 && first == Unset && second == Unset);
+    errno = 73;
+    RequireNotImplemented([&] { RSA_get0_factors_nid_postfix(&rsa, &first, badPtr); });
+    Require(errno == 73 && first == Unset);
+    errno = 73;
+    RequireNotImplemented([&] { RSA_get0_crt_params_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &first, &second, &third); });
+    Require(errno == 73 && first == Unset && second == Unset && third == Unset);
+    errno = 73;
+    RequireNotImplemented([&] { RSA_get0_crt_params_nid_postfix(&rsa, &first, &second, badPtr); });
+    Require(errno == 73 && first == Unset && second == Unset);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
+}
+
 int main() {
     TestRsaKey();
     TestDhPqg();
@@ -300,5 +325,6 @@ int main() {
     TestDsaPqg();
     TestDsaKey();
     TestGuestPointers();
+    TestRsaFactorGuards();
     return 0;
 }

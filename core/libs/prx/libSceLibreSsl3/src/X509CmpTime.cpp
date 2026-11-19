@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <ctime>
 #include <optional>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -32,7 +34,7 @@ bool TwoDigits(const unsigned char* data, int& value) {
 std::optional<std::int64_t> CertificateTime(const Asn1String* time, const char* caller) {
     if (!time) return std::nullopt;
     Asn1String guestTime{};
-    if (!CopyGuestInPreservingErrno(&guestTime, time, sizeof(guestTime))) NotImplemented_nid_no_patch(caller);
+    if (!CopyGuestInPreservingErrno(&guestTime, time, sizeof(guestTime))) throw std::runtime_error(std::string(caller) + ": unreadable time");
     if (!guestTime.data) return std::nullopt;
     int format;
     if (guestTime.length == UtcTimeLength) {
@@ -45,7 +47,7 @@ std::optional<std::int64_t> CertificateTime(const Asn1String* time, const char* 
     if (guestTime.type != 0 && guestTime.type != format) return std::nullopt;
     std::array<unsigned char, GeneralizedTimeLength> buffer{};
     if (!CopyGuestInPreservingErrno(buffer.data(), guestTime.data, static_cast<std::size_t>(guestTime.length))) {
-        NotImplemented_nid_no_patch(caller);
+        throw std::runtime_error(std::string(caller) + ": unreadable time data");
     }
     const unsigned char* data = buffer.data();
     int year;

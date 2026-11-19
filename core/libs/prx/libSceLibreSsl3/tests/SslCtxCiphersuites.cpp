@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -245,6 +246,7 @@ private:
 
 void UnreadableList() {
     LibreSsl3SslCtx context{};
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool thrown = false;
     try {
@@ -255,9 +257,11 @@ void UnreadableList() {
     Require(thrown);
     Require(context.cipherListTls13 == nullptr);
     Require(liveAllocations == 0);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 void UnreadableAndReadOnlyContext() {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool thrown = false;
     try {
@@ -300,6 +304,7 @@ void UnreadableAndReadOnlyContext() {
     Require(ownedPage.As<LibreSsl3SslCtx>()->cipherListTls13 == existingStack);
     sk_free_nid_postfix(existingStack);
     Require(liveAllocations == 0);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 }

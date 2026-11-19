@@ -3,6 +3,7 @@
 
 #include <cerrno>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -31,14 +32,14 @@ extern "C" void APS5_VABI X509_ALGOR_get0_nid_postfix(const void** outObject, in
 
     LibreSsl3X509Algor guestAlgor{};
     if ((outObject || outType) && !CopyGuestInPreservingErrno(guestAlgor, algor))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unreadable algorithm identifier");
 
     int type = LibreSsl3Asn1Undefined;
     const void* value = nullptr;
     if (outType && guestAlgor.parameter) {
         LibreSsl3Asn1Type guestParameter{};
         if (!CopyGuestInPreservingErrno(guestParameter, static_cast<const LibreSsl3Asn1Type*>(guestAlgor.parameter)))
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unreadable parameter");
         type = guestParameter.type;
         value = guestParameter.value;
     }
@@ -46,18 +47,18 @@ extern "C" void APS5_VABI X509_ALGOR_get0_nid_postfix(const void** outObject, in
     const void* previousObject = nullptr;
     const bool hadObject = outObject && CopyGuestInPreservingErrno(previousObject, outObject);
     if (outObject && !CopyGuestOutPreservingErrno(outObject, static_cast<const void*>(guestAlgor.algorithm)))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unwritable object output");
 
     const void* previousValue = nullptr;
     const bool hadValue = outValue && CopyGuestInPreservingErrno(previousValue, outValue);
     if (outValue && !CopyGuestOutPreservingErrno(outValue, value)) {
         if (hadObject) CopyGuestOutPreservingErrno(outObject, previousObject);
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unwritable value output");
     }
 
     if (outType && !CopyGuestOutPreservingErrno(outType, type)) {
         if (hadValue) CopyGuestOutPreservingErrno(outValue, previousValue);
         if (hadObject) CopyGuestOutPreservingErrno(outObject, previousObject);
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unwritable type output");
     }
 }

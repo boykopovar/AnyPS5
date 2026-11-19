@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
@@ -160,6 +161,7 @@ private:
 
 template <typename TCall>
 void RejectsRuntime(TCall call, const char* message) {
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     errno = 71;
     bool rejected = false;
     try {
@@ -168,6 +170,7 @@ void RejectsRuntime(TCall call, const char* message) {
         rejected = errno == 71;
     }
     Check(rejected, message);
+    Check(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unreadable session was reported as an unimplemented export");
 }
 
 void GuestPointers() {

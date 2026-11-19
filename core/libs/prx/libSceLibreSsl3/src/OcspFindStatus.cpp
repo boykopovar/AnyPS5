@@ -188,6 +188,7 @@
 #include <cerrno>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -212,7 +213,7 @@ int IntegerCompare(const Asn1String* first, const Asn1String* second, const char
     Asn1String guestFirst{};
     Asn1String guestSecond{};
     if (!CopyGuestInPreservingErrno(guestFirst, first) || !CopyGuestInPreservingErrno(guestSecond, second))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": unreadable serial number");
     int result = 1;
     if ((guestFirst.type & 0x100) == (guestSecond.type & 0x100))
         result = ASN1_OCTET_STRING_cmp_nid_postfix(first, second);
@@ -230,14 +231,14 @@ int CertIdCompare(const OCSP_CERTID* first, const OCSP_CERTID* second, const cha
     OCSP_CERTID guestFirst{};
     OCSP_CERTID guestSecond{};
     if (!CopyGuestInPreservingErrno(guestFirst, first) || !CopyGuestInPreservingErrno(guestSecond, second))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": unreadable certificate ID");
     if (!guestFirst.hashAlgorithm || !guestSecond.hashAlgorithm)
         throw std::invalid_argument("OCSP_resp_find_status: null certificate ID or algorithm");
     LibreSsl3X509Algor firstAlgorithm{};
     LibreSsl3X509Algor secondAlgorithm{};
     if (!CopyGuestInPreservingErrno(firstAlgorithm, guestFirst.hashAlgorithm) ||
         !CopyGuestInPreservingErrno(secondAlgorithm, guestSecond.hashAlgorithm))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": unreadable algorithm");
     int result = OBJ_cmp_nid_postfix(firstAlgorithm.algorithm, secondAlgorithm.algorithm);
     if (result) return result;
     result = ASN1_OCTET_STRING_cmp_nid_postfix(guestFirst.issuerNameHash, guestSecond.issuerNameHash);
@@ -254,18 +255,18 @@ extern "C" int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResp
     if (!bs) return 0;
     LibreSslOcspBasicResponse guestBs{};
     if (!CopyGuestInPreservingErrno(guestBs, bs))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unreadable basic response");
     if (!guestBs.tbsResponseData) throw std::invalid_argument("OCSP_resp_find_status: null response data");
     LibreSslOcspResponseData guestTbs{};
     if (!CopyGuestInPreservingErrno(guestTbs, guestBs.tbsResponseData))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": unreadable response data");
     const auto* responses = guestTbs.responses;
     for (int index = 0; index < sk_num_nid_postfix(responses); ++index) {
         const auto* single = static_cast<const LibreSslOcspSingleResponse*>(sk_value_nid_postfix(responses, index));
         if (!single) throw std::invalid_argument("OCSP_resp_find_status: null single response");
         LibreSslOcspSingleResponse guestSingle{};
         if (!CopyGuestInPreservingErrno(guestSingle, single))
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unreadable single response");
         if (CertIdCompare(id, static_cast<const OCSP_CERTID*>(guestSingle.certId), __func__)) continue;
         int localReason = 0;
         Asn1String* localRevtime = nullptr;
@@ -277,19 +278,19 @@ extern "C" int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResp
         Asn1String* previousRevtime = nullptr;
         const bool hadRevtime = writeRevoked && revtime && CopyGuestInPreservingErrno(previousRevtime, revtime);
         if (writeRevoked && revtime && !CopyGuestOutPreservingErrno(revtime, localRevtime))
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unwritable revocation time");
         int previousReason = 0;
         const bool hadReason = writeRevoked && reason && CopyGuestInPreservingErrno(previousReason, reason);
         if (writeRevoked && reason && !CopyGuestOutPreservingErrno(reason, localReason)) {
             if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unwritable reason");
         }
         Asn1String* previousThisupd = nullptr;
         const bool hadThisupd = thisupd && CopyGuestInPreservingErrno(previousThisupd, thisupd);
         if (thisupd && !CopyGuestOutPreservingErrno(thisupd, localThisupd)) {
             if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
             if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unwritable this update");
         }
         Asn1String* previousNextupd = nullptr;
         const bool hadNextupd = nextupd && CopyGuestInPreservingErrno(previousNextupd, nextupd);
@@ -297,14 +298,14 @@ extern "C" int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResp
             if (hadThisupd) CopyGuestOutPreservingErrno(thisupd, previousThisupd);
             if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
             if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unwritable next update");
         }
         if (status && !CopyGuestOutPreservingErrno(status, result)) {
             if (hadNextupd) CopyGuestOutPreservingErrno(nextupd, previousNextupd);
             if (hadThisupd) CopyGuestOutPreservingErrno(thisupd, previousThisupd);
             if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
             if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
-            NotImplemented_nid_no_patch(__func__);
+            throw std::runtime_error(std::string(__func__) + ": unwritable status");
         }
         return 1;
     }

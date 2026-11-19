@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <bit>
@@ -218,6 +219,7 @@ void TestGuestOutputs() {
 
     Guarded digest;
     Guarded key;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     bool threwFirst = false;
     errno = 73;
     try { OBJ_find_sigid_algs_nid_postfix(668, roOut.IntPtr(), &key.value); }
@@ -231,6 +233,7 @@ void TestGuestOutputs() {
     catch (const std::runtime_error&) { threwSecond = true; }
     Require(threwSecond && errno == 73 && digest.value == -17019);
     CheckGuard(digest);
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore);
 }
 
 }

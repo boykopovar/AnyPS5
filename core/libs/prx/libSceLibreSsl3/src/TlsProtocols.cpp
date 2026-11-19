@@ -35,7 +35,7 @@ std::string ReadGuestText(const char* text, const char* caller) {
     int error = CopyGuestString_nid_no_patch(text, 65536, copied);
     if (error == 63) error = CopyGuestString_nid_no_patch(text, 1u << 20, copied);
     errno = savedErrno;
-    if (error != 0) NotImplemented_nid_no_patch(caller);
+    if (error != 0) throw std::runtime_error(std::string(caller) + ": unreadable text");
     return copied;
 }
 
@@ -51,7 +51,7 @@ bool TryWriteProtocols(std::uint32_t* protocols, std::uint32_t value) {
 extern "C" int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* protocols, const char* text) {
     if (!protocols) throw std::invalid_argument("tls_config_parse_protocols: null output");
     if (!text) {
-        if (!TryWriteProtocols(protocols, SupportedProtocols)) NotImplemented_nid_no_patch(__func__);
+        if (!TryWriteProtocols(protocols, SupportedProtocols)) throw std::runtime_error(std::string(__func__) + ": unwritable output");
         return 0;
     }
     const std::string guestText = ReadGuestText(text, __func__);
@@ -87,6 +87,6 @@ extern "C" int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* p
     }
     const bool written = TryWriteProtocols(protocols, result);
     free_nid_postfix(copy);
-    if (!written) NotImplemented_nid_no_patch(__func__);
+    if (!written) throw std::runtime_error(std::string(__func__) + ": unwritable output");
     return 0;
 }

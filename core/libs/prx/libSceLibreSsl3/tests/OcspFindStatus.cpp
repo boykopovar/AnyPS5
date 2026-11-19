@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,7 +32,11 @@ void Require(bool condition, std::source_location location = std::source_locatio
 }
 
 template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    try { action(); } catch (const std::runtime_error&) {
+        Require(NotImplementedCalls_nid_no_patch() == reportedBefore, location);
+        return;
+    }
     Require(false, location);
 }
 

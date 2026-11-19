@@ -167,6 +167,7 @@
 
 #include <cerrno>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace {
@@ -221,7 +222,7 @@ void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* n
         return;
     LibreSsl3Rsa guestRsa{};
     if (!CopyGuestInPreservingErrno(guestRsa, rsa))
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": unreadable rsa");
     const void* previous[N]{};
     bool written[N]{};
     for (std::size_t i = 0; i < N; ++i) {
@@ -235,7 +236,7 @@ void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* n
                 if (written[j - 1])
                     CopyGuestOutPreservingErrno(fields[j - 1].first, previous[j - 1]);
             }
-            NotImplemented_nid_no_patch(function);
+            throw std::runtime_error(std::string(function) + ": unwritable output");
         }
         written[i] = hadPrior;
     }
