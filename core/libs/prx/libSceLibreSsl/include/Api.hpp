@@ -967,7 +967,7 @@ std::uint64_t APS5_VABI SSLeay_nid_postfix(void);
 const LibreSslMethod* APS5_VABI SSLv23_client_method_nid_postfix(void);
 const LibreSslMethod* APS5_VABI SSLv23_server_method_nid_postfix(void);
 const LibreSslMethod* APS5_VABI TLS_client_method_nid_postfix(void);
-int APS5_VABI UI_OpenSSL_nid_postfix(void);
+LibreSslUiMethod* APS5_VABI UI_OpenSSL_nid_postfix(void);
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name);
 void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method);
 void* APS5_VABI UI_get0_user_data_nid_postfix(const LibreSslUi* ui);
