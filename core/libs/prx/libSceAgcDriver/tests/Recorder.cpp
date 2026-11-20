@@ -8119,6 +8119,37 @@ bool addressShadowTests(const Device& device, Recorder& recorder, bool inPlace, 
             const auto slabBytes = readback.Bytes();
             const std::array<std::uint8_t, 4> red{255, 0, 0, 255};
             for (std::size_t i = 0; i < runBytes; ++i) Require(static_cast<std::uint8_t>(slabBytes[i]) == red[(first.begin - address + i) % 4], "the slab the address table maps does not hold the image's stored results");
+            {
+                std::vector<ShaderRecompiler::BdaAbi::Range> copiedTable;
+                build({0x55, 0x55, 0x55, 0x55}, [&](GuestBufferMemory& leased) {
+                    leased.AddReadable(address + 1, 64);
+                }, [&](GuestBufferMemory& leased) {
+                    copiedTable = leased.AddressRanges();
+                });
+                Require(!AnyShadowedOverlaps(address, 65536), "a descriptor read over one unit left that unit shadowed in the slab");
+                Require(AnyShadowedOverlaps(address + 65536, bytes - 65536), "a descriptor read over one unit published the whole heap");
+                Require(copiedTable.size() == 2, "a descriptor read over one unit inside a mapped heap did not slice the address table");
+                Require(copiedTable[0].begin == address && copiedTable[0].end == address + 65536 && (copiedTable[0].permissions & ShaderRecompiler::BdaAbi::Write) != 0, "the copied unit inside the mapped heap is not mapped to its import");
+                Require(copiedTable[1].begin == address + 65536 && copiedTable[1].end == address + bytes && copiedTable[1].permissions == ShaderRecompiler::BdaAbi::Read && copiedTable[1].deviceAddress != copiedTable[0].deviceAddress, "the untouched units of the mapped heap are not mapped to their slab");
+                for (std::size_t i = 0; i < 65536; ++i) Require(words[i] == red[i % 4], "the published unit did not receive the image's stored results");
+                for (std::size_t i = 65536; i < bytes; ++i) Require(words[i] == 0x55, "an untouched unit of the heap was overwritten");
+            }
+            {
+                std::vector<ShaderRecompiler::BdaAbi::Range> interiorTable;
+                build({0x55, 0x55, 0x55, 0x55}, [&](GuestBufferMemory& leased) {
+                    leased.AddReadable(address + 131072, 64);
+                }, [&](GuestBufferMemory& leased) {
+                    interiorTable = leased.AddressRanges();
+                });
+                Require(!AnyShadowedOverlaps(address + 131072, 65536), "an interior descriptor read left its unit shadowed in the slab");
+                Require(interiorTable.size() == 4, "an interior descriptor read did not slice the address table into interleaved import and slab ranges");
+                Require(interiorTable[0].begin == address && interiorTable[0].end == address + 65536 && (interiorTable[0].permissions & ShaderRecompiler::BdaAbi::Write) != 0, "the initial published prefix is not mapped to its import");
+                Require(interiorTable[1].begin == address + 65536 && interiorTable[1].end == address + 131072 && interiorTable[1].permissions == ShaderRecompiler::BdaAbi::Read, "the slab run before an interior published unit is not mapped read-only to its slab");
+                Require(interiorTable[2].begin == address + 131072 && interiorTable[2].end == address + 196608 && (interiorTable[2].permissions & ShaderRecompiler::BdaAbi::Write) != 0, "the interior published unit is not mapped to its import");
+                Require(interiorTable[3].begin == address + 196608 && interiorTable[3].end == address + bytes && interiorTable[3].permissions == ShaderRecompiler::BdaAbi::Read, "the slab run after an interior published unit is not mapped read-only to its slab");
+                for (std::size_t i = 131072; i < 196608; ++i) Require(words[i] == red[i % 4], "the interior published unit did not receive the image's stored results");
+                for (std::size_t i = 196608; i < bytes; ++i) Require(words[i] == 0x55, "an untouched unit following an interior publish was overwritten");
+            }
             const auto described = build({255, 0, 0, 255}, [&](GuestBufferMemory& leased) { leased.AddReadable(address, bytes); });
             Require(described.copied && described.current && !AnyShadowedOverlaps(address, bytes), "an address-based build that also reads the heap through a descriptor left the descriptor's bytes unpublished");
             StorageTexture::FlushPending(address, bytes, nullptr, "memory access");
