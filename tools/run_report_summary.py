@@ -41,6 +41,9 @@ def render(report):
     for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
         if not isinstance(report.get(key), dict):
             raise ValueError(f"report field {key!r} must be an object")
+    for key in ("milestones", "missing", "shaders", "unsupported"):
+        if type(report["coverage"].get(key)) is not bool:
+            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
