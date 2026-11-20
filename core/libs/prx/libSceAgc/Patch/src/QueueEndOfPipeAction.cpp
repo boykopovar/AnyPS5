@@ -45,7 +45,7 @@ int APS5_VABI sceAgcQueueEndOfPipeActionPatchAddress(std::uint32_t* cmd, const v
         packet[3] = static_cast<std::uint32_t>(guestAddress);
         packet[4] = static_cast<std::uint32_t>(guestAddress >> 32u);
         writeWords(cmd, packet, 3, 2, __func__);
-    } else {
+    } else if (opcode == 0x47u) {
         auto packet = readPacket<6>(cmd, 0x47u, __func__);
         const auto dataSelect = packet[3] >> 29u;
         Agc::Command::CheckAddress(guestAddress, dataSelect == 2 || dataSelect == 3 ? 8 : 4, __func__);
@@ -53,6 +53,8 @@ int APS5_VABI sceAgcQueueEndOfPipeActionPatchAddress(std::uint32_t* cmd, const v
         packet[2] = static_cast<std::uint32_t>(guestAddress);
         packet[3] = (packet[3] & 0xffff0000u) | static_cast<std::uint32_t>(guestAddress >> 32u);
         writeWords(cmd, packet, 2, 2, __func__);
+    } else {
+        return static_cast<int>(0x8a6c000c);
     }
     return 0;
 }

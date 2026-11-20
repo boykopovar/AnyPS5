@@ -372,6 +372,12 @@ void testEndOfPipeAddressPatch() {
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(const_cast<std::uint32_t*>(readOnlyRelease), label(0x1000u)); });
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(const_cast<std::uint32_t*>(readOnlyEvent), label(0x1000u)); });
     check(readOnlyRelease[3] == 0 && readOnlyRelease[4] == 0 && readOnlyEvent[2] == 0 && readOnlyEvent[3] == (1u << 29u), "an address patch of a read-only packet changed it");
+    std::array<std::uint32_t, 6> foreign{Agc::Command::Header(0x37u, 6), 0, 0, 1u << 29u, 0, 0};
+    const auto foreignBefore = foreign;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(foreign.data(), label(0x1000u)) == static_cast<int>(0x8a6c000c) && foreign == foreignBefore, "a six-dword non-EVENT_WRITE_EOP packet was patched");
+    std::array<std::uint32_t, 8> nop{Agc::Command::Header(0x10u, 8), 0, 0, 0, 0, 0, 0, 0};
+    const auto nopBefore = nop;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(nop.data(), label(0x1000u)) == static_cast<int>(0x8a6c000c) && nop == nopBefore, "a NOP packet did not return 0x8a6c000c");
 }
 
 void testWorkloads() {
