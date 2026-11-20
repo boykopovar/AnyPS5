@@ -5,6 +5,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceVdecCore/include/Api.hpp"
 
 namespace {
 
@@ -52,6 +53,30 @@ int CheckConfigAndInfo(const void* config, const void* info, std::uint64_t infoS
     if (!ReadSize(info, size)) return 0;
     if (size != infoSize) return ErrorStructSize;
     return CheckConfig(config);
+}
+
+int BuildCoreConfig(const void* config, VdecCoreConfigInfo& result) {
+    std::uint32_t codecType = 0;
+    std::int32_t fields[6]{};
+    if (!ReadField(config, 0x8, codecType) || !ReadField(config, 0xc, fields)) return ErrorNullArgument;
+
+    result = {};
+    result.codecType = codecType == 2 || codecType == 0x1a4e ? 1u : 0u;
+    result.profile = fields[0];
+    result.maxLevel = fields[1];
+    result.maxDpbFrameCount = fields[4];
+    result.maxFrameWidth = fields[2];
+    result.maxFrameHeight = fields[3];
+    result.horizontalAlign = fields[5];
+    return 0;
+}
+
+int MapFrameBufferQueryError(int error) {
+    const auto raw = static_cast<std::uint32_t>(error);
+    if (static_cast<std::uint32_t>(raw + 0x7f3fffffu) < 3) return static_cast<int>(0x810c0001u);
+    if (raw == 0x80c0000du) return error;
+    if (raw == 0x80c0000cu) return static_cast<int>(0x810c000cu);
+    return 0;
 }
 
 } // namespace
@@ -116,7 +141,18 @@ int APS5_VABI sceVdecwrapQueryDecoderMemoryInfo(const void* config, void* info) 
 int APS5_VABI sceVdecwrapQueryFrameBufferInfo(const void* config, void* info) {
     if (config == nullptr || info == nullptr) return ErrorNullArgument;
     if (const int error = CheckConfigAndInfo(config, info, 0x18); error != 0) return error;
-    NotImplemented_nid_no_patch(__func__);
+
+    VdecCoreConfigInfo coreConfig{};
+    if (const int error = BuildCoreConfig(config, coreConfig); error != 0) return error;
+    VdecCoreFrameBufferInfo coreInfo{};
+    const int queryResult = sceVdecCoreQueryFrameBufferInfo(&coreConfig, &coreInfo);
+    if (const int error = MapFrameBufferQueryError(queryResult); error != 0) return error;
+
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(static_cast<unsigned char*>(info) + sizeof(std::uint64_t),
+                                                   &coreInfo, 4 * sizeof(std::uint32_t));
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x810c0001u);
     return 0;
 }
 
