@@ -477,6 +477,54 @@ void testToggleLatch() {
     check(!latch.Held(cross) && !latch.Held(square), "clearing releases every toggled button");
 }
 
+void testToggleActions() {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    const auto circle = static_cast<std::uint32_t>(Pad::PadButton::Circle);
+    const auto square = static_cast<std::uint32_t>(Pad::PadButton::Square);
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    auto toggled = defaults();
+    toggled.toggleButtons = cross | square;
+    Pad::KeyboardMouse keyboardMouse(toggled);
+    const auto buttons = [&keyboardMouse]() { return keyboardMouse.Compose(PadInputState{}).buttons; };
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    check((buttons() & cross) != 0, "the first press of a toggled key holds the button");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) != 0, "releasing a toggled key keeps the button held");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) == 0, "the next press releases the toggled button");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_RETURN, true), now);
+    check((buttons() & cross) != 0, "another key bound to the same action toggles the same state");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_RETURN, false), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) == 0, "both keys of the action share one toggle");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_C, true), now);
+    check((buttons() & circle) != 0, "an action that is not listed is held");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_C, false), now);
+    check((buttons() & circle) == 0, "an action that is not listed releases on key up");
+
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    check((buttons() & square) != 0, "a toggled mouse button latches the button");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    check((buttons() & square) == 0, "the next mouse press releases it");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    keyboardMouse.HandleEvent(PadSimulation::FocusLostEvent(), now);
+    check((buttons() & cross) == 0, "losing focus releases the toggled buttons");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) != 0, "a toggle after focus loss starts from released");
+    keyboardMouse.Replace(toggled);
+    check((buttons() & cross) == 0, "replacing the configuration releases the toggled buttons");
+}
+
 void testShake() {
     const auto samples = Simulate(defaults(), {At(0.0, KeyEvent(SDL_SCANCODE_X, true)), At(200.0, KeyEvent(SDL_SCANCODE_X, false))}, 10.0, 300.0);
     const auto& first = samples[1].state;
@@ -826,6 +874,7 @@ int main() {
             {"wheel and keys on focus loss", testWheelFocusLoss},
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
             {"toggle latch", testToggleLatch},
+            {"toggle actions", testToggleActions},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
             {"show pad status", testShowPadStatus},
