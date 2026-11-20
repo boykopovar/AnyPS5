@@ -1194,6 +1194,10 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         return PosixFailure(GUEST_EFAULT);
     }
     FileStat result{};
+    if (KsemStat(d, result)) {
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
+        return 0;
+    }
     if (IsKqueueDescriptor_nid_no_patch(d)) {
         result.st_mode = 0010000;
         if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
@@ -1410,6 +1414,10 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         return SceErrorFromErrno(GUEST_EFAULT);
     }
     FileStat result{};
+    if (KsemStat(d, result)) {
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
+        return 0;
+    }
     if (IsKqueueDescriptor_nid_no_patch(d)) {
         result.st_mode = 0010000;
         if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
@@ -2073,6 +2081,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
     if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (KsemChangeMode(d, mode)) return 0;
     if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
 #ifdef _WIN32
