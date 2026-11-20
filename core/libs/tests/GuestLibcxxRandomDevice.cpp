@@ -1,12 +1,7 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(
-    void* self, const void* token);
-extern "C" void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void* self);
-extern "C" std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void* self);
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
