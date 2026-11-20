@@ -389,6 +389,19 @@ class PerformanceMainTests(PerformanceFixture, unittest.TestCase):
         self.assertEqual(stopped.exception.code, 2)
         prepare.assert_not_called()
 
+    def test_smoke_comparison_rejects_a_performance_summary_before_discovery(self):
+        capture = run_main(self.runner, self.root, ["--profile", "performance", "--trace-frames", "2:5", "--scene", "scene"])
+        baseline = capture["report_directory"] / "summary.json"
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                stderr = io.StringIO()
+                with mock.patch.object(self.runner, "discover", return_value={}) as discover, \
+                        contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as stopped:
+                    self.runner.main(["--games", str(self.root / "games"), "--compare", str(baseline), *options, "PPSA00001"])
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn("--compare requires a smoke-run summary, got a performance capture summary", stderr.getvalue())
+                discover.assert_not_called()
+
     def test_invalid_runtime_capture_is_retained_as_invalid(self):
         for index, (capture_error, console_error) in enumerate(((ValueError("bad native capture"), None),
                 (ValueError("shader caches must be enabled"), None), (None, RuntimeError("no interactive console")))):
