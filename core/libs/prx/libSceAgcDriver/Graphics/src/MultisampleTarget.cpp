@@ -702,7 +702,7 @@ public:
     }
 
     bool CanPublishColor() const {
-        return target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0u && target.cmaskAddress == 0u && !guestColorBaseline.empty();
+        return target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0u && target.cmaskAddress == 0u && !target.fmaskCompression && !guestColorBaseline.empty();
     }
 
     MultisampleColorSnapshot ColorSnapshot() {
