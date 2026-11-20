@@ -342,12 +342,17 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
             for (const auto& point : points) {
                 const FaultToken token = static_cast<FaultToken>(reinterpret_cast<std::uintptr_t>(point.pCheckpointMarker));
                 const auto found = ring.Find(token);
-                if (!found.has_value()) {
-                    std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                const auto kind = CheckpointKindOf(point.pCheckpointMarker);
+                const std::string lead = kind == CheckpointKind::none ? std::string() : std::string(CheckpointKindName(kind)) + " after ";
+                if (kind != CheckpointKind::none && token == 0) {
+                    std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %s, no guest token before it on its command buffer, queue 0x%llx", CheckpointKindName(kind), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                } else if (!found.has_value()) {
+                    if (kind != CheckpointKind::none) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %s after token %u, no longer in the ring, queue 0x%llx", CheckpointKindName(kind), static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
                 } else {
                     const std::size_t descLength = strnlen(found->desc, sizeof(found->desc));
-                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId));
-                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), static_cast<int>(descLength), found->desc);
+                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %stoken %u batch %llu queue 0x%llx program 0x%llx variant %llu", lead.c_str(), static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId));
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %stoken %u batch %llu queue 0x%llx program 0x%llx variant %llu %.*s", lead.c_str(), static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), static_cast<int>(descLength), found->desc);
                 }
                 DeviceFaultAppendStage(checkpoint, sizeof(checkpoint), point.stage);
                 lines.emplace_back(checkpoint);
@@ -563,13 +568,18 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
             for (const auto& point : points) {
                 const FaultToken token = static_cast<FaultToken>(reinterpret_cast<std::uintptr_t>(point.pCheckpointMarker));
                 const auto found = ring.Find(token);
-                if (!found.has_value()) {
-                    std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                const auto kind = CheckpointKindOf(point.pCheckpointMarker);
+                const std::string lead = kind == CheckpointKind::none ? std::string() : std::string(CheckpointKindName(kind)) + " after ";
+                if (kind != CheckpointKind::none && token == 0) {
+                    std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %s, no guest token before it on its command buffer, queue 0x%llx", CheckpointKindName(kind), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                } else if (!found.has_value()) {
+                    if (kind != CheckpointKind::none) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %s after token %u, no longer in the ring, queue 0x%llx", CheckpointKindName(kind), static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
                 } else {
                     const char* stage = DeviceFaultStageName(found->stage);
                     const std::size_t descLength = strnlen(found->desc, sizeof(found->desc));
-                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu stage %s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), stage);
-                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu stage %s %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), stage, static_cast<int>(descLength), found->desc);
+                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %stoken %u batch %llu queue 0x%llx program 0x%llx variant %llu stage %s", lead.c_str(), static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), stage);
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: %stoken %u batch %llu queue 0x%llx program 0x%llx variant %llu stage %s %.*s", lead.c_str(), static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), stage, static_cast<int>(descLength), found->desc);
                     if (found->argBuffer != 0) {
                         DeviceFaultAppendStage(checkpoint, sizeof(checkpoint), point.stage);
                         lines.emplace_back(checkpoint);

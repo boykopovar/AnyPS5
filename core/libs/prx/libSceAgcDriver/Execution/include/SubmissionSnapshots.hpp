@@ -17,6 +17,39 @@ using FaultToken = std::uint32_t;
 
 enum class FaultStage : std::uint32_t { unknown = 0, graphics = 1, compute = 2, mesh = 3, task = 4, copy = 5 };
 
+enum class CheckpointKind : std::uint8_t { none = 0, draw, dispatch, copy, blit, clear, fill, update, barrier, renderPassBegin, renderPassEnd, query, execute, commandBufferBegin, commandBufferEnd, count };
+
+inline constexpr unsigned CheckpointKindShift = 40;
+
+inline std::uintptr_t CheckpointMarker(FaultToken token, CheckpointKind kind) noexcept {
+    return static_cast<std::uintptr_t>(token) | (static_cast<std::uintptr_t>(kind) << CheckpointKindShift);
+}
+
+inline CheckpointKind CheckpointKindOf(const void* marker) noexcept {
+    const auto kind = (reinterpret_cast<std::uintptr_t>(marker) >> CheckpointKindShift) & 0xffu;
+    return kind < static_cast<std::uintptr_t>(CheckpointKind::count) ? static_cast<CheckpointKind>(kind) : CheckpointKind::none;
+}
+
+inline const char* CheckpointKindName(CheckpointKind kind) noexcept {
+    switch (kind) {
+    case CheckpointKind::draw: return "draw";
+    case CheckpointKind::dispatch: return "dispatch";
+    case CheckpointKind::copy: return "copy";
+    case CheckpointKind::blit: return "blit";
+    case CheckpointKind::clear: return "clear";
+    case CheckpointKind::fill: return "fill";
+    case CheckpointKind::update: return "update";
+    case CheckpointKind::barrier: return "barrier";
+    case CheckpointKind::renderPassBegin: return "render pass begin";
+    case CheckpointKind::renderPassEnd: return "render pass end";
+    case CheckpointKind::query: return "query";
+    case CheckpointKind::execute: return "execute commands";
+    case CheckpointKind::commandBufferBegin: return "command buffer begin";
+    case CheckpointKind::commandBufferEnd: return "command buffer end";
+    default: return "none";
+    }
+}
+
 struct FaultTokenEntry {
     alignas(std::atomic_ref<FaultToken>::required_alignment) mutable FaultToken token = 0;
     std::uint64_t submitSerial = 0;

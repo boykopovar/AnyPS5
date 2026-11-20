@@ -406,6 +406,77 @@ void BatchBeginCheckpoint() {
     checkpointToken = 0;
 }
 
+const void* kindMarker = nullptr;
+
+VKAPI_ATTR void VKAPI_CALL MockKindCheckpointData(VkQueue, std::uint32_t* count, VkCheckpointDataNV* data) {
+    if (data == nullptr) {
+        *count = 1;
+        return;
+    }
+    Require(*count == 1, "the kind checkpoint array has the wrong size");
+    data[0].stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    data[0].pCheckpointMarker = const_cast<void*>(kindMarker);
+}
+
+void CheckpointKindMarkers() {
+    for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(AgcDriver::CheckpointKind::count); ++kind) {
+        const auto marker = AgcDriver::CheckpointMarker(0xFFFFFFFFu, static_cast<AgcDriver::CheckpointKind>(kind));
+        Require(static_cast<AgcDriver::FaultToken>(marker) == 0xFFFFFFFFu, "a command kind changed the marker's token");
+        Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(marker)) == static_cast<AgcDriver::CheckpointKind>(kind), "a command kind did not survive its marker");
+    }
+    Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x1234u))) == AgcDriver::CheckpointKind::none, "a plain token marker decoded a command kind");
+    const auto outOfRange = static_cast<std::uintptr_t>(0xFEu) << AgcDriver::CheckpointKindShift;
+    Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(outOfRange)) == AgcDriver::CheckpointKind::none, "an unknown command kind was not decoded as none");
+    const auto highNibble = static_cast<std::uintptr_t>(0x13u) << AgcDriver::CheckpointKindShift;
+    Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(highNibble)) == AgcDriver::CheckpointKind::none, "a kind byte above the known kinds was decoded from its low bits");
+    Require(AgcDriver::CheckpointMarker(0x1234u, AgcDriver::CheckpointKind::copy) == (static_cast<std::uintptr_t>(0x1234u) | (static_cast<std::uintptr_t>(3u) << 40u)), "the copy kind is not stored from bit 40 of the marker");
+    const char* const names[] = {"none", "draw", "dispatch", "copy", "blit", "clear", "fill", "update", "barrier", "render pass begin", "render pass end", "query", "execute commands", "command buffer begin", "command buffer end"};
+    static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(AgcDriver::CheckpointKind::count));
+    for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(AgcDriver::CheckpointKind::count); ++kind) {
+        Require(std::strcmp(AgcDriver::CheckpointKindName(static_cast<AgcDriver::CheckpointKind>(kind)), names[kind]) == 0, "a command kind lost its name");
+    }
+}
+
+void KindCheckpointOutsideRing() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    constexpr AgcDriver::FaultToken stale = 0x0FFFFFFFu;
+    kindMarker = reinterpret_cast<const void*>(AgcDriver::CheckpointMarker(stale, AgcDriver::CheckpointKind::barrier));
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring);
+    Require(lines.size() == 1, "a kind checkpoint after a token outside the ring does not report one line");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: barrier after token %u, no longer in the ring, queue 0x2000 at stage 0x1", static_cast<unsigned>(stale));
+    Require(lines[0] == expected, "a kind checkpoint after a token outside the ring did not name its command kind");
+    const auto staged = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring, static_cast<AgcDriver::DeviceFaultResidencyProbe (*)(std::uint64_t)>(nullptr));
+    Require(staged.size() == 1 && staged[0] == expected, "a kind checkpoint after a token outside the ring did not name its command kind in the residency report");
+    kindMarker = reinterpret_cast<const void*>(AgcDriver::CheckpointMarker(0, AgcDriver::CheckpointKind::copy));
+    const auto first = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring);
+    const std::string none = "[device-fault] checkpoint: copy, no guest token before it on its command buffer, queue 0x2000 at stage 0x1";
+    Require(first.size() == 1 && first[0] == none, "a kind checkpoint without a guest token before it changed its line");
+    const auto firstStaged = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring, static_cast<AgcDriver::DeviceFaultResidencyProbe (*)(std::uint64_t)>(nullptr));
+    Require(firstStaged.size() == 1 && firstStaged[0] == none, "a kind checkpoint without a guest token before it changed its line in the residency report");
+    kindMarker = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(stale));
+    const auto unknown = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring);
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: unknown token %u queue 0x2000 at stage 0x1", static_cast<unsigned>(stale));
+    Require(unknown.size() == 1 && unknown[0] == expected, "a plain token outside the ring changed its line");
+    kindMarker = nullptr;
+}
+
+void KindCheckpointInRing() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the kind checkpoint token is invalid");
+    ClaimBracketToken(ring, token, 11, 0x5003e9700ull, 9, "dispatch 32x1x1");
+    kindMarker = reinterpret_cast<const void*>(AgcDriver::CheckpointMarker(token, AgcDriver::CheckpointKind::barrier));
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring);
+    Require(lines.size() == 1, "a kind checkpoint after a token in the ring does not report one line");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: barrier after token %u batch 11 queue 0x2000 program 0x5003e9700 variant 9 dispatch 32x1x1 at stage 0x1", static_cast<unsigned>(token));
+    Require(lines[0] == expected, "a kind checkpoint after a token in the ring lost the guest program");
+    const auto staged = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring, static_cast<AgcDriver::DeviceFaultResidencyProbe (*)(std::uint64_t)>(nullptr));
+    Require(staged.size() == 1 && staged[0].rfind("[device-fault] checkpoint: barrier after token ", 0) == 0 && staged[0].find("program 0x5003e9700 variant 9 stage ") != std::string::npos, "a kind checkpoint after a token in the ring lost the guest program in the residency report");
+    kindMarker = nullptr;
+}
+
 void ReportBracketOnly() {
     AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
     const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
@@ -764,6 +835,9 @@ int main() {
         EffectiveSerialZeroHasNoMarker();
         TokenCheckpoint();
         BatchBeginCheckpoint();
+        CheckpointKindMarkers();
+        KindCheckpointOutsideRing();
+        KindCheckpointInRing();
         ReportBracketOnly();
         ExtraQueueEmptyBracket();
         TokenReuse();

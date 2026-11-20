@@ -9,6 +9,7 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandCheckpoints.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawStageTimingKeys.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
@@ -1284,6 +1285,7 @@ void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, st
         auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(context.deviceProc(context.device, "vkCmdSetCheckpointNV"));
         if (setCheckpoint == nullptr) return;
         EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
+        NoteRecordedCheckpoint(commands, static_cast<AgcDriver::FaultToken>(token));
     } catch (...) {
     }
 }
