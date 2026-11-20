@@ -702,7 +702,7 @@ public:
     }
 
     MultisampleColorSnapshot ColorSnapshot() {
-        Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
+        Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0 && !target.fmaskCompression, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
         Require(!guestColorBaseline.empty(), "guest color snapshot has no initial footprint");
         readbackRecorder().Sync();
         Require(active->load(std::memory_order_acquire), "multisampled color target was retired before guest color snapshot");
@@ -1107,7 +1107,7 @@ private:
     VkImageView uploadView = VK_NULL_HANDLE;
 
     std::shared_ptr<Buffer> guestSampleUpload(const ColorTarget& use) {
-        Require(use.cmaskAddress == 0 && use.dccAddress == 0, "uploading multisampled guest color under compression metadata is not implemented");
+        Require(use.cmaskAddress == 0 && use.dccAddress == 0 && !use.fmaskCompression, "uploading multisampled guest color under compression metadata is not implemented");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "uploading multisampled guest color of arrays, volumes or mips is not implemented");
         Require(use.tileMode == ColorTileMode::RenderTarget || use.tileMode == ColorTileMode::Z64KBX, "non-uniform multisampled guest color tiling is not implemented");
         const MultisampleTextureLayout layout(use.tileMode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX, use.elementBytes, use.samples, use.extent.width, use.extent.height, 1u, use.pipeBankXor);
@@ -1488,6 +1488,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             target->cmask = MultisampledCmask(use.cmaskAddress, use.cmaskBytes);
         }
         target->cmask.CheckAddress(use.cmaskAddress);
+        target->target.fmaskCompression = target->target.fmaskCompression || use.fmaskCompression;
         target->Keep();
         target->SettleStorageWrites();
         target->ApplyFastClear(use);
@@ -1859,6 +1860,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     }
     std::shared_ptr<Buffer> upload;
     if (!clear) {
+        Require(!target.fmaskCompression, "nonuniform compressed multisample color import is not implemented");
         Require(target.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, target.elementBytes, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
         Require(layout.Bytes() == bytes && layout.LinearBytes() / target.elementBytes <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color layout and footprint differ");

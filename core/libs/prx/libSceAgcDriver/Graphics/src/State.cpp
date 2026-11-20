@@ -2428,6 +2428,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
@@ -2509,6 +2510,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     APS5_LOG_OUT_DEBUG("Color %u info=0x%x number=%u swap=%u", slot, info, number, swap);
@@ -2641,7 +2643,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         }
         const auto cmaskHigh = find(cx, 0x398 + slot);
         const auto cmask = ((cmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(cmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u);
-        Require((info & 0x6000u) == 0 || cmask != 0, "CMASK fast clears or FMASK compression without a CMASK address are unsupported");
+        Require((info & 0x2000u) == 0 || cmask != 0, "CMASK fast clears without a CMASK address are unsupported");
         if (cmask != 0) {
             std::size_t precedingBlocks = 0;
             std::size_t totalBlocks = static_cast<std::size_t>((color.surfaceExtent.width + 1023u) / 1024u) * ((color.surfaceExtent.height + 511u) / 512u);
