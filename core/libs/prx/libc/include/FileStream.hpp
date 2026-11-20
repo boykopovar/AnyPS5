@@ -304,6 +304,7 @@ public:
             std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(open(filename, mode), std::fclose);
             if (!Adopt(replacement.get())) return false;
             replacement.release();
+            _orientation.store(0, std::memory_order_relaxed);
             return true;
         }
         _guest = {};
@@ -424,6 +425,13 @@ public:
         do next = static_cast<std::int16_t>((old & ~0x60) | (endOfFile ? 0x20 : 0) | (error ? 0x40 : 0));
         while (!__atomic_compare_exchange_n(&_guest.flags, &old, next, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
     }
+    void DropFailedUnbufferedWrite() {
+#ifdef __APPLE__
+        auto* h = LoadHandleAtomic_nid_no_patch();
+        if (h && (h->_flags & __SNBF) != 0) ::fpurge(h);
+#endif
+    }
+
     void SyncStatus() {
         auto* h = LoadHandleAtomic_nid_no_patch();
         if (!h) return;

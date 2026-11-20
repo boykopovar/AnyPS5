@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import bisect
 import functools
 import os
 import re
@@ -16,6 +17,7 @@ import nid_names
 
 PT_LOAD = 1
 PT_DYNAMIC = 2
+PT_INTERP = 3
 PF_X = 1
 PF_W = 2
 DT_NULL = 0
@@ -34,13 +36,24 @@ DT_REL = 17
 DT_RELA_KIND = 7
 STT_FUNC = 2
 STT_TLS = 6
+STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
+DT_FLAGS_1 = 0x6ffffffb
+DF_1_PIE = 0x8000000
+R_X86_64_64 = 1
+R_X86_64_RELATIVE = 8
+R_X86_64_TLSDESC = 36
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+R_X86_64_COPY = 5
+R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
+    12: "DT_INIT", 13: "DT_FINI",
+    25: "DT_INIT_ARRAY", 27: "DT_INIT_ARRAYSZ", 26: "DT_FINI_ARRAY", 28: "DT_FINI_ARRAYSZ",
+    32: "DT_PREINIT_ARRAY", 33: "DT_PREINIT_ARRAYSZ",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
     DT_RELA: "DT_RELA", DT_RELASZ: "DT_RELASZ", DT_RELAENT: "DT_RELAENT",
     DT_STRSZ: "DT_STRSZ", DT_SYMENT: "DT_SYMENT", DT_JMPREL: "DT_JMPREL",
@@ -48,6 +61,7 @@ DYNAMIC_VALUE_TAGS = {
 }
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
+ENDBR64 = re.compile(r"^\s*([0-9a-f]+):\s+endbr64\s*$")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
@@ -63,6 +77,7 @@ class Module:
         self.data = data
         self.loads = []
         self.dynamic = None
+        self.has_interpreter = False
         self.read_headers()
         self.tags = self.read_tags()
         self.strsz = self.require_tag(DT_STRSZ, "DT_STRSZ")
@@ -104,10 +119,19 @@ class Module:
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
                 self.loads.append((vaddr, offset, filesz, flags))
+            elif kind == PT_INTERP:
+                self.has_interpreter = True
             elif kind == PT_DYNAMIC and self.dynamic is None:
                 self.dynamic = (offset, filesz)
         if self.dynamic is None:
             raise ModuleError("no PT_DYNAMIC program header")
+
+    def entry_point(self):
+        address, = self.unpack("<Q", 24)
+        if address and any(flags & PF_X and start <= address < start + size and offset + address - start < len(self.data)
+                           for start, offset, size, flags in self.loads):
+            return address
+        return None
 
     def read_tags(self):
         tags = {}
@@ -219,7 +243,10 @@ class Module:
         slots = {}
         for offset, info, _ in self.relocations():
             if info >> 32:
-                slots[offset] = self.symbol(info >> 32)[0]
+                name, section, _, _, binding, visibility = self.symbol(info >> 32)
+                if section and (binding == 0 or visibility != 0) and (info & 0xffffffff) != R_X86_64_COPY:
+                    continue
+                slots[offset] = name
         return slots
 
     def exported_symbols(self):
@@ -235,6 +262,50 @@ class Module:
         for name, _, value, kind in self.exported_symbols():
             (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local
+
+    def lifecycle_array_functions(self):
+        arrays = ((25, 27, "init"), (26, 28, "fini"), (32, 33, "preinit"))
+        if not any(tag in self.tags or size_tag in self.tags for tag, size_tag, _ in arrays):
+            return
+        relocations = {}
+        for offset, info, addend in self.relocations():
+            relocations.setdefault(offset, set()).add((info, addend))
+        offsets = sorted(relocations)
+        for tag, size_tag, name in arrays:
+            if tag not in self.tags and size_tag not in self.tags:
+                continue
+            if tag == 32 and not (self.unpack("<H", 16)[0] == 2 or self.has_interpreter or self.tags.get(DT_FLAGS_1, 0) & DF_1_PIE):
+                continue
+            size = self.require_tag(size_tag, DYNAMIC_VALUE_TAGS[size_tag])
+            if size % 8:
+                raise ModuleError("%s is not a multiple of 8" % DYNAMIC_VALUE_TAGS[size_tag])
+            if not size:
+                continue
+            table = self.require_tag(tag, DYNAMIC_VALUE_TAGS[tag])
+            start = self.address(table, size)
+            for index in range(size // 8):
+                slot = table + index * 8
+                nearby = offsets[bisect.bisect_left(offsets, slot - 15):bisect.bisect_left(offsets, slot + 8)]
+                nearby = [offset for offset in nearby if offset >= slot or any(
+                    offset + (16 if info & 0xffffffff == R_X86_64_TLSDESC else 8) > slot for info, _ in relocations[offset])]
+                if nearby:
+                    if nearby != [slot] or len(relocations[slot]) != 1:
+                        continue
+                    info, addend = next(iter(relocations[slot]))
+                    if info == R_X86_64_RELATIVE:
+                        address = addend & 0xffffffffffffffff
+                    elif info & 0xffffffff == R_X86_64_64:
+                        _, section, value, kind, _, _ = self.symbol(info >> 32)
+                        if section in (0, SHN_COMMON) or kind in (STT_TLS, STT_GNU_IFUNC):
+                            continue
+                        address = (value + addend) & 0xffffffffffffffff
+                    else:
+                        continue
+                else:
+                    address, = self.unpack("<Q", start + index * 8)
+                    if address in (0, 0xffffffffffffffff):
+                        continue
+                yield address, "elf_%s_array_%d" % (name, index)
 
     def code_segments(self):
         segments = []
@@ -260,13 +331,40 @@ class Namer:
 
 def ghidra_symbols(module, namer):
     rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
+    exported_functions = {address for _, section, address, kind in module.exported_symbols()
+                          if kind in (STT_FUNC, STT_GNU_IFUNC) and section != SHN_COMMON}
+    for address, name in module.lifecycle_array_functions():
+        if address not in exported_functions and any(flags & PF_X and start <= address < start + size and
+                                                     offset + address - start < len(module.data)
+                                                     for start, offset, size, flags in module.loads):
+            rows.add((address, True, name, name))
+    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+        address = module.tags.get(tag)
+        if address is None or address in exported_functions:
+            continue
+        if any(flags & PF_X and start <= address < start + size and offset + address - start < len(module.data)
+               for start, offset, size, flags in module.loads):
+            rows.add((address, True, name, name))
+    entry = module.entry_point()
+    if entry is not None and entry not in exported_functions and not any(address == entry and function for address, function, _, _ in rows):
+        rows.add((entry, True, "elf_entry", "elf_entry"))
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue
-        function = kind == STT_FUNC and any(flags & PF_X and start <= address < start + size and
-                                           offset + address - start < len(module.data)
-                                           for start, offset, size, flags in module.loads)
+        function = kind in (STT_FUNC, STT_GNU_IFUNC) and any(flags & PF_X and start <= address < start + size and
+                                                          offset + address - start < len(module.data)
+                                                          for start, offset, size, flags in module.loads)
         rows.add((address, function, namer.resolve(symbol), symbol))
+    exported_functions = {address for address, function, _, _ in rows if function}
+    for _, info, addend in module.relocations():
+        if info != R_X86_64_IRELATIVE:
+            continue
+        address = addend & 0xffffffffffffffff
+        if address not in exported_functions and any(flags & PF_X and start <= address < start + size and
+                                                     offset + address - start < len(module.data)
+                                                     for start, offset, size, flags in module.loads):
+            name = "irelative_resolver_%x" % address
+            rows.add((address, True, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -336,11 +434,17 @@ def referenced_address(line):
 
 def find_stubs(listing, slots, namer):
     stubs = {}
+    landing = None
     for line in listing:
         match = STUB.match(line)
         target = referenced_address(line)
         if match and target in slots:
-            stubs[int(match.group(1), 16)] = namer.resolve(slots[target])
+            address = int(match.group(1), 16)
+            stubs[address] = namer.resolve(slots[target])
+            if landing is not None and address == landing + 4:
+                stubs[landing] = stubs[address]
+        endbr = ENDBR64.match(line)
+        landing = int(endbr.group(1), 16) if endbr else None
     return stubs
 
 
@@ -355,10 +459,12 @@ def line_note(line, slots, stubs, namer):
     return note
 
 
-def annotate_listing(listing, slots, exports, stubs, namer):
+def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
+        if head and int(head.group(1), 16) == entry:
+            out.append("; ===== ELF entry point")
         if head and int(head.group(1), 16) in exports:
             out.append("")
             out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
@@ -419,13 +525,19 @@ def annotate(module_path, prefix, namer):
     slots = module.imports()
     exports, thread_local = module.exports()
     listing = []
+    entry = module.entry_point()
     for vaddr, code in module.code_segments():
         listing.append("; ===== segment %#x" % vaddr)
+        if entry is not None and vaddr < entry < vaddr + len(code):
+            split = entry - vaddr
+            listing.extend(disassemble(code[:split], vaddr))
+            code = code[split:]
+            vaddr = entry
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer, entry))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
