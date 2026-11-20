@@ -457,7 +457,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
@@ -477,6 +477,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureFormat.cpp
@@ -491,7 +492,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
         ${agcTextureDetileShaderHeader}
@@ -1471,10 +1472,94 @@ if(libSceAgcDriver_incdirs)
     target_include_directories(libSceAgcDriver_ParallelCompare_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
 endif()
 
-# --- small-size libraries split from ShaderInputState.cpp ---
+# --- small-size libraries split from ShaderInput ---
 add_library(libSceAgcDriver_ShaderInputState_Chunk01 STATIC Graphics/src/chunks/ShaderInputState_Chunk01.cpp)
 target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderInputState_Chunk01)
 get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
 if(libSceAgcDriver_incdirs)
     target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from  ---
+add_library(libSceAgcDriver_PipelineJournal_Chunk01 STATIC Graphics/src/chunks/PipelineJournal_Chunk01.cpp)
+add_library(libSceAgcDriver_PipelineJournal_Chunk02 STATIC Graphics/src/chunks/PipelineJournal_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PipelineJournal_Chunk01 libSceAgcDriver_PipelineJournal_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from State.cpp ---
+add_library(libSceAgcDriver_State_Chunk01 STATIC Graphics/src/chunks/State_Chunk01.cpp)
+add_library(libSceAgcDriver_State_Chunk02 STATIC Graphics/src/chunks/State_Chunk02.cpp)
+add_library(libSceAgcDriver_State_Chunk03 STATIC Graphics/src/chunks/State_Chunk03.cpp)
+add_library(libSceAgcDriver_State_Chunk04 STATIC Graphics/src/chunks/State_Chunk04.cpp)
+add_library(libSceAgcDriver_State_Chunk05 STATIC Graphics/src/chunks/State_Chunk05.cpp)
+add_library(libSceAgcDriver_State_Chunk06 STATIC Graphics/src/chunks/State_Chunk06.cpp)
+add_library(libSceAgcDriver_State_Chunk07 STATIC Graphics/src/chunks/State_Chunk07.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_State_Chunk01 libSceAgcDriver_State_Chunk02 libSceAgcDriver_State_Chunk03 libSceAgcDriver_State_Chunk04 libSceAgcDriver_State_Chunk05 libSceAgcDriver_State_Chunk06 libSceAgcDriver_State_Chunk07)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_State_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from  ---
+add_library(libSceAgcDriver_UnitShadow_Chunk01 STATIC Graphics/src/chunks/UnitShadow_Chunk01.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk02 STATIC Graphics/src/chunks/UnitShadow_Chunk02.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk03 STATIC Graphics/src/chunks/UnitShadow_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_UnitShadow_Chunk01 libSceAgcDriver_UnitShadow_Chunk02 libSceAgcDriver_UnitShadow_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from State.cpp ---
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 STATIC Graphics/src/chunks/State_Chunk01.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 STATIC Graphics/src/chunks/State_Chunk02.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 STATIC Graphics/src/chunks/State_Chunk03.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 STATIC Graphics/src/chunks/State_Chunk04.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 STATIC Graphics/src/chunks/State_Chunk05.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 STATIC Graphics/src/chunks/State_Chunk06.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07 STATIC Graphics/src/chunks/State_Chunk07.cpp)
+target_link_libraries(libSceAgcDriver_ShaderInputState_Chunk01 PUBLIC libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07)
+get_target_property(libSceAgcDriver_ShaderInputState_Chunk01_incdirs libSceAgcDriver_ShaderInputState_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_ShaderInputState_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from UnitShadow.cpp ---
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 STATIC Graphics/src/chunks/UnitShadow_Chunk01.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 STATIC Graphics/src/chunks/UnitShadow_Chunk02.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03 STATIC Graphics/src/chunks/UnitShadow_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver_UnitShadow_Chunk01 PUBLIC libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03)
+get_target_property(libSceAgcDriver_UnitShadow_Chunk01_incdirs libSceAgcDriver_UnitShadow_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_UnitShadow_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from PipelineJournal.cpp ---
+add_library(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 STATIC Graphics/src/chunks/PipelineJournal_Chunk01.cpp)
+add_library(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02 STATIC Graphics/src/chunks/PipelineJournal_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver_PipelineJournal_Chunk01 PUBLIC libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02)
+get_target_property(libSceAgcDriver_PipelineJournal_Chunk01_incdirs libSceAgcDriver_PipelineJournal_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_PipelineJournal_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
 endif()
