@@ -1056,6 +1056,40 @@ static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext 
     Error(0x0501);
     Require(errno == 71);
 
+    const GLuint infoLogShader = glCreateShader_nid_postfix(0x8b31);
+    const GLuint infoLogProgram = glCreateProgram_nid_postfix();
+    Require(infoLogShader != 0 && infoLogProgram != 0);
+    Error(0);
+
+    GLsizei logLength = -99;
+    char log[2] = {'x', 'x'};
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 1, &logLength, static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    Require(logLength == -99);
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 0, static_cast<GLsizei*>(unmapped), static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 1, static_cast<GLsizei*>(unmapped), log);
+    Error(0x0501);
+    Require(errno == 71);
+    Require(log[0] == 0);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 0, nullptr, static_cast<GLchar*>(unmapped));
+    Error(0);
+    Require(errno == 71);
+
+    glDeleteShader_nid_postfix(infoLogShader);
+    glDeleteProgram_nid_postfix(infoLogProgram);
+    Error(0);
+
     glVertexAttribPointer_nid_postfix(6, 3, 0x1406, 0, 12, nullptr);
     errno = 71;
     glGetVertexAttribfv_nid_postfix(6, 0x8626, static_cast<GLfloat*>(unmapped));

@@ -93,16 +93,30 @@ static SceFiosOpAttr CountingAttr() {
 
 static void CheckInitialization() {
     REQUIRE(!sceFiosIsInitialized(nullptr));
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
     std::uint32_t params[16] = {};
     params[0] = (sizeof(params) << 1) | 0u;
     params[3] = 0xfeedbeef;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
     REQUIRE(sceFiosIsInitialized(nullptr));
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(10) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 2);
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
     std::uint32_t copy[16] = {};
     REQUIRE(sceFiosIsInitialized(reinterpret_cast<SceFiosParams*>(copy)));
@@ -628,6 +642,8 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosFHReadSync(nullptr, fh, buffer, 1) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSeek(fh, 0, 0) == SCE_FIOS_ERROR_BAD_FH && sceFiosFHTell(fh) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHGetSize(fh) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHSeek(999, 0, 0) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHGetSize(999) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHStatSync(nullptr, fh, &stat) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSyncSync(nullptr, fh) == SCE_FIOS_ERROR_BAD_FH);
 
@@ -1164,7 +1180,23 @@ int main() {
     params[0] = sizeof(params) << 1;
     params[6] = 7;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(4) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(9) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(100) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     sceFiosTerminate();
     std::filesystem::remove_all(directory);
     std::puts("guest_fios2 ok");

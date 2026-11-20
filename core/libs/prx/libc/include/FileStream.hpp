@@ -223,7 +223,9 @@ public:
                 errno = ENOENT;
                 return false;
             }
-            return Adopt(open(filename, mode));
+            if (!Adopt(open(filename, mode))) return false;
+            _orientation.store(0, std::memory_order_relaxed);
+            return true;
         }
         auto* previous = GetHandle();
         _guest = {};

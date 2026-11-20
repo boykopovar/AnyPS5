@@ -54,7 +54,7 @@ async function setup(t, name, overrides = {}) {
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
-      json: async () => ({ tag: "test-release", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } })
+      json: async () => ({ tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } })
     }))
   };
   for (const [key, value] of Object.entries(globals)) {
@@ -341,7 +341,7 @@ for (const stage of ["picker", "writable"]) {
     assert.deepEqual(replacement.messages.map(message => message.type), ["inspect", "convert", "written"]);
     assert.equal(opened, stage === "writable" ? 1 : 0);
     assert.equal(aborted, stage === "writable" ? 1 : 0);
-    await replacement.onmessage({ data: { type: "complete", mode: "zip", outputName: "replacement.elf", size: 3, apps: 1, release: "test-release" } });
+    await replacement.onmessage({ data: { type: "complete", mode: "zip", outputName: "replacement.elf", size: 3, apps: 1, release: "v1-test" } });
     assert.equal(get("done").hidden, false);
     assert.equal(get("error").hidden, true);
   });

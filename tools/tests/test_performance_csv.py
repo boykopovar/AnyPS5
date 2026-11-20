@@ -334,6 +334,20 @@ class SafeCellTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(performance_csv.safe_cell(value), value)
 
+class CellEscapeTests(unittest.TestCase):
+    def test_safe_cell_prefixes_formula_triggers_with_a_tab(self):
+        for value in ('=1+1', '+x', '-y', '@z'):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), '\t' + value)
+        self.assertEqual(performance_csv.safe_cell('plain'), 'plain')
+        self.assertEqual(performance_csv.safe_cell(3), 3)
+
+    def test_configuration_cell_names_missing_values_and_escapes_backslashes(self):
+        self.assertEqual(performance_csv.configuration_cell(None), '<missing>')
+        self.assertEqual(performance_csv.configuration_cell('<missing>'), '\\<missing>')
+        self.assertEqual(performance_csv.configuration_cell('\\lead'), '\\\\lead')
+        self.assertEqual(performance_csv.configuration_cell('value'), 'value')
+
 
 if __name__ == "__main__":
     unittest.main()

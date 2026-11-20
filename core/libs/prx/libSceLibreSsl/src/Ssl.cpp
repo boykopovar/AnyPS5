@@ -27,6 +27,7 @@ static_assert(offsetof(LibreSslSslInternal, handshakeFunc) == 56);
 static_assert(offsetof(LibreSslSslInternal, msgCallback) == 64);
 static_assert(offsetof(LibreSslSslInternal, msgCallbackArg) == 72);
 static_assert(offsetof(LibreSslSslInternal, verifyCallback) == 88);
+static_assert(offsetof(LibreSslSslInternal, infoCallback) == 96);
 static_assert(offsetof(LibreSslSslInternal, readAhead) == 212);
 static_assert(offsetof(LibreSslSslInternal, aeadReadCtx) == 240);
 static_assert(offsetof(LibreSslSslInternal, aeadWriteCtx) == 248);

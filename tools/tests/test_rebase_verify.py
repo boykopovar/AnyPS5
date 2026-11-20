@@ -145,6 +145,27 @@ class RebaseVerifyTests(unittest.TestCase):
             self.amend_mode(path, executable)
         self.assertEqual(self.verify(), ["new script.sh: file mode 100644, expected 100755"])
 
+    def test_paths_with_spaces_have_no_trailing_tab(self):
+        path = "spaced file.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "old line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.git("checkout", "-q", "new")
+        self.write(path, "other line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "--amend", "--no-edit")
+        added, _ = rebase_verify.changed_lines(self.root, self.base, "old")
+        self.assertIn(path, added)
+        self.assertNotIn(path + "\t", added)
+        _, deleted = rebase_verify.changed_lines(self.root, "old", self.base)
+        self.assertIn(path, deleted)
+        self.assertNotIn(path + "\t", deleted)
+        self.assertEqual(self.verify(), [
+            f"{path}: an added line is missing (1x): old line",
+            f"{path}: a line is added that the branch did not add (1x): other line",
+        ])
+
     def test_a_line_the_branch_added_that_is_missing_is_reported(self):
         self.write("f.txt", "a\nb\nc\ntail\n")
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
