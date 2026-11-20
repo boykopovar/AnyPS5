@@ -47,7 +47,6 @@
 #include "DataInfo.hpp"
 
 #include "BreakIterator.hpp"
-#include "Data.hpp"
 #include "Currency.hpp"
 
 #include "ConverterHelpers.hpp"
