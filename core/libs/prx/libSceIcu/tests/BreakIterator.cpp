@@ -265,6 +265,37 @@ void Api() {
     second.join();
 }
 
+void GuestDefault() {
+    Context = "guest default locale";
+    std::int32_t status = 0;
+    uloc_setDefault_nid_postfix("el", &status);
+    Expect(status <= 0, "set Greek guest default");
+    const std::u16string greek = u"\u0391\u03b2; \u0393\u03b4.";
+    for (const char* locale : {static_cast<const char*>(nullptr), "el"}) {
+        void* iterator = Open(3, locale);
+        Check(iterator, greek, {0, 4, 7});
+        ubrk_close(iterator);
+    }
+    void* iterator = Open(3, "");
+    Check(iterator, greek, {0, 7});
+    ubrk_close(iterator);
+    status = 0;
+    uloc_setDefault_nid_postfix("en_US", &status);
+    Expect(status <= 0, "set English guest default");
+    for (const char* locale : {static_cast<const char*>(nullptr), "en_US"}) {
+        iterator = Open(1, locale);
+        Check(iterator, u"a.b", {0, 3});
+        ubrk_close(iterator);
+    }
+    iterator = Open(1, "en_US_POSIX");
+    Check(iterator, u"a.b", {0, 1, 2, 3});
+    ubrk_close(iterator);
+    status = 15;
+    Expect(!ubrk_open(3, nullptr, greek.data(), static_cast<std::int32_t>(greek.size()), &status),
+           "null locale open preserves failure");
+    Equal(status, 15, "null locale failure status");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -272,5 +303,6 @@ int main(int argc, char** argv) {
     else {
         SourceExamples();
         Api();
+        GuestDefault();
     }
 }
