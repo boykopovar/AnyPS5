@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import io
 import os
 from pathlib import Path
@@ -114,6 +115,20 @@ def next_sequence(path):
     return sequence
 
 
+def replace_command(temporary, path):
+    try:
+        os.replace(temporary, path)
+    except PermissionError as error:
+        if os.name != "nt" or error.winerror not in (5, 32):
+            raise
+        replace = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+        replace.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                            ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
+        replace.restype = ctypes.c_int
+        if not replace(str(path), str(temporary), None, 0, None, None):
+            raise
+
+
 def button_mask(value):
     names = value.split("+")
     if any(name not in BUTTONS for name in names) or ("release" in names and len(names) > 1) or len(set(names)) != len(names):
@@ -174,7 +189,7 @@ def main():
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
             output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
-        os.replace(temporary, args.path)
+        replace_command(temporary, args.path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
