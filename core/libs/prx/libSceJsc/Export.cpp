@@ -1502,10 +1502,6 @@ int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10Atom
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF19initializeThreadingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF21LineBreakIteratorPool10sharedPoolEv() {
     NotImplemented_nid_no_patch(__func__);
 }
