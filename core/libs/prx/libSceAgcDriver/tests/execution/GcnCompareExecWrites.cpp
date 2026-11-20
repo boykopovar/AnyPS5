@@ -80,7 +80,11 @@ constexpr std::uint64_t LowHalf = 0x00000000ffffffffull;
 constexpr std::uint64_t Quarters = 0x0000ffff0000ffffull;
 constexpr std::uint64_t Lane4 = 0x0000000000000010ull;
 constexpr std::uint64_t GcnBufferBaseLimit = 1ull << 44u;
+#ifdef ANYPS5_ENABLE_ASAN
+constexpr std::uintptr_t LowAddressHint = 0x60000000;
+#else
 constexpr std::uintptr_t LowAddressHint = std::uintptr_t{1} << 40u;
+#endif
 constexpr std::uint64_t VccPreset = 0x2222222211111111ull;
 constexpr std::uint64_t SdstPreset = 0x4444444433333333ull;
 
