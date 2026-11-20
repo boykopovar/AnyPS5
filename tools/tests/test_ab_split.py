@@ -237,6 +237,17 @@ class AbSplitTests(unittest.TestCase):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
 
+    def test_missing_completion_records_only_refuse_counted_present_reports(self):
+        lines = log()
+        early = next(i for i, line in enumerate(lines) if line.startswith("[present]"))
+        lines[early] = lines[early].replace("0 batches without", "2 batches without")
+        self.assertTrue(ab_split.split(lines)["metrics"])
+        settled = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        counted = [i for i in range(settled, len(lines)) if lines[i].startswith("[present]")][1]
+        lines[counted] = lines[counted].replace("0 batches without", "2 batches without")
+        with self.assertRaisesRegex(ValueError, "completion records"):
+            ab_split.split(lines)
+
     def test_dropped_gpu_ranges_in_a_counted_report_refuse_the_comparison(self):
         lines = log()
         index = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
