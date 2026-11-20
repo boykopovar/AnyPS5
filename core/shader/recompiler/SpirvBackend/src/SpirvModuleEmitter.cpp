@@ -560,6 +560,10 @@ std::uint32_t PackedBlendTerm(SpirvEmitterState& state, std::uint32_t factor, st
     return Binary(state, spv::OpFMul, TypeF32(state), value, PackedBlendFactor(state, factor, source, destination, sourceAlpha, constant, constantAlpha));
 }
 
+std::uint32_t PackedBlendConstant(SpirvEmitterState& state, std::uint32_t bits) {
+    return ConstantF32(state, (bits & 0x7f800000u) == 0x7f800000u ? bits : bits & 0xfffff000u);
+}
+
 std::uint32_t BlendPackedColor(SpirvEmitterState& state, IrBufferFormat format, std::uint32_t color, std::uint32_t stored, std::uint32_t control, const std::array<std::uint32_t, 4>& constants) {
     const auto info = GetFormatInfo(format);
     const auto sourceFactor = control & 0x1fu;
@@ -567,7 +571,7 @@ std::uint32_t BlendPackedColor(SpirvEmitterState& state, IrBufferFormat format, 
     const auto destinationFactor = (control >> 8u) & 0x1fu;
     const auto sourceAlpha = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), sourceAlpha, color, 3u);
-    const auto constantAlpha = ConstantF32(state, constants[3]);
+    const auto constantAlpha = PackedBlendConstant(state, constants[3]);
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
         const auto source = state.module.AllocateId();
@@ -578,7 +582,7 @@ std::uint32_t BlendPackedColor(SpirvEmitterState& state, IrBufferFormat format, 
         }
         const auto field = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, stored, ConstantU32(state, info.componentBitOffset[component])), ConstantU32(state, (1u << info.componentBits[component]) - 1u));
         const auto destination = Unary(state, spv::OpBitcast, TypeF32(state), NormalizeFormatComponent(state, info, component, field));
-        const auto constant = ConstantF32(state, constants[component]);
+        const auto constant = PackedBlendConstant(state, constants[component]);
         const auto glsl = [&](std::uint32_t op) {
             const auto result = state.module.AllocateId();
             state.module.AddFunction(spv::OpExtInst, TypeF32(state), result, GlslStd450(state), op, source, destination);
