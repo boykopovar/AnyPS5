@@ -322,6 +322,7 @@ int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestC
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context);
 void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*));
+void APS5_VABI _ZNSt3__16__sortIRNS_6__lessIjjEEPjEEvT0_S5_T__nid_postfix(std::uint32_t* first, std::uint32_t* last, const void* comparator);
 int APS5_VABI access_nid_postfix(const char* path, int mode);
 int APS5_VABI remove_nid_postfix(const char* path);
 double APS5_VABI __adddf3_nid_postfix(double a, double b);
