@@ -27779,10 +27779,6 @@ int APS5_VABI _ZNK7WebCore21HTMLOptionsCollection13selectedIndexEv() {
 
 
 
-int APS5_VABI _ZNK7WebCore21NetworkStorageSession10hasCookiesERKNS_17RegistrableDomainEON3WTF17CompletionHandlerIFvbEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore21NetworkStorageSession18cookieAcceptPolicyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
