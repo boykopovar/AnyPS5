@@ -7694,7 +7694,7 @@ void verifyLanesOutsideHostSubgroup() {
 
 void verifyFusedExactArithmetic() {
     using namespace ShaderRecompiler;
-    const auto pixel = [](bool fused) {
+    const auto pixel = [](bool fused) -> SharedSpirv::Lease {
         static const std::vector<std::uint32_t> code{0x7e000200u, 0x10020100u, 0x06040101u, 0x08060302u, 0x7e000303u, 0xf800180fu, 0u, 0xbf810000u};
         ShaderPixelStageInfo info{};
         info.inputAddr = PixelInputBit(PixelInput::PositionX);
@@ -7745,7 +7745,7 @@ void verifyFusedExactArithmetic() {
 void verifyHalfWaveReduction() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
-    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) {
+    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) -> SharedSpirv::Lease {
         ShaderPixelStageInfo info{};
         info.inputAddr = PixelInputBit(PixelInput::PositionX);
         info.posX = true;
@@ -7858,7 +7858,7 @@ void verifyHalfWaveReduction() {
         const auto wide = "half-wave reduction: a wave64 scan reduced by SPIR-V opcode " + std::to_string(reduction.reduce) + " did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes";
         require(halves(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 64u, true), reduction.reduce, reduction.identity), wide.c_str());
     }
-    const auto vertex = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) {
+    const auto vertex = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) -> SharedSpirv::Lease {
         *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
         RecompileRequest request{};
         request.shader = {ShaderStage::Vertex, 0x10000u, code, 0, {}};
@@ -7875,7 +7875,7 @@ void verifyHalfWaveReduction() {
     };
     require(reductions(vertex(scan(0xffffffffu, 0x26000000u, 0x83800000u), 32u), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the wave64 vertex UMin scan, whose entry EXEC is every invocation, did not read lane 31 as a subgroup UMin on 32 lanes");
     require(halves(vertex(scan(0x80000000u, 0x24000000u, 0x84000000u), 64u), spv::OpGroupNonUniformSMax, 0x80000000u), "half-wave reduction: the wave64 vertex SMax scan did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes");
-    const auto domain = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) {
+    const auto domain = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) -> SharedSpirv::Lease {
         *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
         *std::find(code.begin(), code.end(), 0x7e160f00u) = 0x7e160f01u;
         RecompileRequest request{};
@@ -8015,7 +8015,7 @@ void verifyNarrowVertexWave() {
         request.layout.pushConstantSizeBytes = 128;
         return request;
     };
-    const auto prepared = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) {
+    const auto prepared = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) -> SharedSpirv::Lease {
         return GetPreparedArtifact(*PrepareShader(vertex(code, 64u, subgroupSize, userDataBase))).spirv.Words();
     };
     const auto prepares = [&prepared](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) {
@@ -8232,7 +8232,7 @@ void verifySingleLaneVertexWave() {
         request.useCache = false;
         return request;
     };
-    const auto compiled = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool vertexSubgroups) {
+    const auto compiled = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool vertexSubgroups) -> SharedSpirv::Lease {
         return Recompile(vertex(code, subgroupSize, vertexSubgroups)).spirv.Words();
     };
     const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
@@ -8443,7 +8443,7 @@ void verifySingleLaneDomainWave() {
         request.useCache = false;
         return request;
     };
-    const auto compiled = [&domain](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) {
+    const auto compiled = [&domain](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) -> SharedSpirv::Lease {
         return Recompile(domain(code, subgroupSize, domainSubgroups)).spirv.Words();
     };
     const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
@@ -10223,7 +10223,7 @@ void verifyComputedTexelOffsets() {
     };
     const auto computed = program(0x100u, 0u);
     const auto constant = program(0xffu, 0x3fu | (1u << 8u));
-    const auto recompile = [&](std::span<const std::uint32_t> code, bool offsets) {
+    const auto recompile = [&](std::span<const std::uint32_t> code, bool offsets) -> SharedSpirv::Lease {
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x30000u, code, 0, {}};
         request.target = BufferTarget();
@@ -11175,7 +11175,7 @@ void verifyBdaReadFallbackFunctions() {
     alignas(256) static std::array<std::uint32_t, 32> output{};
     const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
-    const auto compile = [&](std::uint32_t loads, bool barrier, bool coherent, std::uint32_t stride) {
+    const auto compile = [&](std::uint32_t loads, bool barrier, bool coherent, std::uint32_t stride) -> SharedSpirv::Lease {
         std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
         for (std::uint32_t load = 0; load < loads; ++load) {
             code.push_back(0xdc308000u | (coherent ? 0x10000u : 0u) | (stride * load + 4u));
@@ -11298,7 +11298,7 @@ void verifyBdaAnchors() {
     alignas(256) static std::array<std::uint32_t, 32> output{};
     const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
-    const auto compile = [&](std::uint32_t scalarBase, std::uint32_t stride) {
+    const auto compile = [&](std::uint32_t scalarBase, std::uint32_t stride) -> SharedSpirv::Lease {
         std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
         for (std::uint32_t load = 0; load < scalarBase; ++load) {
             code.push_back(0xdc308000u | (stride * load + 4u));
