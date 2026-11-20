@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 

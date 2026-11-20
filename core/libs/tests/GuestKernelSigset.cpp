@@ -194,6 +194,45 @@ void TestNullPointerValidation() {
         Require(sigismember_nid_postfix(nullptr, sig) == -1);
         Require(*__error_nid_postfix() == GuestEinval);
     }
+
+    auto* unmappedLow = reinterpret_cast<GuestSignalSet*>(std::uintptr_t{0x10});
+    auto* unmappedHigh = reinterpret_cast<GuestSignalSet*>(~std::uintptr_t{0xfff});
+
+    for (auto* unmapped : {unmappedLow, unmappedHigh}) {
+        *__error_nid_postfix() = 0;
+        Require(sigemptyset_nid_postfix(unmapped) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+
+        *__error_nid_postfix() = 0;
+        Require(sigfillset_nid_postfix(unmapped) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+
+        *__error_nid_postfix() = 0;
+        Require(sigaddset_nid_postfix(unmapped, 1) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+
+        *__error_nid_postfix() = 0;
+        Require(sigdelset_nid_postfix(unmapped, 1) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+
+        *__error_nid_postfix() = 0;
+        Require(sigismember_nid_postfix(unmapped, 1) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+
+        for (const int sig : invalidSignals) {
+            *__error_nid_postfix() = 0;
+            Require(sigaddset_nid_postfix(unmapped, sig) == -1);
+            Require(*__error_nid_postfix() == GuestEinval);
+
+            *__error_nid_postfix() = 0;
+            Require(sigdelset_nid_postfix(unmapped, sig) == -1);
+            Require(*__error_nid_postfix() == GuestEinval);
+
+            *__error_nid_postfix() = 0;
+            Require(sigismember_nid_postfix(unmapped, sig) == -1);
+            Require(*__error_nid_postfix() == GuestEinval);
+        }
+    }
 }
 
 void TestErrnoPreservation() {

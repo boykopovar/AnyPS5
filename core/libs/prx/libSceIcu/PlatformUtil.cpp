@@ -68,30 +68,6 @@ constexpr auto EbcdicFromAscii = [] {
     return table;
 }();
 
-std::int32_t Compare(const char* left, const char* right, std::uint64_t count) {
-    if (!left) return right ? -1 : 0;
-    if (!right) return 1;
-    while (count--) {
-        const auto first = static_cast<std::uint8_t>(*left++);
-        const auto second = static_cast<std::uint8_t>(*right++);
-        if (!first) return second ? -1 : 0;
-        if (!second) return 1;
-        const auto difference = static_cast<int>(Lower(first)) - Lower(second);
-        if (difference) return difference;
-    }
-    return 0;
-}
-
-template<typename TChar>
-std::int8_t IsInvariant(const TChar* text, std::int32_t length) {
-    for (std::int64_t i = 0; length < 0 || i < length; ++i) {
-        const auto value = static_cast<std::uint32_t>(Require(text)[i]);
-        if (!value && length < 0) break;
-        if (!Invariant(value)) return 0;
-    }
-    return 1;
-}
-
 bool Ignorable(std::uint8_t value, bool ebcdic) {
     if (!ebcdic) return value == '-' || value == '_' || value == ' ' || (value >= 9 && value <= 13);
     return value == 0x60 || value == 0x6d || value == 0x40 || value == 0x05 || value == 0x15 || value == 0x25 ||
@@ -271,36 +247,8 @@ void APS5_VABI uprv_sortArray_nid_postfix(void* array, std::int32_t count, std::
     else InsertionSort(static_cast<char*>(array), count, width, compare, context, temporary);
 }
 
-char APS5_VABI uprv_toupper_nid_postfix(char value) {
-    return value >= 'a' && value <= 'z' ? value - 32 : value;
-}
-
-char APS5_VABI uprv_asciitolower_nid_postfix(char value) {
-    return static_cast<char>(Lower(static_cast<std::uint8_t>(value)));
-}
-
-char APS5_VABI uprv_ebcdictolower_nid_postfix(char value) {
-    return static_cast<char>(Lower(static_cast<std::uint8_t>(value), true));
-}
-
 std::int8_t APS5_VABI uprv_isASCIILetter_nid_postfix(char value) {
     return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z');
-}
-
-std::int32_t APS5_VABI uprv_stricmp_nid_postfix(const char* left, const char* right) {
-    return Compare(left, right, std::numeric_limits<std::uint64_t>::max());
-}
-
-std::int32_t APS5_VABI uprv_strnicmp_nid_postfix(const char* left, const char* right, std::uint32_t count) {
-    return Compare(left, right, count);
-}
-
-std::int8_t APS5_VABI uprv_isInvariantString_nid_postfix(const char* text, std::int32_t length) {
-    return IsInvariant(reinterpret_cast<const std::uint8_t*>(text), length);
-}
-
-std::int8_t APS5_VABI uprv_isInvariantUString_nid_postfix(const char16_t* text, std::int32_t length) {
-    return IsInvariant(text, length);
 }
 
 std::int32_t APS5_VABI uprv_compareASCIIPropertyNames_nid_postfix(const char* left, const char* right) {
