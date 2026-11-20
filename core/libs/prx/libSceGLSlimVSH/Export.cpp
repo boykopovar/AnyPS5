@@ -233,6 +233,10 @@ int APS5_VABI sceSlimglClientLiveTimeout() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceSlimglClientMonitorServerEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceSlimglClientStartIPC() {
     return 0;
 }
