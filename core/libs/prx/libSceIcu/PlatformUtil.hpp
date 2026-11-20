@@ -41,14 +41,7 @@ static_assert(offsetof(UDataSwapper, printErrorContext) == 88);
 extern "C" {
 std::int32_t APS5_VABI uprv_stableBinarySearch_nid_postfix(char*, std::int32_t, void*, std::int32_t, Icu::ArrayComparator, const void*);
 void APS5_VABI uprv_sortArray_nid_postfix(void*, std::int32_t, std::int32_t, Icu::ArrayComparator, const void*, std::int8_t, std::int32_t*);
-char APS5_VABI uprv_toupper_nid_postfix(char);
-char APS5_VABI uprv_asciitolower_nid_postfix(char);
-char APS5_VABI uprv_ebcdictolower_nid_postfix(char);
 std::int8_t APS5_VABI uprv_isASCIILetter_nid_postfix(char);
-std::int32_t APS5_VABI uprv_stricmp_nid_postfix(const char*, const char*);
-std::int32_t APS5_VABI uprv_strnicmp_nid_postfix(const char*, const char*, std::uint32_t);
-std::int8_t APS5_VABI uprv_isInvariantString_nid_postfix(const char*, std::int32_t);
-std::int8_t APS5_VABI uprv_isInvariantUString_nid_postfix(const char16_t*, std::int32_t);
 std::int32_t APS5_VABI uprv_compareASCIIPropertyNames_nid_postfix(const char*, const char*);
 std::int32_t APS5_VABI uprv_compareEBCDICPropertyNames_nid_postfix(const char*, const char*);
 std::int32_t APS5_VABI uprv_compareInvEbcdicAsAscii_nid_postfix(const char*, const char*);

@@ -39,7 +39,6 @@
 #include "Trace.hpp"
 #include "PlatformUtil.hpp"
 #include "Cleanup.hpp"
-#include "AsciiToUpper.hpp"
 #include "Trie2.hpp"
 #include "Text.hpp"
 #include "TextProviders.hpp"
