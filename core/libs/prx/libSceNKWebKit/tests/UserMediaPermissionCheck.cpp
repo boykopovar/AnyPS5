@@ -44,7 +44,7 @@ int main() {
     WKUserMediaPermissionCheckSetUserMediaAccessInfo(ref1, idRef, true);
     Require(check1->completed);
     Require(check1->allowed);
-    Require(check1->userMediaID != nullptr);
+    Require(static_cast<bool>(check1->userMediaID));
     Require(check1->userMediaID->Utf8() == "audio-input-device-1");
 
     auto check2 = NKWebKit::Make<NKWebKit::UserMediaPermissionCheck>();
