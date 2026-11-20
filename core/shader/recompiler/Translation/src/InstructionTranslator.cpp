@@ -703,8 +703,16 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         const bool insideWindow = !scopedWindow || windowRegion.contains(cfgBlock.id);
         context.SetVectorWindowActive(insideWindow);
         if (syncsWindow(insideWindow) && syncedOnEntry(cfgBlock.id)) context.SyncVectorWindow(insideWindow);
+        const auto splitPoints = [&](std::uint32_t programCounter, bool afterInstruction) {
+            if (options.splitState == nullptr) return;
+            for (const auto& point : options.splitState->points) {
+                if (point.programCounter == programCounter && point.afterInstruction == afterInstruction) context.TranslateSplitState(*options.splitState, point);
+            }
+        };
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
+            if (index != cfgBlock.instructionBegin) splitPoints(decoded.instructions[index - 1u].programCounter, true);
+            splitPoints(instruction.programCounter, false);
             if (isCodeTableLoad(cfg, instruction.programCounter)) {
                 const auto table = std::find_if(cfg.codeTableLoads.begin(), cfg.codeTableLoads.end(), [&](const auto& entry) { return entry.programCounter == instruction.programCounter; });
                 if (table == cfg.codeTableLoads.end()) throw std::runtime_error("missing shader code table values");
@@ -734,6 +742,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 });
             }
         }
+        if (cfgBlock.instructionEnd != cfgBlock.instructionBegin) splitPoints(decoded.instructions[cfgBlock.instructionEnd - 1u].programCounter, true);
         if (syncsWindow(!insideWindow) && std::ranges::any_of(cfgBlock.successors, [&](std::uint32_t successor) { return windowRegion.contains(successor) != insideWindow && !syncedOnEntry(successor); })) {
             context.SyncVectorWindow(!insideWindow);
         }
@@ -741,6 +750,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     }
 
     program.Metadata().blockInfo = std::move(blockInfos);
+    program.Metadata().splitState = options.splitState != nullptr;
     program.BlockOrder() = blocks;
 
     ValidateProgram(program, false);

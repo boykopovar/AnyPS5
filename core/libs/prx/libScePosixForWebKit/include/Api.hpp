@@ -4,13 +4,36 @@
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
+#include <cstdint>
 
 struct PosixForWebKitSysinfo {
     std::uint64_t total;
     std::uint32_t one;
 };
 
+struct PosixForWebKitPasswd {
+    char* pw_name;
+    char* pw_passwd;
+    std::uint32_t pw_uid;
+    std::uint32_t pw_gid;
+    std::int64_t pw_change;
+    char* pw_class;
+    char* pw_gecos;
+    char* pw_dir;
+    char* pw_shell;
+    std::int64_t pw_expire;
+    int pw_fields;
+};
+
+static_assert(sizeof(PosixForWebKitPasswd) == 80);
+static_assert(offsetof(PosixForWebKitPasswd, pw_change) == 24);
+static_assert(offsetof(PosixForWebKitPasswd, pw_expire) == 64);
+static_assert(offsetof(PosixForWebKitPasswd, pw_fields) == 72);
+
 extern "C" {
+
+PosixForWebKitPasswd* APS5_VABI getpwuid_nid_postfix(std::uint32_t uid);
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path);
 int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle);

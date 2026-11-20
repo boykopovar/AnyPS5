@@ -172,8 +172,8 @@ static const char* parseES5TimePortion(const char* currentPosition, long& hours,
             if (*currentPosition < '0' || *currentPosition > '9') {
                 return nullptr;
             }
-            long frac = std::strtol(currentPosition, &postParse, 10);
-            long numFracDigits = postParse - currentPosition;
+            const long long frac = std::strtoll(currentPosition, &postParse, 10);
+            const long long numFracDigits = postParse - currentPosition;
             milliseconds = frac * std::pow(10.0, static_cast<double>(-numFracDigits + 3));
         }
         currentPosition = postParse;

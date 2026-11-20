@@ -18,6 +18,8 @@
 #include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
+#include "prx/libSceIcu/include/Availability.hpp"
+#include "prx/libSceIcu/include/InvariantChars.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
 #include "LocaleMap.hpp"

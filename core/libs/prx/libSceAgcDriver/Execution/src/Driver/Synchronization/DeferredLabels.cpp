@@ -65,7 +65,7 @@ bool Driver::labelTryEachPacket() {
 std::chrono::microseconds Driver::labelFlushDeadline() {
     static const std::chrono::microseconds value = [] {
         const char* text = std::getenv("APS5_LABEL_FLUSH_US");
-        return std::chrono::microseconds(text ? std::atoi(text) : (LabelBatchSubmit() ? 1000 : 250));
+        return std::chrono::microseconds(text ? std::atoi(text) : (LabelBatchSubmit() ? 100 : 250));
     }();
     return value;
 }
