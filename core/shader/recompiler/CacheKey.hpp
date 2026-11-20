@@ -392,6 +392,7 @@ private:
         append(key, value.float16NarrowNans);
         append(key, value.float16HostNans);
         append(key, value.meshInlineFunctions);
+        if (value.wgsl) append(key, std::uint64_t{1});
     }
 };
 

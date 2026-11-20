@@ -33,6 +33,7 @@ private:
     mutable std::mutex mutex;
     std::vector<BufferSubstitute> slots;
 };
+class WgslSource;
 
 struct CompiledVariant {
     BindingLayout layout;
@@ -40,6 +41,7 @@ struct CompiledVariant {
     CompiledBindingLayout bindings;
     CompiledShaderArtifact artifact;
     std::shared_ptr<BufferSubstituteTable> substitutes;
+    std::shared_ptr<const WgslSource> wgsl;
 };
 
 }
