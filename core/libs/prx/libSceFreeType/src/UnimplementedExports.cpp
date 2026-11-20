@@ -366,4 +366,8 @@ void APS5_VABI ft_stub_set_pixel_sizes_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI ft_validator_error_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
