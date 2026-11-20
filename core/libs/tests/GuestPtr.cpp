@@ -6,6 +6,16 @@
 #include <cstring>
 #include <limits>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void Require(bool condition, const char* message) {
@@ -18,6 +28,52 @@ struct Payload {
     std::uint32_t first;
     std::uint64_t second;
 };
+
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    return static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+#endif
+}
+
+void* MapPage(std::size_t bytes) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* page = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return page == MAP_FAILED ? nullptr : page;
+#endif
+}
+
+bool MakeReadOnly(void* page, std::size_t bytes) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    return VirtualProtect(page, bytes, PAGE_READONLY, &previous) != 0;
+#else
+    return mprotect(page, bytes, PROT_READ) == 0;
+#endif
+}
+
+bool MakeReadWrite(void* page, std::size_t bytes) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    return VirtualProtect(page, bytes, PAGE_READWRITE, &previous) != 0;
+#else
+    return mprotect(page, bytes, PROT_READ | PROT_WRITE) == 0;
+#endif
+}
+
+void UnmapPage(void* page, std::size_t bytes) {
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, bytes);
+#endif
+}
 
 void CheckMapped() {
     const Payload source{7, 0x1122334455667788ull};
@@ -72,11 +128,29 @@ void CheckFaults() {
     Require(!GuestPtr<Payload>(&value).CopyOut(&value, std::numeric_limits<std::size_t>::max()), "an overflowing guest array was copied out");
 }
 
+void CheckReadOnly() {
+    const std::size_t pageSize = PageSize();
+    void* page = MapPage(pageSize);
+    Require(page != nullptr, "a read-only test page was not mapped");
+    const Payload source{7, 0x1122334455667788ull};
+    std::memcpy(page, &source, sizeof(source));
+    Require(MakeReadOnly(page, pageSize), "the test page was not made read-only");
+    Payload copied{};
+    Require(GuestPtr<const Payload>(page).CopyIn(copied), "a read-only guest pointer was not copied in");
+    Require(std::memcmp(&copied, &source, sizeof(source)) == 0, "a copied-in read-only value differs from its source");
+    Require(!GuestPtr<Payload>(page).CopyOut(source), "a read-only guest pointer was copied out");
+    Require(!GuestBytes(page).CopyOut(&source, sizeof(source)), "a read-only guest byte range was copied out");
+    Require(GuestBytes(page).CopyIn(&copied, sizeof(copied)), "a read-only guest byte range was not copied in");
+    Require(MakeReadWrite(page, pageSize), "the test page was not made writable");
+    UnmapPage(page, pageSize);
+}
+
 }  // namespace
 
 int main() {
     CheckMapped();
     CheckArraysAndBytes();
     CheckFaults();
+    CheckReadOnly();
     std::puts("guest pointer tests passed");
 }
