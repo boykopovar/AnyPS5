@@ -346,6 +346,23 @@ void ReserveCapacity(StringBuilder& builder, unsigned newCapacity) {
     else AllocateBuffer(builder, Characters16(builder.string.impl), newCapacity);
 }
 
+void Resize(StringBuilder& builder, unsigned newSize) {
+    if (builder.overflowed) return;
+    unsigned oldLength = static_cast<unsigned>(builder.length);
+    if (newSize > oldLength) throw std::invalid_argument("WTF::StringBuilder::resize cannot grow");
+    if (newSize == oldLength) return;
+    builder.length = static_cast<std::int32_t>(newSize);
+    if (builder.buffer) {
+        builder.string = String();
+        if (!HasOneRef(builder.buffer)) {
+            if (Is8Bit(builder.buffer)) AllocateBuffer(builder, Characters8(builder.buffer), builder.buffer->length);
+            else AllocateBuffer(builder, Characters16(builder.buffer), builder.buffer->length);
+        }
+        return;
+    }
+    builder.string = NKWebKit::WtfAbi::SubstringSharingImpl(builder.string, 0, newSize);
+}
+
 void Clear(StringBuilder& builder) {
     builder.overflowed = false;
     builder.length = 0;

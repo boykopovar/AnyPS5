@@ -1,0 +1,4 @@
+# shader
+
+## change [v_div_fixup_f64]
+- [v_div_fixup_f64](../../../core/shader/recompiler/Translation/src/Float64Instructions.cpp) flushes its src1 and src2 to a zero of the same sign when bit 0 of the `FLOAT_MODE` f16/f64 denormal field is clear (0 and 2) and keeps a denormal src0 and result in every mode, as `v_div_fixup_f32` does with the f32 field. Measured on RDNA2 (gfx1031, Radeon RX 6700 XT, AMD Windows driver 32.0.21045.5002 through HIP) over 1728 triples of 12 f64 values (zeros, denormals, the minimum normal, ±1, the largest finite value, infinity and quiet and signaling NaNs) at IEEE=0 and IEEE=1 with denorm16 0..3. Shaders without a known float mode keep the previous lowering. The PS5's gfx1013 is not measured. Corroborated on gfx1036 (Windows driver 31.0.22044.1, HIP) over 3 triples with a denormal src0 and src1 at IEEE=0, denorm16 0..3.

@@ -6,9 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from pad_input import BUTTONS, next_sequence
-
-COMMAND_FILE_BYTES = 64 * 1024
+from pad_input import BUTTONS, COMMAND_FILE_BYTES, next_sequence
 
 
 def load_timeline(path):

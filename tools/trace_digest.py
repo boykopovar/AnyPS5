@@ -262,15 +262,54 @@ def persistent_peaks(values):
     return sorted((entry for entry in peaks if entry[1] > 0), key=lambda entry: (-entry[1], entry[0]))
 
 
+def recorded_span(trace, tid, frames, full_at):
+    kept = [frame for frame in frames if frame[2] <= full_at]
+    if not kept or tid not in trace.slices:
+        return {}
+    start, until = frames[0][1], kept[-1][2]
+    span_us = until - start
+    if span_us <= 0:
+        return {}
+    gpu = trace.name(tid) == "gpu"
+    traced = waited = 0.0
+    covered_until = -math.inf
+    leaders = collections.Counter()
+    for ts, dur, name, depth, nested in trace.slices[tid]:
+        begin, end = max(ts, start), min(ts + dur, until)
+        if end <= begin:
+            continue
+        waiting = is_wait(name)
+        if depth == 0 or gpu:
+            contribution = max(end - max(begin, covered_until), 0.0) if gpu else end - begin
+            covered_until = max(covered_until, end)
+            traced += contribution
+            if contribution > 0 and not waiting:
+                leaders[name] += contribution
+        if waiting and not nested:
+            waited += end - begin
+    count = len(kept)
+    return {"frames_before_full": count, "recorded_ms": span_us / 1000.0,
+            "busy_ms_per_frame": (traced - waited) / 1000.0 / count, "wait_ms_per_frame": waited / 1000.0 / count,
+            "busy_pct": 100.0 * (traced - waited) / span_us,
+            "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]}
+
+
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
-    window_ms = summary["window"]["ms"] if summary else None
-    frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
+    window_end = None
+    if summary:
+        window = summary["window"]
+        if not isinstance(window, dict):
+            raise ValueError("window must be an object")
+        window_end = interval_number(window["ms"], "window.ms") * 1000.0
+        if not math.isfinite(window_end):
+            raise ValueError("window.ms is too large to convert to microseconds")
+    frames = trace.frames(window_end)
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
     count = max(len(frames), 1)
     result = {"summary": summary, "frames": len(frames), "window_ms": span_us / 1000.0}
     if trace.losses or (summary and summary.get("trace_dropped")):
         result["trace_incomplete"] = True
-        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost}
+        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost, **recorded_span(trace, tid, frames, ts)}
                                 for tid, ts, lost in trace.losses]
 
     slowest = []
@@ -414,7 +453,13 @@ def markdown(result):
     if result.get("trace_incomplete"):
         lines += ["", "**Incomplete trace:** recorded data was lost. Slice-based timings, waits and batch inventories cover retained events only; missing slices are not idle time. Summary statistics are reported separately."]
         for loss in result["event_loss"]:
-            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms")
+            span = ""
+            if "frames_before_full" in loss:
+                largest = ", ".join(f"{markdown_text(entry['name'])} {entry['ms_per_frame']:.1f}" for entry in loss["top"])
+                span = (f"; over the {loss['frames_before_full']} of {result['frames']} frames that ended before it: busy {loss['busy_ms_per_frame']:.1f} ms per frame "
+                        f"({loss['busy_pct']:.0f} %), wait {loss['wait_ms_per_frame']:.1f}" + (f", largest {largest}" if largest else "")
+                        + " (the thread table divides the retained slices by every frame)")
+            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms{span}")
     lines.append("")
     lines.append("**Slowest frames** (largest slices inside each, inclusive)")
     lines.append("")
@@ -465,7 +510,7 @@ def load_intervals(path):
     candidate = resolve_summary_path(path)
     lines = []
     for number, record in load_summary_lines(candidate, numbered=True, label=path):
-        if "interval_start_s" not in record:
+        if "interval_start_s" not in record and "interval_end_s" not in record:
             continue
         try:
             validate_interval(record)
