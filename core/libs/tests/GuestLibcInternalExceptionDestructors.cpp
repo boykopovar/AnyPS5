@@ -54,7 +54,7 @@ void CheckFutureError() {
     inline_.message.size = 3;
     std::memcpy(inline_.message.buffer, "abc", 4);
     releases = 0;
-    sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(&inline_);
+    _ZNSt12future_errorD2Ev(&inline_);
     Require(inline_.message.reserved == 0 && inline_.message.size == 0 && inline_.message.capacity == 15, "an inline message is reset");
     Require(inline_.message.buffer[0] == 0 && releases == 0, "an inline message is not released");
 
@@ -65,7 +65,7 @@ void CheckFutureError() {
     std::memcpy(heap.message.pointer, "future already retrieved", 25);
     char* storage = heap.message.pointer;
     releases = 0;
-    sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(&heap);
+    _ZNSt12future_errorD2Ev(&heap);
     Require(releases == 1 && lastReleased == storage, "a heap message is released");
     Require(heap.message.size == 0 && heap.message.capacity == 15 && heap.message.buffer[0] == 0, "a heap message is reset to the inline buffer");
 
@@ -73,7 +73,7 @@ void CheckFutureError() {
     expected.message.capacity = 15;
     LibcException::FutureErrorObject actual = expected;
     _ZNSt12future_errorD1Ev_nid_postfix(&expected);
-    sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(&actual);
+    _ZNSt12future_errorD2Ev(&actual);
     Require(std::memcmp(&expected, &actual, sizeof(expected)) == 0, "D2 leaves the object as D1 does");
 }
 
@@ -93,7 +93,7 @@ const LibcException::CategoryObject TestCategory {TestCategoryVtable};
 void CheckSystemErrorConstructor() {
     LibcException::SystemErrorObject object{};
     const LibcException::ErrorCode code {0, 22, &TestCategory};
-    libSceLibcInternalInventory_019_nid_no_patch(&object, code, "invalid argument");
+    _ZNSt12system_errorC2ESt10error_codePKc(&object, code, "invalid argument");
     Require(object.base.vtable != nullptr && object.code.value == 22 && object.code.category == &TestCategory, "the system_error constructor keeps its code");
     Require(std::strcmp(_ZNKSt12system_error4whatEv_nid_postfix(&object.base), "invalid argument: Invalid argument") == 0, "the system_error constructor keeps its message");
     _ZNSt12system_errorD1Ev_nid_postfix(&object.base);
@@ -102,7 +102,7 @@ void CheckSystemErrorConstructor() {
     bool threw = false;
     try {
         LibcException::SystemErrorObject invalid{};
-        libSceLibcInternalInventory_019_nid_no_patch(&invalid, {0, 22, nullptr}, "invalid argument");
+        _ZNSt12system_errorC2ESt10error_codePKc(&invalid, {0, 22, nullptr}, "invalid argument");
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -118,7 +118,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     CheckSystemErrorConstructor();
-    CheckMessageDestructor(&sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch, "value too large");
+    CheckMessageDestructor(&_ZNSt14overflow_errorD2Ev, "value too large");
     CheckMessageDestructor(&sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch, "value too small");
     CheckFutureError();
 

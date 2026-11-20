@@ -124,8 +124,8 @@ void CheckWrappersCallTheVirtuals() {
         CloseExport close;
     };
     const std::array<Wrappers, 2> wrappers{{
-        {_ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix, _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix, sceLibcInternalPending4_005_nid_no_patch},
-        {sceLibcInternalPending4_009_nid_no_patch, sceLibcInternalPending4_010_nid_no_patch, sceLibcInternalPending4_011_nid_no_patch},
+        {_ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix, _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix, _ZNKSt8messagesIcE5closeEi},
+        {_ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE, _ZNKSt8messagesIwE4openERKSsRKSt6locale, _ZNKSt8messagesIwE5closeEi},
     }};
     const MessagesVtable vtable{{nullptr, nullptr, nullptr, nullptr}, RecordOpen, RecordGet, RecordClose};
     const Facet facet{&vtable.facet, 0, 0};
@@ -255,13 +255,13 @@ void CheckExportedVtable() {
     const String name{};
     const int locale = 0;
     Require(_ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(&facet, &name, &locale) == -1, "open through the exported vtable returns -1");
-    const Layout narrow{1, GuestLocale::StringInlineCapacity, sceLibcInternalPending4_006_nid_no_patch};
+    const Layout narrow{1, GuestLocale::StringInlineCapacity, _ZNKSt8messagesIcE6do_getEiiiRKSs};
     String fallback = MakeHeap(narrow, 40, 47, 0x71);
     const long before = live;
     String result{};
     Require(_ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(&result, &facet, -1, 1, 2, &fallback) == &result, "get through the exported vtable returns its result");
     Require(live == before + 1 && result.size == 40 && result.capacity == 47 && std::memcmp(result.pointer, fallback.pointer, 41) == 0, "get through the exported vtable copies the default");
-    sceLibcInternalPending4_005_nid_no_patch(&facet, -1);
+    _ZNKSt8messagesIcE5closeEi(&facet, -1);
     Release(narrow, result);
     Release(narrow, fallback);
 }
@@ -333,14 +333,14 @@ void CheckWideConstructors() {
     const auto* facet = reinterpret_cast<const Facet*>(storage.bytes);
     const String name{};
     const int locale = 0;
-    Require(sceLibcInternalPending4_010_nid_no_patch(facet, &name, &locale) == -1, "a constructed messages<wchar_t> opens no catalog");
-    const Layout wide{2, 7, sceLibcInternalPending4_012_nid_no_patch};
+    Require(_ZNKSt8messagesIwE4openERKSsRKSt6locale(facet, &name, &locale) == -1, "a constructed messages<wchar_t> opens no catalog");
+    const Layout wide{2, 7, _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE};
     String fallback = MakeHeap(wide, 20, 23, 0x35);
     const long before = live;
     String result{};
-    Require(sceLibcInternalPending4_009_nid_no_patch(&result, facet, 1, 2, 3, &fallback) == &result, "get through the wide vtable returns its result");
+    Require(_ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE(&result, facet, 1, 2, 3, &fallback) == &result, "get through the wide vtable returns its result");
     Require(live == before + 1 && result.size == 20 && result.capacity == 23 && std::memcmp(result.pointer, fallback.pointer, 42) == 0, "get through the wide vtable copies the wide default");
-    sceLibcInternalPending4_011_nid_no_patch(facet, 1);
+    _ZNKSt8messagesIwE5closeEi(facet, 1);
     Release(wide, result);
     Release(wide, fallback);
 
@@ -365,8 +365,8 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     const long before = live;
     CheckWrappersCallTheVirtuals();
-    CheckDefaultCopies({1, GuestLocale::StringInlineCapacity, sceLibcInternalPending4_006_nid_no_patch}, 5000);
-    CheckDefaultCopies({2, 7, sceLibcInternalPending4_012_nid_no_patch}, 3000);
+    CheckDefaultCopies({1, GuestLocale::StringInlineCapacity, _ZNKSt8messagesIcE6do_getEiiiRKSs}, 5000);
+    CheckDefaultCopies({2, 7, _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE}, 3000);
     CheckExportedVtable();
     CheckNarrowConstructors();
     CheckWideConstructors();

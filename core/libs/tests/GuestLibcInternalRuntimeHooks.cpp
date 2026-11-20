@@ -27,17 +27,17 @@ int main() {
     std::memcpy(untouchedLocks, locks, sizeof(locks));
     std::memcpy(untouchedInfo, info, sizeof(info));
 
-    libSceLibcInternalInventory_268_nid_no_patch();
-    Require(libSceLibcInternalInventory_269_nid_no_patch() == 0, "_malloc_finalize_lv2 must return 0");
-    libSceLibcInternalInventory_277_nid_no_patch(locks);
-    libSceLibcInternalInventory_278_nid_no_patch("rtld error %d", 1);
-    Require(libSceLibcInternalInventory_279_nid_no_patch() == 7, "_rtld_get_stack_prot must return 7");
-    Require(libSceLibcInternalInventory_281_nid_no_patch() == 0, "_sceLibcGetMallocParam must return 0");
-    sceLibcInternalUnknown6_005_PJWpmO4pj6I_nid_no_patch();
-    sceLibcInternalUnknown6_065_1kIpmZX1jw8_nid_no_patch();
-    sceLibcInternalUnknown6_082_Sopthb9ztZI_nid_no_patch();
-    sceLibcInternalUnknown6_093_R2QKo3hBLkw_nid_no_patch(locks);
-    Require(sceLibcInternalUnknown6_098_5FoEpV3Aj0c_nid_no_patch(&locks, info) == 0, "_rtld_addr_phdr must return 0");
+    _init_tls();
+    Require(_malloc_finalize_lv2() == 0, "_malloc_finalize_lv2 must return 0");
+    _rtld_atfork_pre(locks);
+    _rtld_error("rtld error %d", 1);
+    Require(_rtld_get_stack_prot() == 7, "_rtld_get_stack_prot must return 7");
+    Require(_sceLibcGetMallocParam() == 0, "_sceLibcGetMallocParam must return 0");
+    _thread_init();
+    _thread_init_stub();
+    _malloc_thread_cleanup();
+    _rtld_atfork_post(locks);
+    Require(_rtld_addr_phdr(&locks, info) == 0, "_rtld_addr_phdr must return 0");
 
     Require(std::memcmp(locks, untouchedLocks, sizeof(locks)) == 0, "an atfork hook wrote the lock array");
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0, "_rtld_addr_phdr wrote the phdr info");

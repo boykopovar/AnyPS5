@@ -5,10 +5,9 @@
 
 extern "C" {
 
-void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self) {
+void APS5_VABI _ZNSt4_PadD1Ev(void* self) {
     _ZNSt4_PadD2Ev_nid_postfix(static_cast<GuestPad*>(self));
 }
-APS5_EXPORT("XyJPhPqpzMw", sceLibcInternalPadCompleteDestructor_nid_no_patch);
 
 void APS5_VABI sceLibcInternalPadConstructorWithName_nid_no_patch(void* self, const char* name) {
     PadConstructWithName_nid_no_patch(static_cast<GuestPad*>(self), name);

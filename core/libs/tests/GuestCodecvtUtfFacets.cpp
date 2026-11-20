@@ -211,8 +211,8 @@ void CheckForwarders(const std::uintptr_t* vtable, TIn in, TOut out) {
 }
 
 void CheckLibcInternalForwarders() {
-    CheckForwarders<char16_t>(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, sceLibcInternalPending3_024_nid_no_patch, sceLibcInternalPending3_025_nid_no_patch);
-    CheckForwarders<char32_t>(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, sceLibcInternalPending3_017_nid_no_patch, sceLibcInternalPending3_018_nid_no_patch);
+    CheckForwarders<char16_t>(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, _ZNKSt7codecvtIDsc9_MbstatetE5do_inERS0_PKcS4_RS4_PDsS6_RS6_, sceLibcInternalPending3_025_nid_no_patch);
+    CheckForwarders<char32_t>(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, _ZNKSt7codecvtIDic9_MbstatetE5do_inERS0_PKcS4_RS4_PDiS6_RS6_, _ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6_);
 
     const Facet utf16Facet{_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix + 2, 1, 0, 0x10ffffu, ConsumeHeader, 0};
     const Facet utf32Facet{_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix + 2, 1, 0, 0xffffffffu, ConsumeHeader, 0};
@@ -224,23 +224,23 @@ void CheckLibcInternalForwarders() {
     Require((state16[0] & 0xffff) == 1);
 
     std::uint64_t state32[2] = {};
-    Require(reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, state32, input, input + 8, 1) == 7);
+    Require(reinterpret_cast<Length>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m)(&utf32Facet, state32, input, input + 8, 1) == 7);
     Require((state32[0] & 0xff) == 1);
-    Require(reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, state32, input + 7, input + 8, 1) == 1);
+    Require(reinterpret_cast<Length>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m)(&utf32Facet, state32, input + 7, input + 8, 1) == 1);
     RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(nullptr, state16, input, input + 8, 1); });
     RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(&utf16Facet, nullptr, input, input + 8, 1); });
-    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(nullptr, state32, input, input + 8, 1); });
-    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, nullptr, input, input + 8, 1); });
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m)(nullptr, state32, input, input + 8, 1); });
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m)(&utf32Facet, nullptr, input, input + 8, 1); });
 
     Facet* utf16 = NewFacet(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, 0x10ffff, 0);
     Facet* utf32 = NewFacet(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, 0xffffffff, 0);
     releasedCount = 0;
-    libSceLibcInternalInventory_092_nid_no_patch(utf16);
-    libSceLibcInternalInventory_090_nid_no_patch(utf32);
+    _ZNSt7codecvtIDsc9_MbstatetED0Ev(utf16);
+    _ZNSt7codecvtIDic9_MbstatetED0Ev(utf32);
     Require(releasedCount == 2 && released[0] == utf16 && released[1] == utf32);
     releasedCount = 0;
-    RequireThrows<std::invalid_argument>([] { libSceLibcInternalInventory_092_nid_no_patch(nullptr); });
-    RequireThrows<std::invalid_argument>([] { libSceLibcInternalInventory_090_nid_no_patch(nullptr); });
+    RequireThrows<std::invalid_argument>([] { _ZNSt7codecvtIDsc9_MbstatetED0Ev(nullptr); });
+    RequireThrows<std::invalid_argument>([] { _ZNSt7codecvtIDic9_MbstatetED0Ev(nullptr); });
     Require(releasedCount == 0);
 }
 
@@ -294,7 +294,7 @@ void CheckLibraryNids(const char* libcPath, const char* internalPath, bool patch
     const Length libcLen16 = resolve(libcLib.handle, "lynApfiP6Lw", "CodecvtUtf16Length_nid_no_patch");
     const Length libcLen32 = resolve(libcLib.handle, "m6rjfL4aMcA", "_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix");
     const Length internalLen16 = resolve(internalLib.handle, "lynApfiP6Lw", "_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix");
-    const Length internalLen32 = resolve(internalLib.handle, "m6rjfL4aMcA", "sceLibcInternalPending3_019_nid_no_patch");
+    const Length internalLen32 = resolve(internalLib.handle, "m6rjfL4aMcA", "_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m");
 
     const Facet f16{_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix + 2, 1, 0, 0x10ffffu, ConsumeHeader, 0};
     const Facet f32{_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix + 2, 1, 0, 0xffffffffu, ConsumeHeader, 0};

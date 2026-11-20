@@ -8,7 +8,7 @@
 #include <cstdlib>
 
 extern "C" {
-void APS5_VABI sceLibcInternalUnknown6_112_6yplvTHbxpE_nid_no_patch(void* self);
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev(void* self);
 }
 
 namespace {
@@ -49,7 +49,7 @@ int main() {
 
     using Destructor = void (APS5_VABI*)(void*);
     const Destructor destructors[] = {
-        sceLibcInternalUnknown6_112_6yplvTHbxpE_nid_no_patch,
+        _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev,
         _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix,
         _ZNSt8messagesIwED0Ev_nid_postfix,
         _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix,

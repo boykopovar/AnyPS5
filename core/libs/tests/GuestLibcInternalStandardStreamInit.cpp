@@ -76,23 +76,23 @@ int main() {
     std::string outExpected;
     std::string errExpected;
 
-    CheckBeforeInit(libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-pre-out|", "narrow-pre-err|", outExpected, errExpected);
-    CheckDualRelease(libSceLibcInternalInventory_144_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch,
+    CheckBeforeInit(_ZNSt8ios_base4InitD1Ev, outPath, errPath, "narrow-pre-out|", "narrow-pre-err|", outExpected, errExpected);
+    CheckDualRelease(_ZNSt8ios_base4InitC1Ev, _ZNSt8ios_base4InitD1Ev, _ZNSt8ios_base4InitD1Ev,
         outPath, errPath, "narrow-out|", "narrow-err|", outExpected, errExpected, "narrow-pre-out|", "narrow-pre-err|");
 
     CheckBeforeInit(_ZNSt6_WinitD1Ev_nid_postfix, outPath, errPath, "wide-d1-pre-out|", "wide-d1-pre-err|", outExpected, errExpected);
-    CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
+    CheckDualRelease(_ZNSt6_WinitC1Ev, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
         outPath, errPath, "wide-d1-d2-out|", "wide-d1-d2-err|", outExpected, errExpected, "wide-d1-pre-out|", "wide-d1-pre-err|");
 
     CheckBeforeInit(_ZNSt6_WinitD2Ev_nid_postfix, outPath, errPath, "wide-d2-pre-out|", "wide-d2-pre-err|", outExpected, errExpected);
-    CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD2Ev_nid_postfix, _ZNSt6_WinitD1Ev_nid_postfix,
+    CheckDualRelease(_ZNSt6_WinitC1Ev, _ZNSt6_WinitD2Ev_nid_postfix, _ZNSt6_WinitD1Ev_nid_postfix,
         outPath, errPath, "wide-d2-d1-out|", "wide-d2-d1-err|", outExpected, errExpected, "wide-d2-pre-out|", "wide-d2-pre-err|");
 
-    CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD2Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
+    CheckDualRelease(_ZNSt6_WinitC1Ev, _ZNSt6_WinitD2Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
         outPath, errPath, "wide-d2-d2-out|", "wide-d2-d2-err|", outExpected, errExpected);
 
     char single = 0;
-    libSceLibcInternalInventory_071_nid_no_patch(&single);
+    _ZNSt6_WinitC1Ev(&single);
     WriteStandardStreams("wide-single-d2-out|", "wide-single-d2-err|");
     _ZNSt6_WinitD2Ev_nid_postfix(&single);
     outExpected += "wide-single-d2-out|";
