@@ -853,7 +853,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
 class GitFailureAndExitTests(unittest.TestCase):
     def test_git_failure_raises_with_stderr_or_command_fallback(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C"}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LC_ALL": "C", "GIT_CEILING_DIRECTORIES": str(Path(directory).parent)}):
             with self.assertRaisesRegex(RuntimeError, "not a git repository"):
                 performance_bisect.git(directory, "status")
             failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
@@ -890,6 +890,14 @@ class UniqueRecipeFieldsTests(unittest.TestCase):
         self.assertEqual(json.loads('{"a": 1}', object_pairs_hook=performance_bisect.unique_recipe_fields), {"a": 1})
         with self.assertRaises(ValueError):
             json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
+
+class RecipeFieldTests(unittest.TestCase):
+    def test_unique_recipe_fields_keeps_distinct_names(self):
+        self.assertEqual(performance_bisect.unique_recipe_fields([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_recipe_fields_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'has a duplicate field'):
+            performance_bisect.unique_recipe_fields([('a', 1), ('a', 2)])
 
 
 if __name__ == "__main__":
