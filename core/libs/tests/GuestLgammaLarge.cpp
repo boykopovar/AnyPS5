@@ -460,7 +460,7 @@ int main() {
             GuestCpu::SetMxcsr(GuestCpu::Mxcsr() | 0x1f80u);
             feclearexcept_nid_postfix(0x3f);
             const long double result = lgammal_nid_postfix(input);
-            const int flags = fetestexcept_nid_postfix(0x3f);
+            const int flags = fetestexcept_nid_postfix(FE_ALL_EXCEPT);
             std::uint64_t mantissa{};
             std::uint16_t exponent{};
             std::memcpy(&mantissa, &result, sizeof(mantissa));
