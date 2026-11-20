@@ -420,17 +420,40 @@ int unassigned(uint32_t size, uint32_t& length) {
     return CES_ERROR_UNASSIGNED_CODE;
 }
 
+bool eucCnSingleByte(uint32_t value) {
+    return (value >= 0x80 && value <= 0x8D) || (value >= 0x90 && value <= 0x9F);
+}
+
+bool eucCnLeavesOut(uint8_t lead, uint8_t trail) {
+    switch (lead) {
+        case 0xA2:
+            return trail <= 0xB0 || trail == 0xE3 || trail == 0xE4 || trail == 0xEF || trail == 0xF0 || trail == 0xFD || trail == 0xFE;
+        case 0xA6:
+            return (trail >= 0xB9 && trail <= 0xC0) || trail >= 0xD9;
+        case 0xA8:
+            return (trail >= 0xBB && trail <= 0xC4) || trail >= 0xEA;
+        default:
+            return false;
+    }
+}
+
 int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
     const uint8_t lead = mbcs[0];
+    const bool gbk = isGbk(profile);
+    if (!gbk && lead == 0x0E) return rejectLead(length);
     if (lead < 0x80) {
         length = 1;
         code = lead;
         return 0;
     }
-    const bool gbk = isGbk(profile);
     if (gbk && lead == 0x80) {
         length = 1;
         code = 0x20AC;
+        return 0;
+    }
+    if (!gbk && eucCnSingleByte(lead)) {
+        length = 1;
+        code = lead;
         return 0;
     }
     if (lead == 0xFF || (!gbk && lead < 0xA1)) return rejectLead(length);
@@ -439,6 +462,7 @@ int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_
     if (trail == 0xFF || (gbk ? trail < 0x40 || trail == 0x7F : trail < 0xA1)) return rejectTrail(trail, 2, length);
     const uint32_t cell = (lead - 0x81) * 190 + (trail < 0x7F ? trail - 0x40 : trail - 0x41);
     code = Cp936::TO_UCS2[cell];
+    if (!gbk && eucCnLeavesOut(lead, trail)) code = 0;
     if (code == 0 && gbk && gbUdaMapped(profile)) code = gbkUserDefined(cell);
     if (code == 0) return unassigned(2, length);
     length = 2;
@@ -458,15 +482,21 @@ const std::vector<std::pair<uint16_t, uint16_t>>& cp936Reverse() {
 }
 
 int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    const bool gbk = isGbk(profile);
+    if (!gbk && code == 0x0E) return CES_ERROR_UNASSIGNED_CODE;
     if (code < 0x80) {
         length = 1;
         mbcs[0] = static_cast<uint8_t>(code);
         return 0;
     }
-    const bool gbk = isGbk(profile);
     if (gbk && code == 0x20AC) {
         length = 1;
         mbcs[0] = 0x80;
+        return 0;
+    }
+    if (!gbk && eucCnSingleByte(code)) {
+        length = 1;
+        mbcs[0] = static_cast<uint8_t>(code);
         return 0;
     }
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
@@ -1356,12 +1386,28 @@ int convertString(const void* context, const Source* source, uint32_t sourceMax,
     return result;
 }
 
+constexpr uint32_t SourceWindow = 6;
+
+template<typename Unit, typename Decode>
+int decodeGuestSource(const Unit* source, uint32_t sourceMax, uint32_t& length, uint32_t& code, Decode decode) {
+    Unit window[SourceWindow]{};
+    const uint32_t wanted = std::min(sourceMax, SourceWindow);
+    uint32_t copied = wanted;
+    if (!CesGuest::CopyIn(window, source, copied * sizeof(Unit))) {
+        const auto address = reinterpret_cast<std::uintptr_t>(source);
+        copied = std::min<uint32_t>(wanted, static_cast<uint32_t>((0x1000 - address % 0x1000) / sizeof(Unit)));
+        if (copied == 0 || !CesGuest::CopyIn(window, source, copied * sizeof(Unit))) return CES_ERROR_INVALID_SRC_BUFFER;
+    }
+    const int result = decode(window, copied, length, code);
+    return result == CES_ERROR_SRC_BUFFER_END && copied < wanted ? CES_ERROR_INVALID_SRC_BUFFER : result;
+}
+
 template<typename Unit>
 int rejected(int result, uint32_t length, uint32_t* sourceSize, Unit* character, uint32_t* produced) {
     if (length == 0) return result;
-    if (sourceSize) *sourceSize = length;
-    if (character) *character = 0;
-    if (produced) *produced = 0;
+    if (sourceSize && !CesGuest::Store(sourceSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (character && !CesGuest::Store(character, Unit{0})) return CES_ERROR_INVALID_DST_BUFFER;
+    if (produced && !CesGuest::Store(produced, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
     return result;
 }
 
@@ -1618,13 +1664,13 @@ int mbcsToUtf8(bool accepted, const void* profile, const uint8_t* mbcs, uint32_t
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
     uint32_t consumed = 0;
     uint32_t code = 0;
-    if (const int result = decodeMbcs(profile, mbcs, mbcsMax, consumed, code); result != 0) return rejected<uint8_t>(result, consumed, mbcsLen, nullptr, utf8Len);
+    if (const int result = decodeGuestSource(mbcs, mbcsMax, consumed, code, [profile](const uint8_t* bytes, uint32_t max, uint32_t& used, uint32_t& value) { return decodeMbcs(profile, bytes, max, used, value); }); result != 0) return rejected<uint8_t>(result, consumed, mbcsLen, nullptr, utf8Len);
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
     if (utf8Max < produced) return CES_ERROR_DST_BUFFER_END;
-    std::memcpy(utf8, encoded, produced);
-    if (mbcsLen) *mbcsLen = consumed;
-    if (utf8Len) *utf8Len = produced;
+    if (!CesGuest::CopyOut(utf8, encoded, produced)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (mbcsLen && !CesGuest::Store(mbcsLen, consumed)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf8Len && !CesGuest::Store(utf8Len, produced)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1642,6 +1688,13 @@ template<typename Unit, bool BigEndian>
 void storeUnit(Unit* target, uint32_t code) {
     auto* bytes = reinterpret_cast<uint8_t*>(target);
     for (uint32_t i = 0; i < sizeof(Unit); ++i) bytes[i] = static_cast<uint8_t>(code >> (8 * (BigEndian ? sizeof(Unit) - 1 - i : i)));
+}
+
+template<typename Unit, bool BigEndian>
+bool storeGuestUnit(Unit* target, uint32_t code) {
+    Unit value{};
+    storeUnit<Unit, BigEndian>(&value, code);
+    return CesGuest::Store(target, value);
 }
 
 bool isScalar(uint32_t code) {
@@ -1673,7 +1726,7 @@ int decodeProfiled(bool (*matches)(const void*), const void* profile, const uint
     if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
     if (sourceMax == 0) return CES_ERROR_SRC_BUFFER_END;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    return decodeMbcs(profile, source, sourceMax, length, code);
+    return decodeGuestSource(source, sourceMax, length, code, [profile](const uint8_t* bytes, uint32_t max, uint32_t& used, uint32_t& value) { return decodeMbcs(profile, bytes, max, used, value); });
 }
 
 
@@ -1682,8 +1735,8 @@ int profiledToUcs2(bool (*matches)(const void*), const void* profile, const uint
     uint32_t code = 0;
     if (const int result = decodeProfiled(matches, profile, source, sourceMax, ucs2, length, code); result != 0) return rejected(result, length, sourceSize, ucs2, nullptr);
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
-    *ucs2 = static_cast<uint16_t>(code);
-    if (sourceSize) *sourceSize = length;
+    if (!CesGuest::Store(ucs2, static_cast<uint16_t>(code))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sourceSize && !CesGuest::Store(sourceSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1694,9 +1747,9 @@ int profiledToUtf8(bool (*matches)(const void*), const void* profile, const uint
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
     if (utf8max < produced) return CES_ERROR_DST_BUFFER_END;
-    std::memcpy(utf8, encoded, produced);
-    if (sourceSize) *sourceSize = length;
-    if (utf8Len) *utf8Len = produced;
+    if (!CesGuest::CopyOut(utf8, encoded, produced)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sourceSize && !CesGuest::Store(sourceSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf8Len && !CesGuest::Store(utf8Len, produced)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1707,14 +1760,16 @@ int profiledToUtf16(bool (*matches)(const void*), const void* profile, const uin
     if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf16, length, code); result != 0) return rejected<uint16_t>(result, length, sourceSize, nullptr, utf16Len);
     const uint32_t units = code < 0x10000 ? 1 : 2;
     if (utf16max < units) return CES_ERROR_DST_BUFFER_END;
+    uint16_t encoded[2]{};
     if (units == 1) {
-        storeUnit<uint16_t, BigEndian>(utf16, code);
+        storeUnit<uint16_t, BigEndian>(encoded, code);
     } else {
-        storeUnit<uint16_t, BigEndian>(utf16, 0xD800 | (code - 0x10000) >> 10);
-        storeUnit<uint16_t, BigEndian>(utf16 + 1, 0xDC00 | (code & 0x3FF));
+        storeUnit<uint16_t, BigEndian>(encoded, 0xD800 | (code - 0x10000) >> 10);
+        storeUnit<uint16_t, BigEndian>(encoded + 1, 0xDC00 | (code & 0x3FF));
     }
-    if (sourceSize) *sourceSize = length;
-    if (utf16Len) *utf16Len = units;
+    if (!CesGuest::CopyOut(utf16, encoded, units * sizeof(uint16_t))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sourceSize && !CesGuest::Store(sourceSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf16Len && !CesGuest::Store(utf16Len, units)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1723,8 +1778,8 @@ int profiledToUtf32(bool (*matches)(const void*), const void* profile, const uin
     uint32_t length = 0;
     uint32_t code = 0;
     if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf32, length, code); result != 0) return rejected(result, length, sourceSize, utf32, nullptr);
-    storeUnit<uint32_t, BigEndian>(utf32, code);
-    if (sourceSize) *sourceSize = length;
+    if (!storeGuestUnit<uint32_t, BigEndian>(utf32, code)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sourceSize && !CesGuest::Store(sourceSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1733,8 +1788,8 @@ int encodeProfiled(const void* profile, uint32_t code, uint8_t* target, uint32_t
     uint32_t size = 0;
     if (const int result = encodeMbcs(profile, code, encoded, size); result != 0) return result;
     if (targetMax < size) return CES_ERROR_DST_BUFFER_END;
-    std::memcpy(target, encoded, size);
-    if (targetSize) *targetSize = size;
+    if (!CesGuest::CopyOut(target, encoded, size)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (targetSize && !CesGuest::Store(targetSize, size)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1746,8 +1801,8 @@ int scalarToProfiled(bool (*matches)(const void*), uint32_t code, const void* pr
     uint32_t size = 0;
     if (result == 0) result = encodeMbcs(profile, code, encoded, size);
     if (result == 0 && targetMax < size) result = CES_ERROR_DST_BUFFER_END;
-    if (result == 0) std::memcpy(target, encoded, size);
-    if (targetSize) *targetSize = result == 0 || result == CES_ERROR_DST_BUFFER_END ? size : 0;
+    if (result == 0 && !CesGuest::CopyOut(target, encoded, size)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (targetSize && !CesGuest::Store(targetSize, result == 0 || result == CES_ERROR_DST_BUFFER_END ? size : 0u)) return CES_ERROR_INVALID_DST_BUFFER;
     return result;
 }
 
@@ -1755,7 +1810,9 @@ template<bool BigEndian>
 int utf32ToProfiled(bool (*matches)(const void*), const uint32_t* utf32, const void* profile, uint8_t* target, uint32_t targetMax, uint32_t* targetSize) {
     if (!matches(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf32) return CES_ERROR_INVALID_SRC_BUFFER;
-    return scalarToProfiled(matches, loadUnit<uint32_t, BigEndian>(utf32), profile, target, targetMax, targetSize);
+    uint32_t unit = 0;
+    if (!CesGuest::CopyIn(&unit, utf32, sizeof(unit))) return CES_ERROR_INVALID_SRC_BUFFER;
+    return scalarToProfiled(matches, loadUnit<uint32_t, BigEndian>(&unit), profile, target, targetMax, targetSize);
 }
 
 template<typename Source, typename Decode>
@@ -1766,9 +1823,9 @@ int bufferToProfiled(bool (*matches)(const void*), const Source* source, uint32_
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decode(source, sourceMax, length, code); result != 0) return result;
+    if (const int result = decodeGuestSource(source, sourceMax, length, code, decode); result != 0) return result;
     if (const int result = encodeProfiled(profile, code, target, targetMax, targetSize); result != 0) return result;
-    if (sourceLen) *sourceLen = length;
+    if (sourceLen && !CesGuest::Store(sourceLen, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1805,8 +1862,8 @@ int sbcToUtf16(const uint8_t* profile, uint8_t sbc, uint16_t* utf16, uint32_t ut
     uint32_t code = 0;
     if (const int result = sbcToUnit(profile, sbc, utf16, code); result != 0) return result;
     if (utf16max < 1) return CES_ERROR_DST_BUFFER_END;
-    storeUnit<uint16_t, BigEndian>(utf16, code);
-    if (utf16Len) *utf16Len = 1;
+    if (!storeGuestUnit<uint16_t, BigEndian>(utf16, code)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf16Len && !CesGuest::Store(utf16Len, uint32_t{1})) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1814,15 +1871,16 @@ template<bool BigEndian>
 int sbcToUtf32(const uint8_t* profile, uint8_t sbc, uint32_t* utf32) {
     uint32_t code = 0;
     if (const int result = sbcToUnit(profile, sbc, utf32, code); result != 0) return result;
-    storeUnit<uint32_t, BigEndian>(utf32, code);
-    return 0;
+    return storeGuestUnit<uint32_t, BigEndian>(utf32, code) ? 0 : CES_ERROR_INVALID_DST_BUFFER;
 }
 
 int scalarToSbc(uint32_t code, const uint8_t* profile, uint8_t* sbc) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
     if (!isScalar(code)) return CES_ERROR_INVALID_ENCODE;
-    return unicodeToSbc(profile, code, *sbc) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    uint8_t local = 0;
+    if (!unicodeToSbc(profile, code, local)) return CES_ERROR_UNASSIGNED_CODE;
+    return CesGuest::Store(sbc, local) ? 0 : CES_ERROR_INVALID_DST_BUFFER;
 }
 
 template<bool BigEndian>
@@ -1833,9 +1891,11 @@ int utf16ToSbc(const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, con
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeUtf16<BigEndian>(utf16, utf16max, length, code); result != 0) return result;
-    if (!unicodeToSbc(profile, code, *sbc)) return CES_ERROR_UNASSIGNED_CODE;
-    if (utf16Len) *utf16Len = length;
+    if (const int result = decodeGuestSource(utf16, utf16max, length, code, decodeUtf16<BigEndian>); result != 0) return result;
+    uint8_t local = 0;
+    if (!unicodeToSbc(profile, code, local)) return CES_ERROR_UNASSIGNED_CODE;
+    if (!CesGuest::Store(sbc, local)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf16Len && !CesGuest::Store(utf16Len, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -1843,7 +1903,9 @@ template<bool BigEndian>
 int utf32ToSbc(const uint32_t* utf32, const uint8_t* profile, uint8_t* sbc) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf32) return CES_ERROR_INVALID_SRC_BUFFER;
-    return scalarToSbc(loadUnit<uint32_t, BigEndian>(utf32), profile, sbc);
+    uint32_t unit = 0;
+    if (!CesGuest::CopyIn(&unit, utf32, sizeof(unit))) return CES_ERROR_INVALID_SRC_BUFFER;
+    return scalarToSbc(loadUnit<uint32_t, BigEndian>(&unit), profile, sbc);
 }
 
 std::string hexCode(uint32_t value) {
@@ -2341,7 +2403,7 @@ int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_
     if (!euc || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    const int decoded = decodeEucJp(profile, euc, eucMax, length, code);
+    const int decoded = decodeGuestSource(euc, eucMax, length, code, [profile](const uint8_t* bytes, uint32_t max, uint32_t& used, uint32_t& value) { return decodeEucJp(profile, bytes, max, used, value); });
     if (eucSize && !CesGuest::Store(eucSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
@@ -2370,7 +2432,7 @@ int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* u
     if (!utf8 || utf8max == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    const int decoded = decodeScalarUtf8(utf8, utf8max, length, code);
+    const int decoded = decodeGuestSource(utf8, utf8max, length, code, decodeScalarUtf8);
     if (utf8_len && !CesGuest::Store(utf8_len, length)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
@@ -2390,7 +2452,7 @@ int APS5_VABI sceCesEucJpToUtf8(const void* profile, const uint8_t* eucBuffer, u
     if (!eucBuffer || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t consumed = 0;
     uint32_t code = 0;
-    const int decoded = decodeEucJp(profile, eucBuffer, eucMax, consumed, code);
+    const int decoded = decodeGuestSource(eucBuffer, eucMax, consumed, code, [profile](const uint8_t* bytes, uint32_t max, uint32_t& used, uint32_t& value) { return decodeEucJp(profile, bytes, max, used, value); });
     if (eucLength && !CesGuest::Store(eucLength, consumed)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     uint8_t encoded[4];

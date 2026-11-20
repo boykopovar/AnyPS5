@@ -505,5 +505,41 @@ if command == 'inspect':
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(arguments)
 
+    def test_native_filter_command_is_the_path_alone(self):
+        self.assertEqual(frame_capture_minimize.Minimizer.command(Path("filter")), [str(Path("filter"))])
+
+    def test_minimize_without_units_is_complete_and_unchanged(self):
+        minimizer = PredicateMinimizer([], [])
+        result = minimizer.minimize([], set(), set(), True)
+        self.assertEqual(result, ([], set(), set(), True))
+        self.assertEqual(minimizer.trials, 0)
+
+    def test_minimize_reports_incomplete_when_trial_budget_runs_out(self):
+        args = SimpleNamespace(max_trials=0, filter="filter", replay="replay", capture="capture", output="output")
+        minimizer = frame_capture_minimize.Minimizer(args, re.compile("failure"))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            current, removed_calls, removed_chunks, complete = minimizer.minimize([0, 1, 2], set(), set(), True)
+        self.assertEqual((current, removed_calls, removed_chunks, complete), ([0, 1, 2], set(), set(), False))
+        self.assertIn("maximum trial count reached", stderr.getvalue())
+
+    def test_reducible_chunks_excludes_ranges_and_keeps_deltas_of_retained_groups(self):
+        description = {
+            "calls": [
+                {"index": 0, "memory_group": 1},
+                {"index": 1, "memory_group": 2},
+                {"index": 2, "memory_group": None},
+            ],
+            "chunks": [
+                {"index": 0, "kind": "range", "group": 1},
+                {"index": 1, "kind": "delta", "group": 1},
+                {"index": 2, "kind": "delta", "group": 2},
+                {"index": 3, "kind": "reference", "group": 2},
+            ],
+        }
+        units, removed_groups = frame_capture_minimize.Minimizer.reducible_chunks(description, {1})
+        self.assertEqual(units, [1, 3])
+        self.assertEqual(removed_groups, {2})
+
 if __name__ == "__main__":
     unittest.main()

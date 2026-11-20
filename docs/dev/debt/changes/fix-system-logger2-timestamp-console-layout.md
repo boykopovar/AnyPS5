@@ -1,0 +1,9 @@
+# libSceSystemLogger2
+
+## change [sceSystemLogger2GetTimestamp, sceSystemLogger2GetEventStatus and sceSystemLogger2SetEventAsyncInternal]
+
+- [sceSystemLogger2GetTimestamp, sceSystemLogger2GetEventStatus and sceSystemLogger2SetEventAsyncInternal](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - on a payload process (firmware 11.60) `sceSystemLogger2GetTimestamp` with a null pointer returned `0x818C0002`, a `timestamp` at `0x10` or 40 bytes before the end of a mapped page raised SIGSEGV without writing a byte, and `sceSystemLogger2GetEventStatus` with `0x10` raised SIGSEGV; the console's answer for an unwritable `status` output, or an unreadable event name, is otherwise not measured. As a host-safety fallback these calls return `INVALID_ARGUMENT` (`0x818C0002`) for such a pointer, keeping the caller's `errno` and writing nothing.
+
+## change [libSceSystemLogger2 source]
+
+- [libSceSystemLogger2 source](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - read from the fw 13.40 module (SHA-256 `934AE1CDDE8BC66200EF2891923C53684B70D5BEB600744774A73A190C347485`), not run against the console logger. The logger daemon and its monitor singleton are absent, so `sceSystemLogger2IsAvailableMonitor` returns `0x818C000E` after the native argument checks and `sceSystemLogger2GetEventStatus` returns the same code (an inference). `sceSystemLogger2Initialize` only sets the initialized flag: the native `0x818C0003` allocation failure and its subsystem probe are not reproduced. `sceSystemLogger2GetTimestamp` works before `Initialize` (payload process, firmware 11.60) and writes 48 bytes: the tick, a multiple of 1000000 microseconds, then `secureClock` padded with zeros. The tick follows the host wall clock; on the console it read about 36 minutes ahead of the host UTC, from a clock of unknown source. `networkClock` and `NONE` are unreachable.

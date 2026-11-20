@@ -1,3 +1,4 @@
+#include <string_view>
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -199,8 +200,12 @@ int main() {
         std::puts("the DB stencil copy wrote both drawn stencil values exactly where its draw rasterized");
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
         try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
+        if (std::string_view(error.what()).find("custom sample locations require VK_EXT_sample_locations support") != std::string_view::npos) {
+            std::puts("skipped, the device lacks VK_EXT_sample_locations for the draw's sample count");
+            return VulkanTestSkipped;
+        }
+        std::cerr << error.what() << '\n';
         return 1;
     }
 }
