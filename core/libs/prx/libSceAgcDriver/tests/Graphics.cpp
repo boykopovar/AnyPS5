@@ -2970,6 +2970,17 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    {
+        alignas(256) std::array<std::uint8_t, 8> sliceKeyMemory{};
+        const auto sliceKeys = reinterpret_cast<std::uintptr_t>(sliceKeyMemory.data());
+        auto keyed = queue;
+        keyed.context[0x31c] |= 0x10000000;
+        keyed.context[0x325] = static_cast<std::uint32_t>(sliceKeys >> 8u);
+        keyed.context[0x3a8] = static_cast<std::uint32_t>(sliceKeys >> 40u);
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys + 1024u / 256u, "a color view of one slice did not move the target's DCC keys by one slice's keys");
+        keyed.context[0x31b] = 1u << 13u;
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys, "a color view from the first slice moved the target's DCC keys");
+    }
     queue.context[0x3b8] = 0x09000001;
     const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
     Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
