@@ -26,10 +26,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI res_countArrayItems_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI res_getAlias_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

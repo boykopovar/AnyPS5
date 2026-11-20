@@ -4,7 +4,6 @@
 
 extern "C" {
 const char* APS5_VABI locale_getKeywordsStart_nid_postfix(const char* localeID);
-int APS5_VABI res_countArrayItems_nid_postfix();
 int APS5_VABI res_getAlias_nid_postfix();
 int APS5_VABI res_getArrayItem_nid_postfix();
 int APS5_VABI res_getBinaryNoTrace_nid_postfix();
