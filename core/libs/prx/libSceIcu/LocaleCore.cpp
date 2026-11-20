@@ -29,6 +29,11 @@ constexpr std::int32_t kBufferOverflow = 15;
 constexpr std::int32_t kStringNotTerminated = -124;
 constexpr std::int32_t kFullNameCapacity = 157;
 
+constexpr std::array<std::pair<std::string_view, std::string_view>, 10> CanonicalIds{{
+    {"art__LOJBAN", "jbo"}, {"hy__AREVELA", "hy"}, {"hy__AREVMDA", "hyw"}, {"zh__GUOYU", "zh"}, {"zh__HAKKA", "hak"},
+    {"zh__XIANG", "hsn"}, {"zh_GAN", "gan"}, {"zh_MIN_NAN", "nan"}, {"zh_WUU", "wuu"}, {"zh_YUE", "yue"},
+}};
+
 constexpr std::array<std::pair<std::string_view, std::string_view>, 185> Languages{{
     {"aar", "aa"}, {"abk", "ab"}, {"afr", "af"}, {"aka", "ak"}, {"amh", "am"}, {"ara", "ar"}, {"arg", "an"},
     {"asm", "as"}, {"ava", "av"}, {"ave", "ae"}, {"aym", "ay"}, {"aze", "az"}, {"bak", "ba"}, {"bam", "bm"},
@@ -646,6 +651,9 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
     Parts parts = Parse(id.c_str());
     parts.encoding.clear();
     std::string canonical = BaseName(parts);
+    const auto mapped = std::find_if(CanonicalIds.begin(), CanonicalIds.end(),
+                                     [&](const auto& entry) { return entry.first == canonical; });
+    if (mapped != CanonicalIds.end()) canonical = std::string(mapped->second);
     if (!parts.keywords.empty()) {
         std::vector<std::string> keywords;
         std::size_t start = 0;
