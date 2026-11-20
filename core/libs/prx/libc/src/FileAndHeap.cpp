@@ -896,6 +896,18 @@ void DetachFileStreamAliasesForNative_nid_no_patch(FileStream* source, std::FILE
     }
 }
 
+#ifdef _WIN32
+void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std::FILE* native) {
+    std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
+    for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {
+        if (cur == source || !cur->pushbackBuffer || cur->RawHandle_nid_no_patch() != native) continue;
+        ::_lock_file(native);
+        cur->ReleasePushbackBuffer(native);
+        ::_unlock_file(native);
+    }
+}
+#endif
+
 void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source) {
     std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
     for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {

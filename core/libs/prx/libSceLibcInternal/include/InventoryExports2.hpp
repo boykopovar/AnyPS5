@@ -34,7 +34,6 @@ int APS5_VABI _WGetint_nid_postfix();
 int APS5_VABI _WScanf_nid_postfix();
 int APS5_VABI _WFwprep_nid_postfix();
 int APS5_VABI _Sincos_nid_postfix();
-int APS5_VABI _ZNKSt13bad_exception8_DoraiseEv_nid_postfix();
 int APS5_VABI _WLdtob_nid_postfix();
 int APS5_VABI _WPrintf_nid_postfix();
 int APS5_VABI _WGetstr_nid_postfix();

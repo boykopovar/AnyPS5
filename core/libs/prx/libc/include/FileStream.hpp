@@ -1,9 +1,12 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -111,6 +114,9 @@ std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
     PinNextFileStream_nid_no_patch(std::uint64_t& cursor);
 void DetachFileStreamAliasesForNative_nid_no_patch(FileStream* source, std::FILE* native);
 void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source);
+#ifdef _WIN32
+void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std::FILE* native);
+#endif
 extern "C" void NoteExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native);
@@ -146,6 +152,9 @@ class FileStream {
         PinNextFileStream_nid_no_patch(std::uint64_t&);
     friend void DetachFileStreamAliasesForNative_nid_no_patch(FileStream*, std::FILE*);
     friend void SynchronizeFileStreamAliases_nid_no_patch(FileStream*);
+#ifdef _WIN32
+    friend void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream*, std::FILE*);
+#endif
 
     std::FILE* LoadHandleAtomic_nid_no_patch() const {
         return __atomic_load_n(const_cast<std::FILE* const*>(&_handle), __ATOMIC_ACQUIRE);
@@ -154,6 +163,41 @@ class FileStream {
     void StoreHandleAtomic_nid_no_patch(std::FILE* value) {
         __atomic_store_n(&_handle, value, __ATOMIC_RELEASE);
     }
+#ifdef _WIN32
+    char* pushbackBuffer = nullptr;
+
+    void ReleasePushbackBuffer(std::FILE* native) {
+        if (!pushbackBuffer) return;
+        if (native) {
+            auto* state = reinterpret_cast<UcrtStreamState*>(native);
+            if (state->base == pushbackBuffer) {
+                state->base = reinterpret_cast<char*>(&state->characterBuffer);
+                state->pointer = state->base;
+                state->count = 0;
+            }
+        }
+        std::free(std::exchange(pushbackBuffer, nullptr));
+    }
+
+    void MakePushbackRoomUnlocked() {
+        constexpr long UcrtCrtBuffer = 0x0040;
+        constexpr long UcrtNoBuffer = 0x0400;
+        auto* state = reinterpret_cast<UcrtStreamState*>(GetHandle());
+        if (state->base == nullptr || state->pointer != state->base || state->count <= 0) return;
+        const long flags = std::atomic_ref<long>(state->flags).load();
+        const bool ownedHere = state->base == pushbackBuffer;
+        if (!ownedHere && (flags & (UcrtCrtBuffer | UcrtNoBuffer)) == 0) return;
+        const std::size_t count = static_cast<std::size_t>(state->count);
+        const std::size_t size = std::max({count * 2, count + 16, static_cast<std::size_t>(state->bufferSize > 0 ? state->bufferSize : 0)});
+        auto* const grown = static_cast<char*>(std::malloc(size));
+        if (!grown) return;
+        std::memcpy(grown + size - count, state->pointer, count);
+        if (ownedHere || (flags & UcrtCrtBuffer) == 0) std::free(std::exchange(pushbackBuffer, grown));
+        else std::free(state->base);
+        state->base = grown;
+        state->pointer = grown + size - count;
+    }
+#endif
 
 public:
     enum class Registration { Immediate, Deferred };
@@ -175,6 +219,9 @@ public:
     }
 
     ~FileStream() {
+#ifdef _WIN32
+        ReleasePushbackBuffer(LoadHandleAtomic_nid_no_patch());
+#endif
         if (_registered_nid_no_patch) UnlinkFileStream_nid_no_patch(this);
     }
 
@@ -224,6 +271,13 @@ public:
     }
 
     void Detach() {
+#ifdef _WIN32
+        if (auto* native = LoadHandleAtomic_nid_no_patch()) {
+            ::_lock_file(native);
+            ReleasePushbackBuffer(native);
+            ::_unlock_file(native);
+        }
+#endif
         _orientation.store(0, std::memory_order_relaxed);
         StoreHandleAtomic_nid_no_patch(nullptr);
         _guest.flags = 0;
@@ -267,6 +321,9 @@ public:
     }
 
     bool Adopt(std::FILE* handle) {
+#ifdef _WIN32
+        ReleasePushbackBuffer(nullptr);
+#endif
         _guest = {};
         guestError = false;
         randomDevice = false;
@@ -307,6 +364,12 @@ public:
             _orientation.store(0, std::memory_order_relaxed);
             return true;
         }
+#ifdef _WIN32
+        ::_lock_file(previous);
+        ReleasePushbackBuffer(previous);
+        ::_unlock_file(previous);
+        ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(this, previous);
+#endif
         _guest = {};
         guestError = false;
         randomDevice = false;
@@ -556,6 +619,19 @@ public:
 #endif
     }
 
+    int PushBack(int value) {
+#ifdef _WIN32
+        auto* native = GetHandle();
+        ::_lock_file(native);
+        if (value != EOF) MakePushbackRoomUnlocked();
+        const int result = ::_ungetc_nolock(value, native);
+        ::_unlock_file(native);
+        return result;
+#else
+        return std::ungetc(value, GetHandle());
+#endif
+    }
+
     void KeepDirectoryReadError(bool failed) {
         if (failed && directory && (__atomic_load_n(&_guest.flags, __ATOMIC_RELAXED) & 0x40) != 0) errno = 21;
     }
@@ -601,6 +677,11 @@ public:
         const ClosingDescriptor closing(native, descriptor);
 #else
         const ClosingDescriptor closing(native, ::fileno(native));
+#endif
+#ifdef _WIN32
+        ::_lock_file(native);
+        ReleasePushbackBuffer(native);
+        ::_unlock_file(native);
 #endif
         StoreHandleAtomic_nid_no_patch(nullptr);
         _guest.flags = 0;
