@@ -19,6 +19,7 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "prx/libSceLibcInternal/include/StreambufTransfer.hpp"
 
 #include "prx/libSceLibcInternal/include/FloatWords.hpp"
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"

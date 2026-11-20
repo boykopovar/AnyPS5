@@ -74,6 +74,7 @@ struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/VideoEncoderInfo.hpp"
 #include "prx/libwebrtc/include/PeerConnectionDependencies.hpp"
 #include "prx/libwebrtc/include/CallConfig.hpp"
+#include "prx/libwebrtc/include/PeerConnectionFactoryDependencies.hpp"
 
 extern "C" {
 
@@ -100,8 +101,8 @@ int APS5_VABI _ZN6webrtc8RmsLevel7AverageEv_nid_postfix(WebRtcRmsLevel* level);
 void APS5_VABI _ZN6webrtc8RmsLevelC1Ev_nid_postfix(WebRtcRmsLevel* level);
 void APS5_VABI _ZN6webrtc8RmsLevelD1Ev_nid_postfix(WebRtcRmsLevel* level);
 int APS5_VABI _ZN6webrtc34CreateModularPeerConnectionFactoryENS_33PeerConnectionFactoryDependenciesE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1EOS0__nid_postfix(void);
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1EOS0__nid_postfix(WebRtcPeerConnectionFactoryDependencies* dependencies, WebRtcPeerConnectionFactoryDependencies* other);
+void APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesD1Ev_nid_postfix(WebRtcPeerConnectionFactoryDependencies* dependencies);
 int APS5_VABI _ZNK6webrtc18EnvironmentFactory6CreateEv_nid_postfix(void);
 struct WebRtcFileWrapper;
 
@@ -158,7 +159,7 @@ int APS5_VABI libwebrtcUnknown11(void);
 void APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(WebRtcKeyParams* params, std::int32_t keyType);
 void APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(WebRtcIceServer* server);
 void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObserverE_nid_postfix(WebRtcPeerConnectionDependencies* dependencies, void* observer);
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(WebRtcPeerConnectionFactoryDependencies* dependencies);
 int APS5_VABI libwebrtcUnknown12(void);
 int APS5_VABI libwebrtcUnknown13(void);
 void APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(WebRtcSequenceCheckerImpl* checker, bool attachToCurrentThread);
