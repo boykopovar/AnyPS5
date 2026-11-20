@@ -133,6 +133,17 @@ void TestAsn1() {
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,OCTETSTRING:0102"), 83, 0, {0x04, 0x02, 0x01, 0x02});
     CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:0"), 83, 0, {0x03, 0x02, 0x07, 0x80});
     CheckValue(Conf(83, "critical,ASN1:INTEGER:5"), 83, 1, {0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:UTF8String:a,b"), 83, 0, {0x0c, 0x03, 'a', ',', 'b'});
+    CheckValue(Conf(83, "ASN1:IA5STRING:a, b "), 83, 0, {0x16, 0x05, 'a', ',', ' ', 'b', ' '});
+    CheckValue(Conf(83, "ASN1:OCTETSTRING:x,FORMAT:HEX"), 83, 0,
+        {0x04, 0x0c, 'x', ',', 'F', 'O', 'R', 'M', 'A', 'T', ':', 'H', 'E', 'X'});
+    CheckValue(Conf(83, "ASN1:FORMAT:UTF8,UTF8String:a,b"), 83, 0, {0x0c, 0x03, 'a', ',', 'b'});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,5"), 83, 0, {0x03, 0x02, 0x02, 0x44});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:9, 0 "), 83, 0, {0x03, 0x03, 0x06, 0x80, 0x40});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+3,3,-0"), 83, 0, {0x03, 0x02, 0x04, 0x90});
+    CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:80"), 83, 0, {0x03, 0x02, 0x00, 0x80});
+    CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:0100"), 83, 0, {0x03, 0x03, 0x00, 0x01, 0x00});
+    CheckValue(Conf(83, "ASN1:BITSTRING:ab"), 83, 0, {0x03, 0x03, 0x00, 'a', 'b'});
 }
 
 void TestMalformed() {
@@ -149,6 +160,21 @@ void TestMalformed() {
     Require(Conf(83, "ASN1:FORMAT:HEX,INTEGER:5") == nullptr);
     Require(Conf(83, "ASN1:NULL,INTEGER:5") == nullptr);
     Require(Conf(83, "ASN1:NULL ") == nullptr);
+    Require(Conf(83, "ASN1:INTEGER:1,2") == nullptr);
+    Require(Conf(83, "ASN1:INTEGER:5 ") == nullptr);
+    Require(Conf(83, "ASN1:BOOLEAN:TRUE,x") == nullptr);
+    Require(Conf(83, "ASN1:BOOLEAN:true ") == nullptr);
+    Require(Conf(83, "ASN1:NULL:,") == nullptr);
+    Require(Conf(83, "ASN1:NULL: ") == nullptr);
+    Require(Conf(83, "ASN1:OBJECT:1.2.3,4") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,,2") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,x") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1 2") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-1") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,OCTETSTRING:1") == nullptr);
     Require(allocations.empty());
 }
 
