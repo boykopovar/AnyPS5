@@ -455,6 +455,17 @@ int APS5_VABI _Thrd_yield_nid_postfix() {
     return threadSuccess;
 }
 
+void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds) {
+    std::int64_t remaining{};
+    if (!GuestCopyIn_nid_no_patch(&remaining, nanoseconds, sizeof(remaining))) throw std::invalid_argument("this_thread::sleep_for: unreadable duration");
+    constexpr std::int64_t maxChunk = longestSleepSeconds * nanosPerSecond;
+    while (remaining > 0) {
+        const auto chunk = std::min(remaining, maxChunk);
+        std::this_thread::sleep_for(std::chrono::nanoseconds(chunk));
+        remaining -= chunk;
+    }
+}
+
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
 }
