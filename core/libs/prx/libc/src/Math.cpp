@@ -5531,7 +5531,6 @@ double APS5_VABI tanh_nid_postfix(double x) {
 
 float APS5_VABI tanhf_nid_postfix(float x) {
     const float one = 1.0f, two = 2.0f;
-    static volatile float tiny = 1.0e-30f;
     float t, z;
     const std::int32_t jx = std::bit_cast<std::int32_t>(x);
     const std::int32_t ix = jx & 0x7fffffff;
@@ -5540,7 +5539,8 @@ float APS5_VABI tanhf_nid_postfix(float x) {
         return one / x - one;
     }
     if (ix < 0x41100000) {
-        if (ix < 0x39800000) return x;
+        const volatile float biased = 1.0e30f + x;
+        if (ix < 0x39800000 && biased > one) return x;
         if (ix >= 0x3f800000) {
             t = Expm1f(two * std::fabs(x));
             z = one - two / (t + two);
@@ -5549,7 +5549,7 @@ float APS5_VABI tanhf_nid_postfix(float x) {
             z = -t / (t + two);
         }
     } else {
-        z = one - tiny;
+        z = one;
     }
     return jx >= 0 ? z : -z;
 }
