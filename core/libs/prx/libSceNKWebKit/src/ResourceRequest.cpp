@@ -45,6 +45,7 @@ FormDataRefPtr::~FormDataRefPtr() { }
 }
 
 namespace {
+using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::URL;
@@ -61,6 +62,16 @@ const ResourceRequestBase& Checked(const ResourceRequestBase* self) {
     return *self;
 }
 
+LegacyResourceRequestBase& Checked(LegacyResourceRequestBase* self) {
+    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    return *self;
+}
+
+const LegacyResourceRequestBase& Checked(const LegacyResourceRequestBase* self) {
+    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    return *self;
+}
+
 const URL& Checked(const URL* url) {
     if (!url) throw std::invalid_argument("null WTF::URL");
     return *url;
@@ -72,6 +83,10 @@ const String& Checked(const String* string) {
 }
 
 void UpdateResourceRequest(const ResourceRequestBase& request) {
+    if (!request.resourceRequestUpdated) throw std::logic_error("WebCore::ResourceRequest::doUpdateResourceRequest is not implemented");
+}
+
+void UpdateResourceRequest(const LegacyResourceRequestBase& request) {
     if (!request.resourceRequestUpdated) throw std::logic_error("WebCore::ResourceRequest::doUpdateResourceRequest is not implemented");
 }
 
@@ -615,18 +630,22 @@ void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
     _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(timeoutInterval);
 }
 
-void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(ResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody) {
+void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody) {
     auto& request = Checked(self);
     if (!httpBody) throw std::invalid_argument("null WTF::RefPtr");
-    SetHTTPBody(request, *httpBody);
-    *httpBody = nullptr;
+    UpdateResourceRequest(request);
+    auto* previous = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
+    request.httpBody = std::exchange(*httpBody, nullptr);
+    if (previous) previous->deref();
+    request.resourceRequestBodyUpdated = true;
+    request.platformRequestBodyUpdated = false;
 }
 
-String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const ResourceRequestBase* self, const String* name) {
+String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const LegacyResourceRequestBase* self, const String* name) {
     const auto& request = Checked(self);
     const auto& key = Checked(name);
     UpdateResourceRequest(request);
-    return _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(&HeaderFields(request), key);
+    return _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields), key);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(ResourceRequestBase* self) {
