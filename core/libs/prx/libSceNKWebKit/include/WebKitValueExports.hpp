@@ -291,6 +291,7 @@ const void* APS5_VABI WKMediaSessionMetadataCopyArtworkURL(const void* metadataR
 const void* APS5_VABI WKMediaSessionMetadataCopyTitle(const void* metadataRef);
 std::uint32_t APS5_VABI WKMediaSessionMetadataGetTypeID();
 std::uint32_t APS5_VABI WKMessageListenerGetTypeID();
+void APS5_VABI WKMessageListenerSendReply(const void* listenerRef, const void* replyRef);
 void* APS5_VABI WKMutableArrayCreate();
 void* APS5_VABI WKMutableDictionaryCreate();
 std::uint32_t APS5_VABI WKNavigationActionGetTypeID();

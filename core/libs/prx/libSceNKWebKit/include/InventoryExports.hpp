@@ -300,7 +300,6 @@ int APS5_VABI WKKeyValueStorageManagerGetModificationTimeKey();
 int APS5_VABI WKKeyValueStorageManagerGetOriginKey();
 int APS5_VABI WKKeyValueStorageManagerGetStorageDetailsByOrigin();
 int APS5_VABI WKKeyboardEventMake();
-int APS5_VABI WKMessageListenerSendReply();
 int APS5_VABI WKMouseEventMake();
 int APS5_VABI WKNotificationManagerProviderDidClickNotification();
 int APS5_VABI WKNotificationManagerProviderDidCloseNotifications();
