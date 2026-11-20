@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,6 +49,60 @@ int main() {
 
     LibreSslEvpCipherCtx empty{};
     Require(EVP_EncryptInit_nid_postfix(&empty, nullptr, nullptr, nullptr) == 0);
+
+    LibreSslEvpCipher cbcCipher{};
+    cbcCipher.nid = 419;
+    cbcCipher.blockSize = 16;
+    cbcCipher.keyLength = 16;
+    cbcCipher.ivLength = 16;
+    cbcCipher.flags = CipherModeCbc;
+    cbcCipher.init = Init;
+    unsigned char initialIv[16]{};
+    unsigned char newKey[16]{};
+    unsigned char newIv[16]{};
+    unsigned char thirdKey[16]{};
+    std::memset(initialIv, 0x11, sizeof(initialIv));
+    std::memset(newKey, 0x22, sizeof(newKey));
+    std::memset(newIv, 0x44, sizeof(newIv));
+    std::memset(thirdKey, 0x66, sizeof(thirdKey));
+
+    LibreSslEvpCipherCtx cbcContext{};
+    Require(EVP_EncryptInit_nid_postfix(&cbcContext, &cbcCipher, key, initialIv) == 1);
+    Require(calls == 3 && lastEncrypt == 1 && lastKey == key && lastIv == initialIv);
+    Require(cbcContext.cipher == &cbcCipher && cbcContext.encrypt == 1 && cbcContext.keyLen == 16 && cbcContext.blockMask == 15);
+
+    unsigned char cipherState[8]{};
+    cbcContext.cipherData = cipherState;
+    cbcContext.appData = &cbcCipher;
+    cbcContext.flags = 0x42;
+    cbcContext.encrypt = 0;
+    cbcContext.bufLen = 7;
+    cbcContext.finalUsed = 1;
+    cbcContext.blockMask = 0;
+    std::memset(cbcContext.iv, 0x77, sizeof(cbcContext.iv));
+
+    Require(EVP_EncryptInit_nid_postfix(&cbcContext, nullptr, newKey, newIv) == 1);
+    Require(calls == 4 && lastEncrypt == 1 && lastKey == newKey && lastIv == newIv);
+    Require(cbcContext.cipher == &cbcCipher && cbcContext.engine == nullptr && cbcContext.encrypt == 1);
+    Require(cbcContext.keyLen == 16 && cbcContext.flags == 0x42);
+    Require(cbcContext.appData == &cbcCipher && cbcContext.cipherData == cipherState);
+    Require(std::memcmp(cbcContext.oiv, newIv, sizeof(newIv)) == 0);
+    Require(std::memcmp(cbcContext.iv, newIv, sizeof(newIv)) == 0);
+    Require(cbcContext.bufLen == 0 && cbcContext.finalUsed == 0 && cbcContext.blockMask == 15);
+
+    cbcContext.bufLen = 5;
+    cbcContext.finalUsed = 1;
+    cbcContext.blockMask = 0;
+    std::memset(cbcContext.iv, 0x33, sizeof(cbcContext.iv));
+
+    Require(EVP_EncryptInit_nid_postfix(&cbcContext, nullptr, thirdKey, nullptr) == 1);
+    Require(calls == 5 && lastEncrypt == 1 && lastKey == thirdKey && lastIv == nullptr);
+    Require(cbcContext.cipher == &cbcCipher && cbcContext.engine == nullptr && cbcContext.encrypt == 1);
+    Require(cbcContext.keyLen == 16 && cbcContext.flags == 0x42);
+    Require(cbcContext.appData == &cbcCipher && cbcContext.cipherData == cipherState);
+    Require(std::memcmp(cbcContext.oiv, newIv, sizeof(newIv)) == 0);
+    Require(std::memcmp(cbcContext.iv, newIv, sizeof(newIv)) == 0);
+    Require(cbcContext.bufLen == 0 && cbcContext.finalUsed == 0 && cbcContext.blockMask == 15);
 
     bool threw = false;
     try {
