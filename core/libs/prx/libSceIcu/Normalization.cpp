@@ -222,6 +222,10 @@ std::uint8_t APS5_VABI unorm2_getCombiningClass_nid_postfix(const Icu::Normalize
     return unorm2_getCombiningClass(Required(normalizer), character);
 }
 
+std::uint8_t APS5_VABI _ZNK6icu_6811Normalizer217getCombiningClassEi_nid_postfix(const Icu::Normalizer2*, std::int32_t) {
+    return 0;
+}
+
 std::int8_t APS5_VABI unorm2_isNormalized_nid_postfix(const Icu::Normalizer2* normalizer, const char16_t* text,
                                                       std::int32_t length, std::int32_t* error) {
     auto& status = Status(error);

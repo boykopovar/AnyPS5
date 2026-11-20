@@ -2003,7 +2003,6 @@ int APS5_VABI uloc_getTableStringWithFallback_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_t1kRYepQFw0_nid_no_patch();
 int APS5_VABI _ZN6icu_6817CanonicalIterator11cleanPiecesEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6813EventListener17getDynamicClassIDEv_nid_postfix();
-int APS5_VABI _ZNK6icu_6811Normalizer217getCombiningClassEi_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tCRUBE4pMPk_nid_no_patch();
 int APS5_VABI _ZN6icu_6824ForwardCharacterIteratorD2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_tF_plus_U1Hj7iZM_nid_no_patch();

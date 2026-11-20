@@ -8655,10 +8655,6 @@ int APS5_VABI _ZNK6icu_6813EventListener17getDynamicClassIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK6icu_6811Normalizer217getCombiningClassEi_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_tCRUBE4pMPk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

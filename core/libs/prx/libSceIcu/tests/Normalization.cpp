@@ -198,6 +198,8 @@ void TestQueries() {
     ExpectInt(_ZNK6icu_6811Normalizer211composePairEii_nid_postfix(nfd, -1, 0x110000), -1, "Normalizer2::composePair(out of range)");
     ExpectInt(unorm2_getCombiningClass_nid_postfix(nfc, 0x0301), 230, "unorm2_getCombiningClass(acute)");
     ExpectInt(unorm2_getCombiningClass_nid_postfix(nfc, 0x0327), 202, "unorm2_getCombiningClass(cedilla)");
+    ExpectInt(_ZNK6icu_6811Normalizer217getCombiningClassEi_nid_postfix(nfc, 0x0301), 0, "Normalizer2::getCombiningClass(acute)");
+    ExpectInt(_ZNK6icu_6811Normalizer217getCombiningClassEi_nid_postfix(nfd, 0x110000), 0, "Normalizer2::getCombiningClass(out of range)");
     ExpectInt(unorm2_getCombiningClass_nid_postfix(nfc, u'a'), 0, "unorm2_getCombiningClass(a)");
     ExpectInt(unorm2_hasBoundaryBefore_nid_postfix(nfc, u'a'), 1, "unorm2_hasBoundaryBefore(a)");
     ExpectInt(unorm2_hasBoundaryBefore_nid_postfix(nfc, 0x0301), 0, "unorm2_hasBoundaryBefore(acute)");
