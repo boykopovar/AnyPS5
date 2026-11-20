@@ -8,12 +8,14 @@
 #include <mutex>
 #include <new>
 #include <unordered_set>
+#include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 // Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
@@ -1156,14 +1158,91 @@ static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::siz
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
 }
 
+struct VectorHandleRegistration {
+    IntrusivePtr value;
+    bool hostBody;
+};
+
+static std::mutex VectorHandlesMutex;
+static std::unordered_map<const void*, VectorHandleRegistration> VectorHandles;
+static std::unordered_map<const void*, std::unordered_set<const void*>> VectorHandleOwners;
+
+static bool VectorReferenceOffset(const std::size_t offset) {
+    return offset == VectorReferenceCountOffset || offset == StringVectorReferenceCountOffset || offset == ScalarVectorReferenceCountOffset;
+}
+
+static bool TaggedVectorObject(const void* object) {
+    if (object == nullptr) return false;
+    std::uint64_t tag = 0;
+    std::memcpy(&tag, object, sizeof(tag));
+    return tag == VectorBodyMagic;
+}
+
+static void ForgetVectorHandleLocked(const void* self) {
+    const auto found = VectorHandles.find(self);
+    if (found == VectorHandles.end()) return;
+    const auto owners = VectorHandleOwners.find(found->second.value.object);
+    if (owners != VectorHandleOwners.end()) {
+        owners->second.erase(self);
+        if (owners->second.empty()) VectorHandleOwners.erase(owners);
+    }
+    VectorHandles.erase(found);
+}
+
+static void ForgetVectorHandle(const void* self) {
+    std::lock_guard lock(VectorHandlesMutex);
+    ForgetVectorHandleLocked(self);
+}
+
+static void ForgetVectorObject(const void* object) {
+    std::lock_guard lock(VectorHandlesMutex);
+    const auto owners = VectorHandleOwners.find(object);
+    if (owners == VectorHandleOwners.end()) return;
+    for (const void* handle : owners->second) VectorHandles.erase(handle);
+    VectorHandleOwners.erase(owners);
+}
+
+static bool SameVectorHandle(const IntrusivePtr& left, const IntrusivePtr& right) {
+    return left.object == right.object && left.deleter == right.deleter && left.libContext == right.libContext;
+}
+
+static void RememberVectorHandle(const IntrusivePtr* self) {
+    const bool tagged = TaggedVectorObject(self->object);
+    std::lock_guard lock(VectorHandlesMutex);
+    const auto found = VectorHandles.find(self);
+    if (found != VectorHandles.end() && SameVectorHandle(found->second.value, *self) && found->second.hostBody == tagged) return;
+    ForgetVectorHandleLocked(self);
+    if (self->object == nullptr) return;
+    auto owners = VectorHandleOwners.end();
+    try {
+        owners = VectorHandleOwners.try_emplace(self->object).first;
+        owners->second.insert(self);
+        try {
+            VectorHandles.emplace(self, VectorHandleRegistration{*self, tagged});
+        } catch (...) {
+            owners->second.erase(self);
+            throw;
+        }
+    } catch (...) {
+        if (owners != VectorHandleOwners.end() && owners->second.empty()) VectorHandleOwners.erase(owners);
+        throw;
+    }
+}
+
+static std::size_t IntrusiveReferenceOffset(const IntrusivePtr* self, const std::size_t requested) {
+    return VectorReferenceOffset(requested) && TaggedVectorObject(self->object) ? VectorReferenceCountOffset : requested;
+}
+
 static void CopyIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, const std::size_t referenceCountOffset) {
     *self = *source;
-    if (self->object) ReferenceCount(self->object, referenceCountOffset).fetch_add(1);
+    if (VectorReferenceOffset(referenceCountOffset)) RememberVectorHandle(self);
+    if (self->object) ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_add(1);
 }
 
 static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function) {
+    if (VectorReferenceOffset(referenceCountOffset)) ForgetVectorHandle(self);
     if (!self->object) return;
-    if (ReferenceCount(self->object, referenceCountOffset).fetch_sub(1) != 1) return;
+    if (ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_sub(1) != 1) return;
     if (!self->deleter) NotImplemented_nid_no_patch(function);
     self->deleter(self->object);
     self->object = nullptr;
@@ -1671,7 +1750,6 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 // Shared vector bodies. A Vector handle is an IntrusivePtr whose object is a body;
 // bodies adopted from a title through the pointer/deleter constructor keep their
 // 32-bit reference count at 0x30, so bodies created here do the same.
-static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 struct VectorBody {
     std::uint64_t magic;
     void* libContext;
@@ -1684,8 +1762,7 @@ struct VectorBody {
 };
 static_assert(sizeof(VectorBody) == 0x50 && offsetof(VectorBody, referenceCount) == 0x30);
 
-static std::mutex VectorBodiesMutex;
-static std::unordered_set<const VectorBody*> VectorBodies;
+static const VectorBody* HostVectorBody(const void* self, std::int32_t elementKind, const char* function);
 
 static void APS5_VABI DestroyVectorBody(void* object) {
     auto* body = static_cast<VectorBody*>(object);
@@ -1701,10 +1778,7 @@ static void APS5_VABI DestroyVectorBody(void* object) {
         }
     }
     std::free(body->elements);
-    {
-        std::lock_guard lock(VectorBodiesMutex);
-        VectorBodies.erase(body);
-    }
+    ForgetVectorObject(body);
     std::free(body);
 }
 
@@ -1727,19 +1801,27 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         body->referenceCount = 1;
         body->elementKind = elementKind;
         body->libContext = self->libContext;
-        try {
-            std::lock_guard lock(VectorBodiesMutex);
-            VectorBodies.insert(body);
-        } catch (const std::bad_alloc&) {
-            return nullptr;
-        }
-        self->object = allocation.release();
+        self->object = body;
         self->deleter = &DestroyVectorBody;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            self->object = nullptr;
+            self->deleter = nullptr;
+            return nullptr;
+        } catch (...) {
+            self->object = nullptr;
+            self->deleter = nullptr;
+            throw;
+        }
+        allocation.release();
         return body;
     }
-    if (body->magic != VectorBodyMagic || body->elementKind != elementKind) {
-        // appending to a title-provided body needs its element layout, which is unknown
-        NotImplemented_nid_no_patch(function);
+    body = const_cast<VectorBody*>(HostVectorBody(self, elementKind, function));
+    if (body == nullptr) NotImplemented_nid_no_patch(function);
+    try {
+        RememberVectorHandle(self);
+    } catch (const std::bad_alloc&) {
         return nullptr;
     }
     return body;
@@ -1829,26 +1911,30 @@ static CommonString* StringVectorElements(const IntrusivePtr* self, const bool e
 static const VectorBody* HostVectorBody(const void* self, const std::int32_t elementKind, const char* function) {
     if (self == nullptr) return nullptr;
     const VectorBody* body = nullptr;
-    std::uint64_t tag = 0;
-    std::memcpy(&tag, self, sizeof(tag));
-    if (tag == VectorBodyMagic) body = static_cast<const VectorBody*>(self);
-    {
-        std::lock_guard lock(VectorBodiesMutex);
-        const auto* direct = static_cast<const VectorBody*>(self);
-        if (VectorBodies.contains(direct)) {
-            body = direct;
-        } else {
-            const VectorBody* indirect = nullptr;
-            std::memcpy(&indirect, self, sizeof(indirect));
-            if (VectorBodies.contains(indirect)) body = indirect;
+    if (TaggedVectorObject(self)) {
+        body = static_cast<const VectorBody*>(self);
+    } else {
+        IntrusivePtr value{};
+        std::memcpy(&value, self, sizeof(value));
+        bool known = false;
+        bool host = false;
+        {
+            std::lock_guard lock(VectorHandlesMutex);
+            const auto found = VectorHandles.find(self);
+            if (found != VectorHandles.end() && SameVectorHandle(found->second.value, value)) {
+                known = true;
+                host = found->second.hostBody;
+            } else {
+                ForgetVectorHandleLocked(self);
+            }
         }
-    }
-    if (body == nullptr) {
-        std::uintptr_t pointers[3]{};
-        std::memcpy(pointers, self, sizeof(pointers));
-        if (pointers[0] != 0 && pointers[0] <= pointers[2] && pointers[2] <= pointers[1]) return nullptr;
-        body = ResolveVectorBody(self);
-        if (body != nullptr && body->magic != VectorBodyMagic) NotImplemented_nid_no_patch(function);
+        if (known) {
+            if (!host) NotImplemented_nid_no_patch(function);
+            body = static_cast<const VectorBody*>(value.object);
+        } else if (value.object != nullptr && value.deleter == nullptr) {
+            if (!TaggedVectorObject(value.object)) NotImplemented_nid_no_patch(function);
+            body = static_cast<const VectorBody*>(value.object);
+        }
     }
     if (body != nullptr && body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
     return body;
@@ -7298,7 +7384,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6String
     self->object = body;
     self->deleter = deleter;
     self->libContext = libContext;
-    if (body) ReferenceCount(body, StringVectorReferenceCountOffset).fetch_add(1);
+    RememberVectorHandle(self);
+    if (body) ReferenceCount(body, IntrusiveReferenceOffset(self, StringVectorReferenceCountOffset)).fetch_add(1);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
