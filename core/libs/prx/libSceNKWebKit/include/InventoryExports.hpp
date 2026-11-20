@@ -5185,7 +5185,6 @@ int APS5_VABI _ZNK7WebCore18DOMWindowExtension5frameEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement11scrollDelayEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement12scrollAmountEv();
 int APS5_VABI _ZNK7WebCore18HTMLMarqueeElement4loopEv();
-int APS5_VABI _ZNK7WebCore18MessagePortChannel31hasAnyMessagesPendingOrInFlightEv();
 int APS5_VABI _ZNK7WebCore18PlatformPasteboard10readStringEmRKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore18PlatformPasteboard29typesSafeForDOMToReadAndWriteERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE();

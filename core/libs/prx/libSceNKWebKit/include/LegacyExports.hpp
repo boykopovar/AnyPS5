@@ -1923,7 +1923,6 @@ int APS5_VABI _ZN7WebCore9FrameView8addChildERNS_6WidgetE();
 int APS5_VABI _ZN7Nicosia16SceneIntegrationD1Ev();
 int APS5_VABI _ZN7WebCore17CSSPrimitiveValue14setStringValueENS_11CSSUnitTypeERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore12RenderWidget9setWidgetEON3WTF6RefPtrINS_6WidgetENS1_13DumbPtrTraitsIS3_EEEE();
-int APS5_VABI _ZN7WebCore18MessagePortChannel14processForPortERKNS_21MessagePortIdentifierE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_tbwejyTSXUU_nid_no_patch();
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperation5cloneEv();
 int APS5_VABI _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE();
