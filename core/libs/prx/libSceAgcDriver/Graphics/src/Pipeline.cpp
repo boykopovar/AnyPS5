@@ -165,6 +165,81 @@ bool FragmentInterlock(std::span<const CompiledShader> shaders) {
     });
 }
 
+namespace {
+
+struct ProvokingDecorations {
+    std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
+    std::vector<std::uint64_t> perVertexValues;
+    std::vector<std::uint64_t> perPrimitiveValues;
+};
+
+bool ReadProvokingDecorations(const ShaderRecompiler::RecompileResult& program, ProvokingDecorations& decorations) {
+    const auto words = program.spirv.Words();
+    if (words.size() < 5) return false;
+    constexpr std::uint32_t NoMember = 0xffffffffu;
+    const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if (count == 0 || count > words.size() - cursor) return false;
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
+        if (decoration != 0 && count > decoration) {
+            const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
+            if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) decorations.perVertexValues.push_back(target);
+            if (words[cursor + decoration] == spv::DecorationPerPrimitiveEXT) decorations.perPrimitiveValues.push_back(target);
+            if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) decorations.builtIns[target] = words[cursor + decoration + 1];
+        }
+        cursor += count;
+    }
+    return true;
+}
+
+bool ReadsProvokingVertex(const ShaderRecompiler::RecompileResult& program) {
+    if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
+        return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
+    })) return true;
+    ProvokingDecorations decorations;
+    if (!ReadProvokingDecorations(program, decorations)) return true;
+    const auto& builtIns = decorations.builtIns;
+    return std::any_of(decorations.perVertexValues.begin(), decorations.perVertexValues.end(), [&](std::uint64_t target) {
+        const auto builtIn = builtIns.find(target);
+        if (builtIn == builtIns.end()) return true;
+        switch (builtIn->second) {
+        case spv::BuiltInFragCoord:
+        case spv::BuiltInPointCoord:
+        case spv::BuiltInFrontFacing:
+        case spv::BuiltInSampleId:
+        case spv::BuiltInSamplePosition:
+        case spv::BuiltInSampleMask:
+        case spv::BuiltInHelperInvocation:
+        case spv::BuiltInSubgroupSize:
+        case spv::BuiltInSubgroupLocalInvocationId:
+            return false;
+        default:
+            return true;
+        }
+    });
+}
+
+bool WritesProvokingVertexBuiltIn(const ShaderRecompiler::RecompileResult& program) {
+    ProvokingDecorations decorations;
+    if (!ReadProvokingDecorations(program, decorations)) return true;
+    return std::any_of(decorations.builtIns.begin(), decorations.builtIns.end(), [&](const auto& builtIn) {
+        return (builtIn.second == spv::BuiltInLayer || builtIn.second == spv::BuiltInViewportIndex) &&
+               std::find(decorations.perPrimitiveValues.begin(), decorations.perPrimitiveValues.end(), builtIn.first) == decorations.perPrimitiveValues.end();
+    });
+}
+
+}
+
+bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed) {
+    if (provokingVertexLast || !tessellation || state.provokingVertexMode != VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT) return false;
+    if (state.rectList || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return false;
+    if (shaders.size() != 2u || shaders[0].stage != ShaderRecompiler::ShaderStage::Vertex || shaders[1].stage != ShaderRecompiler::ShaderStage::Fragment || shaders[0].program == nullptr || shaders[1].program == nullptr) return false;
+    if (!ReadsProvokingVertex(*shaders[1].program) || WritesProvokingVertexBuiltIn(*shaders[0].program)) return false;
+    return (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !primitiveListRestart)) || (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!state.primitiveRestart || !indexed));
+}
+
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
     Require(state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT || state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT, "invalid provoking vertex mode");
     if (state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT) {
@@ -185,68 +260,9 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
         }
         return;
     }
-    struct Decorations {
-        std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
-        std::vector<std::uint64_t> perVertexValues;
-        std::vector<std::uint64_t> perPrimitiveValues;
-    };
-    const auto readDecorations = [](const ShaderRecompiler::RecompileResult& program, Decorations& decorations) {
-        const auto words = program.spirv.Words();
-        if (words.size() < 5) return false;
-        constexpr std::uint32_t NoMember = 0xffffffffu;
-        const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
-        for (std::size_t cursor = 5; cursor < words.size();) {
-            const auto count = words[cursor] >> 16u;
-            if (count == 0 || count > words.size() - cursor) return false;
-            const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-            const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
-            if (decoration != 0 && count > decoration) {
-                const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
-                if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) decorations.perVertexValues.push_back(target);
-                if (words[cursor + decoration] == spv::DecorationPerPrimitiveEXT) decorations.perPrimitiveValues.push_back(target);
-                if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) decorations.builtIns[target] = words[cursor + decoration + 1];
-            }
-            cursor += count;
-        }
-        return true;
-    };
-    const auto readsProvokingVertex = [&](const ShaderRecompiler::RecompileResult& program) {
-        if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
-            return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
-        })) return true;
-        Decorations decorations;
-        if (!readDecorations(program, decorations)) return true;
-        const auto& builtIns = decorations.builtIns;
-        return std::any_of(decorations.perVertexValues.begin(), decorations.perVertexValues.end(), [&](std::uint64_t target) {
-            const auto builtIn = builtIns.find(target);
-            if (builtIn == builtIns.end()) return true;
-            switch (builtIn->second) {
-            case spv::BuiltInFragCoord:
-            case spv::BuiltInPointCoord:
-            case spv::BuiltInFrontFacing:
-            case spv::BuiltInSampleId:
-            case spv::BuiltInSamplePosition:
-            case spv::BuiltInSampleMask:
-            case spv::BuiltInHelperInvocation:
-            case spv::BuiltInSubgroupSize:
-            case spv::BuiltInSubgroupLocalInvocationId:
-                return false;
-            default:
-                return true;
-            }
-        });
-    };
-    const auto writesProvokingVertexBuiltIn = [&](const ShaderRecompiler::RecompileResult& program) {
-        Decorations decorations;
-        if (!readDecorations(program, decorations)) return true;
-        return std::any_of(decorations.builtIns.begin(), decorations.builtIns.end(), [&](const auto& builtIn) {
-            return (builtIn.second == spv::BuiltInLayer || builtIn.second == spv::BuiltInViewportIndex) &&
-                   std::find(decorations.perPrimitiveValues.begin(), decorations.perPrimitiveValues.end(), builtIn.first) == decorations.perPrimitiveValues.end();
-        });
-    };
     const bool observed = std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
-        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) return shader.program == nullptr || readsProvokingVertex(*shader.program);
-        return shader.program != nullptr && writesProvokingVertexBuiltIn(*shader.program);
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) return shader.program == nullptr || ReadsProvokingVertex(*shader.program);
+        return shader.program != nullptr && WritesProvokingVertexBuiltIn(*shader.program);
     });
     if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
@@ -381,8 +397,8 @@ ColorWriteMasks channelWriteMasks(const State& state, std::span<const VkPipeline
     return masks;
 }
 
-VkPipelineColorBlendAttachmentState keyedBlend(const Context& context, VkPipelineColorBlendAttachmentState blend) {
-    if (context.dynamicColorWriteMask) blend.colorWriteMask = 0;
+VkPipelineColorBlendAttachmentState keyedBlend(bool dynamicColorWriteMask, VkPipelineColorBlendAttachmentState blend) {
+    if (dynamicColorWriteMask) blend.colorWriteMask = 0;
     return blend;
 }
 
@@ -468,7 +484,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             }
         }
     }
-    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context, blend));
+    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context.dynamicColorWriteMask, blend));
     appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
@@ -516,7 +532,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
-Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
+Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicColorWriteMask(context.dynamicColorWriteMask && !FragmentInterlock(shaders)), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
@@ -696,7 +712,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
-        if (context.dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
+        if (dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
         dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
@@ -771,8 +787,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const auto firstMasks = channelWriteMasks(state, state.blends, false);
         const auto secondMasks = channelWriteMasks(state, state.blends, true);
         for (std::size_t index = 0; index < firstChannels.size(); ++index) {
-            firstChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : firstMasks[index];
-            secondChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : secondMasks[index];
+            firstChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : firstMasks[index];
+            secondChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : secondMasks[index];
         }
         if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
             blend.logicOpEnable = VK_TRUE;
@@ -1062,7 +1078,7 @@ void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state
 }
 
 void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
-    if (!context.dynamicColorWriteMask || state.blends.empty()) return;
+    if (!dynamicColorWriteMask || state.blends.empty()) return;
     const auto masks = channelWriteMasks(state, masked != nullptr ? std::span(masked->blends) : std::span(state.blends), secondChannel);
     recording.SetColorWriteMasks(context, std::span(masks).first(state.blends.size()));
 }
@@ -1177,7 +1193,8 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
-    for (const auto& blend : state.blends) append(key, keyedBlend(context, blend));
+    const bool dynamicColorWriteMask = context.dynamicColorWriteMask && !FragmentInterlock(shaders);
+    for (const auto& blend : state.blends) append(key, keyedBlend(dynamicColorWriteMask, blend));
     key.Put(state.colorRop);
     key.PutBytes(state.blendConstants.data(), sizeof(state.blendConstants));
     append(key, state.samples);
