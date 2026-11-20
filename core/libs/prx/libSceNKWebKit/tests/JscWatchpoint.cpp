@@ -147,7 +147,8 @@ void TestConstructor() {
     }
     {
         std::unique_ptr<WatchpointSet> set(Constructed(IsWatched));
-        WatchpointNode node{nullptr, nullptr};
+        WatchpointNode node;
+        std::memset(&node, 0, sizeof(node));
         SetSentinelNext(*set, &node);
         SetSentinelPrev(*set, &node);
         SetNodePrev(&node, SentinelAddress(*set));
@@ -162,8 +163,10 @@ void TestConstructor() {
 void TestDestructorRemovesListedWatchpoints() {
     {
         std::unique_ptr<WatchpointSet> set(Constructed(IsWatched));
-        WatchpointNode first{nullptr, nullptr};
-        WatchpointNode second{nullptr, nullptr};
+        WatchpointNode first;
+        std::memset(&first, 0, sizeof(first));
+        WatchpointNode second;
+        std::memset(&second, 0, sizeof(second));
         SetSentinelNext(*set, &first);
         SetSentinelPrev(*set, &second);
         SetNodePrev(&first, SentinelAddress(*set));
@@ -179,7 +182,8 @@ void TestDestructorRemovesListedWatchpoints() {
     }
     {
         std::unique_ptr<WatchpointSet> set(Constructed(ClearWatchpoint));
-        WatchpointNode only{nullptr, nullptr};
+        WatchpointNode only;
+        std::memset(&only, 0, sizeof(only));
         SetSentinelNext(*set, &only);
         SetSentinelPrev(*set, &only);
         SetNodePrev(&only, SentinelAddress(*set));
@@ -218,7 +222,8 @@ void TestFireAllSlowDeferred() {
         std::unique_ptr<DeferredWatchpointFire> deferred(new DeferredWatchpointFire);
         std::memset(deferred.get(), 0x77, sizeof(DeferredWatchpointFire));
         _ZN3JSC13WatchpointSetC1ENS_15WatchpointStateE(&deferred->watchpointsToFire, ClearWatchpoint);
-        WatchpointNode only{nullptr, nullptr};
+        WatchpointNode only;
+        std::memset(&only, 0, sizeof(only));
         SetSentinelNext(*fired, &only);
         SetSentinelPrev(*fired, &only);
         SetNodePrev(&only, SentinelAddress(*fired));
@@ -240,13 +245,15 @@ void TestFireAllSlowDeferred() {
         std::unique_ptr<DeferredWatchpointFire> deferred(new DeferredWatchpointFire);
         std::memset(deferred.get(), 0x77, sizeof(DeferredWatchpointFire));
         _ZN3JSC13WatchpointSetC1ENS_15WatchpointStateE(&deferred->watchpointsToFire, ClearWatchpoint);
-        WatchpointNode kept{nullptr, nullptr};
+        WatchpointNode kept;
+        std::memset(&kept, 0, sizeof(kept));
         SetSentinelNext(deferred->watchpointsToFire, &kept);
         SetSentinelPrev(deferred->watchpointsToFire, &kept);
         SetNodePrev(&kept, SentinelAddress(deferred->watchpointsToFire));
         SetNodeNext(&kept, SentinelAddress(deferred->watchpointsToFire));
         deferred->watchpointsToFire.setIsNotEmpty = 1;
-        WatchpointNode only{nullptr, nullptr};
+        WatchpointNode only;
+        std::memset(&only, 0, sizeof(only));
         SetSentinelNext(*fired, &only);
         SetSentinelPrev(*fired, &only);
         SetNodePrev(&only, SentinelAddress(*fired));
@@ -270,7 +277,8 @@ void TestFireAllSlowDeferred() {
         std::unique_ptr<DeferredWatchpointFire> deferred(new DeferredWatchpointFire);
         std::memset(deferred.get(), 0x77, sizeof(DeferredWatchpointFire));
         _ZN3JSC13WatchpointSetC1ENS_15WatchpointStateE(&deferred->watchpointsToFire, ClearWatchpoint);
-        WatchpointNode only{nullptr, nullptr};
+        WatchpointNode only;
+        std::memset(&only, 0, sizeof(only));
         SetSentinelNext(*fired, &only);
         SetSentinelPrev(*fired, &only);
         SetNodePrev(&only, SentinelAddress(*fired));
