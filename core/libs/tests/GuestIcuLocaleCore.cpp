@@ -89,7 +89,7 @@ void CheckKeywordFailure(const std::string& locale, std::int32_t expectedStatus)
 }
 
 void CheckKeywordFailures() {
-    for (const char* locale : {"en@a=", "en@a= ;b=c", "en@=b", "en@ =b", "en@a=b;;c=d", "en@a=b;c", "en@a=b;c;d=e"})
+    for (const char* locale : {"en@a=", "en@a= ;b=c", "en@a=   ", "en@a=b;c=  ", "en@a=b; c = ;d=e", "en@=b", "en@ =b", "en@a=b;;c=d", "en@a=b;c", "en@a=b;c;d=e"})
         CheckKeywordFailure(locale, 3);
     CheckKeywordFailure("en@abcdefghijklmnopqrstuvwxy=1", 5);
     CheckKeywordFailure("en@a                        =1", 5);
