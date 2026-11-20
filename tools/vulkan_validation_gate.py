@@ -272,7 +272,14 @@ def artifact_hashes(build, tests, runtime):
             paths.update(p.resolve() for p in path.rglob("*") if p.is_file())
         else:
             paths.add(path)
-    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
+    hashes = {}
+    for path in sorted(paths):
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        hashes[str(path)] = digest.hexdigest()
+    return hashes
 
 
 def check_timeouts(tests, limit):
