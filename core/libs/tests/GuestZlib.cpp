@@ -224,7 +224,7 @@ int main() {
         std::int32_t retryStatus{};
         std::uint64_t retried{};
         std::thread retry([&] {
-            std::uint32_t retryPoll = 0;
+            std::uint32_t retryPoll = 1000000;
             retryStatus = sceZlibWaitForDone(&retried, &retryPoll);
         });
         retry.join();
