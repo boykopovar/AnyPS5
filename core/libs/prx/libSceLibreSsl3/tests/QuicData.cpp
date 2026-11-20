@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <array>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -194,7 +196,24 @@ void IndependentConnections() {
 
 }
 
+void* APS5_VABI Allocate_nid_no_patch(std::size_t size) { return std::malloc(size); }
+void APS5_VABI Free_nid_no_patch(void* pointer) { std::free(pointer); }
+void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI UnexpectedAlign_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
+void* APS5_VABI UnexpectedRealign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
+int APS5_VABI UnexpectedPosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
+
 int main() {
+    std::array<void*, 10> heapApi{};
+    heapApi[0] = reinterpret_cast<void*>(Allocate_nid_no_patch);
+    heapApi[1] = reinterpret_cast<void*>(Free_nid_no_patch);
+    heapApi[2] = reinterpret_cast<void*>(Callocate_nid_no_patch);
+    heapApi[3] = reinterpret_cast<void*>(Reallocate_nid_no_patch);
+    heapApi[4] = reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch);
+    heapApi[5] = reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch);
+    heapApi[6] = reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch);
+    ApplicationHeapRegister_nid_no_patch(heapApi.data());
     TransportParams();
     Provide();
     Rejections();
