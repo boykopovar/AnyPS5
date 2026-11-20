@@ -29,7 +29,7 @@ struct BuilderState {
     XmlMemAllocator* allocator = nullptr;
     void* userData = nullptr;
     std::array<void*, 15> blocks{};
-    ParseOptions options;
+    ParseOptions options{false, true, false};
     ParseOptions documentOptions;
     bool initializeFailed = false;
     bool failed = false;
