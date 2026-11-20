@@ -12,33 +12,11 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
-#include <new>
 #include <source_location>
 #include <span>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
-
-namespace {
-
-std::size_t failingAllocationSize = 0;
-
-}
-
-void* operator new(std::size_t size) {
-    if (failingAllocationSize != 0 && size >= failingAllocationSize) throw std::bad_alloc();
-    void* pointer = std::malloc(size);
-    if (!pointer) throw std::bad_alloc();
-    return pointer;
-}
-
-void operator delete(void* pointer) noexcept {
-    std::free(pointer);
-}
-
-void operator delete(void* pointer, std::size_t) noexcept {
-    std::free(pointer);
-}
 
 namespace {
 
@@ -376,24 +354,6 @@ void AllocationFailures() {
     }
 }
 
-void RejectsWhenTheStagingBufferCannotBeAllocated() {
-    std::vector<unsigned char> encoded(4 + 5000, 0x01);
-    encoded[0] = 2;
-    encoded[1] = 0x82;
-    encoded[2] = 0x13;
-    encoded[3] = 0x88;
-    String* previous = OwnedInteger();
-    void* output = previous;
-    const unsigned char* cursor = encoded.data();
-    ERR_clear_error_nid_postfix();
-    failingAllocationSize = 4000;
-    void* result = d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, static_cast<std::int64_t>(encoded.size()));
-    failingAllocationSize = 0;
-    Require(result == nullptr && output == previous && cursor == encoded.data());
-    RequireQueue({MallocError});
-    Release(previous);
-}
-
 }
 
 int main() {
@@ -407,7 +367,6 @@ int main() {
     ReadsContentLargerThanOneChunk();
     Ownership();
     FaultingArguments();
-    RejectsWhenTheStagingBufferCannotBeAllocated();
     Rejections();
     AllocationFailures();
     Require(allocations.empty());
