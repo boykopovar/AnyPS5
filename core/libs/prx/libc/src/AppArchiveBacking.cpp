@@ -142,7 +142,9 @@ public:
 private:
     [[noreturn]] static void Fail(int error) {
 #ifdef _WIN32
-        error = WindowsOpenError_nid_no_patch(static_cast<DWORD>(error));
+        if (error == ERROR_HANDLE_DISK_FULL) error = ENOSPC;
+        else if (error == ERROR_FILE_TOO_LARGE) error = EFBIG;
+        else error = WindowsOpenError_nid_no_patch(static_cast<DWORD>(error));
 #endif
         throw std::system_error(error, std::generic_category(), "materialize app0.zar backing");
     }

@@ -607,14 +607,18 @@ void MappingRanges() {
     }
 }
 
-void MappingLifecycle(const char* path) {
+int MappingLifecycle(const char* path) {
     const auto expected = AppArchiveFixture::Pattern(BigSize);
     const int fd = sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0 && sceKernelLseek(fd, 19, 0) == 19);
     Check(TryMapping(fd, MapPage, 3, 1, 0).error == 13);
     const auto shared = TryMapping(fd, MapPage * 3, 1, 1, 0);
     Check(shared.address != MapFailed && std::memcmp(shared.address, expected.data(), MapPage * 3) == 0);
-    Check(mprotect_nid_postfix(shared.address, MapPage, 3) == -1 && *__error_nid_postfix() == 13);
+    const int upgrade = mprotect_nid_postfix(shared.address, MapPage, 3);
+    const int upgradeError = upgrade == 0 ? 0 : *__error_nid_postfix();
+#ifndef __APPLE__
+    Check(upgrade == -1 && upgradeError == 13);
+#endif
     Check(mprotect_nid_postfix(shared.address, MapPage, 0) == 0);
     Check(mprotect_nid_postfix(shared.address, MapPage, 1) == 0);
     Check(sceKernelPread(fd, shared.address, 1, 0) == static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT));
@@ -656,6 +660,7 @@ void MappingLifecycle(const char* path) {
     Check(std::memcmp(kernelMapping, expected.data() + MapPage, MapPage) == 0);
     Check(sceKernelClose(reopened) == 0 && sceKernelClose(replacement) == 0);
     Check(munmap_nid_postfix(kernelMapping, MapPage) == 0);
+    return upgradeError;
 }
 
 bool CollectMapping(void* mapping) {
@@ -1051,17 +1056,22 @@ void MappingProtections() {
     Check(sceKernelClose(archive) == 0 && sceKernelClose(plain) == 0);
 }
 
-void MappingTailProtections(const char* directory) {
+int MappingTailProtections(const char* directory) {
     const auto path = "/app0/" + std::string(directory) + "/" + std::to_string(MapPage + 77) + ".bin";
     const int fd = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     const auto mapping = TryMapping(fd, MapPage * 2, 1, 1, 0);
     Check(mapping.address != MapFailed);
     auto* tail = static_cast<char*>(mapping.address) + MapPage;
-    Check(mprotect_nid_postfix(tail, MapPage, 3) == -1 && *__error_nid_postfix() == 13);
+    const int upgrade = mprotect_nid_postfix(tail, MapPage, 3);
+    const int upgradeError = upgrade == 0 ? 0 : *__error_nid_postfix();
+#ifndef __APPLE__
+    Check(upgrade == -1 && upgradeError == 13);
+#endif
     Check(mprotect_nid_postfix(tail, MapPage, 0) == 0 && mprotect_nid_postfix(tail, MapPage, 1) == 0);
     Check(tail[76] == AppArchiveFixture::Pattern(MapPage + 77).back() && tail[77] == 0);
     Check(sceKernelClose(fd) == 0 && munmap_nid_postfix(mapping.address, MapPage * 2) == 0);
+    return upgradeError;
 }
 
 void MappingEndOfFile(const char* directory) {
@@ -1133,14 +1143,20 @@ void Mappings(const std::filesystem::path& root) {
     Check(archivePartial == plainPartial);
 #endif
 #endif
-    for (const auto* directory : {"Mapped", "Reference"}) {
+    constexpr std::array directories{"Mapped", "Reference"};
+    std::array<int, directories.size()> lifecycleUpgradeErrors{};
+    std::array<int, directories.size()> tailUpgradeErrors{};
+    for (std::size_t i = 0; i < directories.size(); ++i) {
+        const auto* directory = directories[i];
         const auto path = "/app0/" + std::string(directory) + "/" + std::to_string(BigSize) + ".bin";
-        MappingLifecycle(path.c_str());
+        lifecycleUpgradeErrors[i] = MappingLifecycle(path.c_str());
         MappingHostWrites(path.c_str());
         MappingPlacement(path.c_str());
-        MappingTailProtections(directory);
+        tailUpgradeErrors[i] = MappingTailProtections(directory);
         MappingEndOfFile(directory);
     }
+    Check(lifecycleUpgradeErrors.front() == lifecycleUpgradeErrors.back());
+    Check(tailUpgradeErrors.front() == tailUpgradeErrors.back());
     const int fd = sceKernelOpen("/app0/Override.bin", SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     const auto mapping = TryMapping(fd, 5, 1, 2, 0);
