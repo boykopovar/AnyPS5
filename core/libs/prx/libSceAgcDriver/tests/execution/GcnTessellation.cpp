@@ -236,6 +236,7 @@ void RequireProgramDecode() {
     constexpr std::array<std::uint32_t, 4> hullUsers{0x22220001u, 0x22220002u, 0x22220003u, 0x22220004u};
     constexpr std::array<std::uint32_t, 3> domainUsers{0x33330001u, 0x33330002u, 0x33330003u};
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     Bind(queue, GcnLocal.data(), 0x148u, 0x14bu, localUsers);
