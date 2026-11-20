@@ -383,6 +383,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             }
             case InputControl::ToggleMouse: break;
             case InputControl::ToggleFullscreen: break;
+            case InputControl::ToggleBorderless: break;
             case InputControl::TogglePerformanceOverlay: break;
             case InputControl::Screenshot: break;
             case InputControl::ShowPadStatus: break;
