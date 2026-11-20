@@ -56,6 +56,7 @@ int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t contentLength);
 int APS5_VABI sceHttp2SetResolveTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cbFunc, void* userArg);
+int APS5_VABI sceHttp2SetStripGZIPHeadersEnabled(int id, int enable);
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t sslFlags);
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t sslFlags);
@@ -94,5 +95,6 @@ int APS5_VABI sceHttp2SetCookieMaxSize(int cookieBoxId, std::uint32_t size);
 int APS5_VABI sceHttp2SetCookieRecvCallback(void);
 int APS5_VABI sceHttp2SetCookieSendCallback(void);
 int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cbFunc, void* userArg);
+int APS5_VABI _Z5dummyv_nid_postfix();
 
 }

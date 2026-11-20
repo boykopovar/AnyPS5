@@ -1,6 +1,12 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSaveData/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstdint>
+
+namespace {
+constexpr int RequiredBlocksNull = static_cast<int>(0x809F8004u);
+}
 
 extern "C" {
 
@@ -73,5 +79,38 @@ int APS5_VABI libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("yBM2vzabhEA", libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg(std::uint64_t* requiredBlocks) {
+    if (requiredBlocks == nullptr) return RequiredBlocksNull;
+    constexpr std::uint64_t stored = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requiredBlocks, &stored, sizeof(stored));
+    errno = savedErrno;
+    return copied ? 0 : RequiredBlocksNull;
+}
+
+int APS5_VABI libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KOSXhQAd7Co", libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VSIY1inHm0U", libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dBdQn-whUig", libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ohfDGZ8EKis", libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch);
 
 }

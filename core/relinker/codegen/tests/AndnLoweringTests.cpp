@@ -1,6 +1,7 @@
 #include "LoweringExecution.hpp"
 #include <codegen/x86/AndnLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <array>
 #include <cstring>
@@ -119,10 +120,59 @@ void execution() {
             run.Run(state);
             check(state, *Codegen::DecodeAndn(site.data(), site.size()), value);
         }
+        for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+            for (const std::int32_t displacement : {-176, -160, -152, -151, -145, -144, -140, -136}) {
+                Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>((wide ? 0x80 : 0) | ((~1 & 15) << 3)), 0xF2,
+                    static_cast<std::uint8_t>(0x84 | (dst << 3)), 0x24};
+                for (unsigned shift = 0; shift < 32; shift += 8)
+                    site.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+                constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                const auto operands = *Codegen::DecodeAndn(site.data(), site.size());
+                const Execution run(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    for (int part = 0; part < 2; ++part) {
+                        Bytes store{0xC7, 0x84, 0x24};
+                        const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                        const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                        for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(slot >> shift));
+                        for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(word >> shift));
+                        body.Raw(store);
+                    }
+                    Codegen::EmitAndn(body, operands);
+                });
+                auto state = LoweringExecution::InitialState();
+                run.Run(state);
+                check(state, operands, value);
+            }
+        }
+        for (const auto pair : {std::pair<std::uint8_t, std::uint8_t>{1, 6}, {4, 9}, {9, 4}}) {
+            const auto site = instruction(wide, 4, pair.first, pair.second);
+            const auto operands = *Codegen::DecodeAndn(site.data(), site.size());
+            Codegen::StubBodyBuilder probe;
+            Codegen::EmitAndn(probe, operands);
+            const auto built = probe.Finish();
+            const Bytes raw(built.Bytes.begin(), built.Bytes.begin() + static_cast<std::ptrdiff_t>(built.ReturnBranchOffset));
+            Codegen::X64InstructionDecoder decoder;
+            for (std::size_t cut = 0; cut < raw.size(); cut += decoder.Decode(raw.data() + cut, raw.size() - cut)) {
+                const Execution run(site, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    body.Raw(std::span<const std::uint8_t>(raw.data(), cut));
+                    for (std::int32_t disp = -256; disp < -128; disp += 4) {
+                        Bytes clobber{0xC7, 0x84, 0x24};
+                        for (unsigned shift = 0; shift < 32; shift += 8)
+                            clobber.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(disp) >> shift));
+                        clobber.insert(clobber.end(), {0xEF, 0xBE, 0xAD, 0xDE});
+                        body.Raw(clobber);
+                    }
+                    body.Raw(std::span<const std::uint8_t>(raw.data() + cut, raw.size() - cut));
+                });
+                auto state = LoweringExecution::InitialState();
+                run.Run(state);
+                check(state, operands, state.Input[pair.second]);
+            }
+        }
     }
 }
 #else
-void execution() { std::cout << "ANDN execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "ANDN execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 #endif
 
 }

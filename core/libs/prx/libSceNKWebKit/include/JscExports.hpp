@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/JscApi.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -136,5 +137,7 @@ void APS5_VABI _ZN13OpaqueJSClassD1Ev(NKWebKit::OpaqueJSClass* self);
 void APS5_VABI _ZN13OpaqueJSClassD2Ev(NKWebKit::OpaqueJSClass* self);
 void APS5_VABI _ZN14OpaqueJSStringD1Ev(GuestJSString* self);
 void APS5_VABI _ZN14OpaqueJSStringD2Ev(GuestJSString* self);
+NKWebKit::OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
+NKWebKit::OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateEON3WTF6StringE(NKWebKit::WtfAbi::String* string);
 
 }

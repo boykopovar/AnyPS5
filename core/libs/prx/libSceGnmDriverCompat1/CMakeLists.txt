@@ -1,0 +1,16 @@
+add_library(libSceGnmDriverCompat1 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceGnmDriverCompat1 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceGnmDriverCompat1)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gnm_driver_compat1_context_state_internal_size_tests tests/ContextStateInternalSize.cpp)
+    target_include_directories(guest_gnm_driver_compat1_context_state_internal_size_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    add_dependencies(guest_gnm_driver_compat1_context_state_internal_size_tests libSceGnmDriverCompat1)
+    configure_windows_unwind(guest_gnm_driver_compat1_context_state_internal_size_tests)
+    add_test(NAME guest_gnm_driver_compat1_context_state_internal_size COMMAND guest_gnm_driver_compat1_context_state_internal_size_tests $<TARGET_FILE:libSceGnmDriverCompat1>)
+    set_tests_properties(guest_gnm_driver_compat1_context_state_internal_size PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_gnm_driver_compat1_context_state_internal_size PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverCompat1>")
+    endif()
+endif()

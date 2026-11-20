@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -84,7 +86,7 @@ void runJobs(LibraryStore& store) {
 void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
     if (store.stopping) return;
     if (!store.worker.joinable()) {
-        store.worker = std::thread(runJobs, std::ref(store));
+        store.worker = Libc::StartHostThread(runJobs, std::ref(store));
         runningWorkers.fetch_add(1, std::memory_order_acq_rel);
     }
     auto& pending = store.pending[device];
@@ -171,8 +173,8 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     const Key none;
     VkPipelineRenderingCreateInfoKHR shaderRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
     shaderRendering.viewMask = rendering.viewMask;
-    shaderRendering.depthAttachmentFormat = rendering.depthAttachmentFormat;
-    shaderRendering.stencilAttachmentFormat = rendering.stencilAttachmentFormat;
+    shaderRendering.depthAttachmentFormat = keys.narrow ? VK_FORMAT_UNDEFINED : rendering.depthAttachmentFormat;
+    shaderRendering.stencilAttachmentFormat = keys.narrow ? VK_FORMAT_UNDEFINED : rendering.stencilAttachmentFormat;
     const std::array<std::uint32_t, 3> attachments{shaderRendering.viewMask, static_cast<std::uint32_t>(shaderRendering.depthAttachmentFormat), static_cast<std::uint32_t>(shaderRendering.stencilAttachmentFormat)};
     const auto attachmentBytes = std::as_bytes(std::span(attachments));
     const Key attachmentKey(attachmentBytes.begin(), attachmentBytes.end());
@@ -182,6 +184,8 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     VkPipelineDepthStencilStateCreateInfo dynamicDepth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     static const bool backgroundLinking = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
     const bool optimize = backgroundLinking && context.pipelineLinkTimeOptimization;
+    std::vector<VkDynamicState> nonRasterDynamicStates;
+    std::optional<VkPipelineDynamicStateCreateInfo> nonRasterDynamic;
     std::vector<VkPipeline> libraries;
     for (std::size_t part = 0; part < flags.size(); ++part) {
         if (part == 0 && mesh) continue;
@@ -198,6 +202,19 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
         create.flags = optimize ? VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
         create.pDynamicState = info.pDynamicState;
+        if (flags[part] != VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT) {
+            if (!nonRasterDynamic) {
+                nonRasterDynamic = *info.pDynamicState;
+                const std::span states(info.pDynamicState->pDynamicStates, info.pDynamicState->dynamicStateCount);
+                if (std::ranges::find(states, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE) != states.end()) {
+                    nonRasterDynamicStates.assign(states.begin(), states.end());
+                    std::erase(nonRasterDynamicStates, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE);
+                    nonRasterDynamic->dynamicStateCount = static_cast<std::uint32_t>(nonRasterDynamicStates.size());
+                    nonRasterDynamic->pDynamicStates = nonRasterDynamicStates.data();
+                }
+            }
+            create.pDynamicState = &*nonRasterDynamic;
+        }
         create.layout = partLayouts[part];
         switch (flags[part]) {
         case VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT:
@@ -215,7 +232,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         case VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT:
             create.stageCount = 1;
             create.pStages = fragment;
-            create.pMultisampleState = info.pMultisampleState;
+            create.pMultisampleState = keys.narrow && !keys.fragmentPerSample ? nullptr : info.pMultisampleState;
             create.pDepthStencilState = info.pDepthStencilState != nullptr ? info.pDepthStencilState : &dynamicDepth;
             break;
         default:

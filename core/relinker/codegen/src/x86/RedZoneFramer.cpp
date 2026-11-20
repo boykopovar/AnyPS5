@@ -112,23 +112,103 @@ void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x,
     }
 }
 
-bool twoByteRegisterIsGeneral(const std::uint8_t op) {
-    return (op >= 0x40 && op <= 0x4f) || op == 0xa3 || op == 0xa4 || op == 0xa5 || op == 0xab || op == 0xac || op == 0xad || op == 0xaf || op == 0xb0 || op == 0xb1 || op == 0xb3 || op == 0xb6 || op == 0xb7 || op == 0xb8 || (op >= 0xbb && op <= 0xbf) || op == 0xc0 || op == 0xc1 || op == 0xc3;
+std::uint8_t legacyPp(const std::uint8_t* code, const Insn& insn) {
+    std::uint8_t repeat = 0;
+    bool operandSize = false;
+    for (std::size_t index = 0; index < insn.Info.OpcodeOffset; ++index) {
+        if (code[index] == 0x66) operandSize = true;
+        else if (code[index] == 0xf3) repeat = 2;
+        else if (code[index] == 0xf2) repeat = 3;
+    }
+    return repeat != 0 ? repeat : (operandSize ? std::uint8_t{1} : std::uint8_t{0});
 }
 
-bool twoByteRmIsGeneral(const std::uint8_t op) {
-    return twoByteRegisterIsGeneral(op) || op == 0x6e || op == 0x7e || op == 0xba;
+bool twoByteScalarRegisterIsGeneral(const std::uint8_t op) {
+    return op == 0x02 || op == 0x03 || (op >= 0x40 && op <= 0x4f) || op == 0xa3 || op == 0xa4 || op == 0xa5 || op == 0xab || op == 0xac || op == 0xad || op == 0xaf || op == 0xb0 || op == 0xb1 || op == 0xb3 || op == 0xb6 || op == 0xb7 || op == 0xb8 || (op >= 0xbb && op <= 0xbf) || op == 0xc0 || op == 0xc1 || op == 0xc3;
 }
 
-bool vexGeneralUsesRsp(const std::uint8_t* code, const Insn& insn, const std::uint8_t mod, const std::uint8_t reg, const std::uint8_t rm, const bool r, const bool b) {
-    const auto at = insn.Info.OpcodeOffset;
+bool map1RegisterIsGeneral(const std::uint8_t op, const std::uint8_t pp, const std::uint8_t mod, const bool vex, const bool evex) {
+    if (!vex && !evex && twoByteScalarRegisterIsGeneral(op)) return true;
+    if ((op == 0x2c || op == 0x2d) && (pp == 2 || pp == 3)) return true;
+    if (op == 0x50 && !evex && mod == 3 && (pp == 0 || pp == 1)) return true;
+    return (op == 0xc5 || (op == 0xd7 && !evex)) && mod == 3 && (pp == 1 || (!vex && !evex && pp == 0));
+}
+
+bool map1RmIsGeneral(const std::uint8_t op, const std::uint8_t pp, const std::uint8_t reg, const std::uint8_t rex, const bool vex, const bool evex) {
+    if (!vex && !evex) {
+        if (twoByteScalarRegisterIsGeneral(op) || op == 0xba) return true;
+        if ((op == 0x00 && reg <= 1) || (op == 0x01 && reg == 4)) return true;
+        if (op >= 0x90 && op <= 0x9f && pp == 0 && rex != 0) return true;
+        if (op == 0xae && pp == 2 && reg <= 3) return true;
+        if (op == 0xc7 && reg >= 6 && (pp <= 1 || (pp == 2 && reg == 7))) return true;
+    }
+    if (op == 0x2a && (pp == 2 || pp == 3)) return true;
+    return (op == 0x6e || op == 0x7e || op == 0xc4) && (pp == 1 || (!vex && !evex && pp == 0));
+}
+
+bool extendedOpcodeUsesRsp(const std::uint8_t* code, const Insn& insn, const std::uint8_t mod, const std::uint8_t reg, const std::uint8_t rm, const bool r, const bool b) {
+    const auto& info = insn.Info;
+    const auto at = info.OpcodeOffset;
     const auto lead = code[at];
-    if ((lead != 0xc4 && lead != 0xc5) || at + 3 >= insn.Length) return false;
-    const auto map = lead == 0xc5 ? std::uint8_t{1} : static_cast<std::uint8_t>(code[at + 1] & 0x1f);
-    const auto vvvv = static_cast<std::uint8_t>((~code[lead == 0xc5 ? at + 1 : at + 2] >> 3) & 0xf);
-    const auto op = code[lead == 0xc5 ? at + 2 : at + 3];
-    const bool general = (map == 2 && (op == 0xf2 || op == 0xf3 || op == 0xf5 || op == 0xf6 || op == 0xf7)) || (map == 3 && op == 0xf0);
-    return general && ((reg == kRegRsp && !r) || (mod == 3 && rm == kRegRsp && !b) || vvvv == kRegRsp);
+    const bool regRsp = reg == kRegRsp && !r;
+    const bool rmRsp = mod == 3 && rm == kRegRsp && !b;
+    if (info.RexPrefix == 0 && xopPrefixed(code, insn)) {
+        if (at + 3 >= insn.Length) return false;
+        const auto map = static_cast<std::uint8_t>(code[at + 1] & 0x1f);
+        const auto vvvv = static_cast<std::uint8_t>((~code[at + 2] >> 3) & 0xf);
+        const auto op = code[at + 3];
+        if (map == 9 && (op == 0x01 || op == 0x02)) return rmRsp || vvvv == kRegRsp;
+        if (map == 10 && op == 0x10) return regRsp || rmRsp;
+        return false;
+    }
+    std::uint8_t map = 0;
+    std::uint8_t pp = 0;
+    std::uint8_t op = 0;
+    std::uint8_t vvvv = 0;
+    bool isVex = false;
+    bool isEvex = false;
+    if (info.RexPrefix == 0 && (lead == 0xc4 || lead == 0xc5)) {
+        if (at + (lead == 0xc5 ? 2u : 3u) >= insn.Length) return false;
+        isVex = true;
+        map = lead == 0xc5 ? std::uint8_t{1} : static_cast<std::uint8_t>(code[at + 1] & 0x1f);
+        const auto second = code[lead == 0xc5 ? at + 1 : at + 2];
+        pp = static_cast<std::uint8_t>(second & 3);
+        vvvv = static_cast<std::uint8_t>((~second >> 3) & 0xf);
+        op = code[lead == 0xc5 ? at + 2 : at + 3];
+    } else if (info.RexPrefix == 0 && lead == 0x62) {
+        if (at + 4 >= insn.Length) return false;
+        isEvex = true;
+        map = static_cast<std::uint8_t>(code[at + 1] & 0x07);
+        pp = static_cast<std::uint8_t>(code[at + 2] & 3);
+        op = code[at + 4];
+    } else if (info.IsTwoByteOpcode) {
+        pp = legacyPp(code, insn);
+        if (info.Opcode == 0x38 || info.Opcode == 0x3a) {
+            if (at + 2 >= insn.Length) return false;
+            map = info.Opcode == 0x38 ? std::uint8_t{2} : std::uint8_t{3};
+            op = code[at + 2];
+        } else {
+            map = 1;
+            op = info.Opcode;
+        }
+    } else {
+        return false;
+    }
+    if (map == 1) return (regRsp && map1RegisterIsGeneral(op, pp, mod, isVex, isEvex)) || (rmRsp && map1RmIsGeneral(op, pp, reg, info.RexPrefix, isVex, isEvex));
+    if (map == 2) {
+        if (isVex) return (op == 0xf2 || op == 0xf3 || op == 0xf5 || op == 0xf6 || op == 0xf7) && ((op != 0xf3 && regRsp) || rmRsp || vvvv == kRegRsp);
+        if (!isEvex) {
+            const bool regGen = ((op == 0xf0 || op == 0xf1) && (pp <= 1 || pp == 3)) || (op == 0xf6 && (pp == 1 || pp == 2)) || (op == 0xf8 && pp == 1) || (op == 0xf9 && pp == 0);
+            const bool rmGen = (op == 0xf0 && pp == 3 && info.RexPrefix != 0) || (op == 0xf1 && pp == 3) || (op == 0xf6 && (pp == 1 || pp == 2));
+            return (regRsp && regGen) || (rmRsp && rmGen);
+        }
+        return false;
+    }
+    if (map == 3) {
+        if (isVex && op == 0xf0 && pp == 3) return regRsp || rmRsp;
+        return rmRsp && pp == 1 && ((op >= 0x14 && op <= 0x17) || op == 0x20 || op == 0x22);
+    }
+    return false;
 }
 
 MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
@@ -154,10 +234,9 @@ MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || xopPrefixed(code, insn));
     if (!vex && !info.IsTwoByteOpcode && reg == kRegRsp && !r) {
         const auto op = info.Opcode;
-        if ((op <= 0x3f && (op & 7) <= 3) || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;
+        if ((op <= 0x3f && (op & 7) <= 3) || op == 0x63 || op == 0x69 || op == 0x6b || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;
     }
-    if (!vex && info.IsTwoByteOpcode && ((reg == kRegRsp && !r && twoByteRegisterIsGeneral(info.Opcode)) || (mod == 3 && rm == kRegRsp && !b && twoByteRmIsGeneral(info.Opcode)))) use.UsesRsp = use.RegisterRsp = true;
-    if (vex && vexGeneralUsesRsp(code, insn, mod, reg, rm, r, b)) use.UsesRsp = use.RegisterRsp = true;
+    if ((vex || info.IsTwoByteOpcode) && extendedOpcodeUsesRsp(code, insn, mod, reg, rm, r, b)) use.UsesRsp = use.RegisterRsp = true;
     if (mod == 3) {
         const bool generalPurpose = !vex && !info.IsTwoByteOpcode && !(info.Opcode >= 0xd8 && info.Opcode <= 0xdf);
         if (generalPurpose && rm == kRegRsp && !b) use.UsesRsp = use.RegisterRsp = true;
@@ -229,6 +308,7 @@ struct OperandStub {
     std::size_t End;
     std::vector<std::uint8_t> Body;
     std::size_t Operands = 0;
+    std::vector<StubRelocation> Relocations = {};
 };
 
 struct ExitSite {
@@ -431,39 +511,64 @@ void frameSegment(
         for (const auto k : stubbed) {
             if (reason != nullptr) break;
             if (!stubs.empty() && k < stubs.back().Last) continue;
-            OperandStub stub{k, k, body[k].Offset, body[k].Offset, {}};
-            while (stub.Last < body.size() && stub.End - stub.Begin < kJumpBytes) {
-                const auto& covered = body[stub.Last];
-                if (covered.Offset != stub.End || covered.Info.FlowKind != ControlFlowKind::Sequential || covered.Info.HasRipRelativeDisp || frees.contains(stub.Last)) break;
-                const auto use = memoryUse(at(stub.Last), covered);
-                const auto bytes = use.RspBased ? withDisplacement(at(stub.Last), covered, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(stub.Last), at(stub.Last) + covered.Length);
-                if (!bytes) break;
-                stub.Body.insert(stub.Body.end(), bytes->begin(), bytes->end());
-                if (use.RspBased) ++stub.Operands;
-                stub.End += covered.Length;
-                ++stub.Last;
+            const auto grow = [&](const bool ripRelative) {
+                OperandStub stub{k, k, body[k].Offset, body[k].Offset, {}};
+                while (stub.Last < body.size() && stub.End - stub.Begin < kJumpBytes) {
+                    const auto& covered = body[stub.Last];
+                    if (covered.Offset != stub.End || covered.Info.FlowKind != ControlFlowKind::Sequential || (covered.Info.HasRipRelativeDisp && !ripRelative) || frees.contains(stub.Last)) break;
+                    const auto use = memoryUse(at(stub.Last), covered);
+                    const auto bytes = use.RspBased ? withDisplacement(at(stub.Last), covered, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(stub.Last), at(stub.Last) + covered.Length);
+                    if (!bytes) break;
+                    stub.Body.insert(stub.Body.end(), bytes->begin(), bytes->end());
+                    if (use.RspBased) ++stub.Operands;
+                    stub.End += covered.Length;
+                    ++stub.Last;
+                }
+                while (stub.End - stub.Begin < kJumpBytes && stub.First > p) {
+                    const auto j = stub.First - 1;
+                    const auto& prior = body[j];
+                    if (prior.Offset + prior.Length != stub.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || (prior.Info.HasRipRelativeDisp && !ripRelative) || frees.contains(j)) break;
+                    const auto use = memoryUse(at(j), prior);
+                    const auto bytes = use.RspBased ? withDisplacement(at(j), prior, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
+                    if (!bytes) break;
+                    stub.Body.insert(stub.Body.begin(), bytes->begin(), bytes->end());
+                    if (use.RspBased) ++stub.Operands;
+                    stub.Begin = prior.Offset;
+                    stub.First = j;
+                }
+                return stub;
+            };
+            const auto fits = [&](const OperandStub& stub) {
+                return stub.End - stub.Begin >= kJumpBytes && !targetInside(stub.Begin, stub.End) && !overlapsSite(stub.Begin, stub.End) && !overlapsExisting(stub.Begin, stub.End);
+            };
+            auto stub = grow(false);
+            if (!fits(stub)) stub = grow(true);
+            if (!fits(stub)) {
+                reason = "rsp operand that cannot move and has no room for a stub";
+                continue;
             }
-            while (stub.End - stub.Begin < kJumpBytes && stub.First > p) {
-                const auto j = stub.First - 1;
-                const auto& prior = body[j];
-                if (prior.Offset + prior.Length != stub.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || prior.Info.HasRipRelativeDisp || frees.contains(j)) break;
-                const auto use = memoryUse(at(j), prior);
-                const auto bytes = use.RspBased ? withDisplacement(at(j), prior, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
-                if (!bytes) break;
-                stub.Body.insert(stub.Body.begin(), bytes->begin(), bytes->end());
-                if (use.RspBased) ++stub.Operands;
-                stub.Begin = prior.Offset;
-                stub.First = j;
+            std::size_t position = 0;
+            for (auto j = stub.First; j < stub.Last; ++j) {
+                const auto& part = body[j];
+                const auto use = memoryUse(at(j), part);
+                const auto length = use.RspBased ? withDisplacement(at(j), part, use, use.RspDisp + shift)->size() : part.Length;
+                if (part.Info.HasRipRelativeDisp) {
+                    std::int32_t displacement = 0;
+                    std::memcpy(&displacement, at(j) + part.Info.RipRelativeDispOffset, sizeof(displacement));
+                    const auto target = static_cast<std::int64_t>(part.Offset + part.Length) + displacement;
+                    stub.Relocations.push_back({position + part.Info.RipRelativeDispOffset, position + length, target - static_cast<std::int64_t>(stub.Begin), part.Info.AddressSize32});
+                }
+                position += length;
             }
-            if (stub.End - stub.Begin < kJumpBytes || targetInside(stub.Begin, stub.End) || overlapsSite(stub.Begin, stub.End) || overlapsExisting(stub.Begin, stub.End)) reason = "rsp operand that cannot move and has no room for a stub";
-            else stubs.push_back(std::move(stub));
+            stubs.push_back(std::move(stub));
         }
         if (reason != nullptr) { skip(reason); continue; }
         for (const auto& stub : stubs)
             for (auto k = stub.First; k < stub.Last; ++k) moves.erase(k);
 
-        const auto addSite = [&](const std::size_t begin, const std::size_t end, std::vector<std::uint8_t> code) {
+        const auto addSite = [&](const std::size_t begin, const std::size_t end, std::vector<std::uint8_t> code, std::vector<StubRelocation> relocations = {}) {
             TrampolineSite site;
+            site.Relocations = std::move(relocations);
             site.Offset = ph.Offset + begin;
             site.Address = ph.MappedAddress + begin;
             site.Length = end - begin;
@@ -488,7 +593,7 @@ void frameSegment(
             code.insert(code.end(), tail.begin(), tail.end());
             addSite(exit.Begin, exit.End, std::move(code));
         }
-        for (auto& stub : stubs) addSite(stub.Begin, stub.End, std::move(stub.Body));
+        for (auto& stub : stubs) addSite(stub.Begin, stub.End, std::move(stub.Body), std::move(stub.Relocations));
         for (auto& [k, move] : moves) displacements.push_back({ph.Offset + move.first, std::move(move.second)});
         ++report.Framed;
         if (!rbpPrologue) ++report.FramedWithoutFramePointer;

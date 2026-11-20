@@ -1,14 +1,18 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <cstdint>
 #include <cstddef>
@@ -25,6 +29,9 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
 extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor), void (*duplicate)(int from, int to));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
@@ -88,9 +95,8 @@ static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
 static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
 static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
 
-#ifndef _WIN32
 extern "C" int KeepHostStandardError_nid_no_patch();
-#endif
+extern "C" int KeepHostStandardOutput_nid_no_patch();
 
 extern "C" bool TryLockNativeStream_nid_no_patch(std::FILE* stream);
 
@@ -151,6 +157,41 @@ class FileStream {
     std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
+#ifdef _WIN32
+    char* pushbackBuffer = nullptr;
+
+    void ReleasePushbackBuffer(std::FILE* native) {
+        if (!pushbackBuffer) return;
+        if (native) {
+            auto* state = reinterpret_cast<UcrtStreamState*>(native);
+            if (state->base == pushbackBuffer) {
+                state->base = reinterpret_cast<char*>(&state->characterBuffer);
+                state->pointer = state->base;
+                state->count = 0;
+            }
+        }
+        std::free(std::exchange(pushbackBuffer, nullptr));
+    }
+
+    void MakePushbackRoomUnlocked() {
+        constexpr long UcrtCrtBuffer = 0x0040;
+        constexpr long UcrtNoBuffer = 0x0400;
+        auto* state = reinterpret_cast<UcrtStreamState*>(GetHandle());
+        if (state->base == nullptr || state->pointer != state->base || state->count <= 0) return;
+        const long flags = std::atomic_ref<long>(state->flags).load();
+        const bool ownedHere = state->base == pushbackBuffer;
+        if (!ownedHere && (flags & (UcrtCrtBuffer | UcrtNoBuffer)) == 0) return;
+        const std::size_t count = static_cast<std::size_t>(state->count);
+        const std::size_t size = std::max({count * 2, count + 16, static_cast<std::size_t>(state->bufferSize > 0 ? state->bufferSize : 0)});
+        auto* const grown = static_cast<char*>(std::malloc(size));
+        if (!grown) return;
+        std::memcpy(grown + size - count, state->pointer, count);
+        if (ownedHere || (flags & UcrtCrtBuffer) == 0) std::free(std::exchange(pushbackBuffer, grown));
+        else std::free(state->base);
+        state->base = grown;
+        state->pointer = grown + size - count;
+    }
+#endif
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
@@ -166,6 +207,10 @@ public:
 #endif
         _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
     }
+
+#ifdef _WIN32
+    ~FileStream() { ReleasePushbackBuffer(_handle); }
+#endif
 
     FileStream(const FileStream&) = delete;
     FileStream& operator=(const FileStream&) = delete;
@@ -192,10 +237,21 @@ public:
 
     GuestFilePrefix& GuestState() { return _guest; }
     bool IsHostStandard() const {
+#ifdef _WIN32
+        return _handle == __acrt_iob_func(0) || _handle == __acrt_iob_func(1) || _handle == __acrt_iob_func(2);
+#else
         return _handle == stdin || _handle == stdout || _handle == stderr;
+#endif
     }
 
     void Detach() {
+#ifdef _WIN32
+        if (_handle) {
+            ::_lock_file(_handle);
+            ReleasePushbackBuffer(_handle);
+            ::_unlock_file(_handle);
+        }
+#endif
         _orientation.store(0, std::memory_order_relaxed);
         _handle = nullptr;
         _guest.flags = 0;
@@ -239,6 +295,9 @@ public:
     }
 
     bool Adopt(std::FILE* handle) {
+#ifdef _WIN32
+        ReleasePushbackBuffer(nullptr);
+#endif
         _handle = handle;
         _guest = {};
         guestError = false;
@@ -264,10 +323,15 @@ public:
                 errno = ENOENT;
                 return false;
             }
-            return Adopt(open(filename, mode));
+            if (!Adopt(open(filename, mode))) return false;
+            _orientation.store(0, std::memory_order_relaxed);
+            return true;
         }
         auto* previous = GetHandle();
         NativeLock streamLock(previous, true);
+#ifdef _WIN32
+        ReleasePushbackBuffer(previous);
+#endif
         _guest = {};
         guestError = false;
         randomDevice = false;
@@ -281,6 +345,8 @@ public:
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(replaced);
         auto* const standard = HostStandardHandle_nid_no_patch(replaced);
         GuestFileLockForget_nid_no_patch(replaced);
+        if (IsHostStandard() && replaced == 1) KeepHostStandardOutput_nid_no_patch();
+        if (IsHostStandard() && replaced == 2) KeepHostStandardError_nid_no_patch();
         std::optional<ClosingDescriptor> closing(std::in_place, previous, replaced);
         if (open && !filename.empty()) {
             if (!IsHostStandard()) {
@@ -328,10 +394,19 @@ public:
         }
         KeepStandardHandle_nid_no_patch(replaced, standard);
 #else
-        if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
         const bool hostStandard = IsHostStandard();
+        const int error = errno;
+        try {
+#ifndef __EMSCRIPTEN__
+            if (::fileno(previous) == 1) KeepHostStandardOutput_nid_no_patch();
+#endif
+            if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        } catch (const std::system_error&) {
+            errno = error;
+        }
         const ClosingDescriptor closing(previous, ::fileno(previous));
-        const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
+        const int kept = hostStandard ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
+        errno = error;
         if (kept >= 0) ::flockfile(previous);
         if (!hostStandard) streamLock.Forget();
         _handle = std::freopen(filename.c_str(), mode, previous);
@@ -348,6 +423,12 @@ public:
         do next = static_cast<std::int16_t>((old & ~0x60) | (endOfFile ? 0x20 : 0) | (error ? 0x40 : 0));
         while (!__atomic_compare_exchange_n(&_guest.flags, &old, next, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
     }
+    void DropFailedUnbufferedWrite() {
+#ifdef __APPLE__
+        if (_handle && (GetHandle()->_flags & __SNBF) != 0) ::fpurge(GetHandle());
+#endif
+    }
+
     void SyncStatus() {
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
@@ -410,7 +491,10 @@ public:
         }
         if ((state.load() & (UcrtReading | UcrtUpdate)) != UcrtUpdate) return true;
         const bool switched = (state.load() & UcrtWriting) == 0 || ::_fflush_nolock(native) == 0;
-        if (switched) state.fetch_or(UcrtReading);
+        if (switched) {
+            state.fetch_and(~UcrtWriting);
+            state.fetch_or(UcrtReading);
+        }
         SyncUnlockedStatus();
         return switched;
 #elif defined(__GLIBC__)
@@ -467,6 +551,19 @@ public:
 #endif
     }
 
+    int PushBack(int value) {
+#ifdef _WIN32
+        auto* native = GetHandle();
+        ::_lock_file(native);
+        if (value != EOF) MakePushbackRoomUnlocked();
+        const int result = ::_ungetc_nolock(value, native);
+        ::_unlock_file(native);
+        return result;
+#else
+        return std::ungetc(value, GetHandle());
+#endif
+    }
+
     void KeepDirectoryReadError(bool failed) {
         if (failed && directory && (__atomic_load_n(&_guest.flags, __ATOMIC_RELAXED) & 0x40) != 0) errno = 21;
     }
@@ -508,6 +605,7 @@ public:
         GuestFileLockForget_nid_no_patch(::_fileno(_handle));
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(::_fileno(_handle));
         const ClosingDescriptor closing(_handle, ::_fileno(_handle));
+        ReleasePushbackBuffer(_handle);
 #else
         const ClosingDescriptor closing(_handle, ::fileno(_handle));
 #endif
@@ -535,6 +633,7 @@ inline std::FILE* GetNativeStream(FileStream* stream) {
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }

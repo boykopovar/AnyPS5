@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -187,6 +188,13 @@ static void MarkBufferReused(const AudioOut2Port& setter) {
     }
 }
 
+static bool ReadGuestPortBytes(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
 static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port, const AudioOut2Attribute& attribute, const char* verdict) {
     if (!AudioOut2TraceEnabled()) return;
     char values[128] = "";
@@ -196,7 +204,7 @@ static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port
         for (std::size_t index = 0; index < words && used < sizeof(values); index++) {
             std::uint32_t bits = 0;
             float value = 0.0f;
-            std::memcpy(&bits, static_cast<const std::uint8_t*>(attribute.value) + index * sizeof(bits), sizeof(bits));
+            if (!ReadGuestPortBytes(&bits, static_cast<const std::uint8_t*>(attribute.value) + index * sizeof(bits), sizeof(bits))) break;
             std::memcpy(&value, &bits, sizeof(value));
             used += static_cast<std::size_t>(std::snprintf(values + used, sizeof(values) - used, " %08x(%g)", bits, static_cast<double>(value)));
         }
@@ -213,16 +221,27 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     auto* context = AudioOut2FindContext(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    const auto channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
-    const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
+    AudioOut2PortParam local{};
+    const int savedParamErrno = errno;
+    const bool paramRead = GuestCopyIn_nid_no_patch(&local, params, sizeof(local));
+    errno = savedParamErrno;
+    if (!paramRead) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    const auto writePort = [&](AudioOut2PortHandle handle) {
+        const int savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(port, &handle, sizeof(handle));
+        errno = savedErrno;
+        return written;
+    };
+    const auto channels = (local.data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
+    const auto sampleType = local.data_format & FORMAT_TYPE_MASK;
     const auto* fold = StereoFoldFor(channels);
-    if (params->port_type == PORT_TYPE_MAIN) {
-        if ((params->data_format & 0x80u) != 0 && channels != 8) {
-            *port = static_cast<AudioOut2PortHandle>(-1);
+    if (local.port_type == PORT_TYPE_MAIN) {
+        if ((local.data_format & 0x80u) != 0 && channels != 8) {
+            if (!writePort(static_cast<AudioOut2PortHandle>(-1))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
             return PORT_ERROR_FORMAT_FLAG_WITHOUT_8_CHANNELS;
         }
         if (fold == nullptr || channels == 6 || sampleType > 1) {
-            *port = static_cast<AudioOut2PortHandle>(-1);
+            if (!writePort(static_cast<AudioOut2PortHandle>(-1))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
             return PORT_ERROR_UNSUPPORTED_FORMAT;
         }
     }
@@ -235,21 +254,25 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry.used = true;
     entry.generation = ++g_portGeneration;
     entry.context = context;
-    entry.type = params->port_type;
-    entry.dataFormat = params->data_format;
-    entry.samplingFreq = params->sampling_freq;
-    entry.flags = params->flags;
+    entry.type = local.port_type;
+    entry.dataFormat = local.data_format;
+    entry.samplingFreq = local.sampling_freq;
+    entry.flags = local.flags;
     entry.channels = channels;
     entry.fold = fold;
-    if (entry.fold == nullptr || sampleType > 1 || (params->port_type != PORT_TYPE_MAIN && (params->data_format & ~FORMAT_FIELDS_MASK) != 0)) {
+    if (entry.fold == nullptr || sampleType > 1 || (local.port_type != PORT_TYPE_MAIN && (local.data_format & ~FORMAT_FIELDS_MASK) != 0)) {
         entry = AudioOut2Port{};
-        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", params->data_format); return std::string(text); }() + " is not implemented");
+        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", local.data_format); return std::string(text); }() + " is not implemented");
     }
     entry.int16 = sampleType == 1;
-    *port = static_cast<AudioOut2PortHandle>(index) + 1;
+    const auto handle = static_cast<AudioOut2PortHandle>(index) + 1;
+    if (!writePort(handle)) {
+        entry = AudioOut2Port{};
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    }
     AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) sampling_freq=%u flags=0x%x user=%llx\n",
-        AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,
-        entry.channels, params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
+        AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(handle), local.port_type, local.data_format,
+        entry.channels, local.sampling_freq, local.flags, static_cast<unsigned long long>(local.user_handle));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -277,11 +300,14 @@ int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortSt
     const auto* entry = FromHandle(port);
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!state) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    *state = AudioOut2PortState{};
-    state->output = OUTPUT_MAIN;
-    state->num_channels = static_cast<std::uint8_t>(entry->channels);
-    state->volume = VOLUME_MAX;
-    return 0;
+    AudioOut2PortState result{};
+    result.output = OUTPUT_MAIN;
+    result.num_channels = static_cast<std::uint8_t>(entry->channels);
+    result.volume = VOLUME_MAX;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &result, sizeof(result));
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -293,12 +319,15 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        if (!ReadGuestPortBytes(&attribute, attributes + index, sizeof(attribute))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
         const char* verdict = "ignored";
         if (attribute.value == nullptr) {
             verdict = "null value";
         } else if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size == sizeof(entry->data)) {
-            std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
+            void* nextData = nullptr;
+            if (!ReadGuestPortBytes(&nextData, attribute.value, sizeof(nextData))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            entry->data = nextData;
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
             entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
@@ -310,7 +339,11 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
-            std::memcpy(entry->volume, attribute.value, attribute.value_size);
+            float nextVolume[AUDIO_OUT2_PORT_CHANNELS_MAX]{};
+            if (attribute.value_size > sizeof(nextVolume) || !ReadGuestPortBytes(nextVolume, attribute.value, attribute.value_size)) {
+                return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            }
+            std::memcpy(entry->volume, nextVolume, attribute.value_size);
             verdict = "volume";
         }
         const auto traces = entry->attributeTraces++;
@@ -321,6 +354,10 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) {
+    return sceAudioOut2PortSetAttributes(port, attributes, num);
+}
+
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
     constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
     const AudioOutCall call;
@@ -329,9 +366,16 @@ int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        const int savedReadErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedReadErrno;
+        if (!read) return ErrorInvalidParam;
         if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value != nullptr) {
-            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            const int savedWriteErrno = errno;
+            const bool written = GuestCopyOut_nid_no_patch(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            errno = savedWriteErrno;
+            if (!written) return ErrorInvalidParam;
         } else if (attribute.attribute_id == 9 || attribute.attribute_id == 0xa || attribute.attribute_id == 0x21) {
             NotImplemented_nid_no_patch(__func__);
         } else {
