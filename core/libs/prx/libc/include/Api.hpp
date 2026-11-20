@@ -1079,6 +1079,9 @@ std::uint16_t* APS5_VABI seed48_nid_postfix(const std::uint16_t* seed);
 void APS5_VABI lcong48_nid_postfix(const std::uint16_t* parameters);
 std::int64_t APS5_VABI random_nid_postfix();
 void APS5_VABI srandom_nid_postfix(std::uint64_t seed);
+void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(void* self, const void* token);
+void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void* self);
+std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void* self);
 char* APS5_VABI initstate_nid_postfix(std::uint64_t seed, char* state, std::int64_t size);
 char* APS5_VABI setstate_nid_postfix(char* state);
 char* APS5_VABI realpath_nid_postfix(const char* path, char* resolved);
@@ -1352,6 +1355,7 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*);
+void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds);
 int APS5_VABI _Thrd_yield_nid_postfix();
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle);
 void APS5_VABI _Cnd_register_at_thread_exit_nid_postfix(void* condition, void* mutex, int* ready);

@@ -1799,10 +1799,6 @@ int APS5_VABI _ZN6icu_6817StringEnumeration8setCharsEPKciR10UErrorCode_nid_postf
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_getDefaultName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_AATyPI2mYE0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6276,10 +6272,6 @@ int APS5_VABI _ZN6icu_6813UnicodeFilter7setDataEPKNS_23TransliterationRuleDataE_
 }
 
 int APS5_VABI _ZNK6icu_689ErrorCode9errorNameEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_setDefaultName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

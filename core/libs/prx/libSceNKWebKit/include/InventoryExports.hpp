@@ -1914,11 +1914,7 @@ int APS5_VABI _ZN7WebCore13MutationEvent17initMutationEventERKN3WTF10AtomStringE
 int APS5_VABI _ZN7WebCore13OverflowEvent17initOverflowEventEtbb();
 int APS5_VABI _ZN7WebCore13PathUtilities26pathWithShrinkWrappedRectsERKN3WTF6VectorINS_9FloatRectELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEEf();
 int APS5_VABI _ZN7WebCore13PathUtilities27pathsWithShrinkWrappedRectsERKN3WTF6VectorINS_9FloatRectELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEEf();
-int APS5_VABI _ZN7WebCore13QualifiedName17QualifiedNameImplD1Ev();
-int APS5_VABI _ZN7WebCore13QualifiedName17QualifiedNameImplD2Ev();
 int APS5_VABI _ZN7WebCore13QualifiedName4initEv();
-int APS5_VABI _ZN7WebCore13QualifiedNameC1ERKN3WTF10AtomStringES4_S4_();
-int APS5_VABI _ZN7WebCore13QualifiedNameC2ERKN3WTF10AtomStringES4_S4_();
 int APS5_VABI _ZN7WebCore13SleepDisablerD1Ev();
 int APS5_VABI _ZN7WebCore13SleepDisablerD2Ev();
 int APS5_VABI _ZN7WebCore13StyledElement10cssomStyleEv();
@@ -3907,13 +3903,6 @@ int APS5_VABI _ZN7WebCore9CookieJar29cookieRequestHeaderFieldProxyERKNS_8Documen
 int APS5_VABI _ZN7WebCore9CookieJarD0Ev();
 int APS5_VABI _ZN7WebCore9CookieJarD1Ev();
 int APS5_VABI _ZN7WebCore9CookieJarD2Ev();
-int APS5_VABI _ZN7WebCore9DragImageC1EOS0_();
-int APS5_VABI _ZN7WebCore9DragImageC1Ev();
-int APS5_VABI _ZN7WebCore9DragImageC2EOS0_();
-int APS5_VABI _ZN7WebCore9DragImageC2Ev();
-int APS5_VABI _ZN7WebCore9DragImageD1Ev();
-int APS5_VABI _ZN7WebCore9DragImageD2Ev();
-int APS5_VABI _ZN7WebCore9DragImageaSEOS0_();
 int APS5_VABI _ZN7WebCore9FontCache17inactiveFontCountEv();
 int APS5_VABI _ZN7WebCore9FontCache19fontForPlatformDataERKNS_16FontPlatformDataE();
 int APS5_VABI _ZN7WebCore9FontCache21purgeInactiveFontDataEj();
