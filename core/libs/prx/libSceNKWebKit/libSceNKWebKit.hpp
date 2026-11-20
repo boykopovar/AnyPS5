@@ -66,6 +66,7 @@
 #include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/include/DiagnosticLoggingKeysExports.hpp"
+#include "prx/libSceNKWebKit/include/TreeWalkerExports.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
 #include "prx/libSceNKWebKit/include/JsonExports.hpp"
 #include "prx/libSceNKWebKit/include/HEVCCodecParameters.hpp"

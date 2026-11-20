@@ -14199,38 +14199,6 @@ int APS5_VABI _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10TreeWalker10firstChildEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker10parentNodeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker11nextSiblingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker12previousNodeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker14setCurrentNodeERNS_4NodeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker15previousSiblingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker8nextNodeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore10TreeWalker9lastChildEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10XLinkNames4initEv() {
     NotImplemented_nid_no_patch(__func__);
 }
