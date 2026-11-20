@@ -42,6 +42,7 @@ test('search uses configured alternatives in place of built-ins', () => {
     assert.deepEqual(actionsForInput('PAD:L1+R1', entries), new Set(['Screenshot']));
     assert.deepEqual(actionsForInput('J', [...entries, binding('Options', 'KEY', 'J')]), new Set(['Square', 'Options']));
     assert.deepEqual(actionsForInput('F7', [...entries, binding('ToggleMouse', 'KEY', '')]), new Set());
+    assert.deepEqual(actionsForInput('PAD:R1+L1', entries), new Set(['Screenshot']));
 });
 
 test('action names and pad button categories agree with the current native parser', () => {
