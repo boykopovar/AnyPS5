@@ -1,22 +1,9 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE10do_unshiftERS1_PcS4_RS4__nid_postfix(
-    const void* self, void* state, char* to, char* toEnd, char** toNext);
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE11do_encodingEv_nid_postfix(const void* self);
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv_nid_postfix(const void* self);
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(
-    const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext,
-    char* to, char* toEnd, char** toNext);
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(
-    const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext,
-    char* to, char* toEnd, char** toNext);
-extern "C" int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_postfix(
-    const void* self, void* state, const char* from, const char* fromEnd, std::size_t max);
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
