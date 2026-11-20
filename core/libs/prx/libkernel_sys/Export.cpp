@@ -394,13 +394,13 @@ int RenamePath(const std::filesystem::path& source, const std::filesystem::path&
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
+#ifdef _WIN32
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
         if (!fs::is_empty(destination, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-#ifdef _WIN32
     if (!sameFile && sourceIsDirectory && destinationIsDirectory) {
         error.clear();
         if (!fs::remove(destination, error)) return error ? FilesystemError(error) : GuestEio;

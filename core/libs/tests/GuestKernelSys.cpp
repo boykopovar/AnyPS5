@@ -1134,6 +1134,34 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original / "marker") && std::filesystem::remove(original / "new-only"));
     Require(std::filesystem::remove(moved / "different"));
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
+#ifndef _WIN32
+    if (::geteuid() != 0) {
+        const auto nativeSource = parent / "native-rename-source";
+        const auto nativeTarget = parent / "native-rename-target";
+        Require(std::filesystem::create_directory(nativeSource));
+        Require(std::filesystem::create_directory(nativeTarget));
+        std::filesystem::permissions(nativeTarget, std::filesystem::perms::none);
+        Require(::rename(nativeSource.c_str(), nativeTarget.c_str()) == 0);
+        Require(!std::filesystem::exists(nativeSource) && std::filesystem::is_directory(nativeTarget));
+        const auto guestSource = parent / "guest-rename-source";
+        const auto guestTarget = parent / "guest-rename-target";
+        Require(std::filesystem::create_directory(guestSource));
+        Require(std::filesystem::create_directory(guestTarget));
+        std::filesystem::permissions(guestTarget, std::filesystem::perms::none);
+        const int base = sceKernelOpen(parent.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+        Require(base >= 0);
+        Require(renameat_nid_postfix(base, "guest-rename-source", base, "guest-rename-target") == 0);
+        Require(!std::filesystem::exists(guestSource) && std::filesystem::is_directory(guestTarget));
+        Require(sceKernelClose(base) == 0);
+        const auto directSource = parent / "direct-rename-source";
+        const auto directTarget = parent / "direct-rename-target";
+        Require(std::filesystem::create_directory(directSource));
+        Require(std::filesystem::create_directory(directTarget));
+        std::filesystem::permissions(directTarget, std::filesystem::perms::none);
+        Require(rename_nid_postfix(directSource.string().c_str(), directTarget.string().c_str()) == 0);
+        Require(!std::filesystem::exists(directSource) && std::filesystem::is_directory(directTarget));
+    }
+#endif
 }
 
 static void SceKernelFlock() {
