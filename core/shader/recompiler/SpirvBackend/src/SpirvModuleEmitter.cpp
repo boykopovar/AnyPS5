@@ -212,6 +212,17 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto group = EmitBuiltinU32(state, StageInputKind::WorkgroupId, component);
         return EmitBinaryU32(state, spv::OpIAdd, local, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, size)));
     }
+    if (state.splitState && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
+        const auto counts = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        auto divided = linear;
+        for (std::uint32_t axis = 0; axis < component; ++axis) divided = EmitBinaryU32(state, spv::OpUDiv, divided, counts(axis));
+        const auto group = component == 2u ? divided : EmitBinaryU32(state, spv::OpUMod, divided, counts(component));
+        if (kind == StageInputKind::WorkgroupId) return group;
+        const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
+        const auto raw = EmitBinaryU32(state, spv::OpISub, EmitInputComponentU32(state, kind, component), EmitBinaryU32(state, spv::OpIMul, EmitInputComponentU32(state, StageInputKind::WorkgroupId, component), ConstantU32(state, local[component])));
+        return EmitAddU32(state, raw, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, local[component])));
+    }
     if (StageOf(state) == IrShaderStage::Compute && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::WorkgroupOffsetBase + component, 0u);
         const auto value = EmitInputComponentU32(state, kind, component);
@@ -1976,6 +1987,20 @@ void EmitProgram(SpirvEmitterState& state) {
         if (lane.scratchU32Variable != 0u) {
             state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), lane.scratchU32Variable, spv::StorageClassFunction);
         }
+    }
+    if (state.splitState) {
+        const auto count = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
+        const auto groups = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, count(0u), count(1u)), count(2u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto outside = state.module.AllocateId();
+        state.module.AddFunction(spv::OpUGreaterThanEqual, TypeBool(state), outside, linear, groups);
+        const auto stop = state.module.AllocateId();
+        const auto run = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, run, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, outside, stop, run);
+        EmitLabel(state, stop);
+        state.module.AddFunction(spv::OpReturn);
+        EmitLabel(state, run);
     }
     EmitLdsBufferBase(state);
     EmitScratchPoolAcquire(state);

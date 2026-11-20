@@ -217,7 +217,7 @@ void VerifyMeshReuseLimits() {
     Require(replay.request.graphics->mesh->reuseVertexLimit == 14u && replay.request.graphics->mesh->reusePrimitiveLimit == 13u);
     Require(serializer.Serialize(replay.request) == encoded);
     auto bytes = DecodeBase64(encoded);
-    Require(bytes[4] == 63u);
+    Require(bytes[4] == 64u);
     bytes.resize(bytes.size() - 8u);
     bytes[4] = 62u;
     const auto version62 = serializer.Deserialize(EncodeBase64(bytes));
@@ -227,7 +227,7 @@ void VerifyMeshReuseLimits() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 63u);
+    Require(bytes.size() > 14u && bytes[4] == 64u);
     const bool mesh = request.graphics.has_value() && request.graphics->mesh.has_value();
     bytes.resize(bytes.size() - 6u - (mesh ? 8u : 0u));
     bytes[4] = 56u;
@@ -252,7 +252,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -264,6 +264,10 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    auto legacy62Bytes = bytes;
+                    legacy62Bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+                    Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
                     bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
@@ -291,7 +295,11 @@ void VerifyTargetOptions() {
             }
         }
     }
-    auto trailing = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
+    Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
     try {
@@ -802,7 +810,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -918,7 +926,7 @@ int VerifyVersion56Compatibility() {
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
         const auto current = DecodeBase64(serializer.Serialize(request));
-        Require(current[4] == 63u && current.back() == (spanned ? 1u : 0u));
+        Require(current[4] == 64u && current.back() == (spanned ? 1u : 0u));
         Require(serializer.Deserialize(EncodeBase64(current)).request.target.spannedAnySubgroup == spanned);
         auto version57 = current;
         version57[4] = 57u;

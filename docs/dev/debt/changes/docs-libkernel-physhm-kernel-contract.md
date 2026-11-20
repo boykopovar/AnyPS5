@@ -1,0 +1,5 @@
+# libkernel
+
+## change throwing stubs with the no-argument signature of
+
+- [physhm_open, physhm_unlink](../../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel, NIDs `n371J5cP+uo` and `AUqJNkobQ1c`) - throw, declared without arguments. Firmware 13.60's `libkernel.sprx` makes them bare syscalls 629 and 630 (0x2320, 0x2340). Its `physhm_open(path, flags, mode, int)` (kernel-13.60 @ 0xffffffff9ed0c640) takes path 1 as anonymous, else copies up to 1024 bytes and needs a leading `/` (`EINVAL`); flags with bit 0 or outside 0x200e02 fail with `EINVAL` (@ 0xffffffff9ed0bcc2..bcd8). The descriptor (fileops 0xffffffffa0941e30) is memory only: read and write fail with `EOPNOTSUPP`, `ftruncate` rounds up to 16 KiB pages, refuses to shrink with `EOPNOTSUPP` and returns `ENOMEM` when growth fails (@ 0xffffffff9ed0baf6), ioctl answers only 0x4004a200, and mmap maps it. The create paths and `physhm_unlink` are not decoded. Forever Launcher (PPSA99030) imports both but no longer stops on them ([#12712](https://github.com/boykopovar/AnyPS5/discussions/12712))

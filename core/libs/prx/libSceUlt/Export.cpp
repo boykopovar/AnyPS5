@@ -57,6 +57,13 @@ int semaphoreGetState(void* semaphore, std::shared_ptr<UltSemaphoreState>* out) 
     return ULT_OK;
 }
 
+int semaphoreRequest(void* semaphore, std::int32_t numResource, std::shared_ptr<UltSemaphoreState>* out) {
+    if (semaphore == nullptr) return ULT_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if (numResource <= 0) return ULT_ERROR_RANGE;
+    return semaphoreGetState(semaphore, out);
+}
+
 int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
     std::lock_guard<std::mutex> lock(gMutex);
     auto it = gQueues.find(queue);
@@ -209,6 +216,13 @@ UltThreadIdentity UltCurrentThreadIdentity_nid_no_patch() {
     std::uintptr_t thread;
     std::memcpy(&thread, self, sizeof(thread));
     return {reinterpret_cast<void*>(thread), 1};
+}
+
+UltThreadIdentity UltCurrentOwnerIdentity_nid_no_patch() {
+    if (gCurrentUlthread == nullptr) return UltCurrentThreadIdentity_nid_no_patch();
+    void* name = nullptr;
+    std::memcpy(&name, gCurrentUlthread->_name, sizeof(name));
+    return {name, 2};
 }
 
 bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue) {
@@ -423,7 +437,7 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
-        if (state->_attribute == 0) {
+        if ((state->_attribute & 1) == 0) {
             return ULT_ERROR_STATE;
         }
         ++state->_lockCount;
@@ -447,7 +461,7 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
     if (!state->_alive) {
         return ULT_ERROR_STATE;
     }
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_owner = self;
     state->_lockCount = 1;
     return ULT_OK;
@@ -469,7 +483,7 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
-        if (state->_attribute == 0) {
+        if ((state->_attribute & 1) == 0) {
             return ULT_ERROR_STATE;
         }
         ++state->_lockCount;
@@ -478,7 +492,7 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
     if (state->_lockCount != 0) {
         return ULT_ERROR_BUSY;
     }
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_owner = self;
     state->_lockCount = 1;
     return ULT_OK;
@@ -845,13 +859,8 @@ int APS5_VABI sceUltSemaphoreCreate(void* semaphore, const char* name, std::uint
 }
 
 int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::unique_lock<std::mutex> lock(state->_mutex);
@@ -879,13 +888,8 @@ int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) 
 }
 
 int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::lock_guard<std::mutex> lock(state->_mutex);
@@ -900,13 +904,8 @@ int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResourc
 }
 
 int APS5_VABI sceUltSemaphoreRelease(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     {
@@ -1219,7 +1218,6 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
-    if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
     UltMutexInfo localInfo{};
     localInfo.size = sizeof(UltMutexInfo);
     localInfo.object = object;
@@ -1228,6 +1226,7 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     localInfo.owner = state->_ownerIdentity.thread;
     localInfo.ownerType = state->_ownerIdentity.type;
     localInfo.attributes = state->_attribute;
+    localInfo.lockCount = (state->_attribute & 1) ? state->_lockCount : 0;
     localInfo.waitingThreads = state->_waiters;
     const std::size_t count = std::min<std::size_t>(capacity, state->_waiterRecords.size());
     UltMutexInfo previousInfo{};
