@@ -893,6 +893,7 @@ int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path);
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void);
 LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method);
+void* LibreSslNewContext_nid_no_patch(const void* method);
 void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(LibreSslCtx* ctx, void* callback);
 int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void);
