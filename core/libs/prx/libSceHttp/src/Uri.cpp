@@ -184,7 +184,7 @@ int parseUri(std::string_view uri, UriParts& parts) {
             if (!isAsciiDigit(c)) return ERROR_INVALID_URL;
             portValue = portValue * 10 + static_cast<uint32_t>(c - '0');
         }
-        if (portValue > 0x10000) return ERROR_INVALID_URL;
+        if (portValue > 0xFFFF) return ERROR_INVALID_URL;
         if (!port.empty()) parts.port = static_cast<uint16_t>(portValue);
     }
 
