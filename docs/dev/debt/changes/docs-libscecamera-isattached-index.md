@@ -1,0 +1,4 @@
+# libSceCamera
+
+## change [sceCameraIsAttached]
+- [sceCameraIsAttached](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera) - no camera is ever attached: index 0 returns 0 (not attached) and every other index here returns `SCE_CAMERA_ERROR_PARAM` (0x802E0000), as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera.cpp#L187-L200) does without a configured camera, with the error value from its [camera_error.h](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera_error.h). A PS5 (firmware 11.60, payload process; a title process may differ) returned 0 for the indexes 0 and 1 and `0x802e0000` for 2 and -1 in two runs, without `sceCameraOpen` or `sceCameraInit`, and logged `invalid index` for 2 and -1; other indexes are unmeasured, so index 1 differs here. Closes when: a host camera is exposed to guests.
