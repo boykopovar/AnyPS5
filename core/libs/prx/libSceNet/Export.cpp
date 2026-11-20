@@ -1929,7 +1929,10 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
     if (!to) {
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
-            if (interruptible && ThreadCancel::IoInterrupted()) return static_cast<ssize_t>(-1);
+            if (interruptible && ThreadCancel::IoInterrupted()) {
+                errno = EINTR;
+                return static_cast<ssize_t>(-1);
+            }
             return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));
         });
 #else
@@ -1948,7 +1951,10 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
-            if (interruptible && ThreadCancel::IoInterrupted()) return static_cast<ssize_t>(-1);
+            if (interruptible && ThreadCancel::IoInterrupted()) {
+                errno = EINTR;
+                return static_cast<ssize_t>(-1);
+            }
             return ::sendto(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags),
                 reinterpret_cast<const sockaddr*>(&destination), destination_length);
         });
@@ -1960,7 +1966,10 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
         }, true, static_cast<int>(len), interruptible);
 #endif
     }
-    if (result < 0) return fail(interruptible && ThreadCancel::IoInterrupted() ? NET_EINTR : native_error());
+    if (result < 0) {
+        const int error = native_error();
+        return fail(interruptible && ThreadCancel::IoInterrupted() ? NET_EINTR : error);
+    }
 #if defined(_WIN32) || defined(__APPLE__)
     note_local_address(s, socket);
 #endif
