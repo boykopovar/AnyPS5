@@ -287,6 +287,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     if (context.dynamicDepthBiasEnable) functions.cmdSetDepthBiasEnable = context.lookup<PFN_vkCmdSetDepthBiasEnableEXT>("vkCmdSetDepthBiasEnableEXT");
     functions.cmdSetDepthBounds = context.lookup<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.lookup<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
+    if (context.depthBiasControl) functions.cmdSetDepthBias2 = context.lookup<PFN_vkCmdSetDepthBias2EXT>("vkCmdSetDepthBias2EXT");
     if (context.graphicsPipelineLibrary) {
         functions.cmdBeginRendering = context.Function<PFN_vkCmdBeginRenderingKHR>("vkCmdBeginRenderingKHR");
         functions.cmdEndRendering = context.Function<PFN_vkCmdEndRenderingKHR>("vkCmdEndRenderingKHR");

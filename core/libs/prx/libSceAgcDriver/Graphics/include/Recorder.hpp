@@ -73,7 +73,7 @@ public:
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
     void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
-    void SetDepthBias(const Context& context, float constant, float clamp, float slope);
+    void SetDepthBias(const Context& context, float constant, float clamp, float slope, VkDepthBiasRepresentationEXT representation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT);
     void SetDepthBounds(const Context& context, float minimum, float maximum);
     void SetCullMode(const Context& context, VkCullModeFlags mode);
     void SetFrontFace(const Context& context, VkFrontFace face);
@@ -101,6 +101,10 @@ private:
         std::uint32_t count;
         std::array<VkColorComponentFlags, 8> masks;
     };
+    struct DepthBiasFactors {
+        std::array<float, 3> factors;
+        VkDepthBiasRepresentationEXT representation;
+    };
     void wrote(std::uint32_t slots) { valid |= slots & trackable; overwritten |= slots; }
     template<typename TValue, typename TEqual, typename TEmit>
     void apply(Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit);
@@ -116,7 +120,7 @@ private:
     bool pipelineKnown = false;
     VkViewport viewport{};
     VkRect2D scissor{};
-    std::array<float, 3> depthBias{};
+    DepthBiasFactors depthBias{};
     std::array<float, 2> depthBounds{};
     VkCullModeFlags cullMode = 0;
     VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;

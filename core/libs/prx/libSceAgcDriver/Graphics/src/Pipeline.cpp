@@ -1062,7 +1062,10 @@ void Pipeline::Continue(CommandState& recording, const State& state, const State
         setLibraryState(recording, state);
         return;
     }
-    if (depthBias) recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
+    if (depthBias) {
+        const auto constant = HostDepthBiasConstant(context, state.depth->format, state.depthBiasUnits, state.depthBiasConstant);
+        recording.SetDepthBias(context, constant.value, state.depthBiasClamp, state.depthBiasSlope, constant.representation);
+    }
     if (!depthBounds) return;
     recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
 }
@@ -1071,7 +1074,8 @@ void Pipeline::setLibraryState(CommandState& recording, const State& state) cons
     const bool depth = state.depth.has_value();
     recording.SetCullMode(context, state.cullMode);
     recording.SetFrontFace(context, state.frontFace);
-    recording.SetDepthBias(context, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
+    const auto constant = depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasUnits, state.depthBiasConstant) : DepthBiasConstant{0.0f, VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT};
+    recording.SetDepthBias(context, constant.value, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f, constant.representation);
     if (dynamicDepthBiasEnable) recording.SetDepthBiasEnable(context, depthBias);
     recording.SetDepthBounds(context, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
     recording.SetDepthTestEnable(context, depth && state.depthTest);
@@ -1112,7 +1116,8 @@ void Pipeline::ContinueBackFaces(CommandState& recording, const State& state, co
     recording.BindPipeline(context, backFaces, dynamicSlots);
     setColorWriteMasks(recording, state, masked, false);
     setViewports(recording, state);
-    recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
+    const auto constant = HostDepthBiasConstant(context, state.depth->format, state.depthBiasUnits, state.backDepthBiasConstant);
+    recording.SetDepthBias(context, constant.value, state.depthBiasClamp, state.backDepthBiasSlope, constant.representation);
     if (depthBounds) recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
 }
 
