@@ -27,7 +27,7 @@ add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp
     ${http2ZlibDir}/adler32.c ${http2ZlibDir}/crc32.c ${http2ZlibDir}/inffast.c
     ${http2ZlibDir}/inflate.c ${http2ZlibDir}/inftrees.c ${http2ZlibDir}/zutil.c)
 target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR} ${http2ZlibDir})
-target_link_libraries(anyps5_http2_transport PRIVATE libSceHttp libSceNet libSceSsl libkernel libc nghttp2_static)
+target_link_libraries(anyps5_http2_transport PRIVATE libSceHttp libSceNet libSceSsl libkernel libkernel_sys libc nghttp2_static)
 set_target_properties(anyps5_http2_transport PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(anyps5_http2_transport INTERFACE LINKER:--exclude-libs,libanyps5_http2_transport.a)
@@ -87,7 +87,7 @@ if(BUILD_TESTING)
         target_link_libraries(guest_http2_transport_tests PRIVATE ws2_32 bcrypt)
         add_test(NAME guest_http2_dns_first COMMAND guest_http2_transport_tests --dns-first)
         set_tests_properties(guest_http2_dns_first PROPERTIES TIMEOUT 30)
-        set_tests_properties(guest_http2_gzip_members guest_http2_gzip_headers guest_http2 guest_http2_offline_sync guest_http2_offline_async guest_http2_offline_queued guest_http2_offline_declared_length guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http2_gzip_members guest_http2_gzip_headers guest_http2_guest_pointers guest_http2 guest_http2_offline_sync guest_http2_offline_async guest_http2_offline_queued guest_http2_offline_declared_length guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
     add_test(NAME guest_http2_http1_gzip COMMAND guest_http2_transport_tests --http1-gzip)
@@ -100,9 +100,11 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
     add_test(NAME guest_http2_strip_gzip_headers COMMAND guest_http2_transport_tests --strip-gzip-headers)
-    set_tests_properties(guest_http2_strip_gzip_headers PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_http2_gzip_content_length COMMAND guest_http2_transport_tests --gzip-content-length)
+    add_test(NAME guest_http2_gzip_default COMMAND guest_http2_transport_tests --gzip-default)
+    set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length guest_http2_gzip_default PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_http2_strip_gzip_headers PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http2_strip_gzip_headers guest_http2_gzip_content_length guest_http2_gzip_default PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
     add_test(NAME guest_http2_ssl_callbacks COMMAND guest_http2_transport_tests --ssl-callbacks)

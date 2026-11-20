@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import re
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -643,6 +644,33 @@ class ChangeClassification(unittest.TestCase):
     def test_test_owner_of_an_empty_command_is_none(self):
         self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
 
+class ScriptTestOwnersTests(unittest.TestCase):
+    TARGETS = {"alpha": "Alpha", "beta": "beta", "gamma": "gamma"}
+
+    def owners(self, tests, registered, patterns):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run, \
+                mock.patch.object(build_changed_guest_tests, "registered_test_commands", return_value=registered):
+            run.return_value.stdout = json.dumps({"tests": tests})
+            return build_changed_guest_tests.script_test_owners(Path("build"), self.TARGETS, patterns)
+
+    def test_only_tests_matching_a_pattern_contribute_owners_sorted_case_insensitively(self):
+        tests = [
+            {"name": "py_beta", "command": ["python", "bin/beta.exe"]},
+            {"name": "py_alpha", "command": ["python", "bin/alpha.exe"]},
+            {"name": "other_gamma", "command": ["python", "bin/gamma.exe"]},
+        ]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha", "beta"])
+
+    def test_registered_commands_are_used_when_the_listed_command_has_no_owner(self):
+        tests = [{"name": "py_beta", "command": ["python", "script.py"]}]
+        self.assertEqual(self.owners(tests, {"py_beta": ["python", "bin/beta.exe"]}, [re.compile("py_")]), ["beta"])
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), [])
+
+    def test_owner_is_reported_once(self):
+        tests = [{"name": "py_a", "command": ["bin/alpha.exe"]}, {"name": "py_b", "command": ["bin/alpha.exe", "--x"]}]
+        self.assertEqual(self.owners(tests, {}, [re.compile("py_")]), ["Alpha"])
+
+
 class CtestResolutionsTests(unittest.TestCase):
     TARGETS = {"alpha": "alpha", "beta": "beta"}
 
@@ -653,7 +681,7 @@ class CtestResolutionsTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["ctest", "--test-dir", "build", "--show-only=json-v1"])
         return result
 
-    def tests(self):
+    def ctest_entries(self):
         return [
             {"name": "a1", "command": ["bin/alpha.exe"]},
             {"name": "b1", "command": ["cmake", "-P", "x.cmake", "--", "bin/beta.exe"]},
@@ -662,11 +690,11 @@ class CtestResolutionsTests(unittest.TestCase):
         ]
 
     def test_every_test_with_a_known_owner_is_resolved_with_its_position(self):
-        self.assertEqual(self.resolve(self.tests()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
+        self.assertEqual(self.resolve(self.ctest_entries()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
 
     def test_selection_matches_the_owner_or_a_referenced_target(self):
-        self.assertEqual(self.resolve(self.tests(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
-        self.assertEqual(self.resolve(self.tests(), selected=set()), {})
+        self.assertEqual(self.resolve(self.ctest_entries(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})
+        self.assertEqual(self.resolve(self.ctest_entries(), selected=set()), {})
 
     def test_document_without_tests_resolves_nothing(self):
         self.assertEqual(self.resolve([]), {})

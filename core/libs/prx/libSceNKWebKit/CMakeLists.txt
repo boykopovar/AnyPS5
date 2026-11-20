@@ -62,8 +62,8 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME nkwebkit_${testName} COMMAND nkwebkit_${testName}_tests)
         if(ANYPS5_ENABLE_ASAN AND testName STREQUAL "wtf")
-            set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
-                "ASAN_OPTIONS=path_list_append:allocator_may_return_null=1")
+            add_asan_test_options(nkwebkit_${testName} allocator_may_return_null=1)
+            add_asan_test_options(nkwebkit_${testName} detect_stack_use_after_return=0)
         endif()
         if(WIN32)
             set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION

@@ -930,9 +930,9 @@ static void CheckOverlayResolve(const std::string& directory) {
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(base + "/same.txt", now);
     std::filesystem::last_write_time(source + "/same.txt", now);
-    const auto epoch = std::chrono::clock_cast<std::filesystem::file_time_type::clock>(std::chrono::sys_seconds{});
-    std::filesystem::last_write_time(base + "/epoch.txt", epoch);
-    std::filesystem::last_write_time(source + "/epoch.txt", epoch);
+    const KernelTimeval epoch[2]{};
+    REQUIRE(sceKernelUtimes_nid_postfix((base + "/epoch.txt").c_str(), epoch) == 0);
+    REQUIRE(sceKernelUtimes_nid_postfix((source + "/epoch.txt").c_str(), epoch) == 0);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
