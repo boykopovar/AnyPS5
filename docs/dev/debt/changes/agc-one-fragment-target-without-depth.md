@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [One-fragment multisampled color target]
+
+- [One-fragment multisampled color target](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (AGC driver) - a color target with `CB_COLOR_ATTRIB` 4 samples and 1 fragment is decoded as one sample that keeps its coverage sample count and draws sample 0's coverage. Measured only on radeonsi GL (Radeon 610M and 680M); console behaviour is not measured. Beside a depth target it requires static `DB_EQAA` anchors at the depth target's sample count. With no depth target and `MSAA_ENABLE` it is drawn as one sample keeping sample 0's coverage, as a one-sample target is, whatever `DB_EQAA` holds (not measured). Grand Theft Auto V (CUSA00419) draws a 1920x1088 4-sample 1-fragment target this way with `DB_EQAA` 0x00022200. CMASK code 0 or 0xc-0xf is required. More than one but fewer fragments than samples, more fragments than samples, other CMASK codes and any guest read of the FMASK of a target the host drew still throw.

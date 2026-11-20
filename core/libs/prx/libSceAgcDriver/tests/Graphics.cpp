@@ -4636,7 +4636,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    Require(DecodeState(queue).samples == 1 && DecodeState(queue).colors[0].coverageSamples == 2, "a 2-sample one-fragment target under a 2x rasterizer without a depth target did not rasterize sample 0 alone");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -5299,7 +5299,10 @@ void multisampledDepthTests() {
     queue = oneFragment();
     queue.context[0x010] = 0;
     queue.context[0x011] = 0;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    queue.context[0x201] = 0x00022200;
+    state = DecodeState(queue);
+    Require(state.samples == 1 && !state.depth && state.colors.size() == 1 && state.colors[0].samples == 1 && state.colors[0].coverageSamples == 4 && !state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment and no depth target under a 4x rasterizer (CUSA00419's registers) did not draw sample 0's coverage into its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment and no depth target");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");

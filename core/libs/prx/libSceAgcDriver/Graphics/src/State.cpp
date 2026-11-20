@@ -1900,8 +1900,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.sampleLocations.fill(0);
         }
         const bool merged = color.samples == 1u && color.coverageSamples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
-        if (!merged && color.samples == 1 && color.coverageSamples == 1u && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
         Require(color.coverageSamples == color.samples || color.coverageSamples == result.samples || (result.samples == 1u && (read(cx, 0x292) & 1u) == 0), "a one-fragment color target's sample count differs from the rasterizer's");
+        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
         const bool truncated = color.samples == 1u && result.samples > 1u && result.depth && result.depth->samples == result.samples && (result.colors.empty() || result.truncatedCoverage) && !overrasterized(cx, result.samples);
         Require((color.samples == result.samples && !result.mergedCoverage && !result.truncatedCoverage) || merged || truncated, "a color target's sample count differs from the rasterizer's");
         Require(color.coverageSamples == color.samples || result.samples == 1u || staticAnchors(cx, result.depth->samples), "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
