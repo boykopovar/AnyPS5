@@ -30,6 +30,7 @@ struct LocalCredentials {
 static_assert(sizeof(LocalCredentials) == 88);
 constexpr int SolSocket = 0xffff;
 constexpr int SoAcceptConnection = 0x2;
+constexpr int SoReuseAddr = 0x4;
 constexpr int SoDebug = 0x1;
 constexpr int SoKeepAlive = 0x8;
 constexpr int SoBroadcast = 0x20;
@@ -173,7 +174,7 @@ void BooleanOptionsReportTheirBit() {
     Require(GetInt(datagram, SoBroadcast) == SoBroadcast, "SO_BROADCAST reads back as its bit");
     SetInt(stream, SoNoSigpipe, 1);
     Require(GetInt(stream, SoNoSigpipe) == SoNoSigpipe, "SO_NOSIGPIPE reads back as its bit");
-    for (const int option : {SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
+    for (const int option : {SoReuseAddr, SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
         Require(GetInt(stream, option) == 0, "a kept flag starts off");
         SetInt(stream, option, 5);
         Require(GetInt(stream, option) == option, "a kept flag reads back as its bit");
@@ -195,6 +196,7 @@ void BooleanOptionsReportTheirBit() {
         }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
+    Require(SetFails(stream, SolSocket, SoReuseAddr, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
 }
 
