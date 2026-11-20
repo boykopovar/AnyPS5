@@ -898,7 +898,7 @@ ImportChunks& Chunks() {
     return chunks;
 }
 
-std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::uint64_t index, std::uint32_t bufferTypes, const char*& step, VkResult& failure) {
+std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::uint64_t start, std::uint32_t bufferTypes, const char*& step, VkResult& failure) {
     struct stat info {};
     if (fstat(file, &info) != 0) {
         failure = VK_ERROR_INVALID_EXTERNAL_HANDLE;
@@ -911,12 +911,12 @@ std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::
         chunks.chunks.clear();
         chunks.device = context.device;
     }
-    const auto key = std::make_tuple(info.st_dev, info.st_ino, index);
+    const auto key = std::make_tuple(info.st_dev, info.st_ino, start);
     if (const auto found = chunks.chunks.find(key); found != chunks.chunks.end()) {
         if (auto chunk = found->second.lock()) return chunk;
         chunks.chunks.erase(found);
     }
-    if (static_cast<std::uint64_t>(info.st_size) < (index + 1) * ImportChunkBytes) {
+    if (static_cast<std::uint64_t>(info.st_size) < start + ImportChunkBytes) {
         failure = VK_ERROR_INVALID_EXTERNAL_HANDLE;
         step = "a chunk past the end of the shared backing";
         return nullptr;
@@ -924,7 +924,7 @@ std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::
     udmabuf_create request{};
     request.memfd = static_cast<std::uint32_t>(file);
     request.flags = UDMABUF_FLAGS_CLOEXEC;
-    request.offset = index * ImportChunkBytes;
+    request.offset = start;
     request.size = ImportChunkBytes;
     const int device = udmabufDevice();
     const int buffer = device < 0 ? -1 : ioctl(device, UDMABUF_CREATE, &request);
@@ -968,8 +968,9 @@ std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::
 }
 
 const char* createChunkedDmaBufImport(const Context& context, HostImport& entry, int file, std::uint64_t offset, bool& fits, VkResult& failure) {
-    const auto index = offset / ImportChunkBytes;
-    const auto within = offset - index * ImportChunkBytes;
+    auto start = offset / ImportChunkBytes * ImportChunkBytes;
+    if (offset - start + entry.bytes > ImportChunkBytes && offset >= ImportChunkBytes / 2) start = (offset - ImportChunkBytes / 2) / ImportChunkBytes * ImportChunkBytes + ImportChunkBytes / 2;
+    const auto within = offset - start;
     fits = entry.bytes != 0 && within + entry.bytes <= ImportChunkBytes;
     if (!fits) return nullptr;
     const VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
@@ -992,7 +993,7 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
         return nullptr;
     }
     const char* step = nullptr;
-    auto chunk = importChunk(context, file, index, requirements.memoryTypeBits, step, failure);
+    auto chunk = importChunk(context, file, start, requirements.memoryTypeBits, step, failure);
     if (chunk == nullptr) {
         destroy();
         return step;
@@ -1090,7 +1091,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
             const auto size = std::min<VkDeviceSize>(ImportChunkBytes - within, piece.bytes - done);
             const char* step = nullptr;
             VkResult failure = VK_SUCCESS;
-            auto chunk = importChunk(context, file, index, requirements.memoryTypeBits, step, failure);
+            auto chunk = importChunk(context, file, index * ImportChunkBytes, requirements.memoryTypeBits, step, failure);
             if (chunk == nullptr) fail(step, failure);
             if (((requirements.memoryTypeBits >> chunk->memoryType) & 1u) == 0) fail("the memory type of a chunk import", VK_ERROR_FORMAT_NOT_SUPPORTED);
             binds.push_back({piece.resource + done, size, chunk->memory, within, 0});
