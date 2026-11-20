@@ -349,6 +349,10 @@ static bool BrokenPipeError(DWORD error) {
 
 std::int64_t File::IoWriteNative(int descriptor, const void* buffer, std::size_t bytes) {
     const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     const auto type = GetFileType(handle);
     const auto nativeWrite = [&] {
         const auto result = ThreadCancel::Native([&] { return ::_write(descriptor, buffer, static_cast<unsigned int>(bytes)); });
