@@ -76,14 +76,21 @@ std::byte* LowMemory(std::size_t bytes) {
 #else
 #ifdef ANYPS5_ENABLE_ASAN
     constexpr std::uintptr_t FirstHint = 0x60000000;
+    constexpr std::uintptr_t Limit = 0x7fff7000;
+    const auto span = (static_cast<std::uintptr_t>(bytes) + 0xffffu) & ~std::uintptr_t{0xffffu};
+    for (std::uintptr_t hint = FirstHint; hint < Limit && span <= Limit - hint; hint += span) {
+        void* mapped = mmap(reinterpret_cast<void*>(hint), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (mapped != MAP_FAILED) return static_cast<std::byte*>(mapped);
+    }
+    return nullptr;
 #else
     constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
-#endif
     for (std::uintptr_t hint = FirstHint; hint < (std::uintptr_t{1} << 40u); hint += std::uintptr_t{1} << 32u) {
         void* mapped = mmap(reinterpret_cast<void*>(hint), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
         if (mapped != MAP_FAILED) return static_cast<std::byte*>(mapped);
     }
     return nullptr;
+#endif
 #endif
 }
 
