@@ -70,6 +70,8 @@
 #include "prx/libSceNKWebKit/include/HEVCCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfAtomStringExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorFrontendEventExports.hpp"
 #include "prx/libSceNKWebKit/include/DOMExceptionExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"

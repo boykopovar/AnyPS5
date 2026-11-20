@@ -247,7 +247,12 @@ void Release(StringImpl* impl) {
         impl->refCount -= 2;
         return;
     }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    Destroy(impl);
+}
+
+void Destroy(StringImpl* impl) {
+    if (impl->hashAndFlags & 32 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    if (impl->hashAndFlags & 16 && impl->length) RemoveAtom(impl);
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
