@@ -2987,6 +2987,26 @@ static void CheckHyperbolic() {
     errno = 0;
     Require(std::isinf(_Cosh_nid_postfix(infinity, 1.0)) && std::isnan(_Cosh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && errno == 0);
     Require(Near(_Cosh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
+    Require(_Sinh_nid_postfix(0.0, 2.0) == 0.0 && !std::signbit(_Sinh_nid_postfix(0.0, 2.0)) && std::signbit(_Sinh_nid_postfix(-0.0, 2.0)));
+    Require(Near(_Sinh_nid_postfix(1.0, 2.0), 2.3504023872876028, 1e-15));
+    Require(Near(_Sinh_nid_postfix(-1.0, 2.0), -2.3504023872876028, 1e-15));
+    Require(Near(_Sinh_nid_postfix(20.0, 0.5), 121291298.85244757, 1e-15));
+    Require(Near(_Sinh_nid_postfix(711.0, 1e-300), 0x1.2190c08e2f1a4p+28, 1e-15));
+    Require(Near(_Sinh_nid_postfix(-711.0, 1e-300), -0x1.2190c08e2f1a4p+28, 1e-15));
+    Require(_Sinh_nid_postfix(720.0, 0.0) == 0.0 && !std::signbit(_Sinh_nid_postfix(720.0, 0.0)));
+    Require(std::signbit(_Sinh_nid_postfix(-720.0, 0.0)) && std::signbit(_Sinh_nid_postfix(720.0, -0.0)));
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(-710.0, 2.0)) && std::signbit(_Sinh_nid_postfix(-710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(_Sinh_nid_postfix(infinity, 0.0)) && errno == EDOM);
+    errno = 0;
+    Require(std::isnan(_Sinh_nid_postfix(0.0, infinity)) && errno == EDOM);
+    errno = 0;
+    Require(std::isinf(_Sinh_nid_postfix(infinity, 1.0)) && std::signbit(_Sinh_nid_postfix(-infinity, 2.0)) && std::isinf(_Sinh_nid_postfix(1.0, infinity)));
+    Require(std::isnan(_Sinh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && std::isnan(_Sinh_nid_postfix(1.0, std::numeric_limits<double>::quiet_NaN())) && errno == 0);
+    Require(Near(_Sinh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
     Require(sinh_nid_postfix(0.) == 0. && std::signbit(sinh_nid_postfix(-0.)));
     Require(cosh_nid_postfix(0.) == 1. && coshf_nid_postfix(0.f) == 1.f);
     Require(asinh_nid_postfix(0.) == 0. && std::signbit(asinh_nid_postfix(-0.)) && std::signbit(asinhf_nid_postfix(-0.f)));
@@ -4729,6 +4749,20 @@ static void CheckAsinEdgeFlags() {
     }
 }
 
+static void CheckTinyInverseTrigFlags() {
+    for (const auto function : {asin_nid_postfix, atan_nid_postfix}) {
+        for (const double input : {0.0, -0.0, 0x1p-30, -0x1p-30,
+                                   std::numeric_limits<double>::denorm_min(), -std::numeric_limits<double>::denorm_min()}) {
+            const auto bits = std::bit_cast<std::uint64_t>(input);
+            const int expected = (bits << 1) == 0 ? 0 : FE_INEXACT;
+            errno = 1234;
+            std::feclearexcept(FE_ALL_EXCEPT);
+            const auto result = std::bit_cast<std::uint64_t>(function(input));
+            Require(result == bits && errno == 1234 && std::fetestexcept(FE_ALL_EXCEPT) == expected);
+        }
+    }
+}
+
 static void CheckAcosEdgeFlags() {
     for (const double input : {2.0, -2.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::quiet_NaN()}) {
         errno = 0;
@@ -5224,6 +5258,7 @@ int main() {
     CheckAsinConsoleBits();
     CheckAcosEdgeFlags();
     CheckAsinEdgeFlags();
+    CheckTinyInverseTrigFlags();
     CheckPowConsoleBits();
     CheckPowRangeFlags();
     CheckLogConsoleBits();

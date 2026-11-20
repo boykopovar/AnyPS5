@@ -19,8 +19,8 @@ def redact(text, *, home, user, host):
             parts = re.split(r"[\\/]", home.rstrip("\\/"))
             pattern = r"[\\/]".join(re.escape(part) for part in parts)
             text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
-        else:
-            text = text.replace(home, "~")
+        elif home.rstrip("/"):
+            text = re.sub(re.escape(home.rstrip("/")) + r"(?![\w-]|\.+[\w-])", "~", text)
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
@@ -34,7 +34,13 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {redact_report(key, identity): redact_report(item, identity) for key, item in value.items()}
+        result = {}
+        for key, item in value.items():
+            redacted_key = redact_report(key, identity)
+            if redacted_key in result:
+                raise ValueError("duplicate JSON object keys after redaction")
+            result[redacted_key] = redact_report(item, identity)
+        return result
     return value
 
 

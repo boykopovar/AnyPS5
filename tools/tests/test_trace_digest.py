@@ -272,6 +272,26 @@ class TraceEventLossTests(unittest.TestCase):
         self.assertIn("- draw committer: 3 events lost; buffer full at 20.5 ms; over the 2 of 4 frames that ended before it: busy 5.5 ms per frame (55 %), "
                       "wait 0.5, largest Graphics.Draw 6.0 (the thread table divides the retained slices by every frame)", markdown)
 
+    def test_loss_before_any_positive_frame_span_still_reports_lost_events(self):
+        events = [complete(1, "work", 0, 1000), self.marker()]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                   for index, ts in enumerate((0, 0, 10000))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.json"
+            path.write_text(json.dumps(events), encoding="utf-8")
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        report = json.loads(result.stdout)
+                        self.assertTrue(report["trace_incomplete"])
+                        self.assertEqual(report["event_loss"], [{"thread": "tid 1", "at_ms": 1.5, "events_lost": 8}])
+                    else:
+                        self.assertIn("tid 1: 8 events lost; buffer full at 1.5 ms", result.stdout)
+                        self.assertNotIn("frames that ended before it", result.stdout)
+
     def test_gpu_recorded_span_is_the_union_of_clipped_ranges(self):
         events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}}]
         events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}} for index, ts in enumerate(range(0, 40000, 10000))]

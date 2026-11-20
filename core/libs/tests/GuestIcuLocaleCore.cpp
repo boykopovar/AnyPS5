@@ -45,6 +45,34 @@ void Check(LocaleFunction function, bool wholeOnly, std::initializer_list<Case> 
     }
 }
 
+void CheckLongLanguageTag() {
+    for (const LocaleFunction function : {uloc_getBaseName, uloc_canonicalize}) {
+        for (const int groups : {16, 17, 20}) {
+            std::string tag = "en-a";
+            std::string unconverted = "A";
+            for (int group = 0; group < groups; ++group) {
+                tag += "-abcdefgh";
+                unconverted += "_ABCDEFGH";
+            }
+            const bool fits = groups == 16;
+            const std::string expected = !fits ? unconverted : function == uloc_getBaseName ? "en" : "en@a=" + tag.substr(5);
+            for (const std::int32_t capacity : {0, 8, 240}) {
+                std::array<char, 256> buffer{};
+                buffer.fill('Q');
+                std::int32_t status = 0;
+                const auto length = function(tag.c_str(), buffer.data(), capacity, &status);
+                assert(length == static_cast<std::int32_t>(expected.size()));
+                assert(status == (!fits || capacity < length ? 15 : 0));
+                const auto copied = static_cast<std::size_t>(std::min(capacity, length));
+                assert(std::memcmp(buffer.data(), expected.data(), copied) == 0);
+                if (fits && capacity > length) assert(buffer[copied] == '\0');
+                for (std::size_t index = copied + (fits && capacity > length ? 1 : 0); index < buffer.size(); ++index)
+                    assert(buffer[index] == 'Q');
+            }
+        }
+    }
+}
+
 void CheckKeyword(const char* locale, const char* keyword, const char* expected,
                   std::int32_t expectedStatus = 0) {
     for (const std::int32_t capacity : {0, 1, 2, 3, 4, 5, 8, 64}) {
@@ -74,6 +102,9 @@ int main() {
         {"root", ""}, {"und", ""}, {"_US", ""}, {"i-klingon", "i-klingon"},
         {"x-private", "x-private"}, {"zh_Hans_CN", "zh"}, {"eng_USA", "en"},
         {"DEU", "de"}, {"zho_Hant_TWN", "zh"}, {"tlh", "tlh"}, {"xyz_US", "xyz"},
+        {"x-foo", "x-foo"}, {"I_Enochian", "i-enochian"}, {"x-foo_US", "x-foo"}, {"X-", "x-"},
+        {"i-klingon-Latn-DE", "i-klingon"}, {"x", "x"}, {"i.utf8", "i"},
+        {"i-hakka_MT_XEMXIJA", "i-hakka"}, {"I-hakka_MX", "i-hakka"}, {"X-KLINGON_us_SANJOSE", "x-klingon"},
     });
     Check(uloc_getCountry, true, {
         {"en", ""}, {"en_US", "US"}, {"en-US", "US"}, {"zh_Hant_TW", "TW"},
@@ -81,11 +112,12 @@ int main() {
         {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"}, {"eng_USA", "US"},
         {"de-deu", "DE"}, {"zho_Hant_TWN", "TW"}, {"sr_Latn_SRB", "RS"}, {"en_XYZ", "XYZ"},
         {"en_XEA", "XEA"}, {"en_a1", "A1"}, {"en_12", "12"}, {"en_1ab", "1AB"},
-        {"en__US", ""}, {"en_Latn__US", ""},
+        {"en__US", ""}, {"en_Latn__US", ""}, {"x-foo_US", "US"}, {"i-klingon-Latn-DE", "DE"},
+        {"I-hakka_MX", "MX"}, {"X-KLINGON_us_SANJOSE", "US"},
     });
     Check(uloc_getScript, true, {
         {"en_US", ""}, {"zh_Hant_TW", "Hant"}, {"eN_LatN_us", "Latn"},
-        {"sr_Latn_RS@currency=EUR", "Latn"}, {"_US", ""},
+        {"sr_Latn_RS@currency=EUR", "Latn"}, {"_US", ""}, {"i-klingon-Latn-DE", "Latn"},
     });
     Check(uloc_getBaseName, false, {
         {"en-US", "en_US"}, {"en_US_POSIX", "en_US_POSIX"},
@@ -94,6 +126,10 @@ int main() {
         {"i-klingon", "tlh"}, {"x-private", ""}, {"root", ""}, {"und", ""},
         {"eng_USA_POSIX", "en_US_POSIX"}, {"fra-can", "fr_CA"},
         {"en_a1_POSIX", "en_A1_POSIX"}, {"en__US", "en__US"},
+        {"en-u-attr2-attr1", "en"}, {"de-DE-x-ab", "de_DE"}, {"sr-Latn-RS-a-bbb", "sr_Latn_RS"},
+        {"i-default", "en"}, {"i-hakka_MT_XEMXIJA", "i-hakka_MT_XEMXIJA"}, {"x-piglatin_ML.MBE", "x-piglatin_ML.MBE"},
+        {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
+        {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -103,7 +139,15 @@ int main() {
         {"fr@collation=phonebook", "fr@collation=phonebook"},
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
+        {"en-u-attr2-attr1", "en@attribute=attr1-attr2"}, {"de-DE-x-ab", "de_DE@x=ab"},
+        {"i-default", "en@x=i-default"}, {"x-piglatin_ML.MBE", "x-piglatin_ML"},
+        {"i-cherokee_US.utf7", "i-cherokee_US"}, {"x-filfli_MT_FILFLA.gb-18030", "x-filfli_MT_FILFLA"},
+        {"X-KLINGON_us_SANJOSE", "x-klingon_US_SANJOSE"},
+        {"sr-Latn-RS-a-bbb", "sr_Latn_RS@a=bbb"}, {"x-elmer", "@x=elmer"},
+        {"en-a-bbb-x-foo", "en@a=bbb;x=foo"}, {"i-klingon@currency=EUR", "i-klingon@currency=EUR"},
+        {"x_foo", "x-foo"},
     });
+    CheckLongLanguageTag();
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");
     CheckKeyword("en@Currency=USD", "CURRENCY", "USD");
@@ -157,6 +201,16 @@ int main() {
         status = 15;
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
+        status = -124;
+        output.fill('Q');
+        const std::int32_t length = function("en_Latn_US", output.data(), 16, &status);
+        assert(length > 0 && length < 16 && output[static_cast<std::size_t>(length)] == '\0' && status == 0);
+        status = -128;
+        assert(function("en_Latn_US", output.data(), 16, &status) == length && status == -128);
+        status = 0;
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        output.fill('Q');
     }
     status = 0;
     bool keywordThrown = false;
