@@ -49,14 +49,18 @@ inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
 inline constexpr std::uint32_t StoreQuantizeWords = 4u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
-inline constexpr std::uint32_t FoldOffsetBase = 57344u;
-inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57472u;
-inline constexpr std::uint32_t MirrorUnnormalizedBase = 57600u;
-inline constexpr std::uint32_t MinLodBase = 57728u;
-inline constexpr std::uint32_t SamplerLodBiasBase = 57856u;
+inline constexpr std::uint32_t FoldOffsetBase = 58560u;
+inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+inline constexpr std::uint32_t MirrorUnnormalizedBase = 58688u;
+inline constexpr std::uint32_t MinLodBase = 57600u;
+inline constexpr std::uint32_t SamplerLodBiasBase = 58816u;
 inline constexpr float SamplerLodBiasShaderThreshold = 15.0f;
+inline constexpr std::uint32_t GatherLodBase = 57792u;
+inline constexpr std::uint32_t GatherLodBiasBase = 58944u;
+inline constexpr std::uint32_t GatherImageMinLodBase = 57920u;
 inline constexpr std::uint32_t FmaskFormatBase = 58048u;
 inline constexpr std::uint32_t VolumeGatherBase = 58176u;
+inline constexpr std::uint32_t GatherImageShapeBase = 58432u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;

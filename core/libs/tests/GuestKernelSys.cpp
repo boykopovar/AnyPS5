@@ -138,10 +138,62 @@ std::string LinkTarget(const std::string& path) {
     return std::string(buffer, static_cast<std::size_t>(length));
 }
 
+#ifndef _WIN32
+void LinkPermissionErrorTests(const std::filesystem::path& root, const std::string& file) {
+    if (geteuid() == 0) return;
+    const auto denied = root / "link-denied";
+    Require(std::filesystem::create_directory(denied));
+    const auto originalPermissions = std::filesystem::status(denied).permissions();
+    std::filesystem::permissions(denied, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+    if (::access(denied.c_str(), W_OK) == 0) {
+        std::filesystem::permissions(denied, originalPermissions);
+        Require(std::filesystem::remove(denied));
+        return;
+    }
+    const auto created = (denied / "new.txt").string();
+    const auto symbolic = (root / "link-permission-source").string();
+    Require(symlink_nid_postfix("owned.txt", symbolic.c_str()) == 0);
+    const int result = link_nid_postfix(file.c_str(), created.c_str());
+    const int error = Error();
+    const int nofollowResult = linkat_nid_postfix(-100, symbolic.c_str(), -100, created.c_str(), 0);
+    const int nofollowError = Error();
+    std::filesystem::permissions(denied, originalPermissions);
+    Require(result == -1 && error == 13);
+    Require(nofollowResult == -1 && nofollowError == 13);
+    Require(std::filesystem::remove(symbolic) && std::filesystem::remove(denied));
+}
+
+void SymlinkPermissionErrorTests(const std::filesystem::path& root) {
+    if (geteuid() == 0) return;
+    const auto denied = root / "symlink-denied";
+    Require(std::filesystem::create_directory(denied));
+    const auto originalPermissions = std::filesystem::status(denied).permissions();
+    std::filesystem::permissions(denied, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+    if (::access(denied.c_str(), W_OK) == 0) {
+        std::filesystem::permissions(denied, originalPermissions);
+        Require(std::filesystem::remove(denied));
+        return;
+    }
+    const auto created = (denied / "new.link").string();
+    const int result = symlink_nid_postfix("owned.txt", created.c_str());
+    const int error = Error();
+    const int atResult = symlinkat_nid_postfix("owned.txt", -100, created.c_str());
+    const int atError = Error();
+    std::filesystem::permissions(denied, originalPermissions);
+    Require(result == -1 && error == 13);
+    Require(atResult == -1 && atError == 13);
+    Require(std::filesystem::remove(denied));
+}
+#endif
+
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
     const auto file = (root / "owned.txt").string();
     std::ofstream(file).put('x');
+#ifndef _WIN32
+    LinkPermissionErrorTests(root, file);
+    SymlinkPermissionErrorTests(root);
+#endif
     const auto missing = (root / "missing.txt").string();
     const auto throughFile = file + "/inner";
     const auto linked = (root / "linked.txt").string();
@@ -501,6 +553,42 @@ volatile std::uint32_t sigreturnMxcsr = 0;
 std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
     return mxcsr & ~0x3fu;
 }
+
+#ifndef _WIN32
+void CheckLinkPreflightPermissions(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto sourceDirectory = root / "link-source-no-search";
+    Require(std::filesystem::create_directory(sourceDirectory));
+    const auto source = sourceDirectory / "source.txt";
+    std::ofstream(source).put('x');
+    const auto originalPermissions = std::filesystem::status(sourceDirectory).permissions();
+    std::filesystem::permissions(sourceDirectory, std::filesystem::perms::none);
+    if (::access(sourceDirectory.c_str(), X_OK) == 0) {
+        std::filesystem::permissions(sourceDirectory, originalPermissions);
+        Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+        return;
+    }
+    const auto nativeSourceDestination = root / "link-source-native.txt";
+    const auto guestSourceDestination = root / "link-source-guest.txt";
+    Require(::link(source.c_str(), nativeSourceDestination.c_str()) == -1 && errno == EACCES);
+    Require(link_nid_postfix(source.string().c_str(), guestSourceDestination.string().c_str()) == -1 && Error() == 13);
+    std::filesystem::permissions(sourceDirectory, originalPermissions);
+    Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+
+    const auto destinationDirectory = root / "link-destination-no-search";
+    Require(std::filesystem::create_directory(destinationDirectory));
+    const auto accessible = root / "link-accessible.txt";
+    std::ofstream(accessible).put('x');
+    const auto destinationPermissions = std::filesystem::status(destinationDirectory).permissions();
+    std::filesystem::permissions(destinationDirectory, std::filesystem::perms::none);
+    const auto nativeDestination = destinationDirectory / "native.txt";
+    const auto guestDestination = destinationDirectory / "guest.txt";
+    Require(::link(accessible.c_str(), nativeDestination.c_str()) == -1 && errno == EACCES);
+    Require(linkat_nid_postfix(-100, accessible.string().c_str(), -100, guestDestination.string().c_str(), 0) == -1 && Error() == 13);
+    std::filesystem::permissions(destinationDirectory, destinationPermissions);
+    Require(std::filesystem::remove(accessible) && std::filesystem::remove(destinationDirectory));
+}
+#endif
 
 void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
     std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
@@ -1082,6 +1170,34 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original / "marker") && std::filesystem::remove(original / "new-only"));
     Require(std::filesystem::remove(moved / "different"));
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
+#ifndef _WIN32
+    if (::geteuid() != 0) {
+        const auto nativeSource = parent / "native-rename-source";
+        const auto nativeTarget = parent / "native-rename-target";
+        Require(std::filesystem::create_directory(nativeSource));
+        Require(std::filesystem::create_directory(nativeTarget));
+        std::filesystem::permissions(nativeTarget, std::filesystem::perms::none);
+        Require(::rename(nativeSource.c_str(), nativeTarget.c_str()) == 0);
+        Require(!std::filesystem::exists(nativeSource) && std::filesystem::is_directory(nativeTarget));
+        const auto guestSource = parent / "guest-rename-source";
+        const auto guestTarget = parent / "guest-rename-target";
+        Require(std::filesystem::create_directory(guestSource));
+        Require(std::filesystem::create_directory(guestTarget));
+        std::filesystem::permissions(guestTarget, std::filesystem::perms::none);
+        const int base = sceKernelOpen(parent.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+        Require(base >= 0);
+        Require(renameat_nid_postfix(base, "guest-rename-source", base, "guest-rename-target") == 0);
+        Require(!std::filesystem::exists(guestSource) && std::filesystem::is_directory(guestTarget));
+        Require(sceKernelClose(base) == 0);
+        const auto directSource = parent / "direct-rename-source";
+        const auto directTarget = parent / "direct-rename-target";
+        Require(std::filesystem::create_directory(directSource));
+        Require(std::filesystem::create_directory(directTarget));
+        std::filesystem::permissions(directTarget, std::filesystem::perms::none);
+        Require(rename_nid_postfix(directSource.string().c_str(), directTarget.string().c_str()) == 0);
+        Require(!std::filesystem::exists(directSource) && std::filesystem::is_directory(directTarget));
+    }
+#endif
 }
 
 static void SceKernelFlock() {
@@ -1240,6 +1356,11 @@ void CheckKernelEnvironment() {
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longestName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    GuardedPaths guards;
+    char* const unterminated = guards.Unreadable() - longName.size();
+    std::memcpy(unterminated, longName.data(), longName.size());
+    Require(Kenv(get, unterminated, buffer, sizeof(buffer)) == -1 && Error() == 63);
+    Require(Kenv(get, unterminated + 1, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
@@ -1446,6 +1567,9 @@ int main() {
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     CheckLinkSymbolicLinkLimit(root);
+#ifndef _WIN32
+    CheckLinkPreflightPermissions(root);
+#endif
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);

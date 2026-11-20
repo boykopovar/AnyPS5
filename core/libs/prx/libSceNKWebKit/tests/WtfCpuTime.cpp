@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <latch>
 #include <source_location>
 #include <stdexcept>
 #include <thread>
@@ -98,11 +99,22 @@ void TestGuestClock() {
 void TestGuestClockCountsOnlyThisThread() {
     CpuTimeClockForTest_nid_no_patch(nullptr);
     std::atomic<bool> workerBurned{false};
+    std::latch ready(1);
+    std::latch start(1);
+    std::thread worker([&] {
+        ready.count_down();
+        start.wait();
+        workerBurned = BurnUntilAdvanced(ForCurrentThread(), 0.1);
+    });
+    ready.wait();
     const auto wallStart = std::chrono::steady_clock::now();
     const double before = ForCurrentThread();
-    std::thread worker([&workerBurned] { workerBurned = BurnUntilAdvanced(ForCurrentThread(), 0.1); });
+    start.count_down();
     worker.join();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto wallDeadline = wallStart + std::chrono::milliseconds(150);
+    do {
+        std::this_thread::sleep_until(wallDeadline);
+    } while (std::chrono::steady_clock::now() < wallDeadline);
     const double after = ForCurrentThread();
     const std::chrono::duration<double> wall = std::chrono::steady_clock::now() - wallStart;
     Require(workerBurned);
