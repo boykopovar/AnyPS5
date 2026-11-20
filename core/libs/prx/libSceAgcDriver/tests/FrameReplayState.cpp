@@ -132,6 +132,7 @@ void testHostNeighbors(const std::filesystem::path& directory) {
     check(mapped != MAP_FAILED, "host allocation failed");
     auto* occupied = static_cast<std::byte*>(mapped);
     auto* available = occupied + page;
+    progress();
     check(munmap(available, page) == 0, "host page release failed");
     std::uintptr_t base = 0;
     std::size_t arenaSize = 0;
