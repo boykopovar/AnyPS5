@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -51,6 +52,21 @@ class SeedManifestTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stdout, "")
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_symlink_in_the_corpus_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.bin"
+            target.write_bytes(bytes([9]) + b"payload")
+            try:
+                os.symlink(target, root / "link.bin")
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are not available")
+            result = subprocess.run([sys.executable, str(TOOL), directory], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, "")
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("not a regular file", result.stderr)
 
 
 if __name__ == "__main__":
