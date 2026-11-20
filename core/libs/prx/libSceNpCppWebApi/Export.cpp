@@ -4,6 +4,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <unordered_set>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -1680,6 +1684,9 @@ struct VectorBody {
 };
 static_assert(sizeof(VectorBody) == 0x50 && offsetof(VectorBody, referenceCount) == 0x30);
 
+static std::mutex VectorBodiesMutex;
+static std::unordered_set<const VectorBody*> VectorBodies;
+
 static void APS5_VABI DestroyVectorBody(void* object) {
     auto* body = static_cast<VectorBody*>(object);
     if (body->elementKind == 1) {
@@ -1694,6 +1701,10 @@ static void APS5_VABI DestroyVectorBody(void* object) {
         }
     }
     std::free(body->elements);
+    {
+        std::lock_guard lock(VectorBodiesMutex);
+        VectorBodies.erase(body);
+    }
     std::free(body);
 }
 
@@ -1708,13 +1719,21 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
     }
     auto* body = static_cast<VectorBody*>(self->object);
     if (body == nullptr) {
-        body = static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody)));
-        if (body == nullptr) return nullptr;
+        std::unique_ptr<VectorBody, decltype(&std::free)> allocation(
+            static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody))), &std::free);
+        if (allocation == nullptr) return nullptr;
+        body = allocation.get();
         body->magic = VectorBodyMagic;
         body->referenceCount = 1;
         body->elementKind = elementKind;
         body->libContext = self->libContext;
-        self->object = body;
+        try {
+            std::lock_guard lock(VectorBodiesMutex);
+            VectorBodies.insert(body);
+        } catch (const std::bad_alloc&) {
+            return nullptr;
+        }
+        self->object = allocation.release();
         self->deleter = &DestroyVectorBody;
         return body;
     }
@@ -1793,12 +1812,10 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
 
 static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
 
+static void* VectorIteratorElement(const void* self, std::int32_t elementKind, std::size_t elementSize, bool end, const char* function);
+
 static IntrusivePtr* IntrusiveVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
-    const auto* body = static_cast<const VectorBody*>(self->object);
-    if (body == nullptr) return nullptr;
-    if (body->magic != VectorBodyMagic || body->elementKind != 1) NotImplemented_nid_no_patch(function);
-    auto* elements = static_cast<IntrusivePtr*>(body->elements);
-    return end && body->size != 0 ? elements + body->size : elements;
+    return static_cast<IntrusivePtr*>(VectorIteratorElement(self, 1, sizeof(IntrusivePtr), end, function));
 }
 
 static CommonString* StringVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
@@ -1810,25 +1827,60 @@ static CommonString* StringVectorElements(const IntrusivePtr* self, const bool e
 }
 
 static const VectorBody* HostVectorBody(const void* self, const std::int32_t elementKind, const char* function) {
-    const auto* body = ResolveVectorBody(self);
-    if (body == nullptr) return nullptr;
-    if (body->magic != VectorBodyMagic || body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
+    if (self == nullptr) return nullptr;
+    const VectorBody* body = nullptr;
+    std::uint64_t tag = 0;
+    std::memcpy(&tag, self, sizeof(tag));
+    if (tag == VectorBodyMagic) body = static_cast<const VectorBody*>(self);
+    {
+        std::lock_guard lock(VectorBodiesMutex);
+        const auto* direct = static_cast<const VectorBody*>(self);
+        if (VectorBodies.contains(direct)) {
+            body = direct;
+        } else {
+            const VectorBody* indirect = nullptr;
+            std::memcpy(&indirect, self, sizeof(indirect));
+            if (VectorBodies.contains(indirect)) body = indirect;
+        }
+    }
+    if (body == nullptr) {
+        std::uintptr_t pointers[3]{};
+        std::memcpy(pointers, self, sizeof(pointers));
+        if (pointers[0] != 0 && pointers[0] <= pointers[2] && pointers[2] <= pointers[1]) return nullptr;
+        body = ResolveVectorBody(self);
+        if (body != nullptr && body->magic != VectorBodyMagic) NotImplemented_nid_no_patch(function);
+    }
+    if (body != nullptr && body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
     return body;
 }
 
+static void* VectorIteratorElement(const void* self, const std::int32_t elementKind, const std::size_t elementSize, const bool end, const char* function) {
+    if (const auto* body = HostVectorBody(self, elementKind, function)) {
+        if (body->elements == nullptr) return nullptr;
+        return static_cast<std::uint8_t*>(body->elements) + (end ? body->size * elementSize : 0);
+    }
+    if (self == nullptr) return nullptr;
+    void* first = nullptr;
+    std::memcpy(&first, self, sizeof(first));
+    if (!end || first == nullptr) return first;
+    void* last = nullptr;
+    std::memcpy(&last, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(last));
+    return last;
+}
+
 static void* HostVectorBegin(void* out, const void* self, const std::int32_t elementKind, const char* function) {
-    const VectorBody* body = HostVectorBody(self, elementKind, function);
+    void* element = VectorIteratorElement(self, elementKind, 0, false, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr ? body->elements : nullptr;
+    it->element = element;
     return out;
 }
 
 static void* HostVectorEnd(void* out, const void* self, const std::int32_t elementKind, const std::size_t elementSize, const char* function) {
-    const VectorBody* body = HostVectorBody(self, elementKind, function);
+    void* element = VectorIteratorElement(self, elementKind, elementSize, true, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
+    it->element = element;
     return out;
 }
 
@@ -8517,13 +8569,11 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE3endEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * sizeof(IntrusivePtr) : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), true, __func__));
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE5beginEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr ? body->elements : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), false, __func__));
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEdeEv(const void* self) {
@@ -9030,13 +9080,11 @@ const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * sizeof(IntrusivePtr) : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), true, __func__));
 }
 
 CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv(const void* self) {
-    const VectorBody* body = HostVectorBody(self, 1, __func__);
-    return CommonConstIterator(0, body != nullptr ? body->elements : nullptr);
+    return CommonConstIterator(0, VectorIteratorElement(self, 1, sizeof(IntrusivePtr), false, __func__));
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE4sizeEv(const void* self) {
