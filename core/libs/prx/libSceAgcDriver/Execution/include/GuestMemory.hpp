@@ -125,6 +125,7 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
 void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
+std::uint64_t KnownZeroMarks();
 void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
@@ -156,8 +157,15 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 // for every collect: nothing is reused without an ordering point. APS5_PACKET_EPOCH=1 makes the
 // workers bump before every packet as before. CollectEpochBumps counts the bumps ([guestmem] line).
 void BumpCollectEpoch();
+void BumpCollectEpochSince(std::uint64_t since);
+void RaiseCollectSince(std::uint64_t since);
+void ShareCollectWalks(bool share);
+bool CollectWalksShared();
+std::uint64_t CollectSince();
+std::uint64_t SteadyNanoseconds();
 void AdoptLatestCollectEpoch();
 std::uint64_t ProofSerial();
+std::uint64_t OwnProofBreaks();
 void BreakProofs();
 void MarkProofThread();
 std::uint64_t CollectEpoch();
@@ -165,6 +173,15 @@ std::uint64_t CollectEpochBumps();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
+struct GpuUseObservation {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatched = 0;
+    std::uint64_t mapping = 0;
+};
+void CollectWritesForGpuUse(const UnchangedQuery& range, GpuUseObservation& observation);
 struct Observation {
     enum class Status { Complete, Refused, Uncovered, Failed };
     Status status = Status::Failed;

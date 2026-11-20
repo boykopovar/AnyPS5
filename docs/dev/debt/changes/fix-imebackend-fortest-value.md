@@ -1,0 +1,5 @@
+# libSceImeBackend
+## change [sceImeBackendForTestFunction]
+- [sceImeBackendForTestFunction](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - returns 0x80bc10ff unconditionally with no arguments, the value a PS5 (firmware 11.60, payload process; a title process may differ) returned in three calls over two runs; what the test diagnostics backend does beyond that return value is unmeasured. Its sister `sceImeForTestFunction` was not measured and returns 0x80bc00ff here.
+## change [`sceImeBackendParamInit`]
+- [`sceImeBackendParamInit`](../../../core/libs/prx/libSceImeBackend/Export.cpp) (libSceImeBackend) - a parameter block at an unmapped guest address is left unwritten and the call returns without an error; a PS5 (firmware 11.60, payload process; a title process may differ) faulted with SIGSEGV for the address 0x10, so this is a host fallback and not the console's behaviour. For a 4096-byte block preset to 0xAA the console changed 40 bytes (the last at offset 39), the first eight being ffffffff00000000 as here; bytes 8 to 39 and the return value were not measured.

@@ -2,6 +2,9 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#if defined(__x86_64__)
+#include "prx/libc/include/ExtendedPrecisionParts.hpp"
+#endif
 #include "prx/libc/include/GuestLongDouble.hpp"
 #include <algorithm>
 #include <array>
@@ -405,6 +408,81 @@ inline DecimalDigits RoundDecimal(const DecimalDigits& value, long long count) {
     return result;
 }
 
+#if defined(__x86_64__)
+inline DecimalDigits GeneratedDigits(long double value, char lower, long long precision) {
+    static constexpr long double Tenth[3] = {0x19999999p-32L, 0x99999999p-64L, 0x99999999p-96L};
+    DecimalDigits result;
+    if (value == 0) return result;
+    ExtendedWords words = WordsOf(value);
+    words.signExponent &= 0x7fff;
+    long double magnitude = 0;
+    StoreWords(magnitude, words);
+    long double fraction = magnitude;
+    short binary = 0;
+    UnscaleExtended(binary, fraction);
+    std::array<long double, 3> parts{}, factor{}, copy{};
+    std::array<long double, 6> scratch{};
+    SetWide(parts.data(), 3, magnitude);
+    long long exponent = static_cast<long long>(binary) * 30103 / 100000;
+    long long steps = 0;
+    if (exponent <= 3) {
+        steps = (7 - exponent) & ~3LL;
+        exponent = -steps;
+        if (steps != 0) SetWide(factor.data(), 3, 10.0L);
+    } else {
+        exponent = (exponent - 4) & ~3LL;
+        steps = exponent;
+        if (steps != 0) std::copy_n(Tenth, 3, factor.begin());
+    }
+    for (; steps > 0; steps >>= 1) {
+        if ((steps & 1) != 0) MultiplyWide(parts.data(), 3, factor.data(), 3, scratch.data());
+        if (steps < 2) break;
+        copy = factor;
+        MultiplyWide(factor.data(), 3, copy.data(), 3, scratch.data());
+    }
+    std::string text;
+    for (long long generate = std::min(precision + (lower == 'f' ? exponent + 11 : 7), 22LL); generate > 0; generate -= 8) {
+        std::int64_t chunk = 0;
+        while (parts[0] >= 1.0L) {
+            const auto whole = static_cast<std::int64_t>(parts[0]);
+            chunk += whole;
+            AddHalf(parts.data(), 3, -static_cast<long double>(whole));
+        }
+        if (generate >= 9) MultiplyHalf(parts.data(), 3, 100000000.0L);
+        const std::string block = std::to_string(chunk % 100000000);
+        text.append(8 - block.size(), '0').append(block);
+    }
+    exponent += 7;
+    const std::size_t leading = std::min(text.find_first_not_of('0'), text.size());
+    text.erase(0, leading);
+    exponent -= static_cast<long long>(leading);
+    long long count = std::min(precision + (lower == 'f' ? exponent + 1 : lower == 'e' ? 1 : 0), static_cast<long long>(text.size()));
+    if (count >= 0) {
+        const bool up = count < static_cast<long long>(text.size()) && text[static_cast<std::size_t>(count)] >= '5';
+        while (count > 0 && text[static_cast<std::size_t>(count) - 1] == (up ? '9' : '0')) --count;
+        if (up && count > 0) {
+            ++text[static_cast<std::size_t>(count) - 1];
+        } else if (up) {
+            text.insert(0, 1, '1');
+            count = 1;
+            ++exponent;
+        }
+    }
+    text.resize(static_cast<std::size_t>(std::max(count, 0LL)));
+    result.digits = std::move(text);
+    result.exponent = exponent;
+    return result;
+}
+#endif
+
+inline DecimalDigits RoundedDigits(long double value, char lower, long long precision) {
+#if defined(__x86_64__)
+    if (std::numeric_limits<long double>::digits == 64) return GeneratedDigits(value, lower, precision);
+#endif
+    const DecimalDigits exact = ConsoleDecimalDigits(value);
+    return RoundDecimal(exact, lower == 'g' ? precision : lower == 'e' ? precision + 1 : exact.exponent + 1 + precision);
+}
+
 inline char DigitAt(const DecimalDigits& value, long long position) {
     const long long index = value.exponent - position;
     if (value.digits.empty() || index < 0 || index >= static_cast<long long>(value.digits.size())) return '0';
@@ -413,21 +491,19 @@ inline char DigitAt(const DecimalDigits& value, long long position) {
 
 inline std::string DecimalFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
     const FloatSpec parsed = ParseFloatSpec(spec);
-    const DecimalDigits exact = ConsoleDecimalDigits(value);
     const bool upper = conversion == 'E' || conversion == 'G';
     const char lower = static_cast<char>(conversion | 0x20);
     long long precision = parsed.precision < 0 ? 6 : parsed.precision;
+    if (lower == 'g' && precision == 0) precision = 1;
+    const DecimalDigits rounded = RoundedDigits(value, lower, precision);
+    const long long exponent = rounded.digits.empty() ? 0 : rounded.exponent;
     bool exponential = lower == 'e';
     bool strip = false;
     if (lower == 'g') {
-        if (precision == 0) precision = 1;
-        const long long exponent = exact.digits.empty() ? 0 : RoundDecimal(exact, precision).exponent;
         exponential = !(precision > exponent && exponent >= -4);
         precision = exponential ? precision - 1 : precision - 1 - exponent;
         strip = !parsed.alternate;
     }
-    const DecimalDigits rounded = RoundDecimal(exact, exponential ? precision + 1 : exact.exponent + 1 + precision);
-    const long long exponent = rounded.digits.empty() ? 0 : rounded.exponent;
     if (strip) {
         const long long last = rounded.digits.empty() ? 0 : rounded.exponent - static_cast<long long>(rounded.digits.size()) + 1;
         long long needed = exponential ? exponent - last : -last;
