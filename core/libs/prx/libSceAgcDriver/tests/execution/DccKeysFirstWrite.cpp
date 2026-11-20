@@ -171,7 +171,7 @@ private:
 
 std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys) {
     const auto address = AddressOf(texels);
-    const auto meta = AddressOf(keys) >> 8u;
+    const auto meta = keys != nullptr ? AddressOf(keys) >> 8u : 0u;
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((Side - 1u) & 3u) << 30u),
@@ -179,7 +179,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const
         0xfacu | (TileRenderTarget64KB << 20u) | (Type2D << 28u),
         0u,
         0u,
-        (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),
+        keys != nullptr ? (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u) : 0u,
         static_cast<std::uint32_t>(meta >> 8u),
     };
 }
@@ -574,6 +574,44 @@ void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     }
     char message[256];
     std::snprintf(message, sizeof(message), "uniform single-key clear: %zu of %u written-back texels are neither the kernel's write nor the proved clear color 0x%08x", wrong, Side * Side, color);
+    Require(wrong == 0, message);
+}
+
+void RunUniformFillClear(AgcDriver::VulkanDevice& device, std::uint8_t* block, bool uniform) {
+    auto* texels = block;
+    const auto surface = AddressOf(texels);
+    const std::uint32_t color = 0x11223344u;
+    const std::uint32_t other = 0x55667788u;
+    for (std::size_t offset = 0; offset < SurfaceBytes; offset += 4) std::memcpy(texels + offset, &color, 4);
+    if (!uniform) std::memcpy(texels + SurfaceBytes - 4, &other, 4);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, nullptr);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    const auto uploads = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    const std::string what = uniform ? "uniform fill" : "fill with one other texel";
+    Require(image != nullptr, what + ": the write left no pending storage image");
+    const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    const bool cleared = uploaded[LookupOutcomes::UploadClear] == uploads[LookupOutcomes::UploadClear] + 1;
+    Require(cleared == uniform, uniform ? what + ": the first write read the surface and uploaded it instead of clearing it on the GPU" : what + ": the surface was cleared to the first texel instead of uploaded");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test uniform fill");
+    device.WaitIdle();
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto offset = layout.Offset(x, y);
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, texels + offset, 4);
+            const auto expected = y == 0 && x < Threads ? 0xffffffffu : !uniform && offset == SurfaceBytes - 4 ? other : color;
+            if (texel != expected) ++wrong;
+        }
+    }
+    char message[256];
+    std::snprintf(message, sizeof(message), "%s: %zu of %u written-back texels are neither the kernel's write nor the filled texel", what.c_str(), wrong, Side * Side);
     Require(wrong == 0, message);
 }
 
@@ -1352,6 +1390,12 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> uniformClear;
         uniformClear.emplace(false);
         RunUniformSingleClear(*device, uniformClear->Data());
+        std::optional<GuestBlock> uniformFill;
+        uniformFill.emplace(false);
+        RunUniformFillClear(*device, uniformFill->Data(), true);
+        std::optional<GuestBlock> otherFill;
+        otherFill.emplace(false);
+        RunUniformFillClear(*device, otherFill->Data(), false);
         std::optional<GuestBlock> sampled;
         sampled.emplace(false);
         std::optional<GuestBlock> sampledOutput;
@@ -1392,6 +1436,12 @@ int main(int argc, char** argv) {
             std::optional<GuestBlock> uniformClearWatched;
             uniformClearWatched.emplace(true);
             RunUniformSingleClear(*device, uniformClearWatched->Data());
+            std::optional<GuestBlock> uniformFillWatched;
+            uniformFillWatched.emplace(true);
+            RunUniformFillClear(*device, uniformFillWatched->Data(), true);
+            std::optional<GuestBlock> otherFillWatched;
+            otherFillWatched.emplace(true);
+            RunUniformFillClear(*device, otherFillWatched->Data(), false);
 #ifdef _WIN32
             pendingSingle.emplace(true, true);
 #else

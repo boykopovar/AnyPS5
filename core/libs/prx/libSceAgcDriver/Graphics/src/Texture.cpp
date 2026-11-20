@@ -3542,7 +3542,23 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
     const bool fastClear = IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle;
-    if (fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) {
+    const auto filledUniformly = [&] {
+        static const bool enabled = std::getenv("APS5_NO_FILL_UPLOAD_CLEAR") == nullptr;
+        if (!enabled || layers != nullptr || uploadedKeys != DccKeys::Uncompressed || guestBytes < 16 || guestBytes % 16 != 0 || descriptor.baseAddress % 16 != 0) return false;
+        const auto bytes = static_cast<std::size_t>(guestBytes);
+        if (otherPendingOverlaps() || AnyShadowedOverlaps(descriptor.baseAddress, bytes) || Recorder::SnapshotWriteOverlaps(descriptor.baseAddress, bytes)) return false;
+        const auto* words = reinterpret_cast<const std::uint64_t*>(static_cast<std::uintptr_t>(descriptor.baseAddress));
+        if (!GuestMemory::Accessible(words, bytes)) return false;
+        const auto first = words[0];
+        const auto second = words[1];
+        for (std::size_t word = 2; word < bytes / 8; word += 2) {
+            if (words[word] != first || words[word + 1] != second) return false;
+        }
+        std::array<std::uint32_t, 4> pattern{};
+        std::memcpy(pattern.data(), words, sizeof(pattern));
+        return FillClearColor(storageFormat, elementBytes, pattern, clearValue) || (ClearKeepsDenormals(context, storageFormat) && FillClearColor(storageFormat, elementBytes, pattern, clearValue, true));
+    };
+    if ((fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) || (!fastClear && filledUniformly())) {
         // A fast-cleared surface is cleared on the GPU; its texel memory is neither read nor filled.
         // The clear is recorded into the open batch like a direct upload (the image kept by it): a
         // batch of its own submitted the recorder's work first and waited for all of it, 25-40 ms
