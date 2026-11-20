@@ -252,6 +252,9 @@ int main() {
     ContentExportParam badType = fromData;
     std::strncpy(badType.content_type, "text/plain", sizeof(badType.content_type) - 1);
     Require(sceContentExportFromData(first, &badType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3012u));
+    ContentExportParam unterminatedType = fromData;
+    std::memset(unterminatedType.content_type, 'a', sizeof(unterminatedType.content_type));
+    Require(sceContentExportFromData(first, &unterminatedType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(first, nullptr, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     errno = 71;
     Require(sceContentExportFromData(first, reinterpret_cast<const ContentExportParam*>(0x10), 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));

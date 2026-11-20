@@ -92,6 +92,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     }
+    if (std::memchr(localParam.content_type, '\0', sizeof(localParam.content_type)) == nullptr) return ErrorInvalidArgument;
     if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
     const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;
