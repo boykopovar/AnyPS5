@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <set>
 #include <source_location>
@@ -376,12 +377,66 @@ void TestGuardedStrings() {
     Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
     Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
 
-    const std::size_t oversized = (std::size_t{1} << 40) / sizeof(WebRtcGuestString);
-    server.urls.end = server.urls.begin + oversized;
+    server.urls.end = reinterpret_cast<WebRtcGuestString*>(reinterpret_cast<std::uintptr_t>(server.urls.begin) + (std::uintptr_t{1} << 40));
     server.urls.capacityEnd = server.urls.end;
     const int before = allocations;
     Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
     Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+    Require(allocations == before && live.empty());
+    Require(reinterpret_cast<const unsigned char*>(&copy)[0] == 0xcd);
+}
+
+template<typename T>
+T* AtAddress(std::uintptr_t address) {
+    return reinterpret_cast<T*>(address);
+}
+
+void TestMalformedExtents() {
+    constexpr std::uintptr_t Top = std::numeric_limits<std::uintptr_t>::max();
+    constexpr std::uintptr_t Stride = sizeof(WebRtcGuestString);
+    WebRtcIceServer server;
+    _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(&server);
+    WebRtcIceServer copy;
+    std::memset(&copy, 0xcd, sizeof(copy));
+    const int before = allocations;
+
+    server.hostname.capacity = 31;
+    server.hostname.size = 20;
+    server.hostname.pointer = AtAddress<char>(Top - 15);
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
+    Require(allocations == before && live.empty());
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+    Require(allocations == before && live.empty());
+    _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(&server);
+
+    const std::uintptr_t last = (Top - Stride + 1) & ~(std::uintptr_t{alignof(WebRtcGuestString)} - 1);
+    server.urls.begin = AtAddress<WebRtcGuestString>(last);
+    server.urls.end = AtAddress<WebRtcGuestString>(last + 2 * Stride);
+    server.urls.capacityEnd = server.urls.end;
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+
+    GuardedPage page;
+    page.SetInaccessible();
+    const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(page.base);
+    server.urls.begin = AtAddress<WebRtcGuestString>(base);
+    server.urls.end = AtAddress<WebRtcGuestString>(base + Stride + 1);
+    server.urls.capacityEnd = AtAddress<WebRtcGuestString>(base + 2 * Stride);
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+
+    server.urls.begin = AtAddress<WebRtcGuestString>(base + 1);
+    server.urls.end = AtAddress<WebRtcGuestString>(base + 1 + Stride);
+    server.urls.capacityEnd = server.urls.end;
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+
+    server.urls.begin = AtAddress<WebRtcGuestString>(base + Stride);
+    server.urls.end = AtAddress<WebRtcGuestString>(base);
+    server.urls.capacityEnd = server.urls.begin;
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &server); }));
+    Require(Throws([&] { _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&server); }));
+
     Require(allocations == before && live.empty());
     Require(reinterpret_cast<const unsigned char*>(&copy)[0] == 0xcd);
 }
@@ -403,5 +458,6 @@ int main() {
     TestInvalid();
     TestGuardedObjects();
     TestGuardedStrings();
+    TestMalformedExtents();
     return 0;
 }

@@ -65,6 +65,14 @@ constexpr std::size_t ChunkStrings = ChunkBytes / sizeof(WebRtcGuestString);
     throw std::invalid_argument("IceServer requires accessible strings");
 }
 
+std::uintptr_t AddressOf(const void* pointer) {
+    return reinterpret_cast<std::uintptr_t>(pointer);
+}
+
+const void* PointerAt(std::uintptr_t address) {
+    return reinterpret_cast<const void*>(address);
+}
+
 void InitString(WebRtcGuestString& string) {
     string.reserved = 0;
     string.buffer[0] = '\0';
@@ -74,7 +82,8 @@ void InitString(WebRtcGuestString& string) {
 
 void ValidateString(const WebRtcGuestString& string) {
     if (string.capacity < WebRtcGuestStringInlineCapacity || string.size > string.capacity ||
-        (string.capacity > WebRtcGuestStringInlineCapacity && !string.pointer))
+        (string.capacity > WebRtcGuestStringInlineCapacity &&
+         (!string.pointer || string.capacity > std::numeric_limits<std::uintptr_t>::max() - AddressOf(string.pointer))))
         throw std::invalid_argument("IceServer requires valid strings");
 }
 
@@ -102,10 +111,13 @@ void CopyString(WebRtcGuestString& string, const WebRtcGuestString& other) {
     char* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
     string.pointer = data;
     string.capacity = capacity;
+    const std::uintptr_t source = AddressOf(other.pointer);
+    if (size > std::numeric_limits<std::uintptr_t>::max() - source)
+        throw std::invalid_argument("IceServer requires valid strings");
     std::array<char, ChunkBytes> chunk;
     for (std::size_t offset = 0; offset < size;) {
         const std::size_t batch = std::min(ChunkBytes, size - offset);
-        if (!GuestBytes(other.pointer + offset).CopyIn(chunk.data(), batch) || !GuestBytes(data + offset).CopyOut(chunk.data(), batch))
+        if (!GuestBytes(PointerAt(source + offset)).CopyIn(chunk.data(), batch) || !GuestBytes(data + offset).CopyOut(chunk.data(), batch))
             ThrowInaccessible();
         offset += batch;
     }
@@ -115,13 +127,22 @@ void CopyString(WebRtcGuestString& string, const WebRtcGuestString& other) {
     string.size = size;
 }
 
+std::size_t StringCount(const WebRtcGuestStringVector& vector) {
+    const std::uintptr_t begin = AddressOf(vector.begin);
+    const std::uintptr_t end = AddressOf(vector.end);
+    if (end < begin || (end - begin) % sizeof(WebRtcGuestString))
+        throw std::invalid_argument("IceServer requires valid string vectors");
+    return static_cast<std::size_t>((end - begin) / sizeof(WebRtcGuestString));
+}
+
 template<typename TVisit>
 void ForEachString(const WebRtcGuestStringVector& vector, TVisit visit) {
     std::array<WebRtcGuestString, ChunkStrings> chunk;
-    const auto count = static_cast<std::size_t>(vector.end - vector.begin);
+    const std::uintptr_t begin = AddressOf(vector.begin);
+    const std::size_t count = StringCount(vector);
     for (std::size_t offset = 0; offset < count;) {
         const std::size_t batch = std::min(ChunkStrings, count - offset);
-        if (!GuestPtr<const WebRtcGuestString>(vector.begin + offset).CopyIn(chunk.data(), batch))
+        if (!GuestPtr<const WebRtcGuestString>(PointerAt(begin + offset * sizeof(WebRtcGuestString))).CopyIn(chunk.data(), batch))
             ThrowInaccessible();
         for (std::size_t index = 0; index < batch; ++index)
             visit(chunk[index]);
@@ -148,7 +169,7 @@ void ValidateVector(const WebRtcGuestStringVector& vector) {
 void ReleaseVector(WebRtcGuestStringVector& vector) {
     if (vector.begin) {
         ForEachString(vector, [](WebRtcGuestString string) { ReleaseString(string); });
-        GuestStringStorage::Deallocate(vector.begin, static_cast<std::size_t>(vector.capacityEnd - vector.begin) * sizeof(WebRtcGuestString));
+        GuestStringStorage::Deallocate(vector.begin, static_cast<std::size_t>(AddressOf(vector.capacityEnd) - AddressOf(vector.begin)));
     }
     InitVector(vector);
 }
@@ -157,11 +178,9 @@ void CopyVector(WebRtcGuestStringVector& vector, const WebRtcGuestStringVector& 
     InitVector(vector);
     if (!other.begin)
         return;
-    const auto count = static_cast<std::size_t>(other.end - other.begin);
+    const std::size_t count = StringCount(other);
     if (count == 0)
         return;
-    if (count > std::numeric_limits<std::size_t>::max() / sizeof(WebRtcGuestString))
-        throw std::bad_alloc();
     auto* strings = static_cast<WebRtcGuestString*>(GuestStringStorage::Allocate(count * sizeof(WebRtcGuestString)));
     vector.begin = strings;
     vector.end = strings;
