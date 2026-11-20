@@ -390,6 +390,9 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
         writer.WriteBool(merge.layered);
         writer.WriteU32(merge.firstSlice);
         writer.WriteU32(merge.lastSlice);
+        if (merge.mask != 0u) {
+            for (const std::uint32_t word : merge.blendConstants) writer.WriteU32(word);
+        }
     }
     if (info.depthExportEnable) {
         writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
@@ -502,6 +505,9 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             merge.layered = reader.ReadBool();
             merge.firstSlice = reader.ReadU32();
             merge.lastSlice = reader.ReadU32();
+            if (version >= 64u && merge.mask != 0u) {
+                for (std::uint32_t& word : merge.blendConstants) word = reader.ReadU32();
+            }
         } else if (merge.mask != 0u && !merge.blend.enabled) {
             merge.packing = ColorExportPacking::Unorm4_4_4_4;
         }
@@ -971,12 +977,6 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
-    if (request.context.pixel.has_value()) {
-        for (const auto& merge : request.context.pixel->targetMerges) {
-            if (merge.mask == 0u) continue;
-            for (const std::uint32_t word : merge.blendConstants) writer.WriteU32(word);
-        }
-    }
     if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     return base64Encode(buffer);
 }
@@ -1062,11 +1062,6 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
-    if (version >= 64u && result.request.context.pixel.has_value()) {
-        for (auto& merge : result.request.context.pixel->targetMerges) {
-            for (std::uint32_t& word : merge.blendConstants) word = reader.ReadU32();
-        }
-    }
     if (version >= 63u && reader.Remaining() != 0u) {
         if (!reader.ReadBool()) throw std::runtime_error("RequestSerializer: a written emulated barycentrics flag is clear");
         if (!result.request.graphics.has_value()) throw std::runtime_error("RequestSerializer: emulated barycentrics without a graphics context");
