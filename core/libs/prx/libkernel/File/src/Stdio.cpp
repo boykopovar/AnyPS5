@@ -490,9 +490,13 @@ static int NativeFlock(int descriptor, int operation) {
 std::int64_t File::TransferInParts(int descriptor, const iovec* iov, int iovcnt, const std::int64_t* offset, bool write) {
     constexpr std::uint64_t singleCallBytes = 0x7ffff000;
     constexpr std::size_t partBytes = std::size_t{1} << 30;
+    constexpr auto maxBytes = static_cast<std::uint64_t>(std::numeric_limits<ssize_t>::max());
     std::uint64_t total = 0;
-    for (int i = 0; i < iovcnt; ++i) total += iov[i].iov_len;
-    if (total <= singleCallBytes || total > static_cast<std::uint64_t>(std::numeric_limits<ssize_t>::max())) return -2;
+    for (int i = 0; i < iovcnt; ++i) {
+        if (iov[i].iov_len > maxBytes - total) return -2;
+        total += iov[i].iov_len;
+    }
+    if (total <= singleCallBytes) return -2;
     if (offset != nullptr && (*offset < 0 || total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() - *offset))) return -2;
     struct stat status{};
     if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) return -2;
