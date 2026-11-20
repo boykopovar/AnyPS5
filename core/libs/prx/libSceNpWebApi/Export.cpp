@@ -510,7 +510,8 @@ int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* t
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    NotImplemented_nid_no_patch(__func__);
+    (void)keep;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId) {
