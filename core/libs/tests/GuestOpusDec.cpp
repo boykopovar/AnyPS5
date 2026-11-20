@@ -77,6 +77,12 @@ void CheckReference(int rate, int channels) {
                 std::abort();
             }
             Require(actual.front() == 12345 && std::all_of(actual.begin() + count + 1, actual.end(), [](auto value) { return value == 12345; }));
+            std::array<std::int16_t, 11520> concealedExpected{};
+            Require(opus_decode(reference, nullptr, 0, concealedExpected.data(), samples, 0) == samples);
+            actual.fill(12345);
+            Require(sceOpusDecDecode(state.data(), nullptr, 0, actual.data() + 1, count * 2 + 1) == count * 2);
+            Require(actual.front() == 12345 && std::all_of(actual.begin() + count + 1, actual.end(), [](auto value) { return value == 12345; }));
+            Require(std::equal(concealedExpected.begin(), concealedExpected.begin() + count, actual.begin() + 1));
             offset += bytes + 2;
         }
     }
@@ -131,7 +137,7 @@ int main() {
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
     const std::uint8_t malformed[] = {0x7f};
     RequireThrows([&] { sceOpusDecDecode(state.data(), malformed, 1, pcm.data() + 1, 3840); });
-    RequireThrows([&] { sceOpusDecDecode(state.data(), nullptr, 0, pcm.data() + 1, 3840); });
+    RequireThrows([&] { sceOpusDecDecode(state.data(), nullptr, 0, pcm.data() + 1, 3839); });
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
     std::size_t offset = 0;
     for (int frame = 0; frame < 3; ++frame) {
@@ -141,6 +147,16 @@ int main() {
         Require(pcm.front() == 12345 && pcm.back() == 12345);
         Require(sceOpusDecDecode(otherState.data(), packet, bytes, reference.data() + 1, 3840) == 3840);
         Require(std::equal(pcm.begin() + 1, pcm.end() - 1, reference.begin() + 1));
+        if (frame == 0) {
+            std::array<std::uint8_t, 640> plcState{};
+            Require(sceOpusDecCreateEx(&context, plcState.data(), 48000, 2) == 0);
+            Require(sceOpusDecDecode(plcState.data(), packet, bytes, pcm.data() + 1, 3840) == 3840);
+            pcm.fill(12345);
+            Require(sceOpusDecDecode(plcState.data(), nullptr, 0, pcm.data() + 1, 3841) == 3840);
+            Require(pcm.front() == 12345 && pcm.back() == 12345);
+            Require(std::any_of(pcm.begin() + 1, pcm.end() - 1, [](auto value) { return value != 12345; }));
+            Require(sceOpusDecDestroy(plcState.data()) == 0);
+        }
         if (frame == 1) {
             Require(sceOpusDecCreateEx(&context, unsupported.data(), 48000, 2) == 0);
             std::array<std::int16_t, 1920> fresh{};
