@@ -41,7 +41,9 @@ constexpr std::size_t LayerBytes = 65536;
 constexpr std::size_t SurfaceBytes = LayerBytes * Layers;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t TileR64KBX = 0x1b;
+constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
+constexpr std::uint32_t TileDepth64KB = 0x18;
 constexpr std::uint32_t Color32FloatInfo = (4u << 2u) | (7u << 8u);
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
@@ -50,7 +52,8 @@ constexpr std::uint32_t ShaderViewportIndexLayerCapability = 5254;
 constexpr float Filled = 0.25f;
 constexpr float Passed = 0.75f;
 constexpr std::size_t DepthSliceBytes = LayerBytes;
-constexpr std::size_t BlockBytes = SurfaceBytes + DepthSliceBytes * Layers;
+constexpr std::size_t StoredDepthOffset = SurfaceBytes + DepthSliceBytes * Layers;
+constexpr std::size_t BlockBytes = StoredDepthOffset + DepthSliceBytes * Layers;
 constexpr std::size_t HtileSliceBytes = ((Side + 1023u) / 1024u) * ((Side + 511u) / 512u) * 32768u;
 
 alignas(256) std::array<std::uint32_t, HtileSliceBytes * Layers / 4u> Htile{};
@@ -63,6 +66,10 @@ struct Vertex {
     std::array<float, 4> position;
     std::array<float, 3> color;
     std::uint32_t layer;
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> StoreRampCode{
+    0x7e280d00, 0x102828ff, 0x3cf80000, 0x7e3c0300, 0x7e3e0280, 0xf0201108, 0x0001141e, 0xbf810000, 0xbf810000,
 };
 
 alignas(256) std::array<std::array<std::uint32_t, 9>, Layers> LoadCodes{};
@@ -163,6 +170,8 @@ struct Pass {
     bool depthWrite;
     VkCompareOp compare;
     std::span<const std::uint32_t> pixelCode;
+    bool htiled = true;
+    std::uint64_t depthBase = 0;
 };
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pass) {
@@ -197,7 +206,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pa
     state.renderExtent = {Side, Side};
     state.renderLayers = pass.layers;
     state.layerExports = pass.layers == 1 ? 0u : 1u << 18u;
-    state.depth = AgcDriver::Graphics::DepthTarget{DepthAddress + pass.slice * DepthSliceBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, AddressOf(Htile.data()) + pass.slice * HtileSliceBytes, false};
+    const auto depthBase = pass.depthBase != 0 ? pass.depthBase : DepthAddress;
+    state.depth = AgcDriver::Graphics::DepthTarget{depthBase + pass.slice * DepthSliceBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, pass.htiled ? AddressOf(Htile.data()) + pass.slice * HtileSliceBytes : 0u, false};
     state.depth->firstSlice = pass.slice;
     state.depth->lastSlice = pass.slice + pass.layers - 1u;
     state.depth->layers = pass.layers;
@@ -301,6 +311,70 @@ void Expect(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_
     }
 }
 
+std::array<std::uint32_t, 8> DepthPlaneView(std::uint64_t address) {
+    return {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32Float << 20u) | (((Side - 1u) & 3u) << 30u),
+        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        0xfacu | (TileDepth64KB << 20u) | (Type2D << 28u),
+        0u,
+        0u,
+        0u,
+        0u,
+    };
+}
+
+void StoreRamp(AgcDriver::VulkanDevice& device, std::uint64_t plane) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto view = DepthPlaneView(plane);
+    std::copy(view.begin(), view.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(StoreRampCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto program = ShaderRecompiler::Recompile(request);
+    device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void StoredSliceFill(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const auto surface = AddressOf(texels);
+    const auto depth = surface + StoredDepthOffset;
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, 0u);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::fill_n(reinterpret_cast<float*>(texels + StoredDepthOffset), DepthSliceBytes * Layers / 4u, 0.25f);
+    constexpr std::array<std::uint32_t, 2> stored{1, 4};
+    for (const auto slice : stored) {
+        StoreRamp(device, depth + slice * DepthSliceBytes);
+        Require(AgcDriver::Graphics::StorageTexture::FindPending(depth + slice * DepthSliceBytes, DepthSliceBytes) != nullptr, "the row stored into depth slice " + std::to_string(slice) + " is not pending in a storage image");
+    }
+    const std::array<float, Layers> unused{};
+    Quads(Layers, false, unused);
+    Draw(device, surface, {0, Layers, false, false, VK_COMPARE_OP_ALWAYS, FillPixelCode, false, depth});
+    Quads(Layers, true, unused);
+    Draw(device, surface, {0, Layers, true, false, VK_COMPARE_OP_LESS, PassPixelCode, false, depth});
+    for (std::uint32_t slice = 0; slice < Layers; ++slice) {
+        const bool rowStored = std::find(stored.begin(), stored.end(), slice) != stored.end();
+        Expect(device, surface, slice, rowStored ? 0u : Threads, "a layered draw over depth slices 1 and 4 that hold a pending storage image write, with no HTILE");
+    }
+    const float step = std::bit_cast<float>(0x3cf80000u);
+    for (std::uint32_t slice = 0; slice < Layers; ++slice) {
+        const bool rowStored = std::find(stored.begin(), stored.end(), slice) != stored.end();
+        LoadLayer(device, depth, slice);
+        for (std::uint32_t x = 0; x < Threads; ++x) {
+            const auto expected = std::bit_cast<std::uint32_t>(rowStored ? static_cast<float>(x) * step : 1.0f);
+            Require(Output[x] == expected, "depth slice " + std::to_string(slice) + " read as a layer of a 2D array texture after the draw over a stored row: texel (" + std::to_string(x) + ", 0) is " + std::to_string(std::bit_cast<float>(Output[x])) + ", expected " + std::to_string(std::bit_cast<float>(expected)));
+        }
+    }
+}
+
 void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     const auto surface = AddressOf(texels);
     DepthAddress = surface + SurfaceBytes;
@@ -343,6 +417,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
     AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
+    StoredSliceFill(device, texels);
 }
 
 }
