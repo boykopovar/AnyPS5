@@ -1,0 +1,48 @@
+#pragma once
+
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <cstddef>
+
+extern "C" {
+
+void* APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds(void* result);
+void* APS5_VABI WKBundleNodeHandleGetRenderRect(void* result);
+void* APS5_VABI _ZN7WebCore10Pasteboard10readOriginEv(void* result);
+void* APS5_VABI _ZN7WebCore10Pasteboard20typesSafeForBindingsERKN3WTF6StringE(void* result);
+void* APS5_VABI _ZN7WebCore10Pasteboard22readStringInCustomDataERKN3WTF6StringE(void* result);
+void* APS5_VABI _ZN7WebCore14SocketProvider22createWebSocketChannelERNS_8DocumentERNS_22WebSocketChannelClientE(void* result);
+void* APS5_VABI _ZN7WebCore17CredentialStorage29originsWithSessionCredentialsEv(void* result);
+bool APS5_VABI _ZN7WebCore17FrameLoaderClient29hasFrameSpecificStorageAccessEv();
+bool APS5_VABI _ZN7WebCore17FrameLoaderClient38shouldForceUniversalAccessFromLocalURLERKN3WTF3URLE();
+void* APS5_VABI _ZN7WebCore21NetworkStorageSession10getCookiesERKN3WTF3URLE(void* result);
+void* APS5_VABI _ZN7WebCore21NetworkStorageSession17domCookiesForHostERKN3WTF6StringE(void* result);
+void* APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient11createFrameERKN3WTF6StringERNS_21HTMLFrameOwnerElementE(void* result);
+void* APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient12createPluginERKNS_7IntSizeERNS_17HTMLPlugInElementERKN3WTF3URLERKNS6_6VectorINS6_6StringELm0ENS6_15CrashOnOverflowELm16ENS6_10FastMallocEEESG_RKSB_b(void* result);
+void APS5_VABI _ZN7WebCore24CachedResourceHandleBaseC1Ev(void* self);
+void APS5_VABI _ZN7WebCore24CachedResourceHandleBaseC2Ev(void* self);
+void* APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE(void* result);
+void* APS5_VABI _ZN7WebCore33signedPublicKeyAndChallengeStringEjRKN3WTF6StringERKNS0_3URLE(void* result);
+void* APS5_VABI _ZN7WebCore4Icon18createIconForFilesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(void* result);
+void APS5_VABI _ZN9Inspector27PerGlobalObjectWrapperWorldC1Ev(void* self);
+void APS5_VABI _ZN9Inspector27PerGlobalObjectWrapperWorldC2Ev(void* self);
+void* APS5_VABI _ZNK7WebCore14LoaderStrategy12ongoingLoadsEv(void* result);
+void* APS5_VABI _ZNK7WebCore16ResourceResponse13cfURLResponseEv();
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient11hasHTMLViewEv();
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient22shouldPaintBrokenImageERKN3WTF3URLE();
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient24isEmptyFrameLoaderClientEv();
+void* APS5_VABI _ZNK7WebCore17FrameLoaderClient24loadedSubresourceDomainsEv(void* result);
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient25shouldLoadMediaElementURLERKN3WTF3URLE();
+void* APS5_VABI _ZNK7WebCore17FrameLoaderClient29overrideContentSecurityPolicyEv(void* result);
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient29shouldAlwaysUsePluginDocumentERKN3WTF6StringE();
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient32isServiceWorkerFrameLoaderClientEv();
+bool APS5_VABI _ZNK7WebCore17FrameLoaderClient47allowsContentJavaScriptFromMostRecentNavigationEv();
+void* APS5_VABI _ZNK7WebCore18PlatformPasteboard29typesSafeForDOMToReadAndWriteERKN3WTF6StringE(void* result);
+void* APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv(void* result);
+bool APS5_VABI _ZNK7WebCore22EmptyFrameLoaderClient32representationExistsForURLSchemeERKN3WTF6StringE();
+void* APS5_VABI _ZNK9Inspector15RemoteInspector6Client11browserNameEv(void* result);
+void* APS5_VABI _ZNK9Inspector15RemoteInspector6Client14browserVersionEv(void* result);
+void* APS5_VABI _ZNK9Inspector22RemoteInspectionTarget3urlEv(void* result);
+void* APS5_VABI _ZNK9Inspector22RemoteInspectionTarget4nameEv(void* result);
+
+}

@@ -12,7 +12,6 @@ extern "C" {
 
 int APS5_VABI WKErrorCopyLocalizedDescription();
 int APS5_VABI _ZN9Inspector17ScriptDebugServer23removeBreakpointActionsEm();
-int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector21InjectedScriptManagerdaEPv();
 int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Timeline13TimelineEventEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE();
 int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME();

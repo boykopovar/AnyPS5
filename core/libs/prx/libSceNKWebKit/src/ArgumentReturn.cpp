@@ -402,4 +402,14 @@ void* APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentnwEm10NotNullTagPv(vo
     return third;
 }
 
+void* APS5_VABI _ZN7WebCore17FrameLoaderClientnaEmPv(void* first, void* second) {
+    (void)first;
+    return second;
+}
+
+void* APS5_VABI _ZN7WebCore17FrameLoaderClientnwEmPv(void* first, void* second) {
+    (void)first;
+    return second;
+}
+
 }
