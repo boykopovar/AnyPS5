@@ -272,7 +272,6 @@ int APS5_VABI sceIcuLegacyUnknown_5jXnzyO60HQ_nid_no_patch();
 int APS5_VABI _ZN6icu_687UVector11setComparerEPFa8UElementS1_E_nid_postfix();
 int APS5_VABI _ZN6icu_688ByteSink15GetAppendBufferEiiPciPi_nid_postfix();
 int APS5_VABI _ZN6icu_6810UStringSetD1Ev_nid_postfix();
-int APS5_VABI ures_getVersionNumberInternal_nid_postfix();
 int APS5_VABI uprv_deleteUObject_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_5tc_plus_6cE9fAc_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_5yoxeYXrdUE_nid_no_patch();

@@ -123,6 +123,10 @@ void Value(const Bundle& bundle, int operation, std::int32_t incoming = 0, bool 
 void Literals() {
     Bundle root;
     root.Metadata();
+    Require(ures_getVersionNumberInternal_nid_postfix(nullptr) == nullptr, "null resource bundle has no version");
+    const auto* version = ures_getVersionNumberInternal_nid_postfix(root.guest);
+    Require(version && std::string_view(version) == "0", "missing resource bundle version defaults to zero");
+    Require(ures_getVersionNumberInternal_nid_postfix(root.guest) == version, "version string is stable while the bundle is open");
     Require(ures_getSize_nid_postfix(root.guest) == 9 && ures_getType_nid_postfix(root.guest) == 2, "fixed real resource-table metadata");
     std::int32_t status = 0;
     std::int32_t length = -1;

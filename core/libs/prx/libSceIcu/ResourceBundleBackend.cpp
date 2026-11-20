@@ -16,6 +16,9 @@ void* Open_nid_no_patch(const char* path, const char* name, bool direct, std::in
     return result;
 }
 void Close_nid_no_patch(void* handle) { ures_close(static_cast<UResourceBundle*>(handle)); }
+const char* VersionNumber_nid_no_patch(const void* handle) {
+    return ures_getVersionNumber(static_cast<const UResourceBundle*>(handle));
+}
 void* Child_nid_no_patch(const void* handle, const char* key, std::int32_t index, bool byKey, void* fillIn, std::int32_t* status) {
     auto error = status ? static_cast<UErrorCode>(*status) : U_ZERO_ERROR;
     auto* result = byKey ? ures_getByKey(static_cast<const UResourceBundle*>(handle), key, static_cast<UResourceBundle*>(fillIn), status ? &error : nullptr)

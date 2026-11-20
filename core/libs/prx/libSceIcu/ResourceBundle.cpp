@@ -263,6 +263,14 @@ std::int32_t APS5_VABI ures_getSize_nid_postfix(const UResourceBundle* handle) {
     const std::lock_guard lock(owner->mutex);
     return IcuResourceBackend::Size_nid_no_patch(owner->native.get());
 }
+
+const char* APS5_VABI ures_getVersionNumberInternal_nid_postfix(const UResourceBundle* handle) {
+    if (!handle) return nullptr;
+    const auto owner = Find(handle);
+    const std::lock_guard lock(owner->mutex);
+    return IcuResourceBackend::VersionNumber_nid_no_patch(owner->native.get());
+}
+
 std::int32_t APS5_VABI ures_getType_nid_postfix(const UResourceBundle* handle) {
     if (!handle) return -1;
     const auto owner = Find(handle);

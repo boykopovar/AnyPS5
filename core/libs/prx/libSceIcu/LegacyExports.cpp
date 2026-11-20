@@ -1131,10 +1131,6 @@ int APS5_VABI _ZN6icu_6810UStringSetD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getVersionNumberInternal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uprv_deleteUObject_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
