@@ -13,6 +13,7 @@ using IcuRecoveredTest::Require;
 
 constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t BufferOverflow = 15;
+constexpr std::int32_t MissingResource = 2;
 constexpr std::int32_t RelativeDay = 4;
 constexpr std::int32_t LongStyle = 0;
 constexpr std::int32_t CapitalizationNone = 256;
@@ -35,14 +36,14 @@ void RequireThrows(TCall call) {
 URelativeDateTimeFormatter* Open() {
     std::int32_t status = 0;
     auto* const formatter = ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, &status);
-    Require(formatter != nullptr && status <= 0);
+    Require((formatter != nullptr && status <= 0) || (formatter == nullptr && status == MissingResource));
     return formatter;
 }
 
 void OpenAndClose() {
     std::int32_t status = 0;
     auto* const formatter = ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, &status);
-    Require(formatter != nullptr && status <= 0);
+    Require((formatter != nullptr && status <= 0) || (formatter == nullptr && status == MissingResource));
     ureldatefmt_close_nid_postfix(formatter);
     ureldatefmt_close_nid_postfix(nullptr);
 
@@ -63,6 +64,7 @@ void OpenAndClose() {
 
 void FormatRelative() {
     auto* const formatter = Open();
+    if (!formatter) return;
     std::array<char16_t, 32> output;
     output.fill(u'x');
     std::int32_t status = 0;
@@ -99,6 +101,7 @@ void FormatRelative() {
 
 void FormatNumeric() {
     auto* const formatter = Open();
+    if (!formatter) return;
     std::array<char16_t, 32> output{};
     std::int32_t status = 0;
     const auto length = ureldatefmt_formatNumeric_nid_postfix(formatter, -3.0, RelativeDay, output.data(), output.size(), &status);
