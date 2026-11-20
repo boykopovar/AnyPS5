@@ -42,8 +42,8 @@ void Check(const char* path, const char* package) {
         Require(address != nullptr, "resolve resource-bundle NID");
         return address;
     };
-    const auto common = reinterpret_cast<decltype(&udata_setCommonData)>(import("wHZwCpZVcGI"));
-    const auto fileAccess = reinterpret_cast<decltype(&udata_setFileAccess)>(import("mCyTdtewGpk"));
+    const auto common = reinterpret_cast<decltype(&udata_setCommonData_nid_postfix)>(import("wHZwCpZVcGI"));
+    const auto fileAccess = reinterpret_cast<decltype(&udata_setFileAccess_nid_postfix)>(import("mCyTdtewGpk"));
     const auto cleanup = reinterpret_cast<decltype(&u_cleanup_nid_postfix)>(import("1SsridDRBYQ"));
     const auto open = reinterpret_cast<decltype(&ures_open)>(import("bpD6xUk4QVI"));
     const auto direct = reinterpret_cast<decltype(&ures_openDirect_nid_postfix)>(import("lh5Sirif1Js"));
