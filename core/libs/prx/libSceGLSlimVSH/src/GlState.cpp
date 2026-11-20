@@ -126,8 +126,6 @@ void APS5_VABI glBlendEquation_nid_postfix(GLenum mode) { glBlendEquationSeparat
 void APS5_VABI glBlendFuncSeparate_nid_postfix(GLenum srcRgb, GLenum dstRgb, GLenum srcAlpha, GLenum dstAlpha) {
     std::lock_guard lock(mutex);
     if (!Factor(srcRgb) || !Factor(dstRgb) || !Factor(srcAlpha) || !Factor(dstAlpha) || dstRgb == 0x0308 || dstAlpha == 0x0308) { Error_nid_no_patch(0x0500); return; }
-    if (((srcRgb == 0x8001 || srcRgb == 0x8002) && (dstRgb == 0x8003 || dstRgb == 0x8004)) ||
-        ((dstRgb == 0x8001 || dstRgb == 0x8002) && (srcRgb == 0x8003 || srcRgb == 0x8004))) { Error_nid_no_patch(0x0502); return; }
     auto& s = Current_nid_no_patch().state;
     s[0x80c9] = {double(srcRgb)}; s[0x80c8] = {double(dstRgb)};
     s[0x80cb] = {double(srcAlpha)}; s[0x80ca] = {double(dstAlpha)};
