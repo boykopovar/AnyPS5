@@ -567,6 +567,18 @@ static void TestString() {
     double d = _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(numStr, sizeof(numStr) / sizeof(char16_t) - 1, parsedLen);
     Require(std::abs(d - 123.456) < 1e-6);
     Require(parsedLen == 7);
+    struct LongStringCase {
+        const char16_t* text;
+        std::size_t length;
+        double value;
+        std::size_t parsed;
+    };
+    for (const LongStringCase& item : {LongStringCase{u" 12", 3, 0.0, 0}, LongStringCase{u"0x1A", 4, 0.0, 1}, LongStringCase{u"inf", 3, 0.0, 0},
+             LongStringCase{u"infinity", 8, 0.0, 0}, LongStringCase{u"nan", 3, 0.0, 0}, LongStringCase{u"-2.5e3x", 7, -2500.0, 6},
+             LongStringCase{u"12é34", 5, 12.0, 2}, LongStringCase{u"", 0, 0.0, 0}}) {
+        std::size_t parsed = 99;
+        Require(_ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(item.text, item.length, parsed) == item.value && parsed == item.parsed);
+    }
 }
 
 static void TestWebCorePure() {
@@ -598,6 +610,21 @@ static void TestWebCorePure() {
     Require(ir.m_location.m_y == 21);
     Require(ir.m_size.m_width == 100);
     Require(ir.m_size.m_height == 51);
+
+    constexpr int lowest = std::numeric_limits<int>::min();
+    constexpr int highest = std::numeric_limits<int>::max();
+    const FloatRect huge{FloatPoint{3.0e9f, -3.0e9f}, FloatSize{4.0e9f, std::numeric_limits<float>::infinity()}};
+    const IntRect clamped = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(huge);
+    Require(clamped.m_location.m_x == highest && clamped.m_location.m_y == lowest);
+    Require(clamped.m_size.m_width == highest && clamped.m_size.m_height == highest);
+    const FloatRect edge{FloatPoint{2147483648.0f, -2147483648.0f}, FloatSize{2147483520.0f, -0.5f}};
+    const IntRect atEdge = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(edge);
+    Require(atEdge.m_location.m_x == highest && atEdge.m_location.m_y == lowest);
+    Require(atEdge.m_size.m_width == 2147483520 && atEdge.m_size.m_height == -1);
+    const FloatRect unordered{FloatPoint{std::numeric_limits<float>::quiet_NaN(), 0.5f}, FloatSize{-2.5f, 2.5f}};
+    const IntRect fromNaN = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(unordered);
+    Require(fromNaN.m_location.m_x == lowest && fromNaN.m_location.m_y == 1);
+    Require(fromNaN.m_size.m_width == -3 && fromNaN.m_size.m_height == 3);
 }
 
 static void TestJscAndPal() {

@@ -256,6 +256,9 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(!sceFiosFileExistsSync(nullptr, directory.c_str()));
     REQUIRE(sceFiosDirectoryExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosDirectoryExistsSync(nullptr, file.c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, (directory + "/missing").c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, nullptr));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, ""));
     REQUIRE(!sceFiosExistsSync(nullptr, nullptr));
     REQUIRE(!sceFiosExistsSync(nullptr, ""));
 
@@ -266,6 +269,7 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosFileGetSizeSync(nullptr, "") == SCE_FIOS_ERROR_BAD_PATH);
     const std::string tooLong(2000, 'a');
     REQUIRE(sceFiosFileGetSizeSync(nullptr, tooLong.c_str()) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, tooLong.c_str()));
 
     SceFiosStat stat{};
     std::memset(&stat, 0xaa, sizeof(stat));
@@ -363,6 +367,8 @@ static void CheckOperationLifecycle(const std::string& file) {
     REQUIRE(sceFiosOpSyncWait(directoryOp) == 1);
     const SceFiosOp fileAsDirectoryOp = sceFiosDirectoryExists(nullptr, file.c_str(), &exists);
     REQUIRE(!exists && sceFiosOpSyncWait(fileAsDirectoryOp) == 0);
+    const SceFiosOp missingDirOp = sceFiosDirectoryExists(nullptr, "fios2_probe/none", &exists);
+    REQUIRE(!exists && sceFiosOpSyncWait(missingDirOp) == 0);
 
     const SceFiosOp failed = sceFiosFileGetSize(nullptr, "fios2_probe/none");
     REQUIRE(sceFiosOpGetError(failed) == SCE_FIOS_ERROR_BAD_PATH);
