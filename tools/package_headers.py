@@ -43,8 +43,12 @@ def public_headers(root):
     pending = [path / (path.name + ".hpp") for path in directories]
     visited = set()
     while pending:
-        header = resolved_path(pending.pop())
-        if not header.is_relative_to(libs):
+        source = pending.pop()
+        header = Path(os.path.abspath(source))
+        target = resolved_path(source)
+        if resolved_path(header) != target:
+            raise RuntimeError(f"Public header path changes when normalized: {source}")
+        if not header.is_relative_to(libs) or not target.is_relative_to(libs):
             raise RuntimeError(f"Public header is outside core/libs: {header}")
         if header in visited:
             continue
@@ -64,16 +68,14 @@ def public_headers(root):
             if "\\" in name or ":" in name or PurePosixPath(name).is_absolute() or "3rdparty" in PurePosixPath(name).parts:
                 raise RuntimeError(f"Forbidden public include in {header}: {name}")
             search = (header.parent / name, libs / name) if quoted else (libs / name,)
-            candidates = set()
+            candidates = {}
             for path in search:
-                if path.is_symlink():
-                    candidates.add(resolved_path(path))
-                elif path.is_file():
-                    candidates.add(resolved_path(path))
+                if path.is_symlink() or path.is_file():
+                    candidates.setdefault(resolved_path(path), path)
             if len(candidates) > 1:
                 raise RuntimeError(f"Ambiguous public include in {header}: {name}")
             if candidates:
-                pending.append(candidates.pop())
+                pending.append(next(iter(candidates.values())))
             elif quoted or name not in SYSTEM_HEADERS:
                 raise RuntimeError(f"Missing project or unsupported external include in {header}: {name}")
     return sorted(visited)

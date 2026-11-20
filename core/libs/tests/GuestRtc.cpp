@@ -6,6 +6,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -1019,19 +1020,26 @@ int main(int argc, char** argv) {
         const RtcTick networkClock{leapDayTick + 10000000};
         const RtcTick adClock{leapDayTick + 20000000};
         const RtcTick debugClock{leapDayTick + 30000000};
+        const auto start = std::chrono::steady_clock::now();
+        const auto checkClock = [&](auto getter, RtcTick base) {
+            RtcTick sample{};
+            Require(getter(&sample) == 0);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
+            Require(sample.tick >= base.tick && sample.tick - base.tick <= static_cast<std::uint64_t>(elapsed.count()));
+        };
         Require(sceRtcSetCurrentTick(&systemClock) == 0);
         Require(sceRtcSetCurrentNetworkTick(&networkClock) == 0);
-        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
-        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
+        checkClock(sceRtcGetCurrentAdNetworkTick, networkClock);
+        checkClock(sceRtcGetCurrentDebugNetworkTick, networkClock);
         Require(sceRtcSetCurrentAdNetworkTick(&adClock) == 0);
         Require(sceRtcSetCurrentDebugNetworkTick(&debugClock) == 0);
         Require(sceRtcSetCurrentNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcSetCurrentAdNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentAdNetworkTick(nullptr) == invalidPointer);
         Require(sceRtcSetCurrentDebugNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentDebugNetworkTick(nullptr) == invalidPointer);
-        Require(sceRtcGetCurrentTick(&current) == 0 && current.tick >= systemClock.tick && current.tick < systemClock.tick + 1000000);
-        Require(sceRtcGetCurrentNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
-        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= adClock.tick && current.tick < adClock.tick + 1000000);
-        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= debugClock.tick && current.tick < debugClock.tick + 1000000);
+        checkClock(sceRtcGetCurrentTick, systemClock);
+        checkClock(sceRtcGetCurrentNetworkTick, networkClock);
+        checkClock(sceRtcGetCurrentAdNetworkTick, adClock);
+        checkClock(sceRtcGetCurrentDebugNetworkTick, debugClock);
         Require(sceRtcGetCurrentRawNetworkTick(&current) == 0 && current.tick > unixEpochTick);
         Require(sceRtcGetCurrentTick(nullptr) == invalidPointer);
         Require(sceRtcGetCurrentNetworkTick(nullptr) == invalidPointer);

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -15,6 +16,17 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "failed: %s\n", message);
     std::abort();
+}
+
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
+    }
+    Require(false, message);
 }
 
 std::string Hex(const unsigned char* data, std::size_t size) {
@@ -117,6 +129,31 @@ void VerifySha512FamilyFinalCleanup() {
     Require(SHA384_Final_nid_postfix(digest, &ctx) == 0, "SHA384_Final rejects zero mdLength");
 }
 
+void VerifySslGetExData() {
+    LibreSslSslInternal internal{};
+    LibreSslSsl ssl{};
+    ssl.internal = &internal;
+
+    Require(SSL_get_ex_data_nid_postfix(&ssl, 0) == nullptr, "an SSL without stored ex-data returns null");
+
+    void* first = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x11));
+    void* second = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x22));
+    char* elements[2] = {static_cast<char*>(first), static_cast<char*>(second)};
+    LibreSslStack stack{};
+    stack.num = 2;
+    stack.data = elements;
+    internal.exData.stack = &stack;
+
+    Require(SSL_get_ex_data_nid_postfix(&ssl, 0) == first, "SSL ex-data returns the element at the index");
+    Require(SSL_get_ex_data_nid_postfix(&ssl, 1) == second, "SSL ex-data returns the last stored element");
+    Require(SSL_get_ex_data_nid_postfix(&ssl, 2) == nullptr, "an index at the end of the stack returns null");
+    Require(SSL_get_ex_data_nid_postfix(&ssl, -1) == nullptr, "a negative index returns null");
+
+    LibreSslSsl noInternal{};
+    RequireInvalidArgument([&] { SSL_get_ex_data_nid_postfix(&noInternal, 0); }, "a null internal state throws");
+    RequireInvalidArgument([&] { SSL_get_ex_data_nid_postfix(nullptr, 0); }, "a null connection throws");
+}
+
 int APS5_VABI NewCallback(void*, void*, LibreSslExData*, int, std::int64_t, void*) {
     std::abort();
 }
@@ -174,5 +211,6 @@ int main() {
     }
 
     VerifySha512FamilyFinalCleanup();
+    VerifySslGetExData();
     return 0;
 }
