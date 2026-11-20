@@ -1383,6 +1383,9 @@ void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(Gues
 void APS5_VABI PadLaunchWithNameAttr_nid_no_patch(GuestPad* pad, const char* name, void** attrSlot, void** thread);
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
 int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
+void APS5_VABI _ZNSt3__16thread4joinEv_nid_postfix(Pthread* thread);
+void APS5_VABI _ZNSt3__16thread6detachEv_nid_postfix(Pthread* thread);
+void APS5_VABI _ZNSt3__16threadD1Ev_nid_postfix(Pthread* thread);
 void* APS5_VABI _Thrd_id_nid_postfix(void);
 void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void));
 int APS5_VABI _Tss_create_nid_postfix(int* key, void (APS5_VABI* destructor)(void*));

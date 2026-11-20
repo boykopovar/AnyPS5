@@ -1,0 +1,10 @@
+add_test_executable(guest_libcxx_thread_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxThread.cpp)
+target_include_directories(guest_libcxx_thread_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libcxx_thread_tests PRIVATE libc libkernel)
+configure_windows_unwind(guest_libcxx_thread_tests)
+add_test(NAME guest_libcxx_thread COMMAND guest_libcxx_thread_tests)
+set_tests_properties(guest_libcxx_thread PROPERTIES TIMEOUT 15)
+if(WIN32)
+    set_tests_properties(guest_libcxx_thread PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+endif()
