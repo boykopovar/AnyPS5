@@ -305,7 +305,6 @@ private:
             for (const auto& [from, to] : fresh) remove(_fresh, from, to);
         }
         for (const auto& [from, to] : fresh) {
-            written(context, from, to);
             if (protect(from, to)) continue;
             std::unique_lock lock(_lock);
             for (const auto& [left, right] : fresh) {
@@ -317,6 +316,7 @@ private:
             else for (const auto& [left, right] : fresh) written(context, left, right);
             return false;
         }
+        for (const auto& [from, to] : fresh) written(context, from, to);
         return true;
     }
 

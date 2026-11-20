@@ -2106,6 +2106,38 @@ void CheckImportWindowOverAlias() {
     munmap(raw, 3 * Block);
     close(file);
 }
+
+struct WriteInReportWindow {
+    std::uintptr_t page;
+    bool wrote = false;
+    bool seenAfterWrite = false;
+};
+
+void WriteAfterFirstReport(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& probe = *static_cast<WriteInReportWindow*>(context);
+    if (probe.wrote) {
+        probe.seenAfterWrite = probe.seenAfterWrite || (begin <= probe.page && probe.page < end);
+        return;
+    }
+    probe.wrote = true;
+    *reinterpret_cast<volatile std::uint8_t*>(probe.page) = 0x5a;
+}
+
+void CheckWriteAfterFreshReport() {
+    void* memory = mmap(nullptr, Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(memory != MAP_FAILED, "cannot map the fresh report block");
+    std::memset(memory, 0, Block);
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, Block);
+    WriteInReportWindow probe{base + 0x1000};
+    for (int pass = 0; pass < 2; ++pass) {
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(base, Block, &WriteAfterFirstReport, &probe), "cannot collect the fresh report block");
+    }
+    Require(probe.wrote, "the fresh range was not reported");
+    Require(probe.seenAfterWrite, "a store made after a fresh range was reported was never reported");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Block);
+    munmap(memory, Block);
+}
 #endif
 
 void CheckImportWindowFootprint() {
@@ -2759,6 +2791,7 @@ int main(int argc, char** argv) {
         CheckImportWindowAcrossThreads();
 #if defined(__linux__)
         CheckImportWindowOverAlias();
+        CheckWriteAfterFreshReport();
 #endif
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
