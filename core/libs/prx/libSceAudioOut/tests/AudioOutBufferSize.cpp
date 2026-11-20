@@ -32,7 +32,7 @@ void RunPassThrough() {
     suppliedBytes = static_cast<std::uint32_t>(samples.size() * sizeof(float));
     Require(sceAudioOutOutput(handle, samples.data()) == 512, "a 512-frame output did not return 512");
     Require(queued == 1 && queuedBytes == 16384, "a 512-frame F32 8-channel output did not queue 16384 bytes");
-    Require(sceAudioOutClose(handle) == 0 && closed == 1, "the port did not close its device");
+    Require(sceAudioOutClose(handle) == 0 && closed == 0, "the port closed its device instead of parking it");
 }
 
 void RunOverflow(std::uint32_t frames, std::uint32_t format, std::uint32_t frameBytes) {
@@ -49,7 +49,7 @@ void RunOverflow(std::uint32_t frames, std::uint32_t format, std::uint32_t frame
     }
     Require(threw, "an output whose buffer size overflows did not throw");
     Require(queued == 0, "an output whose buffer size overflows queued audio");
-    Require(sceAudioOutClose(handle) == 0 && closed == 1, "the port did not close after the refused output");
+    Require(sceAudioOutClose(handle) == 0 && closed == 0, "the port did not close and park its device after the refused output");
 }
 
 void RunVirtualOverflow() {
