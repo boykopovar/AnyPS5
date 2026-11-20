@@ -80,7 +80,7 @@ class CaptureEnvironment(unittest.TestCase):
         extra = {"APS5_CAPTURE_INPUTS": "1", "APS5_PIPELINE_STATS": "1", "APS5_TRACE_FRAMES": "0:1"}
         before = (base.copy(), extra.copy())
         environment, removed = performance_capture.clean_environment(base, extra, ".", "frames", (3, 2))
-        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd())})
+        self.assertEqual(environment, {"PATH": "runtime", "APS5_TRACE_FRAMES": "3:2", "APS5_TRACE_DIR": str(Path.cwd().resolve())})
         self.assertEqual(set(removed), (set(base) | set(extra)) - {"PATH"})
         self.assertEqual((base, extra), before)
 
