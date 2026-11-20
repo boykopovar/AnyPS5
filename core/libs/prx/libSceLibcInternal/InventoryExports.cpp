@@ -1202,8 +1202,9 @@ int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch(void) {
 }
 APS5_EXPORT("AdYYKgtPlqg", libSceLibcInternalInventory_279_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_280_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_280_nid_no_patch(void* lockInfo) {
+    (void)lockInfo;
+    libSceLibcInternalInventory_278_nid_no_patch("Service unavailable");
 }
 APS5_EXPORT("gRw4XrztJ4Q", libSceLibcInternalInventory_280_nid_no_patch);
 

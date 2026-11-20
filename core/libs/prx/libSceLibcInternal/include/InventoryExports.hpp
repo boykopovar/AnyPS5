@@ -243,7 +243,7 @@ int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_277_nid_no_patch(int* locks);
 void APS5_VABI libSceLibcInternalInventory_278_nid_no_patch(const char* format, ...);
 int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch(void);
-int APS5_VABI libSceLibcInternalInventory_280_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_280_nid_no_patch(void* lockInfo);
 std::uint64_t APS5_VABI libSceLibcInternalInventory_281_nid_no_patch(void);
 int APS5_VABI libSceLibcInternalInventory_283_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_284_nid_no_patch();

@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -26,12 +27,18 @@ int main() {
     unsigned char untouchedInfo[sizeof(info)];
     std::memcpy(untouchedLocks, locks, sizeof(locks));
     std::memcpy(untouchedInfo, info, sizeof(info));
+    std::uintptr_t lockInfo[10];
+    for (std::size_t index = 0; index < 10; ++index) lockInfo[index] = 0x10 + index;
+    std::uintptr_t untouchedLockInfo[10];
+    std::memcpy(untouchedLockInfo, lockInfo, sizeof(lockInfo));
 
     libSceLibcInternalInventory_268_nid_no_patch();
     Require(libSceLibcInternalInventory_269_nid_no_patch() == 0, "_malloc_finalize_lv2 must return 0");
     libSceLibcInternalInventory_277_nid_no_patch(locks);
     libSceLibcInternalInventory_278_nid_no_patch("rtld error %d", 1);
     Require(libSceLibcInternalInventory_279_nid_no_patch() == 7, "_rtld_get_stack_prot must return 7");
+    libSceLibcInternalInventory_280_nid_no_patch(lockInfo);
+    libSceLibcInternalInventory_280_nid_no_patch(nullptr);
     Require(libSceLibcInternalInventory_281_nid_no_patch() == 0, "_sceLibcGetMallocParam must return 0");
     sceLibcInternalUnknown6_005_PJWpmO4pj6I_nid_no_patch();
     sceLibcInternalUnknown6_065_1kIpmZX1jw8_nid_no_patch();
@@ -41,5 +48,6 @@ int main() {
 
     Require(std::memcmp(locks, untouchedLocks, sizeof(locks)) == 0, "an atfork hook wrote the lock array");
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0, "_rtld_addr_phdr wrote the phdr info");
+    Require(std::memcmp(lockInfo, untouchedLockInfo, sizeof(lockInfo)) == 0, "_rtld_thread_init wrote the lock information");
     return 0;
 }
