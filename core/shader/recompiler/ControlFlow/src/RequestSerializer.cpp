@@ -913,6 +913,7 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
 }
 
 std::string RequestSerializer::Serialize(const RecompileRequest& request) const {
+    if (!request.context.splitState.empty()) throw std::invalid_argument("RequestSerializer: a request that splits its state is built by the driver from another request and is not serialized");
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
