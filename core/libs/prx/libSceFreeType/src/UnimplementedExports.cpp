@@ -162,4 +162,8 @@ void APS5_VABI FTA_Export_Module_truetype_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Export_Module_type1_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
