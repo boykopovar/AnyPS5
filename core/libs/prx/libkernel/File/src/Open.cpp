@@ -377,8 +377,10 @@ void* BeginClosingStreamDescriptor(int descriptor) {
 #endif
 }
 
-void EndClosingStreamDescriptor(void* closing) {
+void EndClosingStreamDescriptor([[maybe_unused]] void* closing) {
+#ifdef _WIN32
     delete static_cast<File::PositionedTransferLock*>(closing);
+#endif
 }
 
 struct ClosedDescriptorRegistration {
