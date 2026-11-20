@@ -799,6 +799,8 @@ static bool WritingStream(std::FILE* native) {
     return (state.load() & UcrtWriting) != 0;
 #elif defined(__GLIBC__)
     return ::__fwriting(native) != 0;
+#elif defined(__APPLE__)
+    return (native->_flags & __SWR) != 0;
 #else
     return true;
 #endif
