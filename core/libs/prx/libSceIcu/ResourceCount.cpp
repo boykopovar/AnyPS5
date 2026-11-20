@@ -280,7 +280,7 @@ std::int32_t Count(
             AddElements(data.root, offset, sizeof(std::int32_t), function), function);
     case Table:
         return offset == 0 ? 0 : Read<std::uint16_t>(
-            AddElements(data.root, offset, sizeof(std::int32_t), function), function);
+            AddBytes(data.root, offset, function), function);
     case Array16:
     case Table16:
         return Read<std::uint16_t>(
