@@ -409,3 +409,4 @@ include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/MemoryAllocation.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/StrokerOutputs.cmake")
+target_sources(libSceFreeType PRIVATE src/UnimplementedExports.cpp)
