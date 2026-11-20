@@ -235,11 +235,7 @@ AccessibilityRole lookupAriaRoleTokens(const CharT* data, std::uint32_t length) 
     return AccessibilityRole::Unknown;
 }
 
-}  // namespace
-
-extern "C" {
-
-bool APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(AccessibilityRole ariaRole) {
+bool IsARIAInputRole(AccessibilityRole ariaRole) {
     switch (ariaRole) {
     case AccessibilityRole::CheckBox:
     case AccessibilityRole::RadioButton:
@@ -252,8 +248,26 @@ bool APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityR
     }
 }
 
+}  // namespace
+
+extern "C" {
+
+bool APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(NKWebKit::WebCoreAbi::LegacyAccessibilityRole ariaRole) {
+    using NKWebKit::WebCoreAbi::LegacyAccessibilityRole;
+    switch (ariaRole) {
+    case LegacyAccessibilityRole::CheckBox:
+    case LegacyAccessibilityRole::RadioButton:
+    case LegacyAccessibilityRole::SearchField:
+    case LegacyAccessibilityRole::Switch:
+    case LegacyAccessibilityRole::TextField:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool APS5_VABI _ZN7WebCore19AccessibilityObject13isARIAControlENS_17AccessibilityRoleE(AccessibilityRole ariaRole) {
-    if (_ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(ariaRole))
+    if (IsARIAInputRole(ariaRole))
         return true;
 
     switch (ariaRole) {

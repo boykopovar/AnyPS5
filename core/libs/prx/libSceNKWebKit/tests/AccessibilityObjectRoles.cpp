@@ -66,10 +66,14 @@ void TestIsARIAInputAndControl() {
 
     for (int raw = 0; raw <= 200; ++raw) {
         const auto role = static_cast<AccessibilityRole>(raw);
-        const bool expectedInput = contains(inputRoles, role);
-        const bool expectedControl = expectedInput || contains(controlOnlyRoles, role);
-        Require(_ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(role) == expectedInput);
+        const bool expectedControl = contains(inputRoles, role) || contains(controlOnlyRoles, role);
+        const bool expectedLegacyInput = raw == 20 || raw == 96 || raw == 110 || raw == 122 || raw == 136;
+        Require(_ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(static_cast<NKWebKit::WebCoreAbi::LegacyAccessibilityRole>(raw)) == expectedLegacyInput);
         Require(_ZN7WebCore19AccessibilityObject13isARIAControlENS_17AccessibilityRoleE(role) == expectedControl);
+    }
+
+    for (const int raw : {-1, 256 + 20, 65536 + 96, -2147483647 - 1, 2147483647}) {
+        Require(!_ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(static_cast<NKWebKit::WebCoreAbi::LegacyAccessibilityRole>(raw)));
     }
 }
 
