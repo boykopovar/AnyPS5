@@ -511,23 +511,23 @@ void CheckLinkSymbolicLinkLimit(const std::filesystem::path& root) {
         Require(symlink_nid_postfix(folderLink(index - 1).c_str(), at(folderLink(index)).c_str()) == 0);
     }
     const auto copy = at("copy.txt");
-    const auto linksTo = [&](const std::string& source, const std::string& created, const std::filesystem::path& file) {
+    const auto linksTo = [&](const std::string& source, const std::string& created, const std::filesystem::path& file, const std::filesystem::path& createdFile) {
         const bool linked = link_nid_postfix(source.c_str(), created.c_str()) == 0 && std::filesystem::hard_link_count(file) == 2;
-        return linked && std::filesystem::remove(created);
+        return linked && std::filesystem::remove(createdFile);
     };
     const auto refused = [](int result) { return result == -1 && Error() == 62; };
-    Require(linksTo(at(fileLink(32)), copy, chain / "file.txt"));
+    Require(linksTo(at(fileLink(32)), copy, chain / "file.txt", copy));
     Require(refused(link_nid_postfix(at(fileLink(33)).c_str(), copy.c_str())));
     Require(refused(linkat_nid_postfix(-100, at(fileLink(33)).c_str(), -100, copy.c_str(), 0x400)));
     Require(linkat_nid_postfix(-100, at(fileLink(33)).c_str(), -100, copy.c_str(), 0) == 0 && RemoveSymlink(copy));
-    Require(linksTo(at(folderLink(32) + "/file.txt"), copy, folder / "file.txt"));
+    Require(linksTo(at(folderLink(32) + "/file.txt"), copy, folder / "file.txt", copy));
     Require(refused(link_nid_postfix(at(folderLink(33) + "/file.txt").c_str(), copy.c_str())));
     Require(refused(linkat_nid_postfix(-100, at(folderLink(33) + "/file.txt").c_str(), -100, copy.c_str(), 0)));
     Require(symlink_nid_postfix("file.txt", (folder / "inner").string().c_str()) == 0);
-    Require(linksTo(at(folderLink(31) + "/inner"), copy, folder / "file.txt"));
+    Require(linksTo(at(folderLink(31) + "/inner"), copy, folder / "file.txt", copy));
     Require(refused(link_nid_postfix(at(folderLink(32) + "/inner").c_str(), copy.c_str())));
     Require(RemoveSymlink((folder / "inner").string()));
-    Require(linksTo(at("file.txt"), at(folderLink(32) + "/created.txt"), chain / "file.txt"));
+    Require(linksTo(at("file.txt"), at(folderLink(32) + "/created.txt"), chain / "file.txt", folder / "created.txt"));
     Require(refused(link_nid_postfix(at("file.txt").c_str(), at(folderLink(33) + "/created.txt").c_str())));
     Require(refused(linkat_nid_postfix(-100, at("file.txt").c_str(), -100, at(folderLink(33) + "/created.txt").c_str(), 0x400)));
 #ifndef _WIN32
