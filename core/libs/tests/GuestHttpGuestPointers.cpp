@@ -112,6 +112,10 @@ int main() {
     RequireErrno(sceHttpGetNonblock(tmpl, static_cast<int*>(unmapped)), invalidValue);
     RequireErrno(sceHttpGetAcceptEncodingGZIPEnabled(tmpl, static_cast<int*>(unmapped)), invalidValue);
     RequireErrno(sceHttpGetEpoll(tmpl, static_cast<HttpEpollHandle*>(unmapped), nullptr), invalidValue);
+    RequireErrno(sceHttpGetEpollId(tmpl, static_cast<int*>(unmapped), nullptr), invalidValue);
+    RequireErrno(sceHttpGetEpollId(tmpl, &value, static_cast<void**>(unmapped)), 0);
+    Require(value == -1);
+    RequireErrno(sceHttpSetEpollId(tmpl, 42, unmapped), 0);
     RequireErrno(sceHttpGetCookieStats(context, static_cast<HttpCookieStats*>(unmapped)), invalidValue);
 
     Require(sceHttpGetAutoRedirect(tmpl, &value) == 0);

@@ -11,6 +11,8 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 #ifdef __APPLE__
@@ -661,6 +663,37 @@ void CheckNatDiscovery(in_addr address) {
     responseOriginWorker.join();
     RecordUniqueTransactionId(seenIds, responseOriginTx);
     Require(!WaitReadable(server2, 300));
+
+#ifndef _WIN32
+    rlimit limit{};
+    Require(getrlimit(RLIMIT_NOFILE, &limit) == 0);
+    const rlimit originalLimit = limit;
+    if (limit.rlim_cur < 2 * FD_SETSIZE) {
+        limit.rlim_cur = limit.rlim_max < 2 * FD_SETSIZE ? limit.rlim_max : 2 * FD_SETSIZE;
+        Require(setrlimit(RLIMIT_NOFILE, &limit) == 0);
+    }
+    std::vector<int> filler;
+    while (filler.empty() || filler.back() < FD_SETSIZE) {
+        filler.push_back(open("/dev/null", O_RDONLY));
+        Require(filler.back() >= 0);
+    }
+    NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 1000);
+    StunTxId highTx{};
+    std::thread highWorker([&] {
+        sockaddr_in client{};
+        highTx = ReceiveStunBindingRequest(server1, client);
+        SendStunBindingResponse(server1, client, highTx, address.s_addr, 0, true);
+    });
+    natInfo = {sizeof(natInfo), 99, 99, 0};
+    Require(sceNetCtlGetNatInfo(&natInfo) == 0);
+    highWorker.join();
+    for (const int descriptor : filler) close(descriptor);
+    Require(setrlimit(RLIMIT_NOFILE, &originalLimit) == 0);
+    RecordUniqueTransactionId(seenIds, highTx);
+    Require(natInfo.stun_status == 2);
+    Require(natInfo.nat_type == 1);
+    Require(natInfo.mapped_addr == address.s_addr);
+#endif
 
     NetCtlSetStunServers_nid_no_patch(nullptr, 0, 0);
     CloseTestSocket(server1);

@@ -7,9 +7,23 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <utility>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -188,6 +202,47 @@ void ReallocationFailure() {
     Require(liveAllocations == 0);
 }
 
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial, std::size_t size) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
+
 void UnreadableList() {
     LibreSsl3SslCtx context{};
     errno = 71;
@@ -199,6 +254,51 @@ void UnreadableList() {
     }
     Require(thrown);
     Require(context.cipherListTls13 == nullptr);
+    Require(liveAllocations == 0);
+}
+
+void UnreadableAndReadOnlyContext() {
+    errno = 71;
+    bool thrown = false;
+    try {
+        SSL_CTX_set_ciphersuites_nid_postfix(reinterpret_cast<LibreSsl3SslCtx*>(std::uintptr_t{1}), "TLS_AES_128_GCM_SHA256");
+    } catch (const std::runtime_error&) {
+        thrown = errno == 71;
+    }
+    Require(thrown);
+    Require(liveAllocations == 0);
+
+    LibreSsl3SslCtx sentinelPrototype{};
+    std::memset(&sentinelPrototype, 0xa5, sizeof(sentinelPrototype));
+    const ReadOnlyPage sentinelPage(&sentinelPrototype, sizeof(sentinelPrototype));
+    errno = 71;
+    thrown = false;
+    try {
+        SSL_CTX_set_ciphersuites_nid_postfix(sentinelPage.As<LibreSsl3SslCtx>(), "TLS_AES_128_GCM_SHA256");
+    } catch (const std::runtime_error&) {
+        thrown = errno == 71;
+    }
+    Require(thrown);
+    Require(std::memcmp(sentinelPage.As<void>(), &sentinelPrototype, sizeof(sentinelPrototype)) == 0);
+    Require(liveAllocations == 0);
+
+    auto* const existingStack = sk_new_nid_postfix(nullptr);
+    Require(existingStack != nullptr);
+    const std::size_t before = liveAllocations;
+    LibreSsl3SslCtx ownedPrototype{};
+    ownedPrototype.cipherListTls13 = existingStack;
+    const ReadOnlyPage ownedPage(&ownedPrototype, sizeof(ownedPrototype));
+    errno = 71;
+    thrown = false;
+    try {
+        SSL_CTX_set_ciphersuites_nid_postfix(ownedPage.As<LibreSsl3SslCtx>(), "TLS_AES_128_GCM_SHA256");
+    } catch (const std::runtime_error&) {
+        thrown = errno == 71;
+    }
+    Require(thrown);
+    Require(liveAllocations == before);
+    Require(ownedPage.As<LibreSsl3SslCtx>()->cipherListTls13 == existingStack);
+    sk_free_nid_postfix(existingStack);
     Require(liveAllocations == 0);
 }
 
@@ -219,6 +319,7 @@ int main() {
     NullArguments();
     ReallocationFailure();
     UnreadableList();
+    UnreadableAndReadOnlyContext();
     Require(liveAllocations == 0);
     std::puts("libSceLibreSsl3 SSL_CTX_set_ciphersuites tests passed");
 }

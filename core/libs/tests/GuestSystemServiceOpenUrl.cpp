@@ -12,6 +12,9 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <stdlib.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 #include <cstdlib>
 #include <string>
@@ -243,7 +246,7 @@ std::filesystem::path WriteOpener(const std::filesystem::path& directory) {
     const auto opener = directory / "opener.sh";
     {
         std::ofstream script(opener);
-        script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$0\" \"$1\" > \"" << directory.string() << "/record.tmp\"\nmv \"" << directory.string() << "/record.tmp\" \""
+        script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$0\" \"$1\" \"$([ -e /dev/fd/200 ] && echo open || echo closed)\" > \"" << directory.string() << "/record.tmp\"\nmv \"" << directory.string() << "/record.tmp\" \""
                << directory.string() << "/record\"\n";
     }
     std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
@@ -267,15 +270,25 @@ void CheckPosixLauncher() {
     const auto directory = MakeScratchDirectory();
     const auto opener = WriteOpener(directory);
     const std::string url = "https://example.com/$(touch_pwned);id&x=1#a*b";
+    const int saved = fcntl(200, F_DUPFD_CLOEXEC, 201);
+    Require(saved >= 0 || errno == EBADF);
+    const int source = open("/dev/null", O_RDONLY);
+    Require(source >= 0);
+    if (source != 200) Require(dup2(source, 200) == 200 && close(source) == 0);
     {
         HostBrowserLauncher launcher(opener.string());
         Require(launcher.Launch(url));
     }
+    if (saved >= 0)
+        Require(dup2(saved, 200) == 200 && close(saved) == 0);
+    else
+        Require(close(200) == 0);
     const auto lines = WaitForRecord(directory);
-    Require(lines.size() == 3);
+    Require(lines.size() == 4);
     Require(lines[0] == "1");
     Require(lines[1] == opener.string());
     Require(lines[2] == url);
+    Require(lines[3] == "closed");
     Require(!std::filesystem::exists(directory / "touch_pwned"));
     Require(!std::filesystem::exists(std::filesystem::current_path() / "touch_pwned"));
 
@@ -307,8 +320,8 @@ void CheckPosixOutstandingBound() {
     const auto opener = directory / "blocking.sh";
     {
         std::ofstream script(opener);
-        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nwhile [ ! -e \"" << directory.string()
-               << "/release\" ]; do sleep 0.05; done\n";
+        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nparent=$PPID\ni=0\nwhile [ ! -e \"" << directory.string()
+               << "/release\" ] && kill -0 \"$parent\" 2>/dev/null && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done\n";
     }
     std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
     HostBrowserLauncher launcher(opener.string());

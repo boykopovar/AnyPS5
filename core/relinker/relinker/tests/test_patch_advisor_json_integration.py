@@ -39,7 +39,7 @@ def main():
         assert record["status"] == "verified" and record["verification"]["summary"] == [1, 1, 0, 0], record
         assert record["targets"] == {"eboot.bin": digest}
         assert report["schemaVersion"] == 1, report
-        assert record["conversion_options"] == ["--patches", str(patch), "--skip-sce-module"], record
+        assert record["conversion_options"] == ["--patches", str(patch.resolve()), "--skip-sce-module"], record
         status, report = advise(2)
         assert status == 1 and report["status"] == "multiple_matches", report
         status, report = advise(2, "--list-verified")
