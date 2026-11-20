@@ -27,8 +27,8 @@
 #include "prx/libSceNKWebKit/include/AdClickAttributionExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
-#include "prx/libSceJsc/include/WtfRandomExports.hpp"
 
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -138,6 +138,12 @@ URL ValidOrNull(URL url) {
 
 double Now() {
     return _ZN3WTF8WallTime3nowEv().m_value;
+}
+
+double RandomNumber() {
+    std::uint32_t bits = 0;
+    _ZN3WTF29cryptographicallyRandomValuesEPvm(&bits, sizeof(bits));
+    return static_cast<double>(bits) / (static_cast<double>(std::numeric_limits<std::uint32_t>::max()) + 1.0);
 }
 
 StringView WholeString(const URL& url) {
@@ -253,7 +259,7 @@ OptionalSeconds* APS5_VABI _ZN7WebCore18AdClickAttribution31convertAndGetEarlies
     attribution.conversion.value.priority = conversion->priority;
     attribution.conversion.value.wasSent = conversion->wasSent;
     attribution.conversion.engaged = true;
-    const double seconds = SecondsPerDay + _ZN3WTF12randomNumberEv() * SecondsPerDay;
+    const double seconds = SecondsPerDay + RandomNumber() * SecondsPerDay;
     attribution.earliestTimeToSend.value = Now() + seconds;
     attribution.earliestTimeToSend.engaged = true;
     result->value = seconds;
