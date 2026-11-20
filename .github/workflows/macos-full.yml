@@ -1,0 +1,29 @@
+name: macOS full
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: git submodule update --init --recursive --depth 1 --jobs 8
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=x86_64
+      - run: cmake --build build --parallel 6
+      - name: Run CPU tests
+        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 6 --no-tests=error --exclude-from-file .github/macos-full-expected-failures.txt
