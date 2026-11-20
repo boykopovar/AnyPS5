@@ -450,7 +450,7 @@ static constexpr GammaCase Cases[] = {
 };
 
 constexpr int GuestInexact = 0x20;
-constexpr int GuestAllExceptions = 0x3f;
+constexpr int GuestAllExceptions = 0x3d;
 
 #ifdef __linux__
 static int* TrapError;
