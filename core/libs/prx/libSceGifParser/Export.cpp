@@ -1,8 +1,10 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGifParser/include/InventoryExports.hpp"
+#include "Allocator.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
@@ -20,6 +22,16 @@ std::array<std::byte, kConfigSize> g_configCopy{};
 
 } // namespace
 
+GifParser::Allocator GifParser::GetAllocator_nid_no_patch() {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    Allocator allocator{};
+    std::memcpy(&allocator.allocate, g_config.data(), sizeof(allocator.allocate));
+    std::memcpy(&allocator.release, g_config.data() + 0x18, sizeof(allocator.release));
+    if (!allocator.allocate || !allocator.release)
+        throw std::logic_error("GIF metadata: allocator has not been initialized");
+    return allocator;
+}
+
 extern "C" {
 
 APS5_DUMMY_FUN
@@ -28,12 +40,11 @@ APS5_DUMMY_FUN
 
 extern "C" {
 
-int APS5_VABI libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() {
     const std::lock_guard<std::mutex> lock(g_configMutex);
     g_config.fill(std::byte{0});
     return 0;
 }
-APS5_EXPORT("gtaHM-0DRuA", libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch);
 
 int APS5_VABI libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(const void* config) {
     if (config == nullptr)
@@ -61,20 +72,17 @@ int APS5_VABI libSceGifParserUnknown__minus_ZzjSDCInl4_nid_no_patch() {
 }
 APS5_EXPORT("-ZzjSDCInl4", libSceGifParserUnknown__minus_ZzjSDCInl4_nid_no_patch);
 
-int APS5_VABI libSceGifParserUnknown_g2ESAZBTI9I_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser19gifParserInitializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("g2ESAZBTI9I", libSceGifParserUnknown_g2ESAZBTI9I_nid_no_patch);
 
-int APS5_VABI libSceGifParserUnknown_75RtNTcq2p4_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser21gifParserReadMetadataERKSsRKNS_8MetadataERS3_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("75RtNTcq2p4", libSceGifParserUnknown_75RtNTcq2p4_nid_no_patch);
 
-int APS5_VABI libSceGifParserUnknown_4phPV_plus_C95_minus_0_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser22gifParserWriteMetadataERKSsRKNS_8MetadataE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("4phPV+C95-0", libSceGifParserUnknown_4phPV_plus_C95_minus_0_nid_no_patch);
 
 int APS5_VABI libSceGifParserUnknown_YtzTVdv9KoE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -86,9 +94,8 @@ int APS5_VABI libSceGifParserUnknown_OTz_minus_uftEt84_nid_no_patch() {
 }
 APS5_EXPORT("OTz-uftEt84", libSceGifParserUnknown_OTz_minus_uftEt84_nid_no_patch);
 
-int APS5_VABI libSceGifParserUnknown_moN21TSFs4s_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser25gifParserExtractThumbnailERKSsRNS_9ThumbnailE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("moN21TSFs4s", libSceGifParserUnknown_moN21TSFs4s_nid_no_patch);
 
 }

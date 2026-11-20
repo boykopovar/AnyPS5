@@ -274,11 +274,14 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
-std::vector<std::uint32_t> Scheduled(std::span<const std::uint32_t> original) {
+std::vector<std::uint32_t> Scheduled(std::span<const std::uint32_t> original, bool aroundLoad = false) {
     std::vector<std::uint32_t> code(original.begin(), original.end());
-    code.insert(code.begin() + 25, 0x7e3c0280u);
-    code.insert(code.begin() + 24, 0x7e3e0280u);
-    const auto relocated = [](std::int32_t word) { return word + (word >= 24 ? 1 : 0) + (word >= 25 ? 1 : 0); };
+    const std::int32_t first = aroundLoad ? 29 : 24;
+    const std::int32_t second = aroundLoad ? 32 : 25;
+    code.insert(code.begin() + second, 0x7e3c0280u);
+    code.insert(code.begin() + first, 0x7e3e0280u);
+    const auto relocated = [=](std::int32_t word) { return word + (word >= first ? 1 : 0) + (word >= second ? 1 : 0); };
+    if (aroundLoad) code[27] += 8u;
     for (std::int32_t word = 0; word < static_cast<std::int32_t>(original.size()); ++word) {
         const auto instruction = original[static_cast<std::size_t>(word)];
         const auto opcode = instruction & 0xffff0000u;
@@ -329,6 +332,14 @@ int main() {
         Run(*device, scheduled64, 64, device->Target());
         Check(Expected64);
         Run(*device, scheduled64, 64, device->ComputeTarget(32));
+        Check(Expected64);
+        const auto aroundLoad32 = Scheduled(Wave32Code, true);
+        const auto aroundLoad64 = Scheduled(Wave64Code, true);
+        Run(*device, aroundLoad32, 32, device->ComputeTarget(32));
+        Check(Expected32);
+        Run(*device, aroundLoad64, 64, device->Target());
+        Check(Expected64);
+        Run(*device, aroundLoad64, 64, device->ComputeTarget(32));
         Check(Expected64);
         CheckReversedSubtractRefused(*device);
         std::puts("setpc tests passed");

@@ -47,6 +47,7 @@ constexpr int ErrorTooManyCaches = static_cast<int>(0x817a0002);
 constexpr int ErrorNotFound = static_cast<int>(0x817a0011);
 constexpr int ErrorInvalidValue = static_cast<int>(0x817a0012);
 constexpr int ErrorInvalidUser = static_cast<int>(0x817a0013);
+constexpr int ErrorCacheInfoDisabled = static_cast<int>(0x817a0014);
 constexpr int UserServiceAlreadyInitialized = static_cast<int>(0x80960003);
 constexpr int UserServiceNoMemory = static_cast<int>(0x80960004);
 constexpr int UserServiceInvalidArgument = static_cast<int>(0x80960005);
@@ -615,7 +616,20 @@ const HttpCacheHeader* ExportHeaders(Request& request, const Headers& headers) {
     return array.data();
 }
 
-bool CopyOut(void* dst, const void* src, std::size_t size);
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
+bool CopyIn(void* dst, const void* src, std::size_t size) {
+    const ErrnoGuard guard;
+    return GuestCopyIn_nid_no_patch(dst, src, size);
+}
+
+bool CopyOut(void* dst, const void* src, std::size_t size) {
+    const ErrnoGuard guard;
+    return GuestCopyOut_nid_no_patch(dst, src, size);
+}
 
 bool FillResponse(Request& request, const Entry& entry, HttpCacheResponse* response) {
     HttpCacheResponse localResponse{};
@@ -756,29 +770,51 @@ int Revalidate(Request& request, const ResponseData& response, std::shared_ptr<E
 }
 
 int MakeResponse(const HttpCacheResponseHeader* header, ResponseData& response) {
-    response.status = header->statusCode;
-    if (const int status = ConvertHeaders(header->headerCount, header->headers, response.headers); status != 0) return status;
+    HttpCacheResponseHeader localHeader{};
+    if (!CopyIn(&localHeader, header, sizeof(localHeader))) return ErrorInvalidValue;
+    response.status = localHeader.statusCode;
+    if (const int status = ConvertHeaders(localHeader.headerCount, localHeader.headers, response.headers); status != 0) return status;
     response.time = Now();
     return 0;
 }
 
-bool CopyOut(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = saved;
-    return ok;
-}
+struct RollbackSnapshot {
+    Request* state;
+    Request savedState;
+    std::optional<Entry> savedEntry;
+    std::optional<StoreKey> key;
+    std::optional<Entry> savedStored;
+
+    RollbackSnapshot(Request& request, std::optional<StoreKey> storeKey)
+        : state(&request), savedState(request), key(std::move(storeKey)) {
+        if (request.entry) savedEntry = *request.entry;
+        if (key) {
+            if (const auto stored = Store.find(*key); stored != Store.end()) savedStored = stored->second;
+        }
+    }
+
+    int Rollback() {
+        *state = savedState;
+        if (state->entry && savedEntry) *state->entry = *savedEntry;
+        if (key) {
+            if (savedStored) Store.insert_or_assign(*key, *savedStored);
+            else Store.erase(*key);
+        }
+        return ErrorInvalidValue;
+    }
+};
 
 }
 
 extern "C" {
 
-int APS5_VABI sceHttpCacheEnableCacheInfo() {
+int APS5_VABI sceHttpCacheEnableCacheInfo(bool enable) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl(const char* url) {
+    if (url == nullptr) return ErrorInvalidValue;
+    return ErrorCacheInfoDisabled;
 }
 
 
@@ -864,19 +900,18 @@ int APS5_VABI sceHttpCacheInit(std::size_t poolSize) {
     return cacheId;
 }
 
-static bool CopyIn(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = saved;
-    return ok;
-}
-
 static bool CopyInUrl(const char* src, std::string& out) {
     if (src == nullptr) return false;
-    const int saved = errno;
-    const int rc = CopyGuestString_nid_no_patch(src, 65536, out);
-    errno = saved;
-    return rc == 0;
+    const ErrnoGuard guard;
+    return CopyGuestString_nid_no_patch(src, 65536, out) == 0;
+}
+
+static int ConvertRequest(const HttpCacheRequest& request, RequestData& data, const char* what) {
+    if (const int status = ConvertHeaders(request.headerCount, request.headers, data.headers); status != 0) return status;
+    if (request.url == nullptr) NotImplemented_nid_no_patch(what);
+    if (!CopyInUrl(request.url, data.url)) return ErrorInvalidValue;
+    data.method = request.method;
+    return 0;
 }
 
 int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, void* data) {
@@ -902,62 +937,96 @@ int APS5_VABI sceHttpCacheRetrieve(std::int32_t requestId, const HttpCacheReques
     Request* state = FindRequest(requestId);
     if (state == nullptr) return ErrorNotFound;
     RequestData data;
-    if (const int status = ConvertHeaders(localRequest.headerCount, localRequest.headers, data.headers); status != 0) return status;
-    if (localRequest.url == nullptr) NotImplemented_nid_no_patch("sceHttpCacheRetrieve with a null URL");
-    if (!CopyInUrl(localRequest.url, data.url)) return ErrorInvalidValue;
-    data.method = localRequest.method;
-    const Request savedState = *state;
-    std::optional<std::pair<StoreKey, Entry>> savedStored;
-    if (state->hasStore) {
-        const StoreKey key{state->storeUser, data.url, FirstValue(data.headers, "User-Agent")};
-        if (const auto stored = Store.find(key); stored != Store.end()) savedStored = *stored;
-    }
-    auto rollback = [&]() {
-        *state = savedState;
-        if (savedStored) Store.insert_or_assign(savedStored->first, savedStored->second);
-        return ErrorInvalidValue;
-    };
+    if (const int status = ConvertRequest(localRequest, data, "sceHttpCacheRetrieve with a null URL"); status != 0) return status;
+    std::optional<StoreKey> storeKey;
+    if (state->hasStore) storeKey.emplace(state->storeUser, data.url, FirstValue(data.headers, "User-Agent"));
+    RollbackSnapshot snapshot(*state, std::move(storeKey));
     std::shared_ptr<Entry> found;
     const RequestData* next = nullptr;
     const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
-    if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return rollback();
+    if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return snapshot.Rollback();
     if (retrieveResult == ResultHit) {
-        if (response == nullptr || !FillResponse(*state, *found, response)) return rollback();
+        if (response == nullptr || !FillResponse(*state, *found, response)) return snapshot.Rollback();
         return 0;
     }
     if (retrieveResult != ResultRevalidate) return 0;
     if (nextRequest == nullptr || next == nullptr) {
-        if (nextRequest == nullptr) return rollback();
+        if (nextRequest == nullptr) return snapshot.Rollback();
         NotImplemented_nid_no_patch("sceHttpCacheRetrieve revalidation without a next request");
     }
-    if (!FillNextRequest(*state, *next, nextRequest)) return rollback();
+    if (!FillNextRequest(*state, *next, nextRequest)) return snapshot.Rollback();
     if (!StaleUsable(found.get())) return 0;
-    if (response == nullptr || !FillResponse(*state, *found, response)) return rollback();
+    if (response == nullptr || !FillResponse(*state, *found, response)) return snapshot.Rollback();
     return 0;
 }
 
 int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const HttpCacheRequest* request, HttpCacheResponse* response, HttpCacheRequest* nextRequest, std::int32_t* result, void* pool, std::size_t* requiredSize, std::size_t poolSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard lock(Mutex);
+    Request* state = FindRequest(requestId);
+    if (state == nullptr) return ErrorNotFound;
+    if (pool == nullptr && requiredSize == nullptr) return ErrorInvalidValue;
+    if (request == nullptr) {
+        if (result == nullptr) return ErrorInvalidValue;
+        NotImplemented_nid_no_patch("sceHttpCacheRetrieveWithMemoryPool without a request");
+    }
+    HttpCacheRequest localRequest{};
+    if (!CopyIn(&localRequest, request, sizeof(localRequest))) return ErrorInvalidValue;
+    RequestData data;
+    if (const int status = ConvertRequest(localRequest, data, "sceHttpCacheRetrieveWithMemoryPool with a null URL"); status != 0) return status;
+    if (result == nullptr) return ErrorInvalidValue;
+    std::optional<StoreKey> storeKey;
+    if (state->hasStore) storeKey.emplace(state->storeUser, data.url, FirstValue(data.headers, "User-Agent"));
+    RollbackSnapshot snapshot(*state, std::move(storeKey));
+    std::shared_ptr<Entry> found;
+    const RequestData* next = nullptr;
+    const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
+    if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return snapshot.Rollback();
+    if (retrieveResult != ResultHit && retrieveResult != ResultRevalidate) return 0;
+    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
+    NotImplemented_nid_no_patch("sceHttpCacheRetrieveWithMemoryPool sizing or filling a pool");
 }
 
 int APS5_VABI sceHttpCacheRevalidate(std::int32_t requestId, const HttpCacheResponseHeader* header, HttpCacheResponse* response, std::int32_t* result) {
+    const ErrnoGuard guard;
     if (header == nullptr || result == nullptr) return ErrorInvalidValue;
     std::lock_guard lock(Mutex);
     Request* state = FindRequest(requestId);
     if (state == nullptr) return ErrorNotFound;
     ResponseData received;
     if (const int status = MakeResponse(header, received); status != 0) return status;
+    std::optional<StoreKey> storeKey;
+    if (state->hasStore && state->current) storeKey = KeyFor(*state);
+    RollbackSnapshot snapshot(*state, std::move(storeKey));
     std::shared_ptr<Entry> found;
-    *result = Revalidate(*state, received, found);
+    const std::int32_t revalidateResult = Revalidate(*state, received, found);
+    if (!CopyOut(result, &revalidateResult, sizeof(revalidateResult))) return snapshot.Rollback();
     if (!found) return 0;
-    if (response == nullptr || !FillResponse(*state, *found, response)) return ErrorInvalidValue;
+    if (response == nullptr || !FillResponse(*state, *found, response)) return snapshot.Rollback();
     return 0;
 }
 
 int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const HttpCacheResponseHeader* header, HttpCacheResponse* response, std::int32_t* result, void* pool, std::size_t* requiredSize, std::size_t poolSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const ErrnoGuard guard;
+    std::lock_guard lock(Mutex);
+    Request* state = FindRequest(requestId);
+    if (state == nullptr) return ErrorNotFound;
+    if (pool == nullptr && requiredSize == nullptr) return ErrorInvalidValue;
+    if (header == nullptr) {
+        if (result == nullptr) return ErrorInvalidValue;
+        NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool without a response header");
+    }
+    ResponseData received;
+    if (const int status = MakeResponse(header, received); status != 0) return status;
+    if (result == nullptr) return ErrorInvalidValue;
+    std::optional<StoreKey> storeKey;
+    if (state->hasStore && state->current) storeKey = KeyFor(*state);
+    RollbackSnapshot snapshot(*state, std::move(storeKey));
+    std::shared_ptr<Entry> found;
+    const std::int32_t revalidateResult = Revalidate(*state, received, found);
+    if (!CopyOut(result, &revalidateResult, sizeof(revalidateResult))) return snapshot.Rollback();
+    if (!found) return 0;
+    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
+    NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool sizing or filling a pool");
 }
 
 int APS5_VABI sceHttpCacheSetCacheSharing(std::uint8_t enabled) {
@@ -1080,9 +1149,8 @@ int APS5_VABI sceHttpCacheClearAllUserTags(std::int32_t cacheId, const std::int3
     return 0;
 }
 
-int APS5_VABI sceHttpCacheClearCacheInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttpCacheClearCacheInfo(std::int32_t userId) {
+    return ErrorCacheInfoDisabled;
 }
 
 int APS5_VABI sceHttpCacheDebugSetUrl() {
@@ -1095,7 +1163,10 @@ int APS5_VABI sceHttpCacheRegisterCacheInfoUrl(const void* info) {
     return 0;
 }
 
-int APS5_VABI sceHttpCacheRemoveTag() {
+int APS5_VABI sceHttpCacheRemoveTag(std::int32_t cacheId, std::int32_t userId, const char* tag, const void* target) {
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
+    if (tag == nullptr || target == nullptr) return ErrorNotFound;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

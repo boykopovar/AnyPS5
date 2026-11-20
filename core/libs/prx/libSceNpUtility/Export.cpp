@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "SceTypes.hpp"
@@ -301,7 +302,11 @@ int SetTimeout(Service& service, int id, int resolveRetry, std::uint32_t resolve
 }
 
 int CheckComment(const char* comment) {
-    return strnlen(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1) > WORD_FILTER_COMMENT_MAX_LENGTH ? SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT : 0;
+    std::string copy;
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1, copy);
+    errno = savedErrno;
+    return status == 0 ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
 }
 }
 
@@ -579,12 +584,10 @@ int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetr
     return SetTimeout(lookupNet, id, resolveRetry, static_cast<std::uint32_t>(resolveTimeout), static_cast<std::uint32_t>(connectTimeout), static_cast<std::uint32_t>(sendTimeout), static_cast<std::uint32_t>(receiveTimeout));
 }
 int APS5_VABI sceNpLookupNetTerm(void) {
-    {
-        std::lock_guard lock(lookupNetStateMutex);
-        if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
-        if (--lookupNetRefCount > 0) return 0;
-        lookupNetInitialized = false;
-    }
+    std::lock_guard lock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (--lookupNetRefCount > 0) return 0;
+    lookupNetInitialized = false;
     LookupNetReset();
     return 0;
 }

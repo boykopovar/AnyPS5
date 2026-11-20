@@ -94,6 +94,7 @@ void ReportsTypeAndListening() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
     Require(stream >= 0 && datagram >= 0, "socket failed");
+    Require(GetInt(stream, SoError) == 0, "SO_ERROR of a fresh socket must be 0");
     Require(GetInt(stream, SoType) == Stream, "SO_TYPE of a stream socket must be SOCK_STREAM (1)");
     Require(GetInt(datagram, SoType) == Datagram, "SO_TYPE of a datagram socket must be SOCK_DGRAM (2)");
     Require(GetInt(stream, SoAcceptConnection) == 0, "SO_ACCEPTCONN must be 0 before listen");
@@ -201,6 +202,26 @@ void AcceptFilterFollowsFreeBsd() {
     std::uint32_t size = filter.size();
     Require(getsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, filter.data(), &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt of SO_ACCEPTFILTER on a listener without a filter must fail with EINVAL (22)");
     Require(size == filter.size() && filter[0] == 0xbb && filter[255] == 0xbb, "a failed SO_ACCEPTFILTER get must leave the buffer and its length unchanged");
+    constexpr int ErrorNoEntry = 2;
+    constexpr int ErrorBadAddress = 14;
+    const int otherStream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    Require(otherStream >= 0 && datagram >= 0, "socket failed");
+    for (const char* name : {"dataready", "httpready", "dnsready", ""}) {
+        std::array<std::uint8_t, 256> argument{};
+        std::memcpy(argument.data(), name, std::strlen(name));
+        for (const int descriptor : {listener, otherStream, datagram}) {
+            Require(SetFails(descriptor, SolSocket, SoAcceptFilter, argument.data(), argument.size(), ErrorNoEntry), "an SO_ACCEPTFILTER argument must fail with ENOENT (2), as firmware 13.60 registers no accept filter");
+        }
+        std::array<std::uint8_t, 300> longer{};
+        std::memcpy(longer.data(), name, std::strlen(name));
+        Require(SetFails(listener, SolSocket, SoAcceptFilter, longer.data(), longer.size(), ErrorNoEntry), "a longer SO_ACCEPTFILTER argument must also fail with ENOENT (2)");
+    }
+    Require(SetFails(otherStream, SolSocket, SoAcceptFilter, reinterpret_cast<const void*>(std::uintptr_t{0x10}), 256, ErrorBadAddress), "an unreadable SO_ACCEPTFILTER argument must fail with EFAULT (14)");
+    size = filter.size();
+    Require(getsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, filter.data(), &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "a refused SO_ACCEPTFILTER must leave the listener without a filter");
+    Require(setsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, nullptr, 0) == 0, "removing the filter still returns 0 after a refused set");
+    Require(close_nid_postfix(otherStream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
     Require(close_nid_postfix(listener) == 0, "close failed");
 }
 
@@ -241,6 +262,44 @@ void LingerFollowsFreeBsd() {
     Require(SetFails(stream, SolSocket, SoLinger, &linger, sizeof(std::int32_t), ErrorInvalid), "a linger value shorter than struct linger must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
+
+#ifdef _WIN32
+void DatagramLingerFollowsSocket(int family) {
+    const int first = socket_nid_postfix(family, Datagram, 0);
+    const int other = socket_nid_postfix(family, Datagram, 0);
+    Require(first >= 0 && other >= 0, "opening UDP sockets failed");
+    const int alias = dup_nid_postfix(first);
+    Require(alias >= 0, "dup of UDP socket failed");
+    const auto check = [](int fd, int enabled, int seconds) {
+        Linger read{-1, -1};
+        std::uint32_t length = sizeof(read);
+        Require(getsockopt_nid_postfix(fd, SolSocket, SoLinger, &read, &length) == 0, "UDP SO_LINGER get failed");
+        Require(length == sizeof(read) && read.enabled == enabled && read.seconds == seconds, "wrong UDP linger state");
+    };
+    check(first, 0, 0);
+    const Linger on{-3, 65535};
+    Require(setsockopt_nid_postfix(first, SolSocket, SoLinger, &on, sizeof(on)) == 0, "UDP SO_LINGER set failed");
+    check(alias, SoLinger, 65535);
+    check(other, 0, 0);
+    const Linger invalid{0, 65536};
+    Require(SetFails(alias, SolSocket, SoLinger, &invalid, sizeof(invalid), ErrorDomain), "UDP linger out of range accepted");
+    Require(SetFails(alias, SolSocket, SoLinger, &invalid, 7, ErrorInvalid), "short UDP linger value accepted");
+    check(first, SoLinger, 65535);
+    Linger shortRead{-1, -1};
+    std::uint32_t length = sizeof(shortRead.enabled);
+    Require(getsockopt_nid_postfix(alias, SolSocket, SoLinger, &shortRead, &length) == 0 && length == 4 &&
+            shortRead.enabled == SoLinger && shortRead.seconds == -1, "short UDP linger read overwrote the buffer");
+    Require(close_nid_postfix(first) == 0, "closing first UDP descriptor failed");
+    const Linger off{0, 7};
+    Require(setsockopt_nid_postfix(alias, SolSocket, SoLinger, &off, sizeof(off)) == 0, "disabling UDP linger failed");
+    check(alias, 0, 7);
+    Require(close_nid_postfix(alias) == 0 && close_nid_postfix(other) == 0, "closing UDP sockets failed");
+    const int fresh = socket_nid_postfix(family, Datagram, 0);
+    Require(fresh >= 0, "reopening UDP socket failed");
+    check(fresh, 0, 0);
+    Require(close_nid_postfix(fresh) == 0, "closing fresh UDP socket failed");
+}
+#endif
 
 void LengthsFollowFreeBsd() {
     const int stream = socket_nid_postfix(2, Stream, 0);
@@ -399,6 +458,14 @@ void MulticastMembership() {
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, anyIndex.data(), anyIndex.size()) == 0, "an ip_mreqn without an index selects the default interface");
     size = address.size();
     Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && address == std::array<std::uint8_t, 4>{}, "the default interface reads back as INADDR_ANY");
+    const std::array<std::uint8_t, 12> addressWithoutIndex{224, 0, 0, 251, 127, 0, 0, 1, 0, 0, 0, 0};
+    Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, addressWithoutIndex.data(), addressWithoutIndex.size()) == 0, "an ip_mreqn with index 0 clears the interface whatever its addresses, as inp_set_multicast_if does");
+    std::array<std::uint8_t, 12> request{};
+    request.fill(0xaa);
+    size = request.size();
+    Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, request.data(), &size) == 0 && size == 12 && request == std::array<std::uint8_t, 12>{}, "an ip_mreqn read with no interface selected is all zeros, as inp_getmoptions returns");
+    const std::array<std::uint8_t, 12> negativeIndex{0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+    Require(SetFails(datagram, 0, IpMulticastInterface, negativeIndex.data(), negativeIndex.size(), ErrorInvalid), "a negative ip_mreqn index must fail with EINVAL (22)");
     Require(SetFails(datagram, 0, IpMulticastInterface, loopback.data(), 2, ErrorInvalid), "a short IP_MULTICAST_IF must fail with EINVAL (22)");
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
@@ -574,6 +641,46 @@ void BadPointersFail() {
     UnmapPage(readOnly);
 }
 
+void TimestampOptionBounds() {
+    const int descriptor = socket_nid_postfix(2, Datagram, 0);
+    Require(descriptor >= 0, "socket failed");
+
+    int one = 1;
+    for (const int option : {SoTimestamp, 0x2000}) {
+        Require(setsockopt_nid_postfix(-1, SolSocket, option, &one, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "setsockopt on bad fd must fail with EBADF");
+        int value = 0;
+        std::uint32_t length = sizeof(value);
+        Require(getsockopt_nid_postfix(-1, SolSocket, option, &value, &length) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "getsockopt on bad fd must fail with EBADF");
+
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, nullptr, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with null value must fail with EFAULT");
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with invalid pointer value must fail with EFAULT");
+
+        for (const std::uint32_t badLength : {0u, 2u, 3u}) {
+            Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &one, badLength) == -1 && *__error_nid_postfix() == ErrorInvalid, "setsockopt with invalid length must fail with EINVAL");
+        }
+
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with null length pointer must fail with EFAULT");
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid length pointer must fail with EFAULT");
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), &length) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid value pointer must fail with EFAULT");
+
+        std::int64_t wide = 1;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt must succeed");
+        value = 0;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == option && length == sizeof(int), "getsockopt reads back option value");
+
+        wide = 0;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt clear must succeed");
+        value = -1;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == 0 && length == sizeof(int), "getsockopt reads back 0 after clear");
+    }
+
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
         return MulticastOnTheHost() ? 0 : 77;
@@ -585,10 +692,15 @@ int main(int argc, char** argv) {
     AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();
+#ifdef _WIN32
+    DatagramLingerFollowsSocket(2);
+    DatagramLingerFollowsSocket(28);
+#endif
     LengthsFollowFreeBsd();
     BuffersFollowThePs5();
     NullValues();
     BadPointersFail();
+    TimestampOptionBounds();
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();

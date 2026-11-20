@@ -356,6 +356,11 @@ static void CheckSupplementaryWideCharacters() {
     Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
     Require(ungetwc_nid_postfix(u'X', &stream) == u'X');
     Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
+    rewind_nid_postfix(&stream);
+    *__error_nid_postfix() = 0;
+    Require(fgetws_nid_postfix(reinterpret_cast<char16_t*>(0x10), 8, &stream) == nullptr && *__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) != 0);
+    clearerr_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A');
     stream.Close();
 
     FileStream units(TemporaryFile::Open());
@@ -690,8 +695,11 @@ static void CheckClosedStreamReopen() {
     Require(freopen_nid_postfix(overlong.c_str(), "w", &stream) == nullptr && *__error_nid_postfix() == 63);
     Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
     Require(freopen_nid_postfix(nullptr, "w", &stream) == nullptr && *__error_nid_postfix() == 9);
+    fwide_nid_postfix(&stream, 1);
     Require(freopen_nid_postfix(filename.c_str(), "w", &stream) == &stream);
+    Require(fwide_nid_postfix(&stream, 0) == 0);
     Require(fputs_nid_postfix("reopened\n", &stream) >= 0 && fflush_nid_postfix(&stream) == 0);
+    Require(fwide_nid_postfix(&stream, 0) == -1);
     Require(fileno_nid_postfix(&stream) >= 0);
     Require(freopen_nid_postfix(filename.c_str(), "r", &stream) == &stream);
     Require(fgetc_nid_postfix(&stream) == 'r');
