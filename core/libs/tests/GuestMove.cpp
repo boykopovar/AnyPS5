@@ -110,6 +110,8 @@ void RequireUnknownHandle(std::int32_t handle) {
     Require(sceMoveGetExtensionPortInfo(handle, buffer.bytes) == kInvalidHandle);
     Require(sceMoveReadStateLatest(handle, buffer.bytes) == kInvalidHandle);
     Require(sceMoveReadStateRecent(handle, 0, buffer.bytes, &count) == kInvalidHandle);
+    Require(count == 0);
+    count = -7;
     Require(sceMoveSetVibration(handle, 0xFF) == kInvalidHandle);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kInvalidHandle);
     Require(sceMoveResetLightSphere(handle) == kInvalidHandle);
@@ -175,7 +177,8 @@ int main() {
     Require(sceMoveReadStateRecent(first, -1, nullptr, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, nullptr, nullptr) == kInvalidArg);
     Require(sceMoveReadStateRecent(first + 1, 0, nullptr, &count) == kInvalidHandle);
-    Require(count == -7);
+    Require(count == 0);
+    count = -7;
     SetCompiledSdkVersion(kFirstSdkRequiringData);
     Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
 
@@ -208,7 +211,10 @@ int main() {
     Require(sceMoveSetLightSphereForTracker(first + 1, 0, 0xFF, 0) == kInvalidHandle);
     Require(sceMoveReadStateRecentForTracker(first, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecentForTracker(first, 0, buffer.bytes, nullptr) == kInvalidArg);
+    count = -7;
     Require(sceMoveReadStateRecentForTracker(first + 1, 0, buffer.bytes, &count) == kInvalidHandle);
+    Require(count == 0);
+    count = -7;
     Require(sceMoveReadStateRecentForTracker(first, 0, buffer.bytes, &count) == kNoControllerConnected && buffer.Untouched());
     Require(sceMoveSetExtensionPortOutput(first, nullptr) == kInvalidArg);
     Require(sceMoveSetExtensionPortOutput(first + 1, buffer.bytes) == kInvalidHandle);
