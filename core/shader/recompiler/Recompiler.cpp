@@ -986,23 +986,6 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 #endif
 
-    {
-        static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
-        if (!list.empty()) {
-            char address[32];
-            std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
-            if (list == "all" || list.find(address) != std::string::npos) {
-                char path[128];
-                std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
-                if (auto* file = std::fopen(path, "wb")) {
-                    std::fwrite(result.spirv.data(), sizeof(std::uint32_t), result.spirv.size(), file);
-                    std::fclose(file);
-                    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
-                }
-            }
-        }
-    }
-
     return {request.layout, {}, std::move(static_cast<CompiledBindingLayout&>(bindings)), std::move(result)};
 }
 
@@ -1385,6 +1368,25 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
 }
 
+void dumpFinalSpirv(const RecompileRequest& request, const RecompileResult& result) {
+    static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
+    const auto words = result.spirv.Words();
+    if (list.empty() || words.empty()) return;
+    char address[32];
+    std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+    if (list != "all" && list.find(address) == std::string::npos) return;
+    char path[128];
+    std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    auto* file = std::fopen(path, "wb");
+    if (file == nullptr) throw std::runtime_error("cannot open SPIR-V dump " + std::string(path));
+    const auto written = std::fwrite(words.data(), sizeof(std::uint32_t), words.size(), file);
+    const auto closed = std::fclose(file);
+    if (written != words.size() || closed != 0) throw std::runtime_error("cannot write SPIR-V dump " + std::string(path));
+    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
+}
+
 bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
@@ -1622,6 +1624,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
+    dumpFinalSpirv(request, result);
     return result;
 }
 

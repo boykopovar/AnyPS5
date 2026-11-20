@@ -9,4 +9,5 @@ endif()
 
 if(BUILD_TESTING)
     agc_add_spirv_mode_tests(agc_spirv_dump_tests)
+    set_tests_properties(agc_spirv_dump agc_spirv_dump_full agc_spirv_dump_none PROPERTIES RUN_SERIAL TRUE)
 endif()

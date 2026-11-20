@@ -1,6 +1,7 @@
 #include "BdaAbi.hpp"
 #include "NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -44,6 +45,23 @@ std::vector<std::uint32_t> ReadWords(const std::string& path) {
     return words;
 }
 
+void CheckDump(const std::string& path, const RecompileResult& result) {
+    const auto words = ReadWords(path);
+    Check(words.size() >= 5 && words[0] == spv::MagicNumber, "the dump file has no complete SPIR-V header");
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> spv::WordCountShift;
+        Check(count != 0 && count <= words.size() - offset, "malformed SPIR-V instruction in the dump file");
+        offset += count;
+    }
+    const auto expected = result.spirv.Words();
+    Check(!expected.empty(), "the compiled module is empty");
+    Check(std::ranges::equal(words, expected), "the dump file differs from the final compiled module");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
+    Check(validator.Validate(words.data(), words.size()), "the dump file is not valid SPIR-V");
+#endif
+}
+
 }
 
 int main() {
@@ -63,26 +81,20 @@ int main() {
             {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
             DumpTarget(), {0, 0, 0, 128}, std::nullopt, false,
         };
-        request.useCache = false;
+        request.useCache = true;
         const auto result = Recompile(request);
         char address[32];
         std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
         char file[128];
         std::snprintf(file, sizeof(file), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
         path = file;
-        const auto words = ReadWords(path);
+        CheckDump(path, result);
         std::remove(path.c_str());
-        Check(!words.empty() && words[0] == spv::MagicNumber, "the dump file has no SPIR-V magic number");
-        for (std::size_t offset = 5; offset < words.size();) {
-            const auto count = words[offset] >> spv::WordCountShift;
-            Check(count != 0 && count <= words.size() - offset, "malformed SPIR-V instruction in the dump file");
-            offset += count;
-        }
-        Check(!result.spirv.Words().empty(), "the compiled module is empty");
-#if ANYPS5_ENABLE_SPIRV_TOOLS
-        spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
-        Check(validator.Validate(words.data(), words.size()), "the dump file is not valid SPIR-V");
-#endif
+        const auto cachedResult = Recompile(request);
+        Check(cachedResult.cacheHit, "the second compilation did not use the cached variant");
+        CheckDump(path, cachedResult);
+        Check(std::ranges::equal(cachedResult.spirv.Words(), result.spirv.Words()), "the cache changed the final compiled module");
+        std::remove(path.c_str());
         std::puts("SPIR-V dump test passed");
         return 0;
     } catch (const std::exception& error) {
