@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libSceIcu/NumberingSystemBackend.hpp"
 #include "prx/libc/include/General.hpp"
@@ -120,7 +121,7 @@ UNumberingSystem* Open(const char* name, bool byName, std::int32_t* error) {
     const auto before = ReadStatus(error);
     if (before > 0) return nullptr;
     try {
-        const auto input = ReadName(name);
+        const std::string input = !name && !byName ? Icu::DefaultLocaleName() : ReadName(name);
         auto status = before;
         Native native(IcuNumberingBackend::Open_nid_no_patch(input.c_str(), byName, &status), IcuNumberingBackend::Close_nid_no_patch);
         if (!native) {
