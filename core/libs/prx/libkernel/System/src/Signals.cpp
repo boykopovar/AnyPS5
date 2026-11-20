@@ -176,8 +176,12 @@ void EnsureWakeRelay() {
     if (pending.wakeWriter.load(std::memory_order_acquire) >= 0) return;
     int ends[2];
     if (::pipe(ends) != 0) throw std::runtime_error("signal: creating the wake pipe failed with errno " + std::to_string(errno));
-    for (const int end : ends) ::fcntl(end, F_SETFD, FD_CLOEXEC);
-    ::fcntl(ends[1], F_SETFL, O_NONBLOCK);
+    if (::fcntl(ends[0], F_SETFD, FD_CLOEXEC) != 0 || ::fcntl(ends[1], F_SETFD, FD_CLOEXEC) != 0 || ::fcntl(ends[1], F_SETFL, O_NONBLOCK) != 0) {
+        const int failure = errno;
+        ::close(ends[0]);
+        ::close(ends[1]);
+        throw std::runtime_error("signal: configuring the wake pipe failed with errno " + std::to_string(failure));
+    }
     Libc::StartHostThread(RunWakeRelay, ends[0]).detach();
     pending.wakeWriter.store(ends[1], std::memory_order_release);
 }
