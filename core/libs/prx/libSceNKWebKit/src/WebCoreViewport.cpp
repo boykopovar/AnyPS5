@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace WebCore {
@@ -294,14 +295,14 @@ void ReportViewportError(const ViewportErrorHandler& errorHandler, ViewportError
     errorHandler.callableWrapper->vtable->call(errorHandler.callableWrapper, errorCode, text);
 }
 
-float NumericPrefix(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
+std::optional<float> NumericPrefix(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
     std::size_t parsedLength = 0;
     float numericValue = value.is8Bit
         ? _ZN3WTF17charactersToFloatEPKhmRm(static_cast<const unsigned char*>(value.data), value.length, &parsedLength)
         : _ZN3WTF17charactersToFloatEPKDsmRm(static_cast<const char16_t*>(value.data), value.length, &parsedLength);
     if (!parsedLength) {
         ReportViewportError(errorHandler, UnrecognizedViewportArgumentValueError, value, key);
-        return 0;
+        return std::nullopt;
     }
     if (parsedLength < value.length) {
         ReportViewportError(errorHandler, TruncatedViewportArgumentValueError, value, key);
@@ -309,27 +310,26 @@ float NumericPrefix(StringView key, StringView value, const ViewportErrorHandler
     return numericValue;
 }
 
-float FindSizeValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler, bool* valueWasExplicit = nullptr) {
-    if (valueWasExplicit) {
-        *valueWasExplicit = true;
-    }
+std::optional<float> FindSizeValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler, bool* valueWasExplicit = nullptr) {
+    std::optional<float> sizeValue;
     if (EqualLettersIgnoringASCIICase(value, "device-width")) {
-        return ViewportArguments::ValueDeviceWidth;
-    }
-    if (EqualLettersIgnoringASCIICase(value, "device-height")) {
-        return ViewportArguments::ValueDeviceHeight;
-    }
-    float sizeValue = NumericPrefix(key, value, errorHandler);
-    if (sizeValue < 0) {
+        sizeValue = ViewportArguments::ValueDeviceWidth;
+    } else if (EqualLettersIgnoringASCIICase(value, "device-height")) {
+        sizeValue = ViewportArguments::ValueDeviceHeight;
+    } else if ((sizeValue = NumericPrefix(key, value, errorHandler)) && *sizeValue < 0) {
+        sizeValue = ViewportArguments::ValueAuto;
         if (valueWasExplicit) {
             *valueWasExplicit = false;
         }
-        return ViewportArguments::ValueAuto;
+        return sizeValue;
+    }
+    if (sizeValue && valueWasExplicit) {
+        *valueWasExplicit = true;
     }
     return sizeValue;
 }
 
-float FindScaleValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
+std::optional<float> FindScaleValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
     if (EqualLettersIgnoringASCIICase(value, "yes")) {
         return 1;
     }
@@ -339,17 +339,20 @@ float FindScaleValue(StringView key, StringView value, const ViewportErrorHandle
     if (EqualLettersIgnoringASCIICase(value, "device-width") || EqualLettersIgnoringASCIICase(value, "device-height")) {
         return 10;
     }
-    float numericValue = NumericPrefix(key, value, errorHandler);
-    if (numericValue < 0) {
+    std::optional<float> numericValue = NumericPrefix(key, value, errorHandler);
+    if (!numericValue) {
+        return std::nullopt;
+    }
+    if (*numericValue < 0) {
         return ViewportArguments::ValueAuto;
     }
-    if (numericValue > 10.0) {
+    if (*numericValue > 10.0) {
         ReportViewportError(errorHandler, MaximumScaleTooLargeError, {}, {});
     }
     return numericValue;
 }
 
-bool FindBooleanValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
+std::optional<bool> FindBooleanValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
     if (EqualLettersIgnoringASCIICase(value, "yes")) {
         return true;
     }
@@ -359,10 +362,14 @@ bool FindBooleanValue(StringView key, StringView value, const ViewportErrorHandl
     if (EqualLettersIgnoringASCIICase(value, "device-width") || EqualLettersIgnoringASCIICase(value, "device-height")) {
         return true;
     }
-    return std::abs(NumericPrefix(key, value, errorHandler)) >= 1;
+    std::optional<float> numericValue = NumericPrefix(key, value, errorHandler);
+    if (!numericValue) {
+        return std::nullopt;
+    }
+    return std::abs(*numericValue) >= 1;
 }
 
-ViewportFit ParseViewportFitValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
+std::optional<ViewportFit> ParseViewportFitValue(StringView key, StringView value, const ViewportErrorHandler& errorHandler) {
     if (EqualLettersIgnoringASCIICase(value, "auto")) {
         return ViewportFit::Auto;
     }
@@ -373,7 +380,7 @@ ViewportFit ParseViewportFitValue(StringView key, StringView value, const Viewpo
         return ViewportFit::Cover;
     }
     ReportViewportError(errorHandler, UnrecognizedViewportArgumentValueError, value, key);
-    return ViewportFit::Auto;
+    return std::nullopt;
 }
 
 }
@@ -415,21 +422,37 @@ void APS5_VABI _ZN7WebCore18setViewportFeatureERNS_17ViewportArgumentsEN3WTF10St
     const WebCore::ViewportErrorHandler& errorHandler) {
     using namespace WebCore;
     if (EqualLettersIgnoringASCIICase(key, "width")) {
-        arguments.width = FindSizeValue(key, value, errorHandler, &arguments.widthWasExplicit);
+        if (auto width = FindSizeValue(key, value, errorHandler, &arguments.widthWasExplicit)) {
+            arguments.width = *width;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "height")) {
-        arguments.height = FindSizeValue(key, value, errorHandler);
+        if (auto height = FindSizeValue(key, value, errorHandler)) {
+            arguments.height = *height;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "initial-scale")) {
-        arguments.zoom = FindScaleValue(key, value, errorHandler);
+        if (auto zoom = FindScaleValue(key, value, errorHandler)) {
+            arguments.zoom = *zoom;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "minimum-scale")) {
-        arguments.minZoom = FindScaleValue(key, value, errorHandler);
+        if (auto minZoom = FindScaleValue(key, value, errorHandler)) {
+            arguments.minZoom = *minZoom;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "maximum-scale")) {
-        arguments.maxZoom = FindScaleValue(key, value, errorHandler);
+        if (auto maxZoom = FindScaleValue(key, value, errorHandler)) {
+            arguments.maxZoom = *maxZoom;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "user-scalable")) {
-        arguments.userZoom = FindBooleanValue(key, value, errorHandler);
+        if (auto userZoom = FindBooleanValue(key, value, errorHandler)) {
+            arguments.userZoom = *userZoom;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "shrink-to-fit")) {
-        arguments.shrinkToFit = FindBooleanValue(key, value, errorHandler);
+        if (auto shrinkToFit = FindBooleanValue(key, value, errorHandler)) {
+            arguments.shrinkToFit = *shrinkToFit;
+        }
     } else if (EqualLettersIgnoringASCIICase(key, "viewport-fit") && viewportFitEnabled) {
-        arguments.viewportFit = ParseViewportFitValue(key, value, errorHandler);
+        if (auto viewportFit = ParseViewportFitValue(key, value, errorHandler)) {
+            arguments.viewportFit = *viewportFit;
+        }
     } else {
         ReportViewportError(errorHandler, UnrecognizedViewportArgumentKeyError, key, {});
     }

@@ -458,9 +458,11 @@ static void TestSetViewportFeatureSizes() {
     Require(errors[0].code == WebCore::TruncatedViewportArgumentValueError);
     Require(errors[0].message == u"Viewport argument value \"480px\" for key \"height\" was truncated to its numeric prefix.");
 
+    args.width = 320.0f;
+    args.widthWasExplicit = false;
     errors = SetFeature(args, "width", "auto");
-    Require(args.width == 0.0f);
-    Require(args.widthWasExplicit);
+    Require(args.width == 320.0f);
+    Require(!args.widthWasExplicit);
     Require(errors.size() == 1);
     Require(errors[0].code == WebCore::UnrecognizedViewportArgumentValueError);
     Require(errors[0].message == u"Viewport argument value \"auto\" for key \"width\" is invalid, and has been ignored.");
@@ -477,6 +479,8 @@ static void TestSetViewportFeatureScales() {
     Require(SetFeature(args, "initial-scale", "-1").empty());
     Require(args.zoom == WebCore::ViewportArguments::ValueAuto);
     Require(SetFeature(args, "minimum-scale", "0.5").empty());
+    Require(args.minZoom == 0.5f);
+    Require(SetFeature(args, "minimum-scale", "large").size() == 1);
     Require(args.minZoom == 0.5f);
 
     auto errors = SetFeature(args, "maximum-scale", "12");
@@ -505,7 +509,7 @@ static void TestSetViewportFeatureBooleans() {
     Require(args.shrinkToFit == 1.0f);
 
     auto errors = SetFeature(args, "shrink-to-fit", "maybe");
-    Require(args.shrinkToFit == 0.0f);
+    Require(args.shrinkToFit == 1.0f);
     Require(errors.size() == 1);
     Require(errors[0].code == WebCore::UnrecognizedViewportArgumentValueError);
 }
@@ -518,7 +522,7 @@ static void TestSetViewportFeatureViewportFit() {
     Require(args.viewportFit == WebCore::ViewportFit::Contain);
 
     auto errors = SetFeature(args, "viewport-fit", "fill");
-    Require(args.viewportFit == WebCore::ViewportFit::Auto);
+    Require(args.viewportFit == WebCore::ViewportFit::Contain);
     Require(errors.size() == 1);
     Require(errors[0].message == u"Viewport argument value \"fill\" for key \"viewport-fit\" is invalid, and has been ignored.");
 
