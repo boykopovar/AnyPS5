@@ -52,11 +52,15 @@ int main() {
     GuestCpu::SetX87Control(static_cast<std::uint16_t>((savedControl & ~0xf00u) | 0x300u | 0x3fu));
     GuestCpu::SetMxcsr(savedMxcsr | 0x1f80u);
     Require(fesetround_nid_postfix(FE_TONEAREST) == 0);
-    for (const long double input : {-2.5L, -0.5L, 0.5L, 1.0L, 2.0L, 3.5L}) {
-        const long double expected = std::lgamma(input);
-        const long double actual = lgammal_nid_postfix(input);
-        Require(actual == expected);
-    }
+    const std::array nonPoles{
+        std::array{-2.5L, -0xe65fcfaf6878ac47p-68L},
+        std::array{-0.5L, 0xa1fc4d1f876eb106p-63L},
+        std::array{0.5L, 0x928682473d0de85fp-64L},
+        std::array{1.0L, 0x0000000000000000p-16445L},
+        std::array{2.0L, 0x0000000000000000p-16445L},
+        std::array{3.5L, 0x99b980c4b851adc1p-63L},
+    };
+    for (const auto& item : nonPoles) Require(lgammal_nid_postfix(item[0]) == item[1]);
     Require(std::isinf(lgammal_nid_postfix(std::numeric_limits<long double>::infinity())));
     Require(std::isinf(lgammal_nid_postfix(-std::numeric_limits<long double>::infinity())));
     Require(std::isnan(lgammal_nid_postfix(std::numeric_limits<long double>::quiet_NaN())));
