@@ -282,7 +282,7 @@ static int NativeSync(int descriptor) {
         if (pipe == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
         if (GetFileType(pipe) == FILE_TYPE_PIPE) { errno = EINVAL; return -1; }
         if (::_commit(descriptor) == 0) return 0;
-        if (ThreadCancel::IoActive() && (ThreadCancel::IoInterrupted() || _doserrno == ERROR_OPERATION_ABORTED)) {
+        if (ThreadCancel::IoActive() && _doserrno == ERROR_OPERATION_ABORTED) {
             errno = EINTR;
             return -1;
         }
@@ -291,10 +291,20 @@ static int NativeSync(int descriptor) {
         handle = ReOpenFile(original, GENERIC_WRITE, share, 0);
         errno = previous;
     }
-    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_ACCESS_DENIED ? 0 : File::WindowsFileTime::Failure(GetLastError());
-    const int result = FlushFileBuffers(handle) ? 0 : File::WindowsFileTime::Failure(GetLastError());
-    CloseHandle(handle);
-    return result;
+    DWORD error;
+    if (handle == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        if (error == ERROR_ACCESS_DENIED) return 0;
+    } else {
+        error = FlushFileBuffers(handle) ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(handle);
+    }
+    if (error == ERROR_SUCCESS) return 0;
+    if (ThreadCancel::IoActive() && error == ERROR_OPERATION_ABORTED) {
+        errno = EINTR;
+        return -1;
+    }
+    return File::WindowsFileTime::Failure(error);
 }
 static int NativeFlock(int descriptor, int operation) {
     return File::Flock(descriptor, operation);

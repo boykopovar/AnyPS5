@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
@@ -45,6 +46,7 @@ struct State {
     std::string api, scenario;
     bool metadata = false;
     bool gap = false;
+    bool flushError = false;
     bool caught = false;
     unsigned preflight = 0;
     std::atomic<unsigned> calls{0}, cleanups{0}, destructors{0}, signals{0};
@@ -77,6 +79,7 @@ static int Flush(int file) {
     if (state->gap) {
         Require(completed == (state->scenario == "complete"), "unknown failure must follow the expected native completion or interruption");
         Require(ThreadCancel::IoActive() && ThreadCancel::IoInterrupted() == (state->scenario == "signal"), "unknown failure interruption state");
+        if (state->flushError) return static_cast<int>(0x80020005u);
         throw std::runtime_error("synthetic unknown metadata or flush gap");
     }
     if (!completed) return static_cast<int>(0x80020004u);
@@ -139,7 +142,9 @@ static void* APS5_VABI Writer(void* opaque) {
             state->error = *__error_nid_postfix();
         }
     } catch (const std::runtime_error& error) {
-        Require(state->gap && std::string(error.what()) == "synthetic unknown metadata or flush gap", "unexpected write exception");
+        const auto expected = state->flushError ? "write: syncing an O_FSYNC file failed, fd=" + std::to_string(state->file) + ", error=5"
+                                                : "synthetic unknown metadata or flush gap";
+        Require(state->gap && expected == error.what(), "unexpected write exception");
         state->caught = true;
     }
     state->returned.store(true);
@@ -169,6 +174,11 @@ int main(int argc, char** argv) {
     if (state->scenario.starts_with("gap_")) {
         state->gap = true;
         state->scenario.erase(0, 4);
+    }
+    if (state->scenario.starts_with("flush_error_")) {
+        state->gap = true;
+        state->flushError = true;
+        state->scenario.erase(0, std::string_view("flush_error_").size());
     }
     const auto path = "anyps5-sync-cancel-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     state->file = open_nid_postfix(path.c_str(), 2 | 0x200, 0600);

@@ -710,7 +710,9 @@ bool SyncWrites(int fd) {
     bool synchronized = false;
     int result;
     try {
-        result = ThreadCancel::Native([&] {
+        result = [&] {
+            const ThreadCancel::NativeIo operation;
+            if (ThreadCancel::IoInterrupted()) return EINTR;
             if (metadataHook) {
                 const int metadata = metadataHook(fd);
                 if (metadata != 0) {
@@ -721,13 +723,13 @@ bool SyncWrites(int fd) {
             if (Classify(fd, "write") != Kind::File) return 0;
             synchronized = true;
             return hook ? hook(fd) : sceKernelFsync(fd);
-        });
+        }();
     } catch (const InterruptedFstat&) {
         if (!ThreadCancel::IoActive() || !ThreadCancel::IoInterrupted()) throw;
-        result = -1;
+        result = EINTR;
     }
     if (result != 0) {
-        if (ThreadCancel::IoActive() && (ThreadCancel::IoInterrupted() || (static_cast<unsigned>(result) & 0xffff) == EINTR)) {
+        if (ThreadCancel::IoActive() && (static_cast<unsigned>(result) & 0xffff) == EINTR) {
             ThreadCancel::IoNoRestart();
             errno = EINTR;
             return false;
