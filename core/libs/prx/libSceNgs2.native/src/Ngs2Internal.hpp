@@ -89,6 +89,19 @@ struct Ngs2FilterHistory {
     float y2 = 0.0f;
 };
 
+struct Ngs2MasteringLfe {
+    struct Section {
+        float gain = 0.0f;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        Ngs2FilterHistory history;
+    };
+    bool enabled = false;
+    std::uint32_t cutoff = 120;
+    std::uint32_t designRate = 0;
+    std::array<Section, 2> sections{};
+};
+
 struct Ngs2Filter {
     bool enabled = false;
     bool pending = false;
@@ -231,6 +244,7 @@ struct Ngs2Voice {
     std::uint32_t outputId = 0;
     float fbwLevel = 1.0f;
     float lfeLevel = 1.0f;
+    Ngs2MasteringLfe masteringLfe;
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
@@ -383,6 +397,7 @@ void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& 
 void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain);
 bool Ngs2FilterHasHistory(const Ngs2Filter& filter);
 void Ngs2ResetFilterHistory(Ngs2Voice& voice);
+void Ngs2ApplyMasteringLfe(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block);
 bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame);

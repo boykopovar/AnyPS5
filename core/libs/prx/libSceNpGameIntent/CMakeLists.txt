@@ -1,0 +1,15 @@
+add_library(libSceNpGameIntent SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpGameIntent PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpGameIntent)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_session_service_not_initialized_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSessionServiceNotInitialized.cpp)
+    target_include_directories(guest_np_session_service_not_initialized_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_session_service_not_initialized_tests PRIVATE libSceNpGameIntent libc)
+    configure_windows_unwind(guest_np_session_service_not_initialized_tests)
+    add_test(NAME guest_np_session_service_not_initialized COMMAND guest_np_session_service_not_initialized_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_session_service_not_initialized PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpGameIntent>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
