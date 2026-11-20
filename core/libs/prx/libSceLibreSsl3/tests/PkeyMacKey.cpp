@@ -138,6 +138,31 @@ int main(int argc, char** argv) {
     release(different);
     Require(outstanding == 0);
 
+    unsigned char input[5] = {0x11, 0x00, 0x22, 0x00, 0x33};
+    const unsigned char unchanged[5] = {0x11, 0x00, 0x22, 0x00, 0x33};
+    const int baseline = outstanding;
+    Pkey* ownedKey = newMacKey(HmacType, nullptr, input, sizeof(input));
+    Require(ownedKey != nullptr);
+    auto* ownedOctets = static_cast<Octets*>(ownedKey->key);
+    Require(ownedOctets != nullptr);
+    Require(static_cast<const void*>(ownedOctets->data) != static_cast<const void*>(input));
+    Require(ownedOctets->length == static_cast<int>(sizeof(input)));
+    Require(std::memcmp(ownedOctets->data, unchanged, sizeof(unchanged)) == 0);
+    input[0] = 0xa0;
+    input[2] = 0xa2;
+    input[4] = 0xa4;
+    Require(std::memcmp(ownedOctets->data, unchanged, sizeof(unchanged)) == 0);
+    Pkey* unchangedKey = newMacKey(HmacType, nullptr, unchanged, sizeof(unchanged));
+    Require(unchangedKey != nullptr);
+    Require(compareKeys(ownedKey, unchangedKey) == 1);
+    Pkey* mutatedKey = newMacKey(HmacType, nullptr, input, sizeof(input));
+    Require(mutatedKey != nullptr);
+    Require(compareKeys(ownedKey, mutatedKey) == 0);
+    release(mutatedKey);
+    release(unchangedKey);
+    release(ownedKey);
+    Require(outstanding == baseline);
+
     Require(newMacKey(RsaType, nullptr, secret, sizeof(secret)) == nullptr);
     Require(newMacKey(12345, nullptr, secret, sizeof(secret)) == nullptr);
     Require(newMacKey(HmacType, nullptr, nullptr, 5) == nullptr);
