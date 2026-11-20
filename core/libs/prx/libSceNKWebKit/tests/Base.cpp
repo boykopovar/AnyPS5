@@ -3083,6 +3083,31 @@ static void TestView() {
     WKViewSetViewScaleFactor(ref, 1.75);
     Require(WKViewGetViewScaleFactor(ref) == 1.75);
 
+    Require(!view->isActive);
+    Require(!view->isFocused);
+    Require(!view->isVisible);
+    Require(view->size.width == 0.0);
+    Require(view->size.height == 0.0);
+
+    WKViewSetActive(ref, true);
+    Require(view->isActive);
+    WKViewSetActive(ref, false);
+    Require(!view->isActive);
+
+    WKViewSetFocus(ref, true);
+    Require(view->isFocused);
+    WKViewSetFocus(ref, false);
+    Require(!view->isFocused);
+
+    WKViewSetVisible(ref, true);
+    Require(view->isVisible);
+    WKViewSetVisible(ref, false);
+    Require(!view->isVisible);
+
+    WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, 1080.0 });
+    Require(view->size.width == 1920.0);
+    Require(view->size.height == 1080.0);
+
     WKViewSetDrawsBackground(ref, false);
     Require(!view->drawsBackground);
     WKViewSetDrawsBackground(ref, true);
@@ -3217,6 +3242,62 @@ static void TestView() {
     threw = false;
     try {
         WKViewSetViewScaleFactor(nullptr, 1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ -1.0, 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ 1920.0, -1.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(ref, NKWebKit::SizeValue{ std::numeric_limits<double>::quiet_NaN(), 1080.0 });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetActive(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetFocus(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetVisible(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetSize(nullptr, NKWebKit::SizeValue{ 100.0, 100.0 });
     } catch (const std::invalid_argument&) {
         threw = true;
     }

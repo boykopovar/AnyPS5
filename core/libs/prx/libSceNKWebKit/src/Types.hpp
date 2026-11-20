@@ -478,6 +478,10 @@ public:
     double viewScaleFactor = 1.0;
     bool drawsBackground = true;
     bool isFullScreen = false;
+    bool isActive = false;
+    bool isFocused = false;
+    bool isVisible = false;
+    SizeValue size{ 0.0, 0.0 };
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
