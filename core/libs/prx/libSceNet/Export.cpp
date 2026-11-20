@@ -262,6 +262,9 @@ int TransferSocketForKernel(KernelSocketPoll::NativeOwner* owner, bool send, voi
 struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     NativeSocket value;
     const bool stream;
+#ifdef _WIN32
+    GuestSockets::LingerValue udpLinger;
+#endif
     std::atomic<bool> nonblock{false};
     std::atomic<int> receiveTimeout{0};
     std::atomic<int> sendTimeout{0};
@@ -2071,12 +2074,19 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     }
     optname = timeout_option(optname);
     if (!optval || optlen < sizeof(int)) return fail(NET_EINVAL);
-    int value = 0;
-    std::memcpy(&value, optval, sizeof(value));
     if (optname == NET_SO_LINGER) {
+#ifdef _WIN32
+        if (socket.type == NET_SOCK_DGRAM) {
+            std::lock_guard lk(g_mutex);
+            const int error = GuestSocketSetUdpLinger_nid_no_patch(&socket.native->udpLinger, optval, optlen);
+            return error == 0 ? 0 : fail(error);
+        }
+#endif
         const int error = GuestSocketSetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
         return error == 0 ? 0 : fail(error);
     }
+    int value = 0;
+    std::memcpy(&value, optval, sizeof(value));
     if (optname == NET_SO_REUSEADDR || optname == NET_SO_REUSEPORT) {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
@@ -2148,6 +2158,13 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     }
     if (optval == nullptr || optlen == nullptr) return fail(NET_EINVAL);
     if (level == NET_SOL_SOCKET && optname == NET_SO_LINGER) {
+#ifdef _WIN32
+        if (socket.type == NET_SOCK_DGRAM) {
+            std::lock_guard lk(g_mutex);
+            const int error = GuestSocketGetUdpLinger_nid_no_patch(&socket.native->udpLinger, optval, optlen);
+            return error == 0 ? 0 : fail(error);
+        }
+#endif
         const int error = GuestSocketGetLinger_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), optval, optlen);
         return error == 0 ? 0 : fail(error);
     }
@@ -3915,7 +3932,20 @@ const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void*
 int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, void* address, std::uint32_t* scopeId) {
     if (family != NET_AF_INET6) return fail(NET_EAFNOSUPPORT);
     if (text == nullptr) return fail(NET_EINVAL);
-    const char* percent = scopeId != nullptr ? std::strchr(text, '%') : nullptr;
+
+    std::string copiedText;
+    for (auto current = reinterpret_cast<std::uintptr_t>(text);; ++current) {
+        char byte = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&byte, reinterpret_cast<const void*>(current), sizeof(byte));
+        errno = savedErrno;
+        if (!copied) return fail(NET_EFAULT);
+        if (byte == '\0') break;
+        copiedText.push_back(byte);
+        if (current == UINTPTR_MAX) return fail(NET_EFAULT);
+    }
+
+    const char* percent = scopeId != nullptr ? std::strchr(copiedText.c_str(), '%') : nullptr;
     std::uint32_t zone = 0;
     if (percent != nullptr) {
         const auto interfaceId = InterfaceIdOfName(percent + 1);
@@ -3924,7 +3954,7 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
         if (!index) return 0;
         zone = *index;
     }
-    const std::string unscoped = percent != nullptr ? std::string(text, percent) : std::string(text);
+    const std::string unscoped = percent != nullptr ? std::string(copiedText.c_str(), percent) : copiedText;
     std::array<unsigned char, 16> parsed{};
     const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
     if (converted != 1) return converted;

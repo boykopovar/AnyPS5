@@ -90,10 +90,7 @@ constexpr int LongestHostLinger = 327;
 #endif
 constexpr std::int64_t LongestTimeout = 0x7fffffffffffffffLL;
 
-struct GuestLingerValue {
-    std::int32_t enabled;
-    std::int32_t seconds;
-};
+static_assert(sizeof(LingerValue) == 8);
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -166,6 +163,12 @@ int ReadValue(void* destination, const void* source, std::size_t bytes) {
     return GuestCopyIn_nid_no_patch(destination, source, bytes) ? 0 : ErrorFault;
 }
 
+int ReadLinger(LingerValue& guest, const void* value, std::uint32_t length) {
+    if (length < sizeof(guest)) return ErrorInvalid;
+    if (const int fault = ReadValue(&guest, value, sizeof(guest))) return fault;
+    return guest.seconds < 0 || guest.seconds > MaximumLinger ? ErrorDomain : 0;
+}
+
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
     const std::uint32_t count = output ? std::min(*length, size) : 0;
     if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
@@ -194,10 +197,11 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         return listening ? 0 : ErrorInvalid;
     }
     if (option == GuestLinger) {
-        if (length < sizeof(GuestLingerValue)) return ErrorInvalid;
-        GuestLingerValue guest;
-        if (const int fault = ReadValue(&guest, value, sizeof(guest))) return fault;
-        if (guest.seconds < 0 || guest.seconds > MaximumLinger) return ErrorDomain;
+#ifdef _WIN32
+        if ((family == 2 || family == 28) && type == 2) return GuestSocketSetUdpLinger_nid_no_patch(&state.udpLinger, value, length);
+#endif
+        LingerValue guest;
+        if (const int error = ReadLinger(guest, value, length)) return error;
 #ifdef _WIN32
         linger request{};
         request.l_onoff = guest.enabled != 0 ? 1 : 0;
@@ -313,6 +317,9 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         return ErrorInvalid;
     }
     if (option == GuestLinger) {
+#ifdef _WIN32
+        if ((family == 2 || family == 28) && type == 2) return GuestSocketGetUdpLinger_nid_no_patch(&state.udpLinger, value, length);
+#endif
         linger current{};
         socklen_t size = sizeof(current);
 #ifdef __APPLE__
@@ -320,7 +327,7 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
 #else
         if (::getsockopt(handle, SOL_SOCKET, SO_LINGER, reinterpret_cast<NativeOptionOutput>(&current), &size)) return HostError();
 #endif
-        const GuestLingerValue guest{current.l_onoff != 0 ? GuestLinger : 0, static_cast<std::int32_t>(current.l_linger)};
+        const LingerValue guest{current.l_onoff != 0 ? GuestLinger : 0, static_cast<std::int32_t>(current.l_linger)};
         return Copy(value, length, &guest, sizeof(guest));
     }
     if (option == GuestSendTimeout || option == GuestReceiveTimeout) {
@@ -583,6 +590,23 @@ extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* va
     GuestSockets::SocketOptionState state;
     return GuestSockets::GetSocketLevelOption(native, state, 0, 0, GuestSockets::GuestLinger, value, length);
 }
+
+#ifdef _WIN32
+extern "C" int GuestSocketSetUdpLinger_nid_no_patch(GuestSockets::LingerValue* stored, const void* value, std::uint32_t length) {
+    GuestSockets::LingerValue guest;
+    if (const int error = GuestSockets::ReadLinger(guest, value, length)) return error;
+    *stored = {guest.enabled != 0 ? GuestSockets::GuestLinger : 0, guest.seconds};
+    return 0;
+}
+
+extern "C" int GuestSocketGetUdpLinger_nid_no_patch(const GuestSockets::LingerValue* stored, void* value, std::uint32_t* length) {
+    std::uint32_t capacity;
+    if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return GuestSockets::ErrorFault;
+    const std::uint32_t count = value ? std::min<std::uint32_t>(capacity, sizeof(*stored)) : 0;
+    if (count != 0 && !GuestCopyOut_nid_no_patch(value, stored, count)) return GuestSockets::ErrorFault;
+    return GuestCopyOut_nid_no_patch(length, &count, sizeof(count)) ? 0 : GuestSockets::ErrorFault;
+}
+#endif
 
 extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags) {
     if (flags == nullptr || (option != 0x4 && option != 0x200)) throw std::invalid_argument("Invalid socket reuse state");
