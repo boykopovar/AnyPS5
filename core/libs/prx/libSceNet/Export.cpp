@@ -280,6 +280,34 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     }
 };
 
+void ShutdownSocket_nid_no_patch(const std::shared_ptr<NativeSocketHandle>& native, int type) {
+    if (!native) return;
+#ifdef _WIN32
+    ::shutdown(native->value, SD_BOTH);
+#else
+    if (::shutdown(native->value, SHUT_RDWR) == 0) return;
+#ifdef __APPLE__
+    if (errno != ENOTCONN || type != NET_SOCK_DGRAM) return;
+    sockaddr_storage address{};
+    NativeLength length = sizeof(address);
+    if (::getsockname(native->value, reinterpret_cast<sockaddr*>(&address), &length) != 0) return;
+    if (address.ss_family == AF_INET) {
+        auto& ipv4 = reinterpret_cast<sockaddr_in&>(address);
+        if (ipv4.sin_addr.s_addr == htonl(INADDR_ANY)) ipv4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (ipv4.sin_port == 0) ipv4.sin_port = htons(9);
+    } else if (address.ss_family == AF_INET6) {
+        auto& ipv6 = reinterpret_cast<sockaddr_in6&>(address);
+        if (IN6_IS_ADDR_UNSPECIFIED(&ipv6.sin6_addr)) ipv6.sin6_addr = in6addr_loopback;
+        if (ipv6.sin6_port == 0) ipv6.sin6_port = htons(9);
+    } else {
+        return;
+    }
+    if (::connect(native->value, reinterpret_cast<sockaddr*>(&address), length) == 0)
+        ::shutdown(native->value, SHUT_RDWR);
+#endif
+#endif
+}
+
 int ReadGuestAddress(const void* address, std::uint32_t length,
                      std::array<std::uint8_t, sizeof(sockaddr_storage)>& snapshot) {
     if (!address || length < 2) return NET_EINVAL;
@@ -1365,12 +1393,14 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
 
 int APS5_VABI sceNetSocketClose(int s) {
     std::shared_ptr<NativeSocketHandle> native;
+    int type = 0;
     bool found = false;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
         if (it != g_socks.end()) {
             native = it->second.native;
+            type = it->second.type;
             g_socks.erase(it);
             for (auto& epoll : g_epoll_socks) epoll.second.erase(s);
             found = true;
@@ -1381,13 +1411,7 @@ int APS5_VABI sceNetSocketClose(int s) {
         return close_nid_postfix(s) == 0 ? 0 : fail(*__error_nid_postfix());
     }
     KernelReleaseSocketNumber_nid_no_patch(s);
-    if (native) {
-#ifdef _WIN32
-        ::shutdown(native->value, SD_BOTH);
-#else
-        ::shutdown(native->value, SHUT_RDWR);
-#endif
-    }
+    ShutdownSocket_nid_no_patch(native, type);
     g_cv.NotifyAll();
     return 0;
 }
@@ -1395,18 +1419,16 @@ int APS5_VABI sceNetSocketClose(int s) {
 int APS5_VABI sceNetSocketAbort(int s, int flags) {
     (void)flags;
     std::shared_ptr<NativeSocketHandle> native;
+    int type = 0;
     {
         std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         it->second.aborted = true;
         native = it->second.native;
+        type = it->second.type;
     }
-#ifdef _WIN32
-    if (native) ::shutdown(native->value, SD_BOTH);
-#else
-    if (native) ::shutdown(native->value, SHUT_RDWR);
-#endif
+    ShutdownSocket_nid_no_patch(native, type);
     g_cv.NotifyAll();
     return 0;
 }

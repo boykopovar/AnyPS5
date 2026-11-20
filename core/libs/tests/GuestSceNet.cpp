@@ -783,19 +783,53 @@ static void CheckUnboundDatagramReceive() {
     Require(reply.wait_for(std::chrono::seconds(1)) == std::future_status::ready && reply.get());
     Require(Failed(sceNetBind_nid_postfix(waiting, address.data(), address.size()), 22));
     for (const int descriptor : {waiting, peer}) Require(sceNetSocketClose(descriptor) == 0);
+#if defined(_WIN32) || defined(__APPLE__)
+    for (const int family : {2, 28}) {
+        const std::uint32_t addressSize = family == 2 ? 16 : 28;
+        bool unavailable = false;
+        for (const bool abort : {true, false}) {
+            const int socket = sceNetSocket("bound-abort", family, 2, 17);
+            if (socket < 0 && family == 28 && *sceNetErrnoLoc() == 47) {
+                unavailable = true;
+                break;
+            }
+            Require(socket >= 0);
+            std::array<std::uint8_t, 28> address{};
+            address[0] = static_cast<std::uint8_t>(addressSize);
+            address[1] = static_cast<std::uint8_t>(family);
+            if (family == 2) { address[4] = 127; address[7] = 1; }
+            else address[23] = 1;
+            Require(sceNetBind_nid_postfix(socket, address.data(), addressSize) == 0);
+            auto waiter = std::async(std::launch::async, [socket] {
+                char ignored[4];
+                return sceNetRecvfrom(socket, ignored, sizeof(ignored), 0, nullptr, nullptr);
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            Require(waiter.wait_for(std::chrono::seconds(0)) == std::future_status::timeout);
+            Require((abort ? sceNetSocketAbort(socket, 0) : sceNetSocketClose(socket)) == 0);
+            Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+            if (abort) Require(sceNetSocketClose(socket) == 0);
+        }
+        if (unavailable) continue;
+        for (const bool abort : {true, false}) {
+            const int socket = sceNetSocket("unbound-abort", family, 2, 17);
+            Require(socket >= 0);
+            auto waiter = std::async(std::launch::async, [socket] {
+                char ignored[4];
+                return sceNetRecvfrom(socket, ignored, sizeof(ignored), 0, nullptr, nullptr);
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            Require(waiter.wait_for(std::chrono::seconds(0)) == std::future_status::timeout);
+            Require((abort ? sceNetSocketAbort(socket, 0) : sceNetSocketClose(socket)) == 0);
+            Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+            const auto result = waiter.get();
 #ifdef _WIN32
-    for (const bool abort : {true, false}) {
-        const int socket = sceNetSocket("unbound-abort", 2, 2, 17);
-        Require(socket >= 0);
-        auto waiter = std::async(std::launch::async, [socket] {
-            char ignored[4];
-            return sceNetRecvfrom(socket, ignored, sizeof(ignored), 0, nullptr, nullptr);
-        });
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        Require(waiter.wait_for(std::chrono::seconds(0)) == std::future_status::timeout);
-        Require((abort ? sceNetSocketAbort(socket, 0) : sceNetSocketClose(socket)) == 0);
-        Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready && waiter.get() < 0);
-        if (abort) Require(sceNetSocketClose(socket) == 0);
+            Require(result < 0);
+#else
+            (void)result;
+#endif
+            if (abort) Require(sceNetSocketClose(socket) == 0);
+        }
     }
 #endif
 }
@@ -2935,6 +2969,12 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::strcmp(argv[1], "--ether-pointer-faults") == 0) {
         CheckEtherPointerFaults();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--unbound-datagram-receive") == 0) {
+        Require(sceNetInit_nid_postfix() == 0);
+        CheckUnboundDatagramReceive();
+        sceNetTerm();
         return 0;
     }
     CheckEtherAddress();
