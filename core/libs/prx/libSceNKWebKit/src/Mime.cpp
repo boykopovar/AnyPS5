@@ -316,7 +316,6 @@ static const char* const kNonImageTypes[] = {
     "application/atom+xml",
     "application/json",
     "image/svg+xml",
-    "application/x-ftp-directory",
     "multipart/x-mixed-replace"
 };
 
