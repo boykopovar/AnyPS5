@@ -38,72 +38,90 @@ enum WatchpointState : std::uint8_t {
     IsInvalidated = 2
 };
 
+constexpr std::size_t PackedPointerSize = 6;
+
 struct WatchpointNode {
-    void* next;
-    void* prev;
+    unsigned char next[PackedPointerSize];
+    unsigned char prev[PackedPointerSize];
 };
 
+struct Watchpoint {
+    WatchpointNode node;
+    std::uint8_t type;
+};
+
+inline void* LoadPackedPointer(const void* storage) {
+    std::uint64_t value = 0;
+    std::memcpy(&value, storage, PackedPointerSize);
+    if (value & (std::uint64_t{1} << 47)) value |= std::uint64_t{0xFFFF} << 48;
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(value));
+}
+
+inline void StorePackedPointer(void* storage, void* pointer) {
+    const std::uint64_t value = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+    std::memcpy(storage, &value, PackedPointerSize);
+}
+
 inline void* NodeNext(const void* node) {
-    void* value;
-    std::memcpy(&value, node, sizeof(value));
-    return value;
+    return LoadPackedPointer(node);
 }
 
 inline void* NodePrev(const void* node) {
-    void* value;
-    std::memcpy(&value, static_cast<const unsigned char*>(node) + sizeof(void*), sizeof(value));
-    return value;
+    return LoadPackedPointer(static_cast<const unsigned char*>(node) + PackedPointerSize);
 }
 
 inline void SetNodeNext(void* node, void* value) {
-    std::memcpy(node, &value, sizeof(value));
+    StorePackedPointer(node, value);
 }
 
 inline void SetNodePrev(void* node, void* value) {
-    std::memcpy(static_cast<unsigned char*>(node) + sizeof(void*), &value, sizeof(value));
+    StorePackedPointer(static_cast<unsigned char*>(node) + PackedPointerSize, value);
 }
 
 struct WatchpointSet {
     std::uint32_t refCount;
     std::int8_t state;
     std::int8_t setIsNotEmpty;
-    unsigned char sentinel[sizeof(WatchpointNode)];
+    WatchpointNode sentinel;
 };
 
 inline void* SentinelAddress(WatchpointSet& set) {
-    return set.sentinel;
+    return &set.sentinel;
 }
 
 inline void* SentinelNext(WatchpointSet& set) {
-    return NodeNext(set.sentinel);
+    return NodeNext(&set.sentinel);
 }
 
 inline void* SentinelPrev(WatchpointSet& set) {
-    return NodePrev(set.sentinel);
+    return NodePrev(&set.sentinel);
 }
 
 inline void SetSentinelNext(WatchpointSet& set, void* value) {
-    SetNodeNext(set.sentinel, value);
+    SetNodeNext(&set.sentinel, value);
 }
 
 inline void SetSentinelPrev(WatchpointSet& set, void* value) {
-    SetNodePrev(set.sentinel, value);
+    SetNodePrev(&set.sentinel, value);
 }
 
 struct DeferredWatchpointFire {
     WatchpointSet watchpointsToFire;
 };
 
-static_assert(sizeof(WatchpointNode) == 16);
+static_assert(sizeof(WatchpointNode) == 12);
+static_assert(alignof(WatchpointNode) == 1);
 static_assert(offsetof(WatchpointNode, next) == 0);
-static_assert(offsetof(WatchpointNode, prev) == 8);
-static_assert(sizeof(WatchpointSet) == 24);
+static_assert(offsetof(WatchpointNode, prev) == 6);
+static_assert(offsetof(Watchpoint, node) == 0);
+static_assert(offsetof(Watchpoint, type) == 12);
+static_assert(sizeof(WatchpointSet) == 20);
 static_assert(alignof(WatchpointSet) == 4);
 static_assert(offsetof(WatchpointSet, refCount) == 0);
 static_assert(offsetof(WatchpointSet, state) == 4);
 static_assert(offsetof(WatchpointSet, setIsNotEmpty) == 5);
 static_assert(offsetof(WatchpointSet, sentinel) == 6);
-static_assert(sizeof(DeferredWatchpointFire) == 24);
+static_assert(sizeof(DeferredWatchpointFire) == 20);
 static_assert(alignof(DeferredWatchpointFire) == 4);
 static_assert(offsetof(DeferredWatchpointFire, watchpointsToFire) == 0);
 
