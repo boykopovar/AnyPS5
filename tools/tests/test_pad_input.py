@@ -62,6 +62,41 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(command[1:], [64, 300])
         self.assertEqual(self.queue(1001, "cross"), [command[0] + 1, 16384, 300])
 
+    def symlink_command(self, target):
+        try:
+            self.path.symlink_to(target)
+        except OSError as error:
+            if getattr(error, "winerror", None) == 1314:
+                self.skipTest("Windows symlink creation requires privileges")
+            raise
+
+    def test_queue_updates_symlink_target_without_replacing_link(self):
+        target_dir = self.root / "target"
+        target_dir.mkdir()
+        target = target_dir / "command"
+        target.write_bytes(b"2000 16384 300\n")
+        relative_target = Path("target") / "command"
+        self.symlink_command(relative_target)
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+        self.assertEqual(target.read_bytes(), b"2001 64 300\n")
+        self.assertEqual(self.path.readlink(), relative_target)
+        target.unlink()
+        self.assertEqual(self.queue(1000, "cross"), [1000, 16384, 300])
+        self.assertEqual(target.read_bytes(), b"1000 16384 300\n")
+        self.assertEqual(self.path.readlink(), relative_target)
+
+    def test_symlink_loop_is_a_usage_error_even_if_resolve_returns_the_link(self):
+        self.symlink_command(self.path.name)
+        for resolution in (contextlib.nullcontext(), mock.patch.object(Path, "resolve", return_value=self.path)):
+            with self.subTest(resolution=type(resolution).__name__):
+                errors = io.StringIO()
+                with resolution, contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    self.queue(1000, "down")
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("loop", errors.getvalue().lower())
+                self.assertEqual(self.path.readlink(), Path(self.path.name))
+                self.assertEqual(list(self.root.iterdir()), [self.path])
+
     def test_previous_command_size_limit_matches_runtime(self):
         for command in (b"2000 16384 300\n", b"APS5_PAD_TIMELINE 1 2000 1\n0 1 16384\n"):
             for length, expected in ((65536, 2001), (65537, 1000)):
