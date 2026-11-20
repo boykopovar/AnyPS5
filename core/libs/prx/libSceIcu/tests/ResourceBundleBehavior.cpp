@@ -34,9 +34,9 @@ struct Package {
         ResourceOracleRegister(storage.data(), &status);
         Require(status <= 0, "native oracle registers the actual package");
         status = 0;
-        udata_setCommonData(storage.data(), &status);
+        udata_setCommonData_nid_postfix(storage.data(), &status);
         Require(status <= 0, "guest data registration installs the actual package");
-        udata_setFileAccess(ResourceOracleNoFiles(), nullptr);
+        udata_setFileAccess_nid_postfix(ResourceOracleNoFiles(), nullptr);
     }
     ~Package() { u_cleanup_nid_postfix(); ResourceOracleCleanup(); }
 };
