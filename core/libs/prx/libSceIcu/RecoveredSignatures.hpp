@@ -221,7 +221,6 @@ std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFor
 std::int32_t APS5_VABI ureldatefmt_formatNumeric_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status);
 URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* locale, UNumberFormat* formatter, std::int32_t width, std::int32_t context, std::int32_t* status);
 
-void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
 
