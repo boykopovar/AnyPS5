@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleFloat_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleNibble_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleNibbleTruncated_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSamplePacked_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleSint_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleUint_spv.h"
@@ -35,8 +37,10 @@ bool uintFormat(VkFormat format) {
     }
 }
 
-std::span<const std::uint32_t> fragmentCode(VkFormat format, bool averagePacked) {
-    if (averagePacked) return FIRST_SAMPLE_PACKED_SPV;
+std::span<const std::uint32_t> fragmentCode(VkFormat format, PackedAverage average) {
+    if (average == PackedAverage::Float11_11_10) return FIRST_SAMPLE_PACKED_SPV;
+    if (average == PackedAverage::Unorm4_4_4_4) return FIRST_SAMPLE_NIBBLE_SPV;
+    if (average == PackedAverage::Unorm4_4_4_4Truncated) return FIRST_SAMPLE_NIBBLETRUNCATED_SPV;
     if (sintFormat(format)) return FIRST_SAMPLE_SINT_SPV;
     if (uintFormat(format)) return FIRST_SAMPLE_UINT_SPV;
     return FIRST_SAMPLE_FLOAT_SPV;
@@ -53,7 +57,7 @@ struct DescriptorPool {
 
 }
 
-FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, bool averagePacked) : context(context), extent(extent) {
+FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, PackedAverage average) : context(context), extent(extent) {
     try {
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -140,7 +144,7 @@ FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExte
         Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer first sample");
 
         vertex = CreateShaderModule(context, PRESENTATION_PASS_VERT_SPV, sizeof(PRESENTATION_PASS_VERT_SPV), "vkCreateShaderModule first sample vertex");
-        const auto code = fragmentCode(format, averagePacked);
+        const auto code = fragmentCode(format, average);
         fragment = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule first sample fragment");
         VkPipelineShaderStageCreateInfo stages[2]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;

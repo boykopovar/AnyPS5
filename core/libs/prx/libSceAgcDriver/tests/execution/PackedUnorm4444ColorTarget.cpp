@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -30,6 +31,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -46,6 +48,7 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u) | (2u << 11u);
 constexpr std::uint32_t RoundModeBit = 0x40000u;
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
+constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Float16Export = 4;
 
@@ -57,7 +60,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 64> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 128> Programs{};
 std::size_t programCount = 0;
 
 struct Golden {
@@ -154,21 +157,21 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool truncate) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool truncate, std::uint32_t sampleShift = 0) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
     cx[0x31c] = Unorm4_4_4_4Info | (truncate ? RoundModeBit : 0u);
-    cx[0x31d] = 0;
+    cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.componentMapping == 0x1bu && color.packing == (truncate ? ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated : ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) && color.bytes == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
+    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.componentMapping == 0x1bu && color.packing == (truncate ? ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated : ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) && color.samples == 1u << sampleShift && (color.bytes << sampleShift) == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, std::uint16_t sampleMask = 0xffffu) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -203,6 +206,8 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
+    state.samples = color.samples;
+    state.quadSampleMask.fill(sampleMask);
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
     const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, exportFormat}};
@@ -316,6 +321,48 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
     }
 }
 
+
+std::uint32_t Average(const std::vector<std::array<std::uint32_t, 4>>& codes, std::size_t field, bool truncate) {
+    std::uint32_t sum = 0;
+    for (const auto& sample : codes) sum += sample[field];
+    const auto count = static_cast<std::uint32_t>(codes.size());
+    return (sum + (truncate ? 0u : count / 2u)) / count;
+}
+
+void ResolveCase(AgcDriver::VulkanDevice& device, std::uint32_t sampleShift, bool truncate, const std::vector<std::array<std::uint32_t, 4>>& codes, const std::string& what) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 2);
+    Block source(layout.Bytes() << sampleShift);
+    Block resolved(layout.Bytes());
+    std::memset(source.data, 0, source.bytes);
+    std::memset(resolved.data, 0x5a, resolved.bytes);
+    const auto multisampled = DecodeTarget(source, TiledAttrib3, truncate, sampleShift);
+    for (std::uint32_t sample = 0; sample < (1u << sampleShift); ++sample) {
+        std::array<float, 4> rgba{};
+        for (std::size_t field = 0; field < 4; ++field) rgba[field] = (static_cast<float>(codes[sample][field]) + 0.25f) / 15.0f;
+        Draw(device, multisampled, Float32Export, Float32Program(rgba), static_cast<std::uint16_t>(1u << sample));
+    }
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+    pass.source = multisampled;
+    pass.targets = {DecodeTarget(resolved, TiledAttrib3, truncate)};
+    device.ColorMetadataPass(pass);
+    const auto word = (Average(codes, 0, truncate) << 12u) | (Average(codes, 1, truncate) << 8u) | (Average(codes, 2, truncate) << 4u) | Average(codes, 3, truncate);
+    ExpectSurface(device, resolved, layout, std::vector<std::uint16_t>(resolved.bytes / 2u, 0u), word, what + (truncate ? " with ROUND_MODE 1" : " with ROUND_MODE 0"));
+    AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
+void ResolveTests(AgcDriver::VulkanDevice& device, bool truncate) {
+    ResolveCase(device, 1u, truncate, {{7u, 0u, 4u, 15u}, {8u, 15u, 4u, 14u}}, "a CB resolve of a two-sample 4_4_4_4 unorm target");
+    ResolveCase(device, 2u, truncate, {{1u, 0u, 15u, 3u}, {2u, 0u, 15u, 5u}, {2u, 1u, 15u, 7u}, {2u, 1u, 14u, 9u}}, "a CB resolve of a four-sample 4_4_4_4 unorm target");
+    try {
+        ResolveCase(device, 3u, truncate, {{0u, 15u, 1u, 12u}, {1u, 15u, 0u, 12u}, {2u, 15u, 0u, 12u}, {3u, 15u, 0u, 12u}, {4u, 15u, 0u, 12u}, {5u, 15u, 0u, 12u}, {6u, 15u, 0u, 12u}, {7u, 15u, 0u, 13u}},
+            "a CB resolve of an eight-sample 4_4_4_4 unorm target");
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+        std::puts("eight-sample 4_4_4_4 unorm resolve skipped, the device lacks eight-sample color attachments");
+    }
+}
+
 }
 
 int main() {
@@ -325,6 +372,8 @@ int main() {
         Block linear(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
         TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear", false);
         TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, "linear ROUND_MODE 1", true);
+        ResolveTests(*device, false);
+        ResolveTests(*device, true);
         std::puts("4_4_4_4 unorm color target tests passed");
         return 0;
     } catch (const std::exception& error) {
