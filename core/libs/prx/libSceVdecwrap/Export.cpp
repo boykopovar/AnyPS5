@@ -34,6 +34,14 @@ bool ReadSize(const void* block, std::uint64_t& size) {
     return ReadField(block, 0x0, size);
 }
 
+template <typename TValue>
+bool WriteField(void* block, std::size_t offset, const TValue& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(static_cast<unsigned char*>(block) + offset, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 int CheckConfig(const void* config) {
     std::int32_t codecType = 0;
     if (!ReadField(config, 0x8, codecType)) return 0;
@@ -71,10 +79,10 @@ int BuildCoreConfig(const void* config, VdecCoreConfigInfo& result) {
     return 0;
 }
 
-int MapFrameBufferQueryError(int error) {
+int MapCoreQueryError(int error) {
     const auto raw = static_cast<std::uint32_t>(error);
     if (static_cast<std::uint32_t>(raw + 0x7f3fffffu) < 3) return static_cast<int>(0x810c0001u);
-    if (raw == 0x80c0000du) return error;
+    if (raw == 0x80c0000du) return static_cast<int>(0x810c0001u);
     if (raw == 0x80c0000cu) return static_cast<int>(0x810c000cu);
     return 0;
 }
@@ -134,7 +142,19 @@ int APS5_VABI sceVdecwrapMapMemory(void* decoder, std::uint64_t argument2, void*
 int APS5_VABI sceVdecwrapQueryDecoderMemoryInfo(const void* config, void* info) {
     if (config == nullptr || info == nullptr) return ErrorNullArgument;
     if (const int error = CheckConfigAndInfo(config, info, 0x38); error != 0) return error;
-    NotImplemented_nid_no_patch(__func__);
+
+    VdecCoreConfigInfo coreConfig{};
+    if (const int error = BuildCoreConfig(config, coreConfig); error != 0) return error;
+    std::uint64_t instanceSize = 0;
+    std::uint64_t computeSize = 0;
+    std::uint64_t reservedSize = 0;
+    const int queryResult =
+        sceVdecCoreQueryInstanceSize(&coreConfig, &instanceSize, &computeSize, &reservedSize);
+    if (const int error = MapCoreQueryError(queryResult); error != 0) return error;
+
+    instanceSize += 0x60000;
+    if (!WriteField(info, 0x8, instanceSize) || !WriteField(info, 0x18, computeSize) ||
+        !WriteField(info, 0x28, reservedSize)) return static_cast<int>(0x810c0001u);
     return 0;
 }
 
@@ -146,7 +166,7 @@ int APS5_VABI sceVdecwrapQueryFrameBufferInfo(const void* config, void* info) {
     if (const int error = BuildCoreConfig(config, coreConfig); error != 0) return error;
     VdecCoreFrameBufferInfo coreInfo{};
     const int queryResult = sceVdecCoreQueryFrameBufferInfo(&coreConfig, &coreInfo);
-    if (const int error = MapFrameBufferQueryError(queryResult); error != 0) return error;
+    if (const int error = MapCoreQueryError(queryResult); error != 0) return error;
 
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(static_cast<unsigned char*>(info) + sizeof(std::uint64_t),

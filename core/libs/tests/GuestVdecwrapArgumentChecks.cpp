@@ -87,6 +87,49 @@ static void CheckFrameBufferInfoQuery() {
             "The caller-provided output structure size is preserved");
 }
 
+static void CheckDecoderMemoryInfoQuery() {
+    std::array<unsigned char, 0x28> config{};
+    std::array<unsigned char, 0x38> info{};
+    Put64(config.data(), 0, config.size());
+    Put32(config.data(), 8, 2);
+    Put32(config.data(), 0x14, 1280);
+    Put32(config.data(), 0x18, 720);
+    Put32(config.data(), 0x1c, 3);
+    Put32(config.data(), 0x20, 256);
+    Put64(info.data(), 0, info.size());
+    Put64(info.data(), 0x10, 0xaaaaaaaaaaaaaaaaull);
+    Put64(info.data(), 0x20, 0xbbbbbbbbbbbbbbbbull);
+    Put64(info.data(), 0x30, 0xccccccccccccccccull);
+
+    VdecCoreConfigInfo coreConfig{};
+    coreConfig.codecType = 1;
+    coreConfig.maxFrameWidth = 1280;
+    coreConfig.maxFrameHeight = 720;
+    coreConfig.maxDpbFrameCount = 3;
+    coreConfig.horizontalAlign = 256;
+    std::uint64_t instanceSize = 0;
+    std::uint64_t computeSize = 0;
+    std::uint64_t reservedSize = 0;
+    Require(sceVdecCoreQueryInstanceSize(&coreConfig, &instanceSize, &computeSize, &reservedSize) == 0,
+            "Core memory-size query succeeds");
+
+    Require(sceVdecwrapQueryDecoderMemoryInfo(config.data(), info.data()) == 0,
+            "Wrapper memory-size query succeeds");
+    std::uint64_t value = 0;
+    std::memcpy(&value, info.data() + 8, sizeof(value));
+    Require(value == instanceSize + 0x60000, "The wrapper adds its decoder overhead to instance memory");
+    std::memcpy(&value, info.data() + 0x18, sizeof(value));
+    Require(value == computeSize, "The core compute size is returned");
+    std::memcpy(&value, info.data() + 0x28, sizeof(value));
+    Require(value == reservedSize, "The core reserved size is returned");
+    std::memcpy(&value, info.data() + 0x10, sizeof(value));
+    Require(value == 0xaaaaaaaaaaaaaaaaull, "The first reserved output field is preserved");
+    std::memcpy(&value, info.data() + 0x20, sizeof(value));
+    Require(value == 0xbbbbbbbbbbbbbbbbull, "The second reserved output field is preserved");
+    std::memcpy(&value, info.data() + 0x30, sizeof(value));
+    Require(value == 0xccccccccccccccccull, "The trailing reserved output field is preserved");
+}
+
 int main() {
     unsigned char decoder[0x40]{};
     unsigned char block[0x60]{};
@@ -127,6 +170,7 @@ int main() {
     CheckConfigCalls(0x38, [](const void* c, void* i, void*) { return sceVdecwrapQueryDecoderMemoryInfo(c, i); });
     CheckConfigCalls(0x18, [](const void* c, void* i, void*) { return sceVdecwrapQueryFrameBufferInfo(c, i); });
     CheckFrameBufferInfoQuery();
+    CheckDecoderMemoryInfoQuery();
 
     unsigned char output[0x40]{};
     for (const std::uint64_t size : {0ull, 0x37ull, 0x39ull, 0x18ull}) {
