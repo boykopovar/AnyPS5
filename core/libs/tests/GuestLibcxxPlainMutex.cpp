@@ -31,6 +31,25 @@ int main() {
     contender.join();
     Require(!otherAcquired.load(), "libc++ mutex try_lock accepted another thread while held");
 
+    std::atomic<bool> nonOwnerUnlockThrew{false};
+    std::thread nonOwner([&] {
+        try {
+            _ZNSt3__15mutex6unlockEv_nid_postfix(&mutex);
+        } catch (...) {
+            nonOwnerUnlockThrew.store(true);
+        }
+    });
+    nonOwner.join();
+    Require(!nonOwnerUnlockThrew.load(), "libc++ mutex non-owner unlock threw");
+    Require(mutex != nullptr, "libc++ mutex non-owner unlock changed the handle");
+    bool heldDestroyThrew = false;
+    try {
+        _ZNSt3__15mutexD1Ev_nid_postfix(&mutex);
+    } catch (...) {
+        heldDestroyThrew = true;
+    }
+    Require(!heldDestroyThrew && mutex != nullptr, "libc++ mutex destruction while held did not ignore the pthread error");
+
     std::atomic<bool> attempted{false};
     std::atomic<bool> acquired{false};
     std::thread waiter([&] {

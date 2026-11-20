@@ -44,7 +44,7 @@ void APS5_VABI _ZNSt3__15mutex4lockEv_nid_postfix(PthreadMutex* self) {
 
 void APS5_VABI _ZNSt3__15mutex6unlockEv_nid_postfix(PthreadMutex* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.unlock(CheckedMutex(self, __func__)), __func__);
+    static_cast<void>(kernel.unlock(CheckedMutex(self, __func__)));
 }
 
 bool APS5_VABI _ZNSt3__15mutex8try_lockEv_nid_postfix(PthreadMutex* self) {
@@ -54,7 +54,7 @@ bool APS5_VABI _ZNSt3__15mutex8try_lockEv_nid_postfix(PthreadMutex* self) {
 
 void APS5_VABI _ZNSt3__15mutexD1Ev_nid_postfix(PthreadMutex* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.destroy(CheckedMutex(self, __func__)), __func__);
+    static_cast<void>(kernel.destroy(CheckedMutex(self, __func__)));
 }
 
 }
