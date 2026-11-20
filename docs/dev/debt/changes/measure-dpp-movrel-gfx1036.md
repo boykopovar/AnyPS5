@@ -1,0 +1,5 @@
+# shader
+
+## change [DPP on the relative vector instructions]
+
+- [DPP on the relative vector instructions](../../../core/shader/recompiler/RdnaDecoder/src/RdnaVectorOpDecoder.cpp) (shader recompiler) - the lane selection is not measured on a console. `v_movrels_b32`, `v_movreld_b32`, `v_movrelsd_b32` and `v_movrelsd_2_b32` decode the DPP8 and DPP16 encodings ([RDNA 2 ISA](https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf) §6.9, not excluded by §12.19.1). The relative read `D.u = VGPR[src0 + M0].u` (§12.8) is the per-lane value DPP permutes, so `readRelativeVector` and `writeRelativeVector` use the `DppMoveU32`/`DppUpdateU32` path of other VOP1 sources. The execution test covers a non-identity DPP8 selector with both fetch-inactive values and the identity selector with full masks. On RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) all four follow this for five DPP8 selectors and twelve DPP16 controls (quad permutes, row shifts, rotates, mirrors, bound control, masks), wave32 and wave64.
