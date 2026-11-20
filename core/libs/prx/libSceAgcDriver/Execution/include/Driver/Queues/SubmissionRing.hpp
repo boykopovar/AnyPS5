@@ -17,6 +17,8 @@ std::size_t SubmissionRingCapacity();
 
 std::chrono::seconds StallWatchdogPeriod();
 
+std::chrono::microseconds OrderHoldWait();
+
 using StallClock = std::chrono::steady_clock::time_point (*)();
 void SetStallClock(StallClock clock);
 
