@@ -412,7 +412,7 @@ int main(int argc, char** argv) {
         const bool driverSamplesUnnormalizedAboveMipZero = device->DeviceName().find("llvmpipe") == std::string::npos;
         const auto offsetCoordinates = OffsetCoordinates();
         if (coverage != "descriptor-controls") for (const auto& sampler : Samplers) {
-            const bool mirrored = sampler.mirrorX || sampler.mirrorY;
+            const bool mirrored = ((ClampMode(sampler, 0u) | ClampMode(sampler, 1u)) & 1u) != 0u;
             if (coverage == "mirrored" ? !mirrored : mirrored || sampler.linear != (coverage == "bilinear")) continue;
             const auto singleSamples = Run(*device, target, plain, single, sampler.words, coordinates);
             Check(plain, sampler, 0u, "1-level image", coordinates, singleSamples);
