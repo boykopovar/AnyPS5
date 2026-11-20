@@ -38,12 +38,17 @@ namespace {
 char caught[128];
 long live = 0;
 bool failNextAllocation = false;
+int failedAllocations = 0;
 std::size_t lastAllocationSize = 0;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     lastAllocationSize = size;
     if (failNextAllocation) {
         failNextAllocation = false;
+        throw std::bad_alloc();
+    }
+    if (failedAllocations > 0) {
+        --failedAllocations;
         throw std::bad_alloc();
     }
     ++live;
@@ -490,6 +495,54 @@ void CheckWideCapacityAndAliases() {
     ReleaseWide(terminator);
 }
 
+void CheckWideCopy() {
+    const std::uint16_t five[]{'a', 'b', 'c', 'd', 'e'};
+    String fromInline = MakeWide(five, 5);
+    const long inlineLive = live;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&fromInline, 8, 5);
+    Require(WideHolds(fromInline, five, 5) && fromInline.capacity == 15 && live == inlineLive + 1,
+        "wide _Copy moves an inline string to a heap buffer rounded up to fifteen units");
+    ReleaseWide(fromInline);
+
+    std::array<std::uint16_t, 31> text{};
+    for (std::size_t index = 0; index < text.size(); ++index) text[index] = static_cast<std::uint16_t>('A' + index % 26);
+    String geometric = MakeWideHeap(text.data(), text.size(), 31);
+    const long geometricLive = live;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&geometric, 32, 31);
+    Require(WideHolds(geometric, text.data(), text.size()) && geometric.capacity == 46 && live == geometricLive,
+        "wide _Copy grows by half the old capacity and releases the old buffer");
+    ReleaseWide(geometric);
+
+    String kept = MakeWideHeap(text.data(), 10, 15);
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&kept, 20, 4);
+    Require(WideHolds(kept, text.data(), 4) && kept.capacity == 23,
+        "wide _Copy keeps only the requested length and terminates it");
+    ReleaseWide(kept);
+
+    String retried = MakeWideHeap(text.data(), 10, 15);
+    const long retriedLive = live;
+    failedAllocations = 1;
+    lastAllocationSize = 0;
+    _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&retried, 20, 10);
+    Require(failedAllocations == 0 && lastAllocationSize == 21 * sizeof(std::uint16_t) && WideHolds(retried, text.data(), 10)
+        && retried.capacity == 20 && live == retriedLive,
+        "wide _Copy retries a failed allocation at the requested size");
+    ReleaseWide(retried);
+
+    String failed = MakeWideHeap(text.data(), 10, 15);
+    const long failedLive = live;
+    failedAllocations = 2;
+    bool caughtBadAlloc = false;
+    try {
+        _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(&failed, 20, 10);
+    } catch (const std::bad_alloc&) {
+        caughtBadAlloc = true;
+    }
+    const std::uint16_t none[]{0};
+    Require(caughtBadAlloc && failedAllocations == 0 && WideHolds(failed, none, 0) && failed.capacity == 7 && live == failedLive - 1,
+        "wide _Copy discards the storage and rethrows when the retry fails too");
+}
+
 void CheckWideBoundaryAndFailures() {
     std::array<std::uint16_t, 2032> belowBoundary{};
     std::array<std::uint16_t, 2040> atBoundary{};
@@ -569,6 +622,7 @@ int main() {
     CheckNarrowInsertGrowth();
     CheckWideCapacityAndAliases();
     CheckWideBoundaryAndFailures();
+    CheckWideCopy();
     Require(live == before, "every string allocation is released");
     std::puts("libc internal basic_string: ok");
     return 0;
