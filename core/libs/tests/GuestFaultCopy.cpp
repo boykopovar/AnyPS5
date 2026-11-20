@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -27,6 +28,7 @@ static void* const NonCanonical = reinterpret_cast<void*>(0x8000000000000000ull)
 
 static volatile sig_atomic_t g_outside = 0;
 static volatile sig_atomic_t g_seen = 0;
+static volatile sig_atomic_t g_resetHandHits = 0;
 static struct sigaction g_chained{};
 
 static void Earlier(int, siginfo_t*, void*) {
@@ -37,6 +39,18 @@ static void Earlier(int, siginfo_t*, void*) {
 static void Later(int signal, siginfo_t* info, void* context) {
     ++g_seen;
     g_chained.sa_sigaction(signal, info, context);
+}
+
+static void OnResetHandSegv(int) {
+    ++g_resetHandHits;
+    if (g_resetHandHits >= 2) _exit(42);
+}
+
+static void DisableCoreDumps() {
+    struct rlimit limit{};
+    limit.rlim_cur = 0;
+    limit.rlim_max = 0;
+    setrlimit(RLIMIT_CORE, &limit);
 }
 
 static void RequireExit(pid_t child, int code) {
@@ -62,6 +76,58 @@ static void RequireEarlierHandlerKeepsOtherFaults() {
         _exit(6);
     }
     RequireExit(child, 42);
+}
+
+static void RequireSigIgnWithSigInfoChains() {
+    std::fflush(nullptr);
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        DisableCoreDumps();
+        alarm(10);
+        if (unsetenv("APS5_GUEST_COPY_SYSCALL") != 0) _exit(2);
+        struct sigaction action{};
+        action.sa_handler = SIG_IGN;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_SIGINFO;
+        if (sigaction(SIGSEGV, &action, nullptr) != 0) _exit(3);
+        std::uint32_t source = 0x12345678u;
+        std::uint32_t destination = 0u;
+        if (!GuestCopyIn_nid_no_patch(&destination, &source, sizeof(destination)) || destination != source) _exit(4);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(5);
+        if (raise(SIGSEGV) != 0) _exit(6);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(7);
+        _exit(0);
+    }
+    RequireExit(child, 0);
+}
+
+static void RequireResetHandChainsToDefault() {
+    std::fflush(nullptr);
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        DisableCoreDumps();
+        alarm(10);
+        if (unsetenv("APS5_GUEST_COPY_SYSCALL") != 0) _exit(2);
+        g_resetHandHits = 0;
+        struct sigaction action{};
+        action.sa_handler = OnResetHandSegv;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_RESETHAND;
+        if (sigaction(SIGSEGV, &action, nullptr) != 0) _exit(3);
+        std::uint32_t source = 0x87654321u;
+        std::uint32_t destination = 0u;
+        if (!GuestCopyIn_nid_no_patch(&destination, &source, sizeof(destination)) || destination != source) _exit(4);
+        if (raise(SIGSEGV) != 0) _exit(5);
+        if (g_resetHandHits != 1) _exit(6);
+        if (GuestCopyIn_nid_no_patch(&destination, Unmapped, sizeof(destination))) _exit(7);
+        raise(SIGSEGV);
+        _exit(8);
+    }
+    int status = 0;
+    Require(waitpid(child, &status, 0) == child);
+    Require(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
 }
 
 static void RequireLaterHandlerChains() {
@@ -130,8 +196,8 @@ static void RequireBusChainAfterGuestRegistration() {
 }
 
 static void RequireCopies() {
-    for (const std::size_t bytes : {std::size_t{1}, std::size_t{7}, std::size_t{8}, std::size_t{63}, std::size_t{4096}, std::size_t{4097}, std::size_t{65536}}) {
-        for (std::size_t offset = 0; offset < 4; ++offset) {
+    for (const std::size_t bytes : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{7}, std::size_t{8}, std::size_t{15}, std::size_t{16}, std::size_t{17}, std::size_t{31}, std::size_t{32}, std::size_t{33}, std::size_t{63}, std::size_t{4096}, std::size_t{4097}, std::size_t{65536}}) {
+        for (std::size_t offset = 0; offset < 8; ++offset) {
             std::vector<unsigned char> source(bytes + offset), destination(bytes + offset, 0);
             for (std::size_t index = 0; index < source.size(); ++index) source[index] = static_cast<unsigned char>(index * 7 + bytes);
             Require(GuestCopyIn_nid_no_patch(destination.data() + offset, source.data() + offset, bytes));
@@ -189,10 +255,64 @@ static void RequireThreads() {
     Require(failures.load() == 0);
 }
 
+static void RequireShortFaultPrefixes() {
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 64);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    std::memset(pages, 0x5a, page);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+    for (std::size_t bytes = 1; bytes <= 33; ++bytes) {
+        unsigned char buffer[64];
+        std::memset(buffer, 0xcc, sizeof(buffer));
+        Require(GuestCopyIn_nid_no_patch(buffer, pages + page - bytes, bytes));
+        for (std::size_t index = 0; index < bytes; ++index) Require(buffer[index] == 0x5a);
+        Require(buffer[bytes] == 0xcc);
+        Require(GuestCopyOut_nid_no_patch(pages + page - bytes, buffer, bytes));
+        for (std::size_t prefix = 0; prefix < bytes; ++prefix) {
+            std::memset(buffer, 0xcc, sizeof(buffer));
+            errno = 71;
+            Require(!GuestCopyIn_nid_no_patch(buffer, pages + page - prefix, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < sizeof(buffer); ++index) Require(buffer[index] == (index < prefix ? 0x5a : 0xcc));
+            for (std::size_t index = 0; index < bytes; ++index) buffer[index] = static_cast<unsigned char>(index * 13 + 1);
+            Require(!GuestCopyOut_nid_no_patch(pages + page - prefix, buffer, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < prefix; ++index) Require(pages[page - prefix + index] == buffer[index]);
+            std::memset(pages + page - prefix, 0x5a, prefix);
+        }
+    }
+    Require(munmap(pages, page * 2) == 0);
+}
+
+static void RequireShortBusFaults() {
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 0);
+    FILE* file = std::tmpfile();
+    Require(file != nullptr);
+    Require(ftruncate(fileno(file), page) == 0);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_SHARED, fileno(file), 0));
+    Require(pages != MAP_FAILED);
+    unsigned char buffer[33]{};
+    for (std::size_t bytes = 1; bytes <= sizeof(buffer); ++bytes) {
+        errno = 71;
+        Require(!GuestCopyIn_nid_no_patch(buffer, pages + page, bytes));
+        Require(errno == 71);
+        Require(!GuestCopyOut_nid_no_patch(pages + page, buffer, bytes));
+        Require(errno == 71);
+    }
+    Require(munmap(pages, page * 2) == 0);
+    Require(std::fclose(file) == 0);
+}
+
 int main() {
     RequireEarlierHandlerKeepsOtherFaults();
+    RequireSigIgnWithSigInfoChains();
+    RequireResetHandChainsToDefault();
     RequireCopies();
     RequireFaults();
+    RequireShortFaultPrefixes();
+    RequireShortBusFaults();
     RequireThreads();
     RequireLaterHandlerChains();
     RequireGuestRegistrationKeepsCopyFaults();

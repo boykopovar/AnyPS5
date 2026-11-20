@@ -7,12 +7,12 @@
 
 extern "C" {
 
-int APS5_VABI _Atan_nid_postfix();
+double APS5_VABI _Atan_nid_postfix(double x, int flags);
 double APS5_VABI _Dtento_nid_postfix(double* value, std::int64_t power, int* error);
-int APS5_VABI _Erfc_nid_postfix();
-int APS5_VABI _FAtan_nid_postfix();
+double APS5_VABI _Erfc_nid_postfix(double x);
+float APS5_VABI _FAtan_nid_postfix(float x, int flags);
 float APS5_VABI _FDtento_nid_postfix(float* value, std::int64_t power, int* error);
-int APS5_VABI _FErfc_nid_postfix();
+float APS5_VABI _FErfc_nid_postfix(float x);
 int APS5_VABI _FHypot_nid_postfix();
 int APS5_VABI _FLogpoly_nid_postfix();
 float APS5_VABI _FPow_nid_postfix(float x, float y, short* exponent);
@@ -20,7 +20,7 @@ int APS5_VABI _FQuad_nid_postfix();
 int APS5_VABI _FQuadph_nid_postfix();
 int APS5_VABI _FRint_nid_postfix();
 int APS5_VABI _FSincos_nid_postfix();
-int APS5_VABI _FTan_nid_postfix();
+float APS5_VABI _FTan_nid_postfix(float x, int quadrants);
 int APS5_VABI _FTgamma_nid_postfix();
 float* APS5_VABI _FXp_addh_nid_postfix(float* p, int n, float x);
 float* APS5_VABI _FXp_addx_nid_postfix(float* p, int n, const float* q, int m);
@@ -35,9 +35,9 @@ float* APS5_VABI _FXp_setw_nid_postfix(float* p, int n, float x);
 float* APS5_VABI _FXp_sqrtx_nid_postfix(float* p, int n, float* scratch);
 float* APS5_VABI _FXp_subx_nid_postfix(float* p, int n, const float* q, int m);
 int APS5_VABI _Hypot_nid_postfix();
-int APS5_VABI _LAtan_nid_postfix();
+long double APS5_VABI _LAtan_nid_postfix(long double x, int flags);
 long double APS5_VABI _LDtento_nid_postfix(long double* value, std::int64_t power, int* error);
-int APS5_VABI _LErfc_nid_postfix();
+long double APS5_VABI _LErfc_nid_postfix(long double x);
 int APS5_VABI _LHypot_nid_postfix();
 int APS5_VABI _LLogpoly_nid_postfix();
 long double APS5_VABI _LPow_nid_postfix(long double x, long double y, short* exponent);
@@ -45,7 +45,7 @@ int APS5_VABI _LQuad_nid_postfix();
 int APS5_VABI _LQuadph_nid_postfix();
 int APS5_VABI _LRint_nid_postfix();
 int APS5_VABI _LSincos_nid_postfix();
-int APS5_VABI _LTan_nid_postfix();
+long double APS5_VABI _LTan_nid_postfix(long double x, int quadrants);
 int APS5_VABI _LTgamma_nid_postfix();
 long double* APS5_VABI _LXp_addh_nid_postfix(long double* p, int n, long double x);
 long double* APS5_VABI _LXp_addx_nid_postfix(long double* p, int n, const long double* q, int m);
