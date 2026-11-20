@@ -15513,7 +15513,28 @@ bool sampledImportPiecesTests(const Device& device, Recorder& recorder) {
         }
         for (std::size_t index = 0; index < uploaded.size(); ++index) check(uploaded[index], index * unit / 2u, phase);
     }
-    std::cout << "sampled import pieces: gapped fallback, consecutive scratch reuse, boundary texels and repeated writes passed\n";
+    recorder.Sync();
+    {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        for (std::size_t half = 0; half < 8; ++half) {
+            const auto begin = address + half * unit / 2u;
+            const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
+            Require(imported != nullptr, "a sampled texture half lost its existing import");
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, static_cast<std::uint32_t>(16u + half * 16u) * 0x01010101u);
+        }
+        recorder.NotePendingWrite(address, bytes);
+        static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, bytes));
+        const auto program = request(address);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        const auto before = SampledTexturesImported();
+        auto resources = std::make_shared<ShaderResources>(context, shader);
+        Require(SampledTexturesImported() == before + 1, "a sampled array behind open import writes was not uploaded on the GPU");
+        const auto read = recorder.DescribePendingRead(address, bytes);
+        Require(read.has_value() && read->kind == Recorder::ReadKind::StorageUpload, "a sampled array copied from imports does not hold its guest range as read until the copy runs");
+        recorder.Keep(resources);
+    }
+    std::cout << "sampled import pieces: gapped fallback, consecutive scratch reuse, boundary texels, repeated writes and pending import reads passed\n";
     return true;
 }
 
