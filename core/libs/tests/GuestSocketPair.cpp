@@ -403,6 +403,13 @@ int main(int argc, char** argv) {
         return 0;
     }
     Require(argc == 1);
+    *__error_nid_postfix() = 0;
+    Require(sockatmark_nid_postfix(-1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(sockatmark_nid_postfix(1) == -1 && *__error_nid_postfix() == 38);
+    const int atmarkDatagram = socket_nid_postfix(2, Datagram, 0);
+    Require(atmarkDatagram >= 0 && sockatmark_nid_postfix(atmarkDatagram) == 0);
+    Require(close_nid_postfix(atmarkDatagram) == 0);
     int pair[2] = {-1, -1};
     Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
     Require(pair[0] >= 0 && pair[0] < DescriptorSetSize && pair[1] >= 0 && pair[1] < DescriptorSetSize && pair[0] != pair[1]);
