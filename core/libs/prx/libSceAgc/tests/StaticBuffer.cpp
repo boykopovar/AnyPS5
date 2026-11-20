@@ -60,6 +60,12 @@ void testInvalidGuestPointers() {
     check(errno == E2BIG, "a rejected static buffer get changed errno");
     check(sceAgcGetStaticBuffer(2, reinterpret_cast<void*>(0x1)) == InvalidStaticBuffer, "static buffer get accepted an unmapped guest pointer");
     for (std::uint8_t byte : out) check(byte == 0xAA, "rejected static buffer get touched the sentinel output");
+    std::uint64_t qword = 0xAA;
+    errno = E2BIG;
+    check(sceAgcGetStaticQword(0, nullptr) == InvalidStaticBuffer, "static qword get accepted a null guest pointer");
+    check(errno == E2BIG, "a rejected static qword get changed errno");
+    check(sceAgcGetStaticQword(0, reinterpret_cast<std::uint64_t*>(0x1)) == InvalidStaticBuffer, "static qword get accepted an unmapped guest pointer");
+    check(qword == 0xAA, "rejected static qword get touched the sentinel output");
 }
 
 void testReadOnlyGuestPages() {

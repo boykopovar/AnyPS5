@@ -1,5 +1,7 @@
-called_from_lib:libvulkan_lvp.so
-called_from_lib:libLLVM
-called_from_lib:libpulsecommon
+race:libvulkan_lvp.so
+thread:libvulkan_lvp.so
 race:libLLVM
+thread:libLLVM
 deadlock:libLLVM
+race:libpulsecommon
+thread:libpulsecommon

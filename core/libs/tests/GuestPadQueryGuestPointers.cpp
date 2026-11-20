@@ -17,6 +17,7 @@ int main() {
     auto* const unwritableStatus = reinterpret_cast<std::uint16_t*>(0x10);
     auto* const unreadableLeonardoData = reinterpret_cast<const PadLeonardoData*>(0x10);
     auto* const unwritableLeonardoUniqueData = reinterpret_cast<PadLeonardoUniqueData*>(0x10);
+    const auto* const unreadableUpdateData = reinterpret_cast<const PadUpdateData*>(0x10);
     std::int32_t deviceId = 7;
     std::uint16_t status = 7;
     std::uint8_t leonardoData[128]{};
@@ -26,6 +27,8 @@ int main() {
     auto* const localUniqueData = reinterpret_cast<PadLeonardoUniqueData*>(leonardoUniqueData);
 
     Require(scePadGetDeviceId(12345, unreadableDeviceId) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadBondUpdateSendData(12345, unreadableUpdateData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadControllerUpdateSendData(12345, unreadableUpdateData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, unwritableStatus) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, &status) == PAD_ERROR_INVALID_ARG && status == 0);
     Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
@@ -36,6 +39,10 @@ int main() {
     Require(scePadInit_nid_postfix() == PAD_OK);
 
     errno = 71;
+    Require(scePadBondUpdateSendData(12345, unreadableUpdateData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadControllerUpdateSendData(12345, unreadableUpdateData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetDeviceId(12345, unreadableDeviceId) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
     Require(scePadGetDeviceId(12345, &deviceId) == PAD_ERROR_INVALID_HANDLE && deviceId == -1);
@@ -68,6 +75,10 @@ int main() {
     Require(scePadGetDeviceId(12345, static_cast<std::int32_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, static_cast<std::uint16_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
+    Require(scePadBondUpdateSendData(12345, static_cast<const PadUpdateData*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadControllerUpdateSendData(12345, static_cast<const PadUpdateData*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
     Require(scePadParseUniqueDataLeonardo(12345, localData, static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
@@ -96,6 +107,9 @@ int main() {
     Require(scePadGetExtControllerInformation(special, extInfo) == PAD_OK);
     for (std::size_t i = 0; i < 0x2c; ++i) Require(extInfo[i] == 0);
     for (std::size_t i = 0x2c; i < sizeof(extInfo); ++i) Require(extInfo[i] == 0x5a);
+    Require(scePadGetMotionSensorPosition(12345, reinterpret_cast<PadMotionSensorPosition*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetSphereRadius(12345, reinterpret_cast<float*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetBluetoothAddress(12345, reinterpret_cast<std::uint64_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
 #ifdef _WIN32
     Require(VirtualFree(page, 0, MEM_RELEASE) != 0);

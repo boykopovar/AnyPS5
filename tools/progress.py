@@ -33,6 +33,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
@@ -42,7 +43,7 @@ QUALIFIED = re.compile(rf"(?:\.|->|(?:\b(?!(?:{KEYWORDS})\b)\w+|>)\s*::)\s*$")
 CMAKE_SHARED = re.compile(r'^\s*include\(\s*"?\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./([\w.-]+)/[\w.-]+\.cmake"?\s*\)', re.M)
 SOURCE_SHARED = re.compile(r'^\s*#\s*include\s*"prx/([\w.-]+)/[\w./-]+\.cpp"', re.M)
 STUB_WRAPPER = re.compile(
-    r"^[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
+    r"^(?=[\w:<>,\s*&\[\]]*\()[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
     r"(?!(?:if|while|for|switch|catch|return|else)\b)(\w+)\s*\([^;{]*\)\s*"
     r"(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{", re.M)
 DISCARD = re.compile(r"\(void\)\s*\w+\s*;")
@@ -130,7 +131,33 @@ def body_end(text, start):
     return len(text)
 
 
+def brace_spans(text, pattern):
+    return [(match.end() - 1, body_end(text, match.end() - 1)) for match in re.finditer(pattern, text)]
+
+
+class Linkage:
+    def __init__(self, text):
+        self.text = text
+        self.anonymous = brace_spans(text, r"\bnamespace\s*\{")
+        self.classes = brace_spans(text, r"\b(?:class|struct|union)\b[^;{}()]*\{")
+        self.declared = {match.group(1) for match in STATIC_DECLARATION.finditer(text)
+                         if self.namespace_scope(match.start())}
+
+    def namespace_scope(self, start):
+        return not any(open_brace < start < close for open_brace, close in self.classes)
+
+    def internal(self, name, start):
+        if any(open_brace < start < close for open_brace, close in self.anonymous):
+            return True
+        if not self.namespace_scope(start):
+            return False
+        boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
+        return name in self.declared or bool(re.search(r"\bstatic\b", self.text[boundary + 1:start]))
+
+
 def stub_calls(text):
+    if STUB not in text:
+        return {STUB}
     helpers = {}
     for match in STUB_WRAPPER.finditer(text):
         body = text[match.end() - 1:body_end(text, match.end() - 1)]
@@ -279,7 +306,7 @@ def parameter_type(declaration):
 
 class Definition:
     def __init__(self, name, text, match, follow_qualified):
-        self.name, self.follow_qualified = name, follow_qualified
+        self.name, self.follow_qualified, self.start = name, follow_qualified, match.start()
         start = match.end(1)
         opening = text.index("(", start)
         parameters = text[opening + 1:closing(text, opening)]
@@ -519,10 +546,15 @@ def scan_library(path):
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
                for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
     for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
+        if not definitions:
+            continue
         wrappers = inert_wrappers(text)
+        linkage = Linkage(text)
         for definition in definitions:
             name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
+                continue
+            if name not in exported and linkage.internal(name, definition.start):
                 continue
             if definition.reaches:
                 todo.add(name)
