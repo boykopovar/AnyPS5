@@ -1422,6 +1422,38 @@ static void CheckGpuAccessFollowsProtection() {
     Require(sceKernelMapNamedFlexibleMemory(&flexible, page, 0x33, 0, "gpu") == 0);
     Require(GpuMapped(flexible));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page) == 0);
+    std::int64_t gpuOnlyPhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &gpuOnlyPhys) == 0);
+    void* gpuOnly = nullptr;
+    Require(sceKernelMapDirectMemory(&gpuOnly, page, 0x30, 0, gpuOnlyPhys, 0) == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuOnly);
+        Require(!range.readable && !range.writable && range.gpu && range.gpuWritable && range.HostReadable() && range.HostWritable());
+    }
+    {
+        const auto addr = reinterpret_cast<std::uintptr_t>(gpuOnly);
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == addr && range->gpu && range->gpuWritable && !range->readable; }));
+        const auto registered = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+        Require(std::any_of(registered.begin(), registered.end(), [&](const auto& range) { return range->address == addr && range->gpu && range->gpuWritable && !range->readable; }));
+    }
+    Require(sceKernelMprotect(gpuOnly, page, 0x10) == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuOnly);
+        Require(!range.readable && !range.writable && range.gpu && !range.gpuWritable && range.HostReadable() && !range.HostWritable());
+    }
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(gpuOnly), page) == 0);
+    void* gpuFlex = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&gpuFlex, page, 0x30, 0, "gpu-only") == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuFlex);
+        Require(!range.readable && !range.writable && range.gpu && range.gpuWritable);
+    }
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(gpuFlex), page) == 0);
+    Require(sceKernelReleaseDirectMemory(gpuOnlyPhys, page * 2) == 0);
 }
 
 static std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
@@ -4144,7 +4176,9 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     const auto pointer = [&](std::size_t index) { return reinterpret_cast<void*>(base + index * page); };
     {
         GuestAllocations::Mutation mutation;
-        for (std::size_t index = 0; index < 8; ++index) mutation.Add(pointer(index), page, index != 3, index != 3 && index != 4, index != 5);
+        for (std::size_t index = 0; index < 8; ++index) mutation.Add(pointer(index), page, index != 3, index != 3 && index != 4, index != 3 && index != 5);
+        mutation.Add(pointer(8), page, false, false, true, true);
+        mutation.Add(pointer(9), page, false, false, true, true);
     }
     const auto weak = [&](std::size_t index) { return std::weak_ptr<const GuestAllocations::Range>(GuestAllocations::GuestAllocationsLookup_nid_postfix(base + index * page, false)); };
     const auto verify = [&](const GuestAllocations::Mapped& mapped, std::initializer_list<std::size_t> expected) {
@@ -4160,6 +4194,22 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     verify({weak(4)}, {4});
     verify({weak(5)}, {5});
     verify({weak(7), weak(1)}, {0, 1, 2, 6, 7});
+    verify({weak(8)}, {8, 9});
+    verify({weak(7), weak(8)}, {6, 7, 8, 9});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer(12), page, true, true, true, false);
+        mutation.Add(pointer(13), page, true, true, true, true);
+        mutation.Add(pointer(14), page, true, false, true, false);
+        mutation.Add(pointer(15), page, true, false, true, true);
+    }
+    verify({weak(12)}, {12, 13});
+    verify({weak(14)}, {14});
+    verify({weak(15)}, {15});
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 12; index < 16; ++index) mutation.Remove(pointer(index));
+    }
     auto stale = std::make_shared<const GuestAllocations::Range>(*GuestAllocations::GuestAllocationsLookup_nid_postfix(base + page, false));
     {
         GuestAllocations::Mutation mutation;
@@ -4187,7 +4237,7 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     verify({weak(2)}, {2});
     {
         GuestAllocations::Mutation mutation;
-        for (std::size_t index = 0; index < 8; ++index) if (index != 1) mutation.Remove(pointer(index));
+        for (std::size_t index = 0; index < 10; ++index) if (index != 1) mutation.Remove(pointer(index));
         mutation.Remove(pointer(10));
     }
     verify({weak(0)}, {});

@@ -1659,7 +1659,7 @@ struct ImportRun {
 };
 
 bool importStaysWatched(const Context& context, HostImports& state, const ImportRun& run) {
-    if (std::any_of(run.ranges.begin(), run.ranges.end(), [](const auto& range) { return !range->writable; })) return false;
+    if (std::any_of(run.ranges.begin(), run.ranges.end(), [](const auto& range) { return !range->HostWritable(); })) return false;
     if (!GuestMemory::Watched(run.base, static_cast<std::size_t>(run.bytes))) return false;
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION first{};
@@ -1674,7 +1674,7 @@ bool importStaysWatched(const Context& context, HostImports& state, const Import
 }
 
 bool continuesRun(const GuestAllocations::Range& before, const GuestAllocations::Range& after) {
-    return before.address + before.bytes == after.address && before.readable && after.readable && before.writable == after.writable && before.gpu == after.gpu;
+    return before.address + before.bytes == after.address && before.HostReadable() && after.HostReadable() && before.readable == after.readable && before.writable == after.writable && before.gpu == after.gpu && before.HostWritable() == after.HostWritable();
 }
 
 std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uint64_t address) {
@@ -1682,7 +1682,7 @@ std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uin
     if (found == lease.begin()) return lease.size();
     const auto index = static_cast<std::size_t>(std::prev(found) - lease.begin());
     const auto& range = *lease[index];
-    return range.readable && address < range.address + range.bytes ? index : lease.size();
+    return range.HostReadable() && address < range.address + range.bytes ? index : lease.size();
 }
 
 std::atomic<std::uint64_t> importWindow{0};
@@ -2686,7 +2686,7 @@ const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& le
     const auto found = std::upper_bound(lease.begin(), lease.end(), begin, [](std::uint64_t value, const auto& range) { return value < range->address; });
     if (found == lease.begin()) return nullptr;
     const auto& range = *std::prev(found);
-    return range->readable && begin >= range->address && end <= range->address + range->bytes ? range.get() : nullptr;
+    return range->HostReadable() && begin >= range->address && end <= range->address + range->bytes ? range.get() : nullptr;
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> changedSpans(std::vector<RefreshedRange>& refreshed, const GuestAllocations::Lease& lease) {
@@ -3780,7 +3780,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         }
         if (state.failed.contains(selected.address)) return nullptr;
         const auto found = state.entries.find(selected.address);
-        if (found != state.entries.end() && sameRange(found->second->range, range) && found->second->reserved == selected.bytes && found->second->writable == range->writable && found->second->heap == heap && found->second->joinedHeap == joinedHeap) mirror = found->second;
+        if (found != state.entries.end() && sameRange(found->second->range, range) && found->second->reserved == selected.bytes && found->second->writable == range->HostWritable() && found->second->heap == heap && found->second->joinedHeap == joinedHeap) mirror = found->second;
     }
     if (mirror != nullptr) {
         if (!mirror->sparse) {
@@ -3790,7 +3790,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         if (refreshSparseMirror(*mirror, blocks)) return mirror;
     }
     Pieces pieces;
-    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(selected.address), selected.bytes, range->writable && !heap)) {
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(selected.address), selected.bytes, range->HostWritable() && !heap)) {
         if (!heap || !sparseMirrorsEnabled()) return nullptr;
         pieces = GuestMemory::DescribeCommitted(selected.address, selected.bytes).ranges;
         if (pieces.empty()) return nullptr;
@@ -3801,7 +3801,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
     mirror->bytes = sparse ? sparseExtent(selected.address, selected.bytes, pieces) : selected.bytes;
     mirror->reserved = selected.bytes;
     mirror->sparse = sparse;
-    mirror->writable = range->writable;
+    mirror->writable = range->HostWritable();
     mirror->heap = heap;
     mirror->joinedHeap = joinedHeap;
     mirror->range = range;
@@ -3910,7 +3910,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         if (sparse) std::memset(target.data() + cursor, 0, target.size() - cursor);
         mirror->committed = std::move(pieces);
     }
-    if (range->writable && !heap) mirror->shadow.assign(mirror->buffer->Bytes().begin(), mirror->buffer->Bytes().end());
+    if (range->HostWritable() && !heap) mirror->shadow.assign(mirror->buffer->Bytes().begin(), mirror->buffer->Bytes().end());
     std::lock_guard lock(state.mutex);
     ++state.rebuilds;
     mirror->serial = (1ull << 63u) | ++state.serials;
@@ -3939,7 +3939,7 @@ std::shared_ptr<const GuestAllocations::Range> fixedImageRange(std::uint64_t beg
     auto found = std::upper_bound(lease.begin(), lease.end(), begin, [](std::uint64_t address, const auto& range) { return address < range->address; });
     if (found == lease.begin()) return nullptr;
     const auto& range = *--found;
-    if (!range->readable || range->writable || range->releasable || end > range->address + range->bytes) return nullptr;
+    if (!range->readable || range->HostWritable() || range->releasable || end > range->address + range->bytes) return nullptr;
     return range;
 }
 
@@ -5186,7 +5186,7 @@ bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vec
     for (auto at = address; at < end;) {
         const auto* range = containingRange(lease, at, at + 1);
         if (range == nullptr) return false;
-        if (pieces != nullptr) pieces->push_back({range->address, range->bytes, range->writable, range->gpu});
+        if (pieces != nullptr) pieces->push_back({range->address, range->bytes, range->HostWritable(), range->gpu});
         at = range->address + range->bytes;
     }
     return true;
@@ -5501,9 +5501,9 @@ void GuestBufferMemory::AcquireRegistered() {
         std::uint64_t coveredEnd = 0;
         std::uint64_t copiedBytes = 0;
         for (const auto& range : lease) {
-            if (!range->readable || !range->gpu) continue;
+            if (!range->HostReadable() || !range->gpu) continue;
             validate(range->address, range->bytes);
-            Region region{range->address, range->address + range->bytes, range->writable, {}, nullptr};
+            Region region{range->address, range->address + range->bytes, range->HostWritable(), {}, nullptr};
             const HostImport* entry = nullptr;
             bool overBudget = false;
             std::vector<ImportPiece> pieces;
@@ -5537,7 +5537,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 for (const auto& piece : pieces) if (piece.entry != nullptr) imported.emplace_back(piece.begin, piece.end);
                 releaseImportedMirrors(context, std::span(imported).subspan(firstImported));
                 for (const auto& piece : pieces) {
-                    Region part{piece.begin, piece.end, range->writable, {}, nullptr};
+                    Region part{piece.begin, piece.end, range->HostWritable(), {}, nullptr};
                     if (piece.entry != nullptr) {
                         part.hostBacked = true;
                         part.direct = piece.entry;
@@ -5576,7 +5576,7 @@ void GuestBufferMemory::AcquireRegistered() {
                     continue;
                 }
             }
-            addCopiedRange({range->address, range->address + range->bytes, range->writable});
+            addCopiedRange({range->address, range->address + range->bytes, range->HostWritable()});
             const auto& copied = regions.back();
             std::uint64_t committed = copied.end - copied.begin;
             if (copied.sparse) {
@@ -5886,7 +5886,7 @@ std::shared_ptr<const GuestAllocations::Range> joinedHeapRange(const GuestAlloca
     if (!same) {
         const auto& first = *run.ranges.front();
         entry.members.assign(run.ranges.begin(), run.ranges.end());
-        entry.range = std::make_shared<const GuestAllocations::Range>(GuestAllocations::Range{run.base, static_cast<std::size_t>(run.bytes), true, first.writable, first.allocationAddress, first.allocationBytes, true, first.gpu, first.backingSerial});
+        entry.range = std::make_shared<const GuestAllocations::Range>(GuestAllocations::Range{run.base, static_cast<std::size_t>(run.bytes), first.readable, first.writable, first.allocationAddress, first.allocationBytes, true, first.gpu, first.backingSerial, first.gpuWritable});
     }
     return entry.range;
 }

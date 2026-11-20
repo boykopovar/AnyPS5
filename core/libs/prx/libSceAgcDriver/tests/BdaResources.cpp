@@ -4000,28 +4000,61 @@ void gpuMappingTests(const Context& context) {
     constexpr std::size_t bytes = 65536;
     auto* cpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
     auto* gpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
+    auto* gpuOnlyRw = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
+    auto* gpuOnlyRo = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
     {
         GuestAllocations::Mutation mutation;
         mutation.Add(cpu, bytes, true, true, false);
         mutation.Add(gpu, bytes, true, true, true);
+        mutation.Add(gpuOnlyRw, bytes, false, false, true, true);
+        mutation.Add(gpuOnlyRo, bytes, false, false, true, false);
     }
     {
         GuestBufferMemory leased(context);
         leased.AcquireRegistered();
         leased.Upload(true);
         const auto ranges = leased.AddressRanges();
-        const auto has = [&](const std::byte* block) { return std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == reinterpret_cast<std::uintptr_t>(block); }); };
-        Require(has(gpu), "a GPU-mapped range is missing from the BDA table");
-        Require(!has(cpu), "a range mapped without GPU access is in the BDA table");
+        const auto findRange = [&](const std::byte* block) {
+            return std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == reinterpret_cast<std::uintptr_t>(block); });
+        };
+        Require(findRange(gpu) != ranges.end(), "a GPU-mapped range is missing from the BDA table");
+        Require(findRange(cpu) == ranges.end(), "a range mapped without GPU access is in the BDA table");
+        Require(findRange(gpuOnlyRw) != ranges.end(), "a GPU-only read-write range is missing from the BDA table");
+        Require(findRange(gpuOnlyRo) != ranges.end(), "a GPU-only read-only range is missing from the BDA table");
         leased.WriteBack();
+    }
+    {
+        auto importing = context;
+        importing.hostImportAlignment = bytes;
+        ClearHostImports(importing.device);
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        const auto findRange = [&](const std::byte* block) {
+            return std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == reinterpret_cast<std::uintptr_t>(block); });
+        };
+        Require(findRange(cpu) == ranges.end(), "a range mapped without GPU access is in the imported BDA table");
+        const auto cpuGpu = findRange(gpu);
+        const auto rw = findRange(gpuOnlyRw);
+        const auto ro = findRange(gpuOnlyRo);
+        Require(cpuGpu != ranges.end() && (cpuGpu->permissions & ShaderRecompiler::BdaAbi::Write) != 0, "a GPU-mapped range lost write permission in the imported BDA table");
+        Require(rw != ranges.end() && (rw->permissions & ShaderRecompiler::BdaAbi::Write) != 0, "a GPU-only read-write range is missing or read-only in the imported BDA table");
+        Require(ro != ranges.end() && (ro->permissions & ShaderRecompiler::BdaAbi::Write) == 0, "a GPU-only read-only range is missing or writable in the imported BDA table");
+        leased.WriteBack();
+        ClearHostImports(importing.device);
     }
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(cpu);
         mutation.Remove(gpu);
+        mutation.Remove(gpuOnlyRw);
+        mutation.Remove(gpuOnlyRo);
     }
     ::operator delete(cpu, std::align_val_t{bytes});
     ::operator delete(gpu, std::align_val_t{bytes});
+    ::operator delete(gpuOnlyRw, std::align_val_t{bytes});
+    ::operator delete(gpuOnlyRo, std::align_val_t{bytes});
 }
 
 void stridedOverhangTests(const Context& context, const BdaTestAccess& access) {
