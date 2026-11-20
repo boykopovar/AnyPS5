@@ -117,6 +117,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         def fetch(ref):
+            ref = ref.removeprefix("refs/remotes/")
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
@@ -128,7 +129,9 @@ def main(argv=None):
             else:
                 remotes = set(lines(args.repo, "remote"))
                 for candidate in BASES:
-                    remote, _, branch = candidate.partition("/")
+                    if not candidate.startswith("refs/remotes/"):
+                        continue
+                    remote, _, branch = candidate.removeprefix("refs/remotes/").partition("/")
                     if branch and remote in remotes:
                         fetch(candidate)
                         break
