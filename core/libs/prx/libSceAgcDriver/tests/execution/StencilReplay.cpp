@@ -87,13 +87,20 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
 }
 
 ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
-    const AgcDriver::Registers context{
+    AgcDriver::Registers context{
         {0x003, 0u}, {0x0b4, 0u}, {0x0b5, 0x3f800000u}, {0x1b3, 0x700u}, {0x1b4, 0x700u}, {0x1b6, 0u}, {0x1c5, 9u}, {0x203, shaderControl},
     };
+    if ((shaderControl & 6u) == 4u) {
+        context.insert_or_assign(0x011u, 1u);
+        context.insert_or_assign(0x10bu, 0x40u);
+        context.insert_or_assign(0x10cu, 0xff0000u);
+        context.insert_or_assign(0x200u, 1u);
+    }
     return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
 }
 
 bool LastReplayStored = false;
+std::uint32_t ExpectedBinds = 1u;
 
 void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
     Pixels.fill(Kept);
@@ -173,7 +180,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const auto bindsBefore = GraphicsBinds.load();
     device.Draw(state, draw, shaders);
     device.WaitIdle();
-    if (!pixelResult.stencilReferences.empty()) Require(GraphicsBinds.load() - bindsBefore == 1u, "stencil replay rebound its shader pipeline within an original draw");
+    if (!pixelResult.stencilReferences.empty()) Require(GraphicsBinds.load() - bindsBefore == ExpectedBinds, "stencil replay rebound its shader pipeline within an original draw");
 }
 
 void Check(const std::function<bool(std::uint32_t, std::uint32_t)>& drawn, std::string_view what) {
@@ -339,7 +346,7 @@ int main() {
             try {
                 Draw(*device, alternating, exported, replace(), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) { if (restart) state.primitiveRestart = true; else state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; });
             } catch (const std::exception& error) {
-                refused = std::string(error.what()).find("direct triangle lists") != std::string::npos;
+                refused = std::string(error.what()).find("triangle lists without restart") != std::string::npos;
             }
             Require(refused, "unsafe primitive routing was not refused");
         }
@@ -353,9 +360,99 @@ int main() {
         bool orderedRefused = false;
         try { Draw(*device, alternating, 0x10052u, replace()); } catch (const std::exception& error) { orderedRefused = std::string(error.what()).find("late tests") != std::string::npos; }
         Require(orderedRefused, "ordered fragment execution was not refused");
-        bool indirectRefused = false;
-        try { Draw(*device, alternating, exported, replace(), 3u, 1u, false, {}, [](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect.emplace(); }); } catch (const std::exception& error) { indirectRefused = std::string(error.what()).find("direct triangle lists") != std::string::npos; }
-        Require(indirectRefused, "an indirect replay draw was not refused");
+        using IndirectDraw = AgcDriver::Pm4::DrawParameters::IndirectDraw;
+        const auto indirectDraw = [](const void* records, std::uint32_t opcode, std::uint32_t recordBytes, std::uint32_t count, const std::uint32_t* countWord = nullptr) {
+            IndirectDraw indirect{reinterpret_cast<std::uintptr_t>(records), opcode, recordBytes, recordBytes, count, countWord != nullptr, reinterpret_cast<std::uintptr_t>(countWord), 0x280u, 0x280u, 0x280u, false, 0u};
+            indirect.vertexRule = IndirectDraw::Rule::InPlace;
+            indirect.instanceRule = IndirectDraw::Rule::InPlace;
+            return indirect;
+        };
+        for (const bool nearLast : {true, false}) {
+            alignas(256) const std::array<std::uint32_t, 8> overlapping = nearLast ? std::array<std::uint32_t, 8>{3u, 1u, 3u, 0u, 3u, 1u, 0u, 0u} : std::array<std::uint32_t, 8>{3u, 1u, 0u, 0u, 3u, 1u, 3u, 0u};
+            Draw(*device, PlainPixelCode, plain, replace(0x33u));
+            Draw(*device, ordered, exported, replace(), 0u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(overlapping.data(), 0x2cu, 16u, 2u); });
+            Draw(*device, PlainPixelCode, plain, equal(nearLast ? 255u : 0u));
+            Check(all, "the last of two overlapping indirect records sets the stencil");
+        }
+        {
+            alignas(256) const std::array<std::uint32_t, 5> record{6u, 2u, 0u, 99u, 7u};
+            Draw(*device, PlainPixelCode, plain, replace(0u));
+            Draw(*device, ordered, exported, instanceOrder, 6u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                draw.indexed = true;
+                draw.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+                draw.indexSize = 4u;
+                draw.indirect = indirectDraw(record.data(), 0x25u, 20u, 1u);
+                draw.indirect->vertexRule = IndirectDraw::Rule::Constant;
+                draw.indirect->vertexConstant = 1u;
+            }, indexedVertices);
+            Draw(*device, PlainPixelCode, plain, equal(0u));
+            Check(all, "an indexed indirect record replays with the constant base vertex and its own instances");
+        }
+        {
+            constexpr std::array<std::uint32_t, 8> constant{0x7e0a02ffu, 0x5au, 0x7e0e02f2u, 0xf8000082u, 5u << 8u, 0xf800180fu, 0x07070707u, 0xbf810000u};
+            alignas(256) const std::array<std::uint32_t, 10> records{3u, 1u, 6u, 0u, 0u, 6u, 1u, 3u, 0u, 0u};
+            Draw(*device, PlainPixelCode, plain, replace(0u));
+            Draw(*device, constant, exported, replace(), 6u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                draw.indexed = true;
+                draw.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+                draw.indexSize = 4u;
+                draw.indirect = indirectDraw(records.data(), 0x38u, 20u, 2u);
+                draw.indirect->vertexRule = IndirectDraw::Rule::Constant;
+                draw.indirect->vertexConstant = 1u;
+            }, indexedVertices);
+            Check(all, "a single-reference indexed indirect draw");
+            Draw(*device, PlainPixelCode, plain, equal(0x5au));
+            Check(all, "indexed records past the bound index count are skipped and longer ones clamped");
+        }
+        {
+            alignas(256) const std::array<std::uint32_t, 8> records{3u, 1u, 0u, 0u, 3u, 1u, 3u, 0u};
+            alignas(256) const std::uint32_t drawn = 1u;
+            Draw(*device, PlainPixelCode, plain, replace(0x33u));
+            Draw(*device, ordered, exported, replace(), 0u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(records.data(), 0x2cu, 16u, 2u, &drawn); });
+            Draw(*device, PlainPixelCode, plain, equal(255u));
+            Check(all, "a record count read from memory below the packet's maximum");
+        }
+        {
+            alignas(256) const std::array<std::uint32_t, 8> records{3u, 1u, 0u, 0u, 3u, 2u, 0u, 0xffffffffu};
+            bool overflowRefused = false;
+            try { Draw(*device, ordered, exported, replace(), 0u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(records.data(), 0x2cu, 16u, 2u); }); } catch (const std::exception& error) { overflowRefused = std::string(error.what()).find("draw indices overflow") != std::string::npos; }
+            Require(overflowRefused, "an indirect record whose instances overflow was not refused");
+        }
+        {
+            alignas(256) const std::array<std::uint32_t, 8> records{0u, 1u, 0u, 0u, 3u, 0u, 0u, 0u};
+            Draw(*device, PlainPixelCode, plain, replace(0x33u));
+            ExpectedBinds = 0u;
+            Draw(*device, ordered, exported, replace(), 0u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(records.data(), 0x2cu, 16u, 2u); });
+            ExpectedBinds = 1u;
+            Check([](std::uint32_t, std::uint32_t) { return false; }, "indirect records without vertices or instances draw nothing");
+            Draw(*device, PlainPixelCode, plain, equal(0x33u));
+            Check(all, "indirect records without vertices or instances keep the stencil");
+        }
+        {
+            constexpr std::array<std::uint32_t, 12> fullscreen{
+                0x7e040f00u, 0x36060481u,
+                0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u,
+                0x34100488u, 0x7e0e02f2u, 0x7e0c02ffu, 0x3f400000u,
+                0xf8000083u, (8u << 8u) | 6u,
+                0xf800180fu, 0x07070707u, 0xbf810000u
+            };
+            alignas(256) const std::array<std::uint32_t, 4> record{3u, 1u, 0u, 0u};
+            Draw(*device, PlainPixelCode, plain, replace(0xeeu));
+            Draw(*device, fullscreen, 0x45u, replace(), 0u, 0u, false, [](AgcDriver::Graphics::State& state) {
+                state.depthTest = true;
+                state.depthWrite = true;
+                state.depthCompare = VK_COMPARE_OP_ALWAYS;
+            }, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                draw.indirect = indirectDraw(record.data(), 0x24u, 16u, 1u);
+                draw.indirect->vertexRule = IndirectDraw::Rule::Constant;
+                draw.indirect->instanceRule = IndirectDraw::Rule::Constant;
+            });
+            Check(even, "an indirect fullscreen triangle with depth, kill and an unbounded operation-value export");
+            Draw(*device, PlainPixelCode, plain, equal(4u));
+            Check([](std::uint32_t x, std::uint32_t) { return x == 4u; }, "each kept column replaces its own operation value");
+            Draw(*device, PlainPixelCode, plain, equal(0xeeu));
+            Check(odd, "killed columns keep the stencil");
+        }
         auto killed = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         killed.insert(std::find(killed.begin(), killed.end(), 0xf800180fu), 0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u);
         Draw(*device, killed, exported, replace());
