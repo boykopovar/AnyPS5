@@ -461,7 +461,12 @@ void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratio
     constexpr std::int64_t maxChunk = longestSleepSeconds * nanosPerSecond;
     while (remaining > 0) {
         const auto chunk = std::min(remaining, maxChunk);
-        std::this_thread::sleep_for(std::chrono::nanoseconds(chunk));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(chunk);
+        for (;;) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+            std::this_thread::sleep_for(deadline - now);
+        }
         remaining -= chunk;
     }
 }
