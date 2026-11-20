@@ -183,7 +183,7 @@ int APS5_VABI sceUltReaderWriterLockLockWrite(void* rwlock) {
         return ULT_ERROR_STATE;
     }
     if (const int waited = Wait(*state, lock, true, 2); waited != ULT_OK) return waited;
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_writing = true;
     state->_writer = std::this_thread::get_id();
     return ULT_OK;
@@ -199,7 +199,7 @@ int APS5_VABI sceUltReaderWriterLockTryLockWrite(void* rwlock) {
     if (state->_writing || state->_readers != 0) {
         return ULT_ERROR_BUSY;
     }
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_writing = true;
     state->_writer = std::this_thread::get_id();
     return ULT_OK;
@@ -239,7 +239,6 @@ int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInf
     std::lock_guard<std::mutex> lock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
-    if (state->_writing && state->_ownerIdentity.type != 1) NotImplemented_nid_no_patch(__func__);
     UltReaderWriterLockInfo localInfo{};
     localInfo.size = sizeof(UltReaderWriterLockInfo);
     localInfo.object = object;

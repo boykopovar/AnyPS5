@@ -1184,6 +1184,11 @@ void TestJsonText() {
                 Equals(guarded.buffer, "abcdefghij") && guarded.canary[0] == 0,
         "escaping that runs out of room keeps the text it appended");
     Require(sceNpUtilJsonEscape(reinterpret_cast<char*>(0x10), 64, "a", 1) == NpUtilInvalid, "escaping into an unmapped buffer is refused");
+    std::strcpy(escaped, "x");
+    Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), reinterpret_cast<const char*>(0x10), 4) == NpUtilInvalid && Equals(escaped, "x"),
+        "escaping an unmapped source is refused and leaves the buffer");
+    Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), "yz", 100) == 0 && Equals(escaped, "xyz"),
+        "escaping stops at the source terminator before its length");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -1203,6 +1208,9 @@ void TestJsonText() {
         "unescaping into an unwritable buffer is refused and keeps errno");
     Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71,
         "an unwritable unescaped length is refused and keeps errno");
+    length = 9;
+    Require(sceNpUtilJsonUnescape(text, sizeof(text), reinterpret_cast<const char*>(0x10), 4, &length) == NpUtilInvalid && length == 9,
+        "unescaping an unmapped source is refused and leaves the length");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -1224,6 +1232,11 @@ void TestJsonText() {
         "unwritable destination length is refused");
     Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "a", 1, &length, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid,
         "unwritable consumed length is refused");
+    length = 9;
+    consumed = 9;
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), reinterpret_cast<const char*>(0x10), 1, &length, &consumed) == NpUtilInvalid
+            && length == 9 && consumed == 9,
+        "an unmapped source character is refused and leaves the lengths");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";

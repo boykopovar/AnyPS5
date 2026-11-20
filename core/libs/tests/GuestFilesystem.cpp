@@ -988,6 +988,10 @@ int main() {
             Require(fscanf_nid_postfix(directoryStream, "%d", &scanned) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
             clearerr_nid_postfix(directoryStream);
 
+            *__error_nid_postfix() = 0;
+            Require(fscanf_s_nid_postfix(directoryStream, "%d", &scanned) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
+            clearerr_nid_postfix(directoryStream);
+
             Require(fseek_nid_postfix(directoryStream, 0, 0) == 0 && ftell_nid_postfix(directoryStream) == 0);
             *__error_nid_postfix() = 0;
             Require(fputc_nid_postfix('x', directoryStream) == -1 && *__error_nid_postfix() == 9 && ferror_nid_postfix(directoryStream) != 0);
