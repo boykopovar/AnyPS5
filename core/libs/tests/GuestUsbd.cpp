@@ -50,19 +50,26 @@ void Require(bool condition, const char* message) {
     }
 }
 
-std::uint8_t* PageBeforeGuard() {
+std::size_t GuardedPageSize() {
 #ifdef _WIN32
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
-    const std::size_t pageSize = info.dwPageSize;
+    return info.dwPageSize;
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0, "the page size is unknown");
+    return static_cast<std::size_t>(nativePageSize);
+#endif
+}
+
+std::uint8_t* PageBeforeGuard() {
+    const std::size_t pageSize = GuardedPageSize();
+#ifdef _WIN32
     auto* memory = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     Require(memory != nullptr, "the guarded page was not allocated");
     DWORD previous;
     Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "the guard page was not protected");
 #else
-    const long nativePageSize = sysconf(_SC_PAGESIZE);
-    Require(nativePageSize > 0, "the page size is unknown");
-    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
     void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(allocation != MAP_FAILED, "the guarded page was not mapped");
     auto* memory = static_cast<std::uint8_t*>(allocation);
