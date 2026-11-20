@@ -5,6 +5,7 @@
 
 extern "C" {
 
+void APS5_VABI _ZN3WTF11setDataFileEPKc(const char* path);
 Jsc::WtfAbi::PrintStream& APS5_VABI _ZN3WTF8dataFileEv();
 void APS5_VABI _ZN3WTF15FilePrintStreamD0Ev(Jsc::WtfAbi::FilePrintStream* self);
 void APS5_VABI _ZN3WTF15FilePrintStreamD1Ev(Jsc::WtfAbi::FilePrintStream* self);

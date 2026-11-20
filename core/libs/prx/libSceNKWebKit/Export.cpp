@@ -13085,10 +13085,6 @@ int APS5_VABI _ZN3WTF11ThreadGroupD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11setDataFileEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF12CountingLock10unlockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }

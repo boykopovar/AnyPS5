@@ -53,6 +53,7 @@ extern "C" {
 
 void APS5_VABI _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(Jsc::WtfAbi::PrintStreamPtr* file);
 Jsc::WtfAbi::FilePrintStreamPtr* APS5_VABI _ZN3WTF15FilePrintStream4openEPKcS2_(Jsc::WtfAbi::FilePrintStreamPtr* result, const char* filename, const char* mode);
+void WtfInstallDataFile_nid_no_patch(Jsc::WtfAbi::FilePrintStream* file);
 Jsc::WtfAbi::PrintStream* WtfDataFile_nid_no_patch();
 void WtfFilePrintStreamDestroy_nid_no_patch(Jsc::WtfAbi::FilePrintStream* stream);
 void WtfFilePrintStreamDelete_nid_no_patch(Jsc::WtfAbi::FilePrintStream* stream);

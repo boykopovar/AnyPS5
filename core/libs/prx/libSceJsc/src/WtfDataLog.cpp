@@ -169,8 +169,11 @@ PrintStream* LockedFileData() {
     return reinterpret_cast<PrintStream*>(lockedFileData);
 }
 
-void SetDefaultDataFile() {
-    auto* file = new (fileData) FilePrintStream{FilePrintStreamVtable + 2, &_Stdout_nid_postfix, Jsc::WtfAbi::FilePrintStreamBorrow};
+constexpr int GuestUnbuffered = 2;
+
+void InstallDataFile(FilePrintStream* file) {
+    if (!file) file = new (fileData) FilePrintStream{FilePrintStreamVtable + 2, &_Stdout_nid_postfix, Jsc::WtfAbi::FilePrintStreamBorrow};
+    if (file->file != &_Stdout_nid_postfix) setvbuf_nid_postfix(file->file, nullptr, GuestUnbuffered, 0);
     if (PrintStream* previous = dataFile.load(std::memory_order_acquire)) Slot<Flush>(previous, Jsc::WtfAbi::PrintStreamFlush)(previous);
     auto* locked = new (lockedFileData) LockedPrintStream{};
     locked->vtable = LockedPrintStreamVtable + 2;
@@ -180,7 +183,7 @@ void SetDefaultDataFile() {
 
 void InitializeLogFileOnce() {
     if (dataFile.load(std::memory_order_acquire)) return;
-    SetDefaultDataFile();
+    InstallDataFile(nullptr);
 }
 
 void RequireGuestCopy(bool copied, int savedErrno, const char* message) {
@@ -191,6 +194,10 @@ void RequireGuestCopy(bool copied, int savedErrno, const char* message) {
 } // namespace
 
 extern "C" {
+
+void WtfInstallDataFile_nid_no_patch(Jsc::WtfAbi::FilePrintStream* file) {
+    InstallDataFile(file);
+}
 
 Jsc::WtfAbi::PrintStream* WtfDataFile_nid_no_patch() {
     std::call_once(initializeOnce, InitializeLogFileOnce);

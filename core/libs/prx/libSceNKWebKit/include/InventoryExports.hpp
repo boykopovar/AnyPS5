@@ -1153,7 +1153,6 @@ int APS5_VABI _ZN3WTF11PrintStream6printfEPKcz();
 int APS5_VABI _ZN3WTF11ThreadGroup3addERKNS_14AbstractLockerERNS_6ThreadE();
 int APS5_VABI _ZN3WTF11ThreadGroup3addERNS_6ThreadE();
 int APS5_VABI _ZN3WTF11ThreadGroupD2Ev();
-int APS5_VABI _ZN3WTF11setDataFileEPKc();
 int APS5_VABI _ZN3WTF12CountingLock10unlockSlowEv();
 int APS5_VABI _ZN3WTF12CountingLock8lockSlowEv();
 int APS5_VABI _ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm();
