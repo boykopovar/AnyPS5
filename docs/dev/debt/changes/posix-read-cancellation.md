@@ -1,0 +1,39 @@
+# libc
+
+## change [setjmp, longjmp]
+
+- [setjmp, longjmp](../../../core/libs/prx/libc/src/JumpBuffer.cpp) (libc) save the signal mask at 72 in the jump buffer and restore it, as FreeBSD 11.4's [`setjmp` and `longjmp`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/amd64/gen/setjmp.S#L51-L85) do, which is unverified on a console. They go through the `sigprocmask` libkernel registers when it loads and mark the buffer at 88 as `sigsetjmp` does, so a buffer saved before then is jumped to without changing the mask. The in-process opaque buffer also stores a context identity at 92 for I/O delivery lifetime; this implementation metadata is not console-verified
+
+# libkernel
+
+## change on Linux and macOS sends the host SIGUSR1
+
+- [sceKernelRaiseException](../../../core/libs/prx/libkernel/System/src/Exception.cpp) reaches the target thread through host SIGUSR1 on Linux and macOS. Address waits and POSIX reads defer delivery until their ownership guards are released. A handler that needs another host lock held by the interrupted thread can deadlock, and a handler that waits keeps those locks held. Restartable POSIX reads resume only while descriptor generations remain unchanged. Non-restarting sleeps may end early, and the poll of `sceNetEpollWait` and socket transfers with timeouts can return `EINTR`. The console uses system calls for kernel objects and libthr defers signals under its internal locks.
+
+## change reaches a thread that waits in an alertable
+
+- [sceKernelRaiseException](../../../core/libs/prx/libkernel/System/src/Exception.cpp) reaches a thread that waits in an alertable `TimedWait` wait through an APC. POSIX read/receive waits also wake and defer delivery until their ownership guards are released. A thread blocked in another host wait, including a wait under `APS5_COARSE_TIMED_WAITS`, is redirected and runs the handler only when that wait returns
+
+## change [Thread cancellation]
+
+- [Thread cancellation](../../../core/libs/prx/libkernel/Pthread/src/Thread.cpp) (libkernel) - PS5 kernel wakeup on mid-sleep cancellation remains unmeasured. [Firmware 13.42 disassembly and emulated checks](https://github.com/boykopovar/AnyPS5/pull/8916#issuecomment-6416760904) support the SCE cancellation checks before and after sleep. Long SCE waits still do not wake for cancellation here; six deferred tests pin that model until measured. POSIX `usleep`/`nanosleep`/`_nanosleep` wake on enabled cancellation only above 1 ms; shorter waits and short SCE waits retain the GPU wake path. POSIX `sleep` wakes on enabled cancellation. File and socket writes, connection operations and multiplexed I/O waits remain non-cancellable. States/types 0/1 and 0/2, canceled value 1 and cleanup layout follow FreeBSD libthr, not console measurements. Asynchronous cancellation acts like deferred except at the two set calls.
+
+## change [MSG_DONTWAIT]
+
+- [MSG_DONTWAIT](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) has no console verification of the Windows transport emulation. Exposed Windows native sockets stay nonblocking; guest blocking mode and timeouts are implemented by directional readiness and retries. Unix uses native per-call flags; FreeBSD 11.4 [soreceive_generic](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_socket.c#L1500-L1520) returns `EWOULDBLOCK` for `MSG_DONTWAIT` when no data is available. Windows blocking stream `MSG_PEEK | MSG_WAITALL` throws through `NotImplemented_nid_no_patch`; this combination needs a separate buffering contract.
+
+## change [MSG_WAITALL]
+
+- [MSG_WAITALL](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) has no console measurement of stream completion or timeout behavior. Windows completes stream receives through readiness retries and restarts the `SO_RCVTIMEO` inactivity deadline after positive progress; Unix uses native flags. Datagram sockets ignore `MSG_WAITALL`. Windows blocking stream `MSG_PEEK | MSG_WAITALL` throws through `NotImplemented_nid_no_patch`; nonblocking combinations and other platforms follow host rules.
+
+## change [Blocking receives]
+
+- [Blocking receives](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) - `shutdown(SHUT_RD)` from another thread does not end every `recv`, `recvfrom` or `recvmsg` blocked on the socket, where FreeBSD's [`sorflush`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_socket.c#L2403-L2409) wakes them all. On macOS it misses a receive on an unconnected datagram socket: XNU's [`soshutdown`](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/uipc_socket.c#L4351-L4356) fails with `ENOTCONN` without flushing. A `recvmsg` that takes a zero-length datagram as `SHUT_RD` lands returns it without its `SO_TIMESTAMP` or `SO_BINTIME` record.
+
+## add Functional
+
+- [Opaque I/O context identity](../../../core/libs/prx/libkernel/System/src/UserContext.cpp) (libkernel) reserves 16 bytes of `mc_spare` for an identity and saved stack pointer. A copied context retains the identity, and a manually retargeted stack replaces it. This metadata is unverified on a console.
+- [POSIX read cancellation](../../../core/libs/prx/libkernel/Pthread/src/NativeIo.cpp) (libkernel) is not console-verified. It covers `read`, `_read`, `readv`, `_readv`, `pread`, `preadv`, `recv`, `recvfrom`, `recvmsg`, `_recvfrom` and `_recvmsg`; SCE APIs gain no cancellation points. Windows POSIX receives forwarded to libSceNet check interruption between readiness polls. Unix requires unused host `SIGUSR2` and throws if occupied. Non-interruptible drivers may delay cancellation and close indefinitely. POSIX `close`, `sceKernelClose` and guest-socket close interrupt and drain admitted POSIX reads, even with cancellation disabled; completed or partial results win, otherwise the read returns `EINTR`. This differs from the reported console behavior where close returns while the read stays blocked, which is unverified here. Descriptor replacement and stdio closure may still wait indefinitely. Descriptor-access waits are cancellable.
+- [POSIX I/O signal delivery](../../../core/libs/prx/libkernel/Pthread/src/IoSignals.cpp) (libkernel) has no console verification; its macOS backend has not been run. Asynchronous caught native signals and raised exceptions interrupt POSIX read waits and run after operation guards are released, including disabled cancellation and unregistered callers. Restartable reads retry only if descriptor generations remain unchanged; socket receive timeouts prevent restart. Synchronous host faults keep the existing immediate delivery behavior. Guest context restoration and longjmp identify suspended contexts without retaining a stack-address registry; abandoned delivery/restart state is retired and host signal masks are restored. Context identity exhaustion throws rather than reusing an identity.
+- [POSIX I/O cancellation cost](../../../core/libs/prx/libkernel/Pthread/src/Thread.cpp) (libkernel) - scePthreadCancel blocks the cancelling caller while the target retains its I/O or condition wait registration, repeatedly waking it and yielding without a deadline. A target that cannot leave its native call can keep the caller spinning indefinitely. SignalManager registration still uses a global lock and per-call allocation and signal-mask syscalls. Windows transport waits reuse a per-thread loopback waker; setup, registration and syscall costs remain unmeasured. Close interrupt retries use bounded backoff, but the cancelling caller does not.
+- [Borrowed socket lease retirement](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) releases libcurl's descriptor without POSIX admission or generation tracking. A receive before lookup or restarted after a signal can see a reused descriptor. An in-flight native receive retains its socket.
