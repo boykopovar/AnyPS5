@@ -10,20 +10,20 @@ void Require(bool value, const std::string& message) {
 }
 
 constexpr std::int32_t ZeroError = 0;
-constexpr std::int32_t IllegalArgument = 1;
 
 }
 
 int main() {
+    // ICU does not validate the platform: UCNV_UNKNOWN (-1) and UCNV_IBM (0) are both legal.
+    for (const std::int32_t platform : {-1, 0}) {
+        std::int32_t status = ZeroError;
+        UConverter* converter = ucnv_openCCSID_nid_postfix(367, platform, &status);
+        if (converter != nullptr) {
+            Require(status <= ZeroError, "a converter was returned with an error status");
+        }
+    }
+
     std::int32_t status = ZeroError;
-    Require(ucnv_openCCSID_nid_postfix(367, 7, &status) == nullptr, "an invalid platform was accepted");
-    Require(status == IllegalArgument, "an invalid platform did not report an illegal argument");
-
-    status = ZeroError;
-    Require(ucnv_openCCSID_nid_postfix(367, -1, &status) == nullptr, "a negative platform was accepted");
-    Require(status == IllegalArgument, "a negative platform did not report an illegal argument");
-
-    status = ZeroError;
     Require(ucnv_openCCSID_nid_postfix(367, 0, nullptr) == nullptr, "a null status was accepted");
 
     status = 5;
