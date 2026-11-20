@@ -49,7 +49,7 @@ README = """AnyPS5 bug report
 anyps5-report.json  the run report of the last run, redacted
 anyps5.log          the log of the run (ANYPS5_LOG_FILE), redacted
 anyps5-input.ini    the input mapping in use, redacted
-anyps5-settings.txt the ANYPS5_ environment variables of the run, redacted
+anyps5-settings.txt the ANYPS5_ and APS5_ environment variables of the run, redacted
 host.txt            operating system, machine and Python version
 README.txt          this file
 
@@ -60,8 +60,8 @@ attach the bundle to a public report.
 
 
 def settings_text(environ, identity):
-    lines = [f"{name}={redact(value, **identity)}" for name, value in sorted(environ.items()) if name.startswith("ANYPS5_")]
-    return "\n".join(lines) + ("\n" if lines else "No ANYPS5_ variables were set.\n")
+    lines = [f"{name}={redact(value, **identity)}" for name, value in sorted(environ.items()) if name.startswith(("ANYPS5_", "APS5_"))]
+    return "\n".join(lines) + ("\n" if lines else "No ANYPS5_ or APS5_ variables were set.\n")
 
 
 def host_text():

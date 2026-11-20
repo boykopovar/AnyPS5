@@ -58,8 +58,8 @@ class SettingsTests(unittest.TestCase):
     identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
 
     def test_only_anyps5_variables_are_listed_in_name_order(self):
-        environ = {"PATH": "/usr/bin", "ANYPS5_ZETA": "1", "ANYPS5_ALPHA": "on", "HOME": "/home/ana"}
-        self.assertEqual(bug_report.settings_text(environ, self.identity), "ANYPS5_ALPHA=on\nANYPS5_ZETA=1\n")
+        environ = {"PATH": "/usr/bin", "ANYPS5_ZETA": "1", "APS5_NO_LABEL_READ_TRAP": "1", "ANYPS5_ALPHA": "on", "HOME": "/home/ana", "XAPS5_OTHER": "x"}
+        self.assertEqual(bug_report.settings_text(environ, self.identity), "ANYPS5_ALPHA=on\nANYPS5_ZETA=1\nAPS5_NO_LABEL_READ_TRAP=1\n")
 
     def test_values_are_redacted(self):
         environ = {"ANYPS5_INPUT_CONFIG": "/home/ana/cfg/serverfestivo.ini", "ANYPS5_DNS_OVERRIDE": "store.example=192.168.1.20"}
@@ -68,7 +68,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIn("ANYPS5_DNS_OVERRIDE=store.example=<ip>", text)
 
     def test_no_variables_says_so(self):
-        self.assertEqual(bug_report.settings_text({"PATH": "/x"}, self.identity), "No ANYPS5_ variables were set.\n")
+        self.assertEqual(bug_report.settings_text({"PATH": "/x"}, self.identity), "No ANYPS5_ or APS5_ variables were set.\n")
 
 
 class BundleTests(unittest.TestCase):
