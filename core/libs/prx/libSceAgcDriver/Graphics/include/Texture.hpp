@@ -582,11 +582,13 @@ public:
     // (ProvedClearKeys): Refresh's own key rule for the fast revalidation. Under
     // GuestMemory::GpuMutex only, as Refresh is; never from a build's stage A.
     DccKeys UploadedKeys() const { return uploadedKeys; }
+    std::uint64_t UploadedMixedSignature() const { return uploadedMixedSignature; }
     DccKeys FilledKeys() const { return filledKeys; }
     bool GuestSnapshotValid() const { return originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); }
     DccKeyProof& KeyProof() const { return keyProof; }
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
     DccKeys ProvedKeys() const;
+    DccKeyState ProvedKeyState() const;
     bool ServesKeysAt(std::uint64_t dccAddress) const;
     // Brings the image up to date with guest memory before another use; returns whether its content
     // was still current (nothing uploaded).
@@ -755,7 +757,7 @@ private:
     // else from the import (`discard`: the image has no layout yet, a whole-surface first upload).
     // The write-back retiles into the import's unit shadow where a slab takes the piece
     // (`shadowed` receives those guest ranges, `imported` the pieces written to the import).
-    std::uint64_t uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
+    std::uint64_t uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false, const MixedKeyClear* mixedClear = nullptr);
     std::uint64_t writeBackWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, Buffer* save = nullptr);
     struct DrawnRect {
         std::uint32_t left = 0;
@@ -902,15 +904,18 @@ private:
     std::vector<BaselineMiss> pendingMiss;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
+    std::uint64_t uploadedMixedSignature = 0;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
     mutable DccKeyProof keyProof;
     mutable DccRangeProof targetKeyProof;
     DccSingleProof singleProof;
+    bool uploadedMixedClear() const { return uploadedMixedSignature != 0; }
     struct RefreshProof {
         std::uint64_t generation = 0;
         std::uint64_t pendingSerial = 0;
         std::uint64_t keyGeneration = 0;
         DccKeys keys = DccKeys::Uncompressed;
+        std::uint64_t mixedSignature = 0;
     };
     RefreshProof refreshProof;
     struct ForeignKeyProof {
