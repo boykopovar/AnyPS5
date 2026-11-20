@@ -1088,7 +1088,7 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     const auto baseLevel = FloatClamp(state, imageMinLevel, ZeroF32(state), lastLevel);
     const auto level = Select(state, i32, mipNone, Unary(state, spv::OpConvertFToS, i32, baseLevel), Unary(state, spv::OpConvertFToS, i32, nearest));
     const auto size = state.module.AllocateId();
-    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 2), size, image, level);
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 2), size, image, ConstantI32(state, 0));
     std::uint32_t extent[2] = {};
     std::uint32_t first[2] = {};
     for (std::uint32_t axis = 0; axis < 2u; axis++) {
@@ -1097,7 +1097,9 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
         const auto shifted = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpIAdd, u32, shapeField(axis == 0u ? 4u : 18u, 0x3fffu), ConstantU32(state, 1u)), Unary(state, spv::OpBitcast, u32, level));
         const auto texels = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, u32, texels, GlslStd450(state), GLSLstd450UMax, shifted, ConstantU32(state, 1u));
-        extent[axis] = Select(state, i32, Binary(state, spv::OpIEqual, boolean, queried, ConstantI32(state, 0)), Unary(state, spv::OpBitcast, i32, texels), queried);
+        const auto levelTexels = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, u32, levelTexels, GlslStd450(state), GLSLstd450UMax, Binary(state, spv::OpShiftRightLogical, u32, Unary(state, spv::OpBitcast, u32, queried), Unary(state, spv::OpBitcast, u32, level)), ConstantU32(state, 1u));
+        extent[axis] = Select(state, i32, Binary(state, spv::OpIEqual, boolean, queried, ConstantI32(state, 0)), Unary(state, spv::OpBitcast, i32, texels), Unary(state, spv::OpBitcast, i32, levelTexels));
         const auto coord = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, f32, coord, setup.coord, axis);
         const auto scaled = Binary(state, spv::OpFSub, f32, Binary(state, spv::OpFMul, f32, coord, Unary(state, spv::OpConvertSToF, f32, extent[axis])), ConstantF32(state, 0x3f000000u));
