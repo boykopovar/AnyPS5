@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -127,20 +128,41 @@ int main() {
     Require(Throws<std::domain_error>({std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0, 0.0, 0.0}, 100, 1, 1), "NaN chunk", row);
     double y[3];
     bool threw = false;
+    errno = 1234;
     try {
         __kernel_rem_pio2_nid_postfix(nullptr, y, 0, 1, 0);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
-    Require(threw, "null input", row);
+    Require(threw && errno == 1234, "null input", row);
     double x[1] = {1.0};
     threw = false;
+    errno = 5678;
     try {
         __kernel_rem_pio2_nid_postfix(x, nullptr, 0, 1, 0);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
-    Require(threw, "null output", row);
+    Require(threw && errno == 5678, "null output", row);
+    double* const unmapped = reinterpret_cast<double*>(static_cast<std::uintptr_t>(0x10));
+    threw = false;
+    errno = 3333;
+    try {
+        __kernel_rem_pio2_nid_postfix(unmapped, y, 0, 1, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && errno == 3333, "unmapped input", row);
+    threw = false;
+    errno = 4444;
+    try {
+        __kernel_rem_pio2_nid_postfix(x, unmapped, 0, 1, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && errno == 4444, "unmapped output", row);
+    errno = 9999;
+    Require(__kernel_rem_pio2_nid_postfix(x, y, 0, 1, 0) == 1 && errno == 9999, "successful call preserves errno", row);
     std::puts("__kernel_rem_pio2: ok");
     return 0;
 }
