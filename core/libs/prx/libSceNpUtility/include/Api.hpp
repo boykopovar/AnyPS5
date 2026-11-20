@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -33,14 +34,14 @@ int APS5_VABI sceNpWordFilterWaitAsync(int reqId, int* result);
 int APS5_VABI sceNpWordFilterSanitizeComment(int reqId, const char* comment, char* sanitizedComment, void* option);
 
 int APS5_VABI sceNpAppInfoIntAbortRequest(void);
-int APS5_VABI sceNpAppInfoIntCheckAvailability();
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityA();
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityAll();
-int APS5_VABI sceNpAppInfoIntCheckAvailabilityAllA();
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailability();
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityA();
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAll();
-int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAllA();
+int APS5_VABI sceNpAppInfoIntCheckAvailability(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, void* argument4, void* argument5);
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, void* argument4, void* argument5);
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAll(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, void* argument4, std::uint64_t argument5, void* argument6);
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAllA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, void* argument4, std::uint64_t argument5, void* argument6);
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailability(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, void* argument6);
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, void* argument6);
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAll(std::uint32_t argument1, const void* argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, std::uint64_t argument6, void* argument7);
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAllA(std::uint32_t argument1, std::uint32_t argument2, std::uint32_t argument3, std::uint32_t argument4, void* argument5, std::uint64_t argument6, void* argument7);
 int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId);
 int APS5_VABI sceNpAppInfoIntDestroyRequest(void);
 void APS5_VABI sceNpAppInfoIntFinalize(void);
@@ -61,22 +62,22 @@ int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdNum(std::int32_t requestI
 int APS5_VABI sceNpAppLaunchLinkIntInitialize(std::int32_t userId);
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo();
 int APS5_VABI sceNpLookupCreateTitleCtxA(int userId);
-int APS5_VABI sceNpLookupNetAbortRequest();
-int APS5_VABI sceNpLookupNetCensorComment();
+int APS5_VABI sceNpLookupNetAbortRequest(std::int32_t requestId);
+int APS5_VABI sceNpLookupNetCensorComment(std::int32_t requestId, const void* npId, const char* comment, const void* option);
 int APS5_VABI sceNpLookupNetConvertJidToNpId();
 int APS5_VABI sceNpLookupNetConvertNpIdToJid();
-int APS5_VABI sceNpLookupNetCreateRequest();
-int APS5_VABI sceNpLookupNetCreateTitleCtx();
-int APS5_VABI sceNpLookupNetDeleteRequest();
-int APS5_VABI sceNpLookupNetDeleteTitleCtx();
-int APS5_VABI sceNpLookupNetInit();
-int APS5_VABI sceNpLookupNetInitWithFunctionPointer();
-int APS5_VABI sceNpLookupNetInitWithMemoryPool();
-int APS5_VABI sceNpLookupNetIsInit();
-int APS5_VABI sceNpLookupNetNpId();
-int APS5_VABI sceNpLookupNetSanitizeComment();
-int APS5_VABI sceNpLookupNetSetTimeout();
-int APS5_VABI sceNpLookupNetTerm();
+int APS5_VABI sceNpLookupNetCreateRequest(std::int32_t titleCtxId);
+int APS5_VABI sceNpLookupNetCreateTitleCtx(const void* selfNpId, const void* npId);
+int APS5_VABI sceNpLookupNetDeleteRequest(std::int32_t requestId);
+int APS5_VABI sceNpLookupNetDeleteTitleCtx(std::int32_t titleCtxId);
+int APS5_VABI sceNpLookupNetInit(void);
+int APS5_VABI sceNpLookupNetInitWithFunctionPointer(const void* param, const void* functionPointer);
+int APS5_VABI sceNpLookupNetInitWithMemoryPool(const void* param, const void* pool);
+int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out);
+int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option);
+int APS5_VABI sceNpLookupNetSanitizeComment(std::int32_t requestId, const void* npId, const char* comment, char* sanitizedComment, const void* option);
+int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetry, std::int32_t resolveTimeout, std::int32_t connectTimeout, std::int32_t sendTimeout, std::int32_t receiveTimeout);
+int APS5_VABI sceNpLookupNetTerm(void);
 int APS5_VABI sceNpServiceChecker2IntAbortRequest(int requestId);
 int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId);
 int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId);
@@ -96,7 +97,7 @@ int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_
 int APS5_VABI sceNpTitleMetadataIntAbortRequest();
 int APS5_VABI sceNpTitleMetadataIntCreateRequest();
 int APS5_VABI sceNpTitleMetadataIntDeleteRequest();
-int APS5_VABI sceNpTitleMetadataIntGetInfo();
+int APS5_VABI sceNpTitleMetadataIntGetInfo(std::uint32_t argument1, void* argument2, void* argument3);
 int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t titleIdLength, char* npTitleId);
 int APS5_VABI sceNpUtilityInit();
 int APS5_VABI sceNpUtilityTerm();

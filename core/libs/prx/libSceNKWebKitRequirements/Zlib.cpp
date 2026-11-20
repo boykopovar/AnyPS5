@@ -35,7 +35,9 @@
 */
 
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "prx/libc/include/General.hpp"
 #include "zlib.h"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -183,7 +185,6 @@ int End(GuestZStream* guest, bool inflating, TEnd end) {
 extern "C" {
 
 int APS5_VABI deflateInit2__nid_postfix(GuestZStream* stream, int level, int method, int windowBits, int memLevel, int strategy, const char* version, int streamSize) {
-    if (windowBits >= 25 && windowBits <= 31) throw std::runtime_error("deflateInit2_: gzip wrapper is not implemented");
     return Initialize(stream, version, streamSize, false, [&](z_stream& host) {
         return deflateInit2(&host, level, method, windowBits, memLevel, strategy);
     });
@@ -209,8 +210,6 @@ std::uint64_t APS5_VABI deflateBound_nid_postfix(GuestZStream* stream, std::uint
 }
 
 int APS5_VABI inflateInit2__nid_postfix(GuestZStream* stream, int windowBits, const char* version, int streamSize) {
-    if (windowBits >= 16 && windowBits < 48 && ((windowBits & 15) == 0 || (windowBits & 15) >= 8))
-        throw std::runtime_error("inflateInit2_: gzip decoding is not implemented");
     return Initialize(stream, version, streamSize, true, [windowBits](z_stream& host) {
         return inflateInit2(&host, windowBits);
     });
@@ -231,11 +230,22 @@ int APS5_VABI inflateEnd_nid_postfix(GuestZStream* stream) {
 int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* destinationLength, const std::uint8_t* source, std::uint64_t sourceLength) {
     if (!destinationLength) throw std::runtime_error("uncompress: null destination length");
     std::uint8_t probe = 0;
-    std::uint64_t left = *destinationLength;
+    std::uint64_t left = 0;
+    {
+        const int savedErrno = errno;
+        const bool copiedIn = GuestCopyIn_nid_no_patch(&left, destinationLength, sizeof(left));
+        errno = savedErrno;
+        if (!copiedIn) throw std::runtime_error("uncompress: unreadable destination length");
+    }
     std::uint64_t remaining = sourceLength;
     std::uint8_t* output = destination;
-    if (left) *destinationLength = 0;
-    else {
+    if (left) {
+        const std::uint64_t zero = 0;
+        const int savedErrno = errno;
+        const bool copiedOut = GuestCopyOut_nid_no_patch(destinationLength, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!copiedOut) throw std::runtime_error("uncompress: unwritable destination length");
+    } else {
         left = 1;
         output = &probe;
     }
@@ -258,8 +268,15 @@ int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* d
         result = inflate(&stream, Z_NO_FLUSH);
         produced += space - stream.avail_out;
     } while (result == Z_OK);
-    if (output != &probe) *destinationLength = produced;
-    else if (produced && result == Z_BUF_ERROR) left = 1;
+    if (output != &probe) {
+        const int savedErrno = errno;
+        const bool copiedOut = GuestCopyOut_nid_no_patch(destinationLength, &produced, sizeof(produced));
+        errno = savedErrno;
+        if (!copiedOut) {
+            inflateEnd(&stream);
+            throw std::runtime_error("uncompress: unwritable destination length");
+        }
+    } else if (produced && result == Z_BUF_ERROR) left = 1;
     const std::uint64_t unused = left + stream.avail_out;
     inflateEnd(&stream);
     if (result == Z_STREAM_END) return Z_OK;

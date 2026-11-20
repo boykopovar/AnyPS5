@@ -9,6 +9,7 @@
 #include <thread>
 #endif
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -164,6 +165,31 @@ bool CheckMedianSleepBound(
 } // namespace
 
 int main() {
+    using Nanos = std::chrono::nanoseconds;
+    using FractionalNanos = std::chrono::duration<double, std::nano>;
+    static_assert(PreciseDeadlineTicks<PreciseHundredNanos>(FractionalNanos{0.0}) == 0);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{-0.5}) == 0);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{0.5}) == 1);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{1.0}) == 1);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{1.5}) == 2);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{100.5}) == 101);
+    static_assert(PreciseDeadlineTicks<PreciseHundredNanos>(FractionalNanos{99.5}) == 1);
+    static_assert(PreciseDeadlineTicks<PreciseHundredNanos>(FractionalNanos{100.0}) == 1);
+    static_assert(PreciseDeadlineTicks<PreciseHundredNanos>(FractionalNanos{100.5}) == 2);
+    static_assert(PreciseDeadlineTicks<PreciseHundredNanos>(Nanos{101}) == 2);
+    static_assert(PreciseDeadlineTicks<Nanos>(FractionalNanos{0x1.fffffffffffffp62}) == (Nanos::max)().count() - 1023);
+
+    if (PreciseDeadlineTicks<PreciseHundredNanos>(FractionalNanos{std::nextafter(100.0, 101.0)}) != 2) {
+        std::cerr << "PreciseDeadlineTicks rounded down just above a QPC tick\n";
+        return 1;
+    }
+    try {
+        PreciseDeadlineTicks<Nanos>(FractionalNanos{0x1p63});
+        std::cerr << "PreciseDeadlineTicks accepted an out-of-range deadline\n";
+        return 1;
+    } catch (const std::overflow_error&) {
+    }
+
     static_assert(PreciseHundredNanosToQpcTicks(500, 10000000ULL) == 500);
     static_assert(PreciseHundredNanosToQpcTicks(500, 3579545ULL) == 179);
     static_assert(PreciseHundredNanosToQpcTicks(500, 14318180ULL) == 716);
@@ -240,6 +266,15 @@ int main() {
     }
 
     PreciseSleepUntil(std::chrono::steady_clock::time_point{});
+    using FractionalDeadline = std::chrono::time_point<std::chrono::steady_clock, FractionalNanos>;
+    PreciseSleepUntil(FractionalDeadline{FractionalNanos{-0.5}});
+    const FractionalDeadline fractionalDeadline = std::chrono::steady_clock::now() + FractionalNanos{50000.5};
+    PreciseSleepUntil(fractionalDeadline);
+    if (std::chrono::steady_clock::now() < fractionalDeadline) {
+        std::cerr << "PreciseSleepUntil returned before a fractional steady_clock deadline\n";
+        return 1;
+    }
+
     const auto coarseDeadline = std::chrono::ceil<std::chrono::microseconds>(
         std::chrono::steady_clock::now() + std::chrono::microseconds(25));
     PreciseSleepUntil(coarseDeadline);

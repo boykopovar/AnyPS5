@@ -1,11 +1,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleFloat_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/FirstSamplePacked_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleSint_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleUint_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassVert_spv.h"
+#include <array>
 #include <memory>
 #include <span>
 
@@ -32,7 +35,8 @@ bool uintFormat(VkFormat format) {
     }
 }
 
-std::span<const std::uint32_t> fragmentCode(VkFormat format) {
+std::span<const std::uint32_t> fragmentCode(VkFormat format, bool averagePacked) {
+    if (averagePacked) return FIRST_SAMPLE_PACKED_SPV;
     if (sintFormat(format)) return FIRST_SAMPLE_SINT_SPV;
     if (uintFormat(format)) return FIRST_SAMPLE_UINT_SPV;
     return FIRST_SAMPLE_FLOAT_SPV;
@@ -49,7 +53,7 @@ struct DescriptorPool {
 
 }
 
-FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent) : context(context), extent(extent) {
+FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, bool averagePacked) : context(context), extent(extent) {
     try {
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -136,7 +140,7 @@ FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExte
         Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer first sample");
 
         vertex = CreateShaderModule(context, PRESENTATION_PASS_VERT_SPV, sizeof(PRESENTATION_PASS_VERT_SPV), "vkCreateShaderModule first sample vertex");
-        const auto code = fragmentCode(format);
+        const auto code = fragmentCode(format, averagePacked);
         fragment = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule first sample fragment");
         VkPipelineShaderStageCreateInfo stages[2]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -214,6 +218,19 @@ void FirstSampleCopy::release() noexcept {
 }
 
 void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayout layout) {
+    record(&recorder, VK_NULL_HANDLE, source, layout, framebuffer);
+}
+
+std::shared_ptr<void> FirstSampleCopy::RecordInto(VkCommandBuffer commands, Recorder* recorder, VkImageView source, VkImageLayout layout, VkImageView destination) {
+    const std::array<VkImageView, 1> views{destination};
+    auto target = std::make_shared<Framebuffer>(context, renderPass, views, extent);
+    auto pool = record(recorder, commands, source, layout, target->Handle());
+    auto kept = std::make_shared<std::pair<std::shared_ptr<void>, std::shared_ptr<Framebuffer>>>(std::move(pool), std::move(target));
+    if (recorder != nullptr) recorder->Keep(kept);
+    return kept;
+}
+
+std::shared_ptr<void> FirstSampleCopy::record(Recorder* recorder, VkCommandBuffer batchCommands, VkImageView source, VkImageLayout layout, VkFramebuffer target) {
     const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = 1;
@@ -236,18 +253,27 @@ void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayo
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
-    recorder.Keep(pool);
-    recorder.RecordUncounted([&](VkCommandBuffer commands) {
+    const auto draw = [&](CommandState& recording) {
+        const auto commands = recording.Commands();
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         begin.renderPass = renderPass;
-        begin.framebuffer = framebuffer;
+        begin.framebuffer = target;
         begin.renderArea = {{0, 0}, extent};
         context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        recording.BindPipeline(context, pipeline, 0);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, 0, nullptr);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
-    });
+    };
+    if (recorder != nullptr) {
+        recorder->Keep(pool);
+        recorder->RecordUncounted(draw);
+    } else {
+        CommandState recording;
+        recording.Begin(batchCommands, false);
+        draw(recording);
+    }
+    return pool;
 }
 
 }
