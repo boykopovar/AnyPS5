@@ -200,4 +200,33 @@ std::uint32_t APS5_VABI _ZN7bmalloc19mapToActiveHeapKindENS_8HeapKindE(std::uint
     return 0;
 }
 
+
+void* APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEm(std::uint32_t, std::size_t size) {
+    return NKWebKit::Allocate(size);
+}
+
+void* APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEmm(std::uint32_t, std::size_t alignment, std::size_t size) {
+    return NKWebKit::Allocate(size, alignment);
+}
+
+void* APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEm(std::uint32_t, std::size_t size) {
+    return NKWebKit::TryAllocate(size);
+}
+
+void* APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEmm(std::uint32_t, std::size_t alignment, std::size_t size) {
+    return NKWebKit::TryAllocate(size, alignment);
+}
+
+void APS5_VABI _ZN7bmalloc5Cache27deallocateSlowCaseNullCacheENS_8HeapKindEPv(std::uint32_t, void* object) {
+    NKWebKit::Deallocate(object);
+}
+
+void* APS5_VABI _ZN7bmalloc5Cache27reallocateSlowCaseNullCacheENS_8HeapKindEPvm(std::uint32_t, void* object, std::size_t newSize) {
+    return NKWebKit::Reallocate(object, newSize);
+}
+
+void* APS5_VABI _ZN7bmalloc5Cache30tryReallocateSlowCaseNullCacheENS_8HeapKindEPvm(std::uint32_t, void* object, std::size_t newSize) {
+    return NKWebKit::TryReallocate(object, newSize);
+}
+
 }

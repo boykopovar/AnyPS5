@@ -23695,34 +23695,6 @@ int APS5_VABI _ZN7bmalloc17getPerProcessDataEjPKcmm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEmm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache27deallocateSlowCaseNullCacheENS_8HeapKindEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache27reallocateSlowCaseNullCacheENS_8HeapKindEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEmm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc5Cache30tryReallocateSlowCaseNullCacheENS_8HeapKindEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7bmalloc5Cache8scavengeENS_8HeapKindE() {
     NotImplemented_nid_no_patch(__func__);
 }
