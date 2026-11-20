@@ -201,7 +201,7 @@ class CommandTests(unittest.TestCase):
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source"
+            source = root / "source {commit}"
             source.mkdir()
             subprocess.run(["git", "init", "-q", str(source)], check=True)
             subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
@@ -209,9 +209,9 @@ class CommandTests(unittest.TestCase):
             (source / "source.cpp").write_text("source", encoding="utf-8")
             subprocess.run(["git", "-C", str(source), "add", "source.cpp"], check=True)
             subprocess.run(["git", "-C", str(source), "commit", "-qm", "test: source"], check=True)
-            build_dir = root / "source" / "build"
+            build_dir = source / "build"
             recipe = {"build_dir": "build", "build_commands": [[sys.executable, "-c",
-                       "from pathlib import Path; Path(r'{build_dir}').mkdir(parents=True)"]]}
+                       "from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(parents=True)", "{build_dir}"]]}
             actual = performance_bisect.run_build_commands(source, recipe, GOOD, root / "results")
             self.assertEqual(actual, build_dir)
             self.assertTrue(build_dir.is_dir())

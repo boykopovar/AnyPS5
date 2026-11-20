@@ -51,28 +51,4 @@ int APS5_VABI ucol_strcollUTF8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unum_formatDoubleForFields_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumf_formatDecimal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumf_formatDouble_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumf_openForSkeletonAndLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumf_resultToString_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }

@@ -48,11 +48,6 @@ int APS5_VABI libwebrtcUnknown02(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("DdAZMMuUzBg", libwebrtcUnknown03);
 int APS5_VABI libwebrtcUnknown03(void) {
     NotImplemented_nid_no_patch("DdAZMMuUzBg");
@@ -113,11 +108,6 @@ int APS5_VABI _ZN7cricket18BasicPortAllocatorC1EPN3rtc14NetworkManagerEPNS1_19Pa
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10CallConfigC1ERKNS_11EnvironmentEPNS_13TaskQueueBaseE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -161,11 +151,6 @@ int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void) {
 }
 
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

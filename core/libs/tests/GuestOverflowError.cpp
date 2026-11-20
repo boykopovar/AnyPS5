@@ -90,16 +90,30 @@ int main() {
     Require(std::strcmp(table.what(allocated), "heap overflow") == 0);
     table.deleteObject(allocated);
 
+    const auto nextPrime = _ZNSt3__112__next_primeEm_nid_postfix;
+    Require(nextPrime(0) == 0 && nextPrime(1) == 2 && nextPrime(2) == 2);
+    Require(nextPrime(210) == 211 && nextPrime(211) == 211 && nextPrime(212) == 223);
+    Require(nextPrime(4'294'967'296ull) == 4'294'967'311ull);
+    constexpr std::uint64_t Pseudoprime = 3'825'123'056'546'413'051ull;
+    Require(nextPrime(Pseudoprime) > Pseudoprime);
+    constexpr std::uint64_t LargestPrime = 18'446'744'073'709'551'557ull;
+    Require(nextPrime(LargestPrime - 1) == LargestPrime && nextPrime(LargestPrime) == LargestPrime);
+
+    const auto plainOverflow = [] { LibcThrowOverflowError_nid_no_patch("arith overflow"); };
+    const auto primeOverflow = [] { _ZNSt3__112__next_primeEm_nid_postfix(LargestPrime + 1); };
 #ifdef __APPLE__
-    Require(TerminateSeesType([] { LibcThrowOverflowError_nid_no_patch("arith overflow"); }, type.name));
+    Require(TerminateSeesType(plainOverflow, type.name));
+    Require(TerminateSeesType(primeOverflow, type.name));
 #else
-    const std::type_info* caught = nullptr;
-    try {
-        LibcThrowOverflowError_nid_no_patch("arith overflow");
-    } catch (...) {
-        caught = __cxa_current_exception_type_nid_postfix();
+    for (auto call : {+plainOverflow, +primeOverflow}) {
+        const std::type_info* caught = nullptr;
+        try {
+            call();
+        } catch (...) {
+            caught = __cxa_current_exception_type_nid_postfix();
+        }
+        Require(caught != nullptr && caught->name() != nullptr && std::strcmp(caught->name(), type.name) == 0);
     }
-    Require(caught != nullptr && caught->name() != nullptr && std::strcmp(caught->name(), type.name) == 0);
 #endif
     return 0;
 }
