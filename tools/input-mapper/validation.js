@@ -1,4 +1,4 @@
-import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, canonicalChord, canonicalValue, chordButtons, defaults, mouseValues, padButtons, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
 export const settings = [
@@ -14,7 +14,8 @@ export const settings = [
     {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
     {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
     {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
-    {name: 'MouseStickTarget', kind: 'stickTarget'}
+    {name: 'MouseStickTarget', kind: 'stickTarget'},
+    {name: 'ToggleActions', kind: 'padButtons'}
 ];
 
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
@@ -48,6 +49,16 @@ export function settingValue(setting, value) {
     }
     if (setting.kind === 'stickTarget') {
         if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
+        return '';
+    }
+    if (setting.kind === 'padButtons') {
+        for (const part of text.split(',')) {
+            const name = part.trim();
+            if (!name) return `${setting.name} has an empty action name.`;
+            const action = canonicalValue(name, actions);
+            if (action === undefined) return `${setting.name}: unknown action '${name}'.`;
+            if (!padButtons.has(action)) return `${setting.name} only lists pad buttons, not '${action}'.`;
+        }
         return '';
     }
     const underflows = parsed === 0 && /[1-9]/u.test(text.split(/e/iu, 1)[0]);
