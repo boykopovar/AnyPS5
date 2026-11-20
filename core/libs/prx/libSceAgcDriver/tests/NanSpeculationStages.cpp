@@ -3,6 +3,7 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/InstructionTranslator.hpp"
 #include "Translation/ShaderInputInfoBuilder.hpp"
+#include <array>
 #include <cstdio>
 #include <initializer_list>
 #include <cstdlib>
@@ -12,6 +13,47 @@
 using namespace ShaderRecompiler;
 
 namespace {
+
+bool SplitStateSpeculation() {
+    const std::vector<std::uint32_t> code{0x06020300u, 0x06020300u, 0xbf810000u};
+    const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+    auto cfg = GraphBuilder{}.Build(decoded);
+    Structurizer{}.Structurize(cfg);
+    GuestContext context{};
+    context.waveSize = 32;
+    context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    const std::array<std::uint32_t, 1> registers{1u};
+    for (const auto point : std::array{
+        SplitStateAbi::Point{0u, false, SplitStateAbi::Action::Save},
+        SplitStateAbi::Point{0u, true, SplitStateAbi::Action::Save},
+        SplitStateAbi::Point{4u, false, SplitStateAbi::Action::Save},
+        SplitStateAbi::Point{4u, true, SplitStateAbi::Action::Save}}) {
+        const std::array points{point};
+        const SplitStateAbi::Plan plan{points, registers, 1u};
+        TranslateOptions options{};
+        options.stage = ShaderStageKind::Compute;
+        options.waveSize = 32;
+        options.userDataCount = 0;
+        options.inputInfo = BuildShaderStageInputInfo(options.stage, context, 32);
+        options.splitState = &plan;
+        const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
+        std::size_t stores = 0;
+        for (const auto& block : program.Blocks()) {
+            for (const auto* instruction : block->Instructions()) stores += instruction->Opcode() == IrOpcode::StoreSplitState;
+        }
+        const bool finalPoint = point.programCounter == 4u && point.afterInstruction;
+        if (stores != 1u || program.Metadata().nanSpeculationCandidates != 1u ||
+            program.Metadata().nanSpeculationDeclines != (finalPoint ? 0u : 1u) ||
+            program.Metadata().nanSpeculationKept != (finalPoint ? 1u : 0u)) {
+            std::fprintf(stderr, "nan split state pc=%u after=%u stores=%zu candidates=%u declined=%u kept=%u\n",
+                         point.programCounter, static_cast<unsigned>(point.afterInstruction), stores,
+                         program.Metadata().nanSpeculationCandidates, program.Metadata().nanSpeculationDeclines,
+                         program.Metadata().nanSpeculationKept);
+            return false;
+        }
+    }
+    return true;
+}
 
 std::size_t Ballots(ShaderStageKind stage, std::uint32_t first) {
     const std::vector<std::uint32_t> code{first, 0xbf810000u};
@@ -75,6 +117,7 @@ int main() {
     setenv("APS5_NAN_SPECULATION_MIN_DENSITY", "0", 1);
 #endif
     try {
+        if (!SplitStateSpeculation()) return 1;
         constexpr std::uint32_t AddF32 = 0x06020300u;
         constexpr std::uint32_t Nop = 0xbf800000u;
         const auto compute = Ballots(ShaderStageKind::Compute, AddF32) - Ballots(ShaderStageKind::Compute, Nop);
