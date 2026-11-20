@@ -3932,7 +3932,20 @@ const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void*
 int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, void* address, std::uint32_t* scopeId) {
     if (family != NET_AF_INET6) return fail(NET_EAFNOSUPPORT);
     if (text == nullptr) return fail(NET_EINVAL);
-    const char* percent = scopeId != nullptr ? std::strchr(text, '%') : nullptr;
+
+    std::string copiedText;
+    for (auto current = reinterpret_cast<std::uintptr_t>(text);; ++current) {
+        char byte = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&byte, reinterpret_cast<const void*>(current), sizeof(byte));
+        errno = savedErrno;
+        if (!copied) return fail(NET_EFAULT);
+        if (byte == '\0') break;
+        copiedText.push_back(byte);
+        if (current == UINTPTR_MAX) return fail(NET_EFAULT);
+    }
+
+    const char* percent = scopeId != nullptr ? std::strchr(copiedText.c_str(), '%') : nullptr;
     std::uint32_t zone = 0;
     if (percent != nullptr) {
         const auto interfaceId = InterfaceIdOfName(percent + 1);
@@ -3941,7 +3954,7 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
         if (!index) return 0;
         zone = *index;
     }
-    const std::string unscoped = percent != nullptr ? std::string(text, percent) : std::string(text);
+    const std::string unscoped = percent != nullptr ? std::string(copiedText.c_str(), percent) : copiedText;
     std::array<unsigned char, 16> parsed{};
     const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
     if (converted != 1) return converted;

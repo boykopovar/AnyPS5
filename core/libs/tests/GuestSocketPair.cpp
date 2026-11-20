@@ -363,6 +363,32 @@ static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
+static bool BlockSize(int descriptor, std::uint32_t expected) {
+    FileStat status{};
+    return fstat_nid_disambig1_nid_postfix(descriptor, &status) == 0 && status.st_blksize == expected;
+}
+
+static void CheckStatBlockSize() {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendBuffer = 0x1001;
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(BlockSize(pair[0], 8192) && BlockSize(pair[1], 8192));
+    const int resized = 5000;
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &resized, sizeof(resized)) == 0);
+    Require(BlockSize(pair[0], 5000) && BlockSize(pair[1], 8192));
+    FileStat status{};
+    Require(sceKernelFstat(pair[0], &status) == 0 && status.st_blksize == 5000);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(BlockSize(pair[0], 2048) && BlockSize(pair[1], 2048));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    const int tcp = socket_nid_postfix(2, Stream, 0);
+    Require(tcp >= 0 && BlockSize(tcp, 32768) && close_nid_postfix(tcp) == 0);
+    const int udp = socket_nid_postfix(2, Datagram, 0);
+    Require(udp >= 0 && BlockSize(udp, 9216) && close_nid_postfix(udp) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "sendmsg-memory") == 0) {
         CheckSendMessageFaults();
@@ -531,6 +557,7 @@ int main(int argc, char** argv) {
 #endif
     CheckReceiveMessageFaults();
     CheckAddressOnPairEnd();
+    CheckStatBlockSize();
     CheckRecordOverSendBuffer(Datagram, 2048);
 #if !defined(_WIN32) && !defined(__APPLE__)
     CheckRecordOverSendBuffer(SequencedPacket, 8192);

@@ -158,6 +158,13 @@ void CheckDataOpen() {
     Require(status == U_USING_DEFAULT_WARNING, "open by full item name preserves warning");
     CheckOpenedData(data.get());
 
+    for (const std::int32_t incoming : {std::int32_t{-129}, INT32_MIN}) {
+        status = incoming;
+        data.reset(udata_open_nid_postfix(nullptr, "nrm", "nfkc", &status));
+        Require(status == incoming, "open keeps a status below the warning range");
+        CheckOpenedData(data.get());
+    }
+
     status = U_ZERO_ERROR;
     const std::string missingName(600, 'x');
     Require(!udata_open_nid_postfix(nullptr, "nrm", missingName.c_str(), &status)
