@@ -75,4 +75,9 @@ bool APS5_VABI WKPageBackgroundExtendsBeyondPage(const void* pageRef) {
     return NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__)->backgroundExtendsBeyondPage;
 }
 
+const void* APS5_VABI WKPageGetFrameSetLargestFrame(const void* pageRef) {
+    const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    return page->frameSetLargestFrame ? page->frameSetLargestFrame.Get() : nullptr;
+}
+
 }

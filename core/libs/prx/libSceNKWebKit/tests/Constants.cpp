@@ -81,7 +81,6 @@ int main() {
     Require(WKKeyValueStorageManagerGetStorageDetailsByOrigin() == 0);
     Require(WKOpenPanelParametersCopyCapture() == 0);
     Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
-    Require(WKPageGetFrameSetLargestFrame() == 0);
     Require(WKPageGetPaginationLineGridEnabled() == 0);
     Require(WKPageIsMockRealtimeMediaSourceCenterEnabled() == 0);
     Require(WKPlugInInformationReplacementObscuredKey() == 0);

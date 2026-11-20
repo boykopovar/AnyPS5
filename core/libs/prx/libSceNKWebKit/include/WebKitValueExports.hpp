@@ -331,6 +331,7 @@ bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
 NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef);
 bool APS5_VABI WKPageGetAddsVisitedLinks(const void* pageRef);
+const void* APS5_VABI WKPageGetFrameSetLargestFrame(const void* pageRef);
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef);
 const void* APS5_VABI WKPageGetInspector(const void* pageRef);
 double APS5_VABI WKPageGetPageLength(const void* pageRef);

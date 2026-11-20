@@ -270,10 +270,6 @@ int APS5_VABI WKOpenPanelParametersGetMediaCaptureType() {
     return 0;
 }
 
-int APS5_VABI WKPageGetFrameSetLargestFrame() {
-    return 0;
-}
-
 int APS5_VABI WKPageGetPaginationLineGridEnabled() {
     return 0;
 }

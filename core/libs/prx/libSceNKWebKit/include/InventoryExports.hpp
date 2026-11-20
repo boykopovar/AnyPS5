@@ -339,7 +339,6 @@ int APS5_VABI WKPageGetBytecodeProfile();
 int APS5_VABI WKPageGetContentsAsMHTMLData();
 int APS5_VABI WKPageGetContentsAsString();
 int APS5_VABI WKPageGetContext();
-int APS5_VABI WKPageGetFrameSetLargestFrame();
 int APS5_VABI WKPageGetImageForFindMatch();
 int APS5_VABI WKPageGetIsControlledByAutomation();
 int APS5_VABI WKPageGetMediaCaptureEnabled();

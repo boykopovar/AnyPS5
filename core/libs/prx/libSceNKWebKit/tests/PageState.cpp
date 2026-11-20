@@ -110,6 +110,13 @@ int main() {
     WKPageSetBackgroundExtendsBeyondPage(pageRef, false);
     Require(!WKPageBackgroundExtendsBeyondPage(pageRef));
 
+    Require(WKPageGetFrameSetLargestFrame(pageRef) == nullptr);
+    auto frame = NKWebKit::Make<NKWebKit::Frame>();
+    page->frameSetLargestFrame = frame;
+    Require(WKPageGetFrameSetLargestFrame(pageRef) == frame.Get());
+    page->frameSetLargestFrame = nullptr;
+    Require(WKPageGetFrameSetLargestFrame(pageRef) == nullptr);
+
     RequireInvalidArgument([] { WKPageIsClosed(nullptr); });
     RequireInvalidArgument([] { WKPageCopyTitle(nullptr); });
     RequireInvalidArgument([] { WKPageCopyActiveURL(nullptr); });
@@ -127,6 +134,8 @@ int main() {
     RequireInvalidArgument([] { WKPageSetCustomUserAgent(NKWebKit::Make<NKWebKit::Page>().Get(), NKWebKit::Make<NKWebKit::URL>("x").Get()); });
     RequireInvalidArgument([probe] { WKPageSetApplicationNameForUserAgent(nullptr, probe); });
     RequireInvalidArgument([probe] { WKPageSetCustomTextEncodingName(nullptr, probe); });
+    RequireInvalidArgument([] { WKPageGetFrameSetLargestFrame(nullptr); });
+    RequireInvalidArgument([] { WKPageGetFrameSetLargestFrame(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
     RequireInvalidArgument([] { WKPageIsClosed(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
 
     return 0;
