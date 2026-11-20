@@ -58,14 +58,16 @@ extern "C" {
 WebCore::ColorSpaceAndComponents* APS5_VABI _ZNK7WebCore5Color23colorSpaceAndComponentsEv(WebCore::ColorSpaceAndComponents* result, const WebCore::Color* self) {
     WebCore::Color color;
     Read(&color, self, sizeof(color), "unreadable color");
-    WebCore::ColorSpaceAndComponents value;
+    WebCore::ColorSpaceAndComponents value{};
     if (!(color.m_colorAndFlags & InvalidInlineColor)) {
         WebCore::ExtendedColor extended;
         Read(&extended, reinterpret_cast<const void*>(color.m_colorAndFlags), sizeof(extended), "unreadable extended color");
-        value = {extended.m_colorSpace, extended.m_components};
+        value.colorSpace = extended.m_colorSpace;
+        value.components = extended.m_components;
     } else {
         const auto bits = color.m_colorAndFlags;
-        value = {SRGB, {ComponentFloat(bits, 56), ComponentFloat(bits, 48), ComponentFloat(bits, 40), ComponentFloat(bits, 32)}};
+        value.colorSpace = SRGB;
+        value.components = {ComponentFloat(bits, 56), ComponentFloat(bits, 48), ComponentFloat(bits, 40), ComponentFloat(bits, 32)};
     }
     const int savedErrno = errno;
     Require(GuestCopyOut_nid_no_patch(result, &value, sizeof(value)), savedErrno, "unwritable result");

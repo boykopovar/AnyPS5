@@ -1,9 +1,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -51,6 +53,20 @@ void TestExtendedColors() {
     Require(extended.m_refCount == 1);
 }
 
+void TestPaddingZeroed() {
+    WebCore::ExtendedColor extended{1, {0.25f, -0.5f, 1.5f, 0.75f}, 2};
+    const WebCore::Color colors[] = {WebCore::Color{(std::uint64_t{0x11ff8000} << 32) | 0x3}, WebCore::Color{reinterpret_cast<std::uint64_t>(&extended)}};
+    for (const auto& color : colors) {
+        unsigned char bytes[sizeof(WebCore::ColorSpaceAndComponents)];
+        std::memset(bytes, 0xAA, sizeof(bytes));
+        auto* result = reinterpret_cast<WebCore::ColorSpaceAndComponents*>(bytes);
+        Require(_ZNK7WebCore5Color23colorSpaceAndComponentsEv(result, &color) == result);
+        for (std::size_t i = offsetof(WebCore::ColorSpaceAndComponents, colorSpace) + 1; i < offsetof(WebCore::ColorSpaceAndComponents, components); ++i) {
+            Require(bytes[i] == 0);
+        }
+    }
+}
+
 void TestUnreadableColors() {
     WebCore::ColorSpaceAndComponents result{};
     const WebCore::Color nullExtended{0};
@@ -68,6 +84,7 @@ void TestUnwritableResult() {
 int main() {
     TestInlineColors();
     TestExtendedColors();
+    TestPaddingZeroed();
     TestUnreadableColors();
     TestUnwritableResult();
     return 0;
