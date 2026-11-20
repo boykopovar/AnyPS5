@@ -818,7 +818,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -826,12 +830,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 

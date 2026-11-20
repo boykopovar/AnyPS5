@@ -153,7 +153,26 @@ class NamesLookupTests(unittest.TestCase):
         status = pr_overlap.main_status(names, "refs/pr/base")
         text = pr_overlap.lookup_report(names, found, status, self.prs, "https://github.com/owner/project/blob/0")
         self.assertIn("pending\n  main: core/libs/prx/libSceExample (stub)\n  open: [PR 1](https://www.github.com/owner/project/pull/1) by author1: title 1\n", text)
-        self.assertIn("absent\n  main: not declared\n  open: none\n", text)
+        self.assertIn("absent\n  main: no matching PS5 export\n  open: no matching PS5 export changes\n", text)
+
+    def test_report_scopes_internal_function_lookups(self):
+        path = "core/shader/recompiler/Decoder.cpp"
+        source = "int DecodeExample(int opcode) { return opcode; }\n"
+        base = commit_on_base(run("rev-parse", "refs/pr/base"), "internal decoder", {path: source})
+        run("update-ref", "refs/pr/base", base)
+        sha = commit_on_base(base, "edit internal decoder", {path: source.replace("return opcode;", "return opcode + 1;")})
+        run("update-ref", "refs/pr/4", sha)
+        pr = {"ref": "refs/pr/4", "sha": sha, "author": "author4", "title": "internal decoder edit", "depends": set()}
+        names = ["DecodeExample"]
+        found = pr_overlap.pull_requests_with(names, {4: pr}, 2)
+        status = pr_overlap.main_status(names, "refs/pr/base")
+        text = pr_overlap.lookup_report(names, found, status, {4: pr}, "https://github.com/owner/project/blob/0")
+        self.assertIn("PS5 exports only", text)
+        self.assertIn("Internal functions and instruction opcodes are not checked", text)
+        self.assertIn("--branch <branch>", text)
+        self.assertIn("main: no matching PS5 export", text)
+        self.assertIn("open: no matching PS5 export changes", text)
+        self.assertNotIn("open: none", text)
 
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):
