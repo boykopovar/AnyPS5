@@ -1,4 +1,5 @@
 #pragma once
+#include "RecoveredSignatures.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
@@ -8,7 +9,6 @@ extern "C" {
 
 UResourceBundle* APS5_VABI ures_open(const char*, const char*, std::int32_t*);
 UResourceBundle* APS5_VABI ures_openDirect_nid_postfix(const char*, const char*, std::int32_t*);
-void APS5_VABI ures_close(UResourceBundle*);
 UResourceBundle* APS5_VABI ures_getByKey(const UResourceBundle*, const char*, UResourceBundle*, std::int32_t*);
 UResourceBundle* APS5_VABI ures_getByIndex_nid_postfix(const UResourceBundle*, std::int32_t, UResourceBundle*, std::int32_t*);
 std::int32_t APS5_VABI ures_getSize_nid_postfix(const UResourceBundle*);

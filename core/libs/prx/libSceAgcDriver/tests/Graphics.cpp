@@ -2970,6 +2970,17 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    {
+        alignas(256) std::array<std::uint8_t, 8> sliceKeyMemory{};
+        const auto sliceKeys = reinterpret_cast<std::uintptr_t>(sliceKeyMemory.data());
+        auto keyed = queue;
+        keyed.context[0x31c] |= 0x10000000;
+        keyed.context[0x325] = static_cast<std::uint32_t>(sliceKeys >> 8u);
+        keyed.context[0x3a8] = static_cast<std::uint32_t>(sliceKeys >> 40u);
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys + 1024u / 256u, "a color view of one slice did not move the target's DCC keys by one slice's keys");
+        keyed.context[0x31b] = 1u << 13u;
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys, "a color view from the first slice moved the target's DCC keys");
+    }
     queue.context[0x3b8] = 0x09000001;
     const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
     Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
@@ -4702,11 +4713,21 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
-    for (const auto [packedInfo, name] : {std::pair{6u << 2u, "10_11_11 unorm"}, std::pair{(7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u, "11_11_10 float"}}) {
-        auto packed = rasterizedResolve;
-        for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
-        expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
-    }
+    auto packed = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(packed); }, "CB resolves of 10_11_11 unorm color targets");
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u;
+    const auto floatPass = DecodeColorMetadataPass(packed);
+    Require(floatPass.has_value() && floatPass->mode == ColorMetadataPass::Mode::Resolve && floatPass->source.has_value() && floatPass->source->packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && floatPass->source->samples == 2 && floatPass->targets.size() == 1, "a CB resolve of an 11_11_10 float target was refused");
+    auto swapped = packed;
+    swapped.context[0x32b] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(swapped); }, "11_11_10 float color targets of different layouts");
+    auto unormDestination = packed;
+    unormDestination.context[0x32b] = (unormDestination.context[0x32b] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormDestination); }, "11_11_10 float color targets of different layouts");
+    auto unormSource = packed;
+    unormSource.context[0x31c] = (unormSource.context[0x31c] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormSource); }, "11_11_10 float color targets of different layouts");
     auto uintSource = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
     const auto uintPass = DecodeColorMetadataPass(uintSource);
@@ -10481,7 +10502,7 @@ void registeredReadableCoverTests() {
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const auto add = [&](std::size_t index, bool readable) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, true);
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, readable);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     const auto remove = [&](std::size_t index) {
@@ -10504,6 +10525,18 @@ void registeredReadableCoverTests() {
     Require(!RegisteredReadableCovers(base, 0), "an empty range must not be covered");
     for (std::size_t index = 0; index < 4; ++index) remove(index);
     Require(!RegisteredReadableCovers(base, block), "a removed allocation must not be covered");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, block, false, false, true, true);
+        mutation.Add(memory + block, block, false, false, true, false);
+    }
+    std::vector<RegisteredPiece> pieces;
+    Require(RegisteredReadableCovers(base, block, &pieces) && pieces.size() == 1 && pieces[0].writable && pieces[0].gpu, "a gpu-rw allocation without cpu access must be covered as writable");
+    Require(RegisteredReadableCovers(base + block, block, &pieces) && pieces.size() == 1 && !pieces[0].writable && pieces[0].gpu, "a gpu-read allocation without cpu access must be covered as read-only");
+    Require(RegisteredReadableCovers(base, 2 * block, &pieces) && pieces.size() == 2, "adjacent gpu-only allocations must be covered together");
+    Require(RegisteredReadableEnd(base) == base + block, "RegisteredReadableEnd missed a gpu-only allocation");
+    remove(0);
+    remove(1);
     ::operator delete(memory, std::align_val_t{block});
 }
 
