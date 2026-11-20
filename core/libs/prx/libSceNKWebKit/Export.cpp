@@ -23715,19 +23715,7 @@ int APS5_VABI _ZN7bmalloc6IsoTLS13ensureEntriesEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc6IsoTLS8scavengeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc9Scavenger8scheduleEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
