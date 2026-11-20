@@ -10,6 +10,10 @@
 #include <new>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 using NKWebKit::WtfAbi::AtomString;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
@@ -21,6 +25,22 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <typename Function>
+static Function Exported(const char* name, Function linked) {
+#ifdef _WIN32
+    auto* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceNKWebKit.prx"), name));
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceNKWebKit\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<Function>(symbol);
+#else
+    (void)name;
+    return linked;
+#endif
+}
+#define ExportedFunction(name) Exported(#name, &name)
 
 namespace {
 
@@ -200,8 +220,8 @@ void TestDestructors() {
     _ZN7WebCore16TrackPrivateBaseC2Ev(object.data());
     const void* const* vptr;
     std::memcpy(&vptr, object.data(), sizeof(vptr));
-    Require(vptr[0] == reinterpret_cast<const void*>(&_ZN7WebCore16TrackPrivateBaseD1Ev));
-    Require(vptr[1] == reinterpret_cast<const void*>(&_ZN7WebCore16TrackPrivateBaseD0Ev));
+    Require(vptr[0] == reinterpret_cast<const void*>(ExportedFunction(_ZN7WebCore16TrackPrivateBaseD1Ev)));
+    Require(vptr[1] == reinterpret_cast<const void*>(ExportedFunction(_ZN7WebCore16TrackPrivateBaseD0Ev)));
 
     const auto before = object;
     _ZN7WebCore16TrackPrivateBaseD1Ev(object.data());
