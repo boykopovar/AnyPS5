@@ -30,12 +30,19 @@ void Require(bool value, const char* what) {
 struct TestAllocator {
     XmlMemAllocator base;
     std::vector<void*> blocks;
+    bool failNext = false;
+    std::size_t allocations = 0;
 };
 
 void* APS5_VABI TestAllocate(XmlMemAllocator* self, std::size_t size, void* userData) {
     auto* allocator = reinterpret_cast<TestAllocator*>(self);
     Require(userData == reinterpret_cast<void*>(0x1234), "allocate receives the user data");
     Require(size != 0, "allocate receives a non-zero size");
+    ++allocator->allocations;
+    if (allocator->failNext) {
+        allocator->failNext = false;
+        return nullptr;
+    }
     void* block = std::malloc(size);
     allocator->blocks.push_back(block);
     return block;
@@ -388,6 +395,69 @@ void TestUnreadableString() {
     Require(threw, "a null buffer with a non-zero size throws");
 }
 
+void TestCopyAllocationFailureRetry() {
+    Fixture f;
+    const std::size_t before = f.LiveBlocks();
+    XmlHandle source{nullptr};
+    _ZN3sce3Xml13AttributeListC1Ev(&source);
+    Require(_ZN3sce3Xml13AttributeList10initializeEPKNS0_11InitializerE(&source, &f.initializer) == 0, "initialize the source");
+    Require(f.LiveBlocks() == before + 1, "the source takes one block");
+    const XmlString name = Text("alpha");
+    const XmlString value = Text("one");
+    Require(_ZN3sce3Xml13AttributeList12addAttributeEPKNS0_6StringES4_(&source, &name, &value) == 0, "add the first attribute");
+    const XmlString second = Text("beta");
+    const XmlString secondValue = Text("two");
+    Require(_ZN3sce3Xml13AttributeList12addAttributeEPKNS0_6StringES4_(&source, &second, &secondValue) == 0, "add the second attribute");
+    XmlString result{};
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &source, &name);
+    Require(Read(result) == "one", "the source has the first value");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &source, &second);
+    Require(Read(result) == "two", "the source has the second value");
+    const void* const sourceImpl = source.impl;
+    const std::size_t callsBefore = f.allocator.allocations;
+
+    f.allocator.failNext = true;
+    XmlHandle destination{reinterpret_cast<void*>(0x5555)};
+    bool threw = false;
+    try {
+        _ZN3sce3Xml13AttributeListC1ERKS1_(&destination, &source);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "a failed copy allocation throws a logic_error in the current adapter");
+    Require(f.allocator.allocations == callsBefore + 1, "the failed copy makes one allocation request");
+    Require(!f.allocator.failNext, "the failed copy consumes the single failure");
+    Require(destination.impl == nullptr, "a failed copy leaves the destination null");
+    Require(source.impl == sourceImpl, "a failed copy leaves the source handle unchanged");
+    Require(_ZNK3sce3Xml13AttributeList9getLengthEv(&source) == 2, "a failed copy leaves the source length unchanged");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &source, &name);
+    Require(Read(result) == "one", "a failed copy leaves the first source value unchanged");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &source, &second);
+    Require(Read(result) == "two", "a failed copy leaves the second source value unchanged");
+    Require(f.LiveBlocks() == before + 1, "a failed copy leaves the live block count unchanged");
+
+    _ZN3sce3Xml13AttributeListC1ERKS1_(&destination, &source);
+    Require(destination.impl != nullptr, "a retry on the same destination succeeds");
+    Require(destination.impl != source.impl, "the retry has a separate handle");
+    Require(_ZNK3sce3Xml13AttributeList9getLengthEv(&destination) == 2, "the retry copies both attributes");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &destination, &name);
+    Require(Read(result) == "one", "the retry copies the first value");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &destination, &second);
+    Require(Read(result) == "two", "the retry copies the second value");
+    Require(f.LiveBlocks() == before + 2, "the retry takes one block");
+
+    Require(_ZN3sce3Xml13AttributeList5clearEv(&destination) == 0, "clear the destination");
+    Require(_ZNK3sce3Xml13AttributeList9getLengthEv(&destination) == 0, "the destination clears independently");
+    Require(_ZNK3sce3Xml13AttributeList9getLengthEv(&source) == 2, "clearing the destination leaves the source unchanged");
+    _ZN3sce3Xml13AttributeListD1Ev(&destination);
+    Require(f.LiveBlocks() == before + 1, "the destination teardown frees its block");
+    Require(_ZNK3sce3Xml13AttributeList9getLengthEv(&source) == 2, "the source survives destination teardown");
+    _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&result, &source, &name);
+    Require(Read(result) == "one", "the source value survives destination teardown");
+    _ZN3sce3Xml13AttributeListD1Ev(&source);
+    Require(f.LiveBlocks() == before, "the source teardown frees its block");
+}
+
 }
 
 int main() {
@@ -397,6 +467,7 @@ int main() {
     TestAttr();
     TestAllocationAccounting();
     TestUnreadableString();
+    TestCopyAllocationFailureRetry();
     std::puts("guest_xml_attribute_list: all checks passed");
     return 0;
 }
