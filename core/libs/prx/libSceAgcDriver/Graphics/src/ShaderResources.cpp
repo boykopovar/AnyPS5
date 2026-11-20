@@ -591,7 +591,10 @@ std::vector<LookupRecord>& lookupLog() {
     return ShaderRecompiler::ThreadOwned(lookupLogSlot);
 }
 
+thread_local std::uint64_t lookupLogPushes = 0;
+
 void logLookup(const LookupRecord& record) {
+    ++lookupLogPushes;
     auto& log = lookupLog();
     if (log.size() >= LookupLogBound) {
         const auto dropped = std::min(LookupLogBound / 2, buildLookupsStart);
@@ -990,7 +993,9 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
-std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false) {
+std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false);
+
+std::shared_ptr<Texture> lookupSampledTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes, bool depthCompare, VkImageViewType multisampleViewType, bool layerRows) {
     Require(!layerRows || (requested.dimension == TextureDimension::k1DArray && !depthCompare), "only a sampled 1D array is laid out as rows of a 2D image");
     const auto resource = layerRows ? requested : ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (resource.baseAddress != requested.baseAddress) guestBytes = 0;
@@ -1383,6 +1388,113 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     reportCacheCounts(cache, budget);
     reportTextureCounters();
     if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
+    return texture;
+}
+
+struct SampledLookupKey {
+    VkDevice device = VK_NULL_HANDLE;
+    std::array<std::uint32_t, 8> words{};
+    std::array<std::uint32_t, 8> shape{};
+    std::uint64_t address = 0;
+    std::uint64_t guestBytes = 0;
+    std::uint32_t components = 0;
+    std::uint32_t flags = 0;
+    bool operator==(const SampledLookupKey&) const = default;
+};
+
+struct SampledLookupKeyHash {
+    std::size_t operator()(const SampledLookupKey& key) const {
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+        mix(reinterpret_cast<std::uintptr_t>(key.device));
+        for (const auto word : key.words) mix(word);
+        for (const auto word : key.shape) mix(word);
+        mix(key.address);
+        mix(key.guestBytes);
+        mix(key.components);
+        mix(key.flags);
+        return static_cast<std::size_t>(hash);
+    }
+};
+
+struct SampledLookupProof {
+    std::weak_ptr<Texture> texture;
+    LookupRecord record;
+    std::uint64_t pendingSerial = 0;
+    std::uint64_t imports = 0;
+    std::uint64_t allocations = 0;
+    std::uint64_t unwatched = 0;
+};
+
+struct SampledLookupMemo {
+    std::unordered_map<SampledLookupKey, SampledLookupProof, SampledLookupKeyHash> proofs;
+    std::uint32_t depth = 0;
+};
+
+constexpr std::size_t SampledLookupMemoEntries = 65536;
+
+thread_local SampledLookupMemo* sampledLookupMemoSlot = nullptr;
+
+bool MemoizableSampledLookup(const LookupRecord& record, const Texture& texture) {
+    return record.object == &texture && record.source == nullptr && !record.depth && record.generation != 0 && record.keys == DccKeys::Uncompressed && record.resource.dccAddress == 0 && record.committed.empty() && texture.SharedStorageSource() == nullptr;
+}
+
+std::shared_ptr<Texture> provedSampledLookup(const Context& context, SampledLookupProof& proof) {
+    auto texture = proof.texture.lock();
+    if (texture == nullptr || texture->Released()) return nullptr;
+    if (proof.imports != HostImportSetGeneration() || proof.allocations != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || proof.unwatched != GuestMemory::UnwatchSerial()) return nullptr;
+    const auto address = proof.record.resource.baseAddress;
+    const auto bytes = static_cast<std::size_t>(proof.record.bytes);
+    if (DepthSurfaceOverlaps(context.device, address, bytes)) return nullptr;
+    if (const auto serial = StorageTexture::PendingSerial(); serial != proof.pendingSerial) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
+        if (StorageTexture::AnyPendingOverlaps(range) || StorageTexture::PendingSerial() != serial) return nullptr;
+        proof.pendingSerial = serial;
+    }
+    if (GuestMemory::CollectWrites(address, bytes) == 0 || !GuestMemory::UnchangedSince(address, bytes, proof.record.generation)) return nullptr;
+    RequireNoMultisampleTarget(address, bytes, "a texture read");
+    if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->BoundKeptBytes();
+    return texture;
+}
+
+std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes, bool depthCompare, VkImageViewType multisampleViewType, bool layerRows) {
+    auto& memo = ShaderRecompiler::ThreadOwned(sampledLookupMemoSlot);
+    struct Nesting {
+        std::uint32_t& depth;
+        explicit Nesting(std::uint32_t& value) : depth(value) { ++depth; }
+        ~Nesting() { --depth; }
+    };
+    if (memo.depth != 0 || words.size() > 8 || RuntimeSwitches::Set(RuntimeSwitch::NoSampledLookupMemo)) {
+        const Nesting nested(memo.depth);
+        return lookupSampledTexture(context, words, requested, components, guestBytes, depthCompare, multisampleViewType, layerRows);
+    }
+    const Nesting outer(memo.depth);
+    SampledLookupKey key;
+    key.device = context.device;
+    std::copy(words.begin(), words.end(), key.words.begin());
+    key.shape = {requested.width, requested.height, requested.depthOrLastArray, requested.baseArray, requested.mipCount, requested.baseLevel, requested.format, static_cast<std::uint32_t>(requested.dimension)};
+    key.address = requested.baseAddress;
+    key.guestBytes = guestBytes;
+    key.components = static_cast<std::uint32_t>(components.r) | (static_cast<std::uint32_t>(components.g) << 8u) | (static_cast<std::uint32_t>(components.b) << 16u) | (static_cast<std::uint32_t>(components.a) << 24u);
+    key.flags = (depthCompare ? 1u : 0u) | (layerRows ? 2u : 0u) | (static_cast<std::uint32_t>(multisampleViewType) << 2u);
+    if (const auto found = memo.proofs.find(key); found != memo.proofs.end()) {
+        if (auto texture = provedSampledLookup(context, found->second)) {
+            logLookup(found->second.record);
+            return texture;
+        }
+        memo.proofs.erase(found);
+    }
+    const auto pendingSerial = StorageTexture::PendingSerial();
+    const auto imports = HostImportSetGeneration();
+    const auto allocations = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto unwatched = GuestMemory::UnwatchSerial();
+    const auto pushes = lookupLogPushes;
+    auto texture = lookupSampledTexture(context, words, requested, components, guestBytes, depthCompare, multisampleViewType, layerRows);
+    if (texture == nullptr || lookupLogPushes != pushes + 1 || lookupLog().empty()) return texture;
+    const auto& record = lookupLog().back();
+    if (!MemoizableSampledLookup(record, *texture) || StorageTexture::PendingSerial() != pendingSerial || HostImportSetGeneration() != imports || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != allocations || GuestMemory::UnwatchSerial() != unwatched || DepthSurfaceOverlaps(context.device, record.resource.baseAddress, record.bytes)) return texture;
+    if (memo.proofs.size() >= SampledLookupMemoEntries) memo.proofs.clear();
+    memo.proofs.insert_or_assign(key, SampledLookupProof{texture, record, pendingSerial, imports, allocations, unwatched});
     return texture;
 }
 
