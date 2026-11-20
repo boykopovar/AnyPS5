@@ -45,6 +45,20 @@ class RedactTests(unittest.TestCase):
             home="\\\\FileHost\\Share\\Example\\", user="", host="")
         self.assertEqual(out, "opened ~/games/title.elf")
 
+    def test_posix_home_is_not_replaced_inside_a_sibling_directory(self):
+        out = bug_report.redact(
+            "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and /home/ana/title.elf",
+            home="/home/ana", user="", host="")
+        self.assertEqual(out, "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and ~/title.elf")
+
+    def test_posix_home_before_a_period_is_redacted(self):
+        out = bug_report.redact("Home is /home/ana. Sibling is /home/ana.old.", home="/home/ana", user="", host="")
+        self.assertEqual(out, "Home is ~. Sibling is /home/ana.old.")
+
+    def test_posix_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact("opened /home/ana/title.elf", home="/home/ana/", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf")
+
     def test_short_or_empty_identities_are_not_replaced(self):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
