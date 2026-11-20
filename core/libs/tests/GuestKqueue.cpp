@@ -342,7 +342,7 @@ static void TimerReadd() {
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
-    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)) == 0);
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd | EvDisable, 0, 100000)) == 0);
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -1828,6 +1828,37 @@ static void TimerDisableEnableRearm() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void TimerToggleTakesNewPeriod() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    int other = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 30000, &marker)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDisable, NoteUseconds, 250000, &other)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &other)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 1 && events[0].udata == &other && events[0].data == 1);
+    const auto first = std::chrono::steady_clock::now();
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].data == 1);
+    Require(std::chrono::steady_clock::now() - first >= std::chrono::milliseconds(150));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvAdd, NoteUseconds, 400000)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvDisable)) == 0);
+    Require(Apply(kq, Change(2, EvfiltTimer, EvAdd | EvEnable, NoteUseconds, 20000, &marker)) == 0);
+    const auto readded = std::chrono::steady_clock::now();
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 2 && events[0].udata == &marker && events[0].data == 1);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 2 && events[0].data >= 1);
+    Require(std::chrono::steady_clock::now() - readded < std::chrono::milliseconds(780));
+    Require(Throws([kq] { Apply(kq, Change(2, EvfiltTimer, EvDisable, NoteUseconds, -5)); }));
+    Require(Apply(kq, Change(2, EvfiltTimer, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvEnable, NoteUseconds, 1000)), GuestEnoent);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void PeriodicTimerFiresTwice() {
     const int kq = kqueue_nid_postfix();
     KernelEvent events[4]{};
@@ -2001,6 +2032,7 @@ int main(int argc, char** argv) {
     VnodeOneshotWatchStops();
     PeriodicTimerFiresTwice();
     TimerDisableEnableRearm();
+    TimerToggleTakesNewPeriod();
 #endif
 #ifdef _WIN32
     RecycleBinDeleteWatchedFile();

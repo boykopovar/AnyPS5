@@ -1,0 +1,5 @@
+# libkernel
+
+## change [EVFILT_TIMER modify with data 0]
+
+- [EVFILT_TIMER modify with data 0](../../../core/libs/prx/libkernel/Equeue/src/Kqueue.cpp) (libkernel) - a change without `EV_ADD` and with `data` and `fflags` unset keeps the period, where PS5 firmware 13.60 took FreeBSD's zero default: the timer then fired about every millisecond, also after `EV_DISABLE` or `EV_ENABLE` with `data` 0. Otherwise `data` 0 or less, an unknown unit, flags other than `EV_ADD`, `EV_ONESHOT`, `EV_ENABLE` and `EV_DISABLE`, a one-shot timer or a period that overflows the armed expiry throw. A positive `data` with a known unit replaces the period and `udata` and keeps the armed expiry, as FreeBSD 11's [`kqueue_register`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_event.c) copies `data` and `fflags` for every change that does not delete the note; not measured on a console. An enable reports the expiries missed while disabled and keeps the phase, as `filt_timerexpire` does (`TimerDisableEnableRearm`, `TimerToggleTakesNewPeriod`).
