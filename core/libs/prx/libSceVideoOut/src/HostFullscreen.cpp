@@ -9,6 +9,10 @@ HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized
     return HostFullscreenMode::Borderless;
 }
 
+bool WindowModeStartsBorderless(const char* value) {
+    return value != nullptr && std::strcmp(value, "borderless") == 0;
+}
+
 std::string HostFullscreenWarning(const char* value) {
     std::string sanitized;
     if (value != nullptr) {

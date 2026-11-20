@@ -327,6 +327,14 @@ static int FailedCreateTest() {
     return 0;
 }
 
+static void SetWindowModeSetting(const char* value) {
+#ifdef _WIN32
+    _putenv_s("ANYPS5_WINDOW_MODE", value);
+#else
+    SDL_setenv("ANYPS5_WINDOW_MODE", value, 1);
+#endif
+}
+
 static void SetFullscreenSetting(const char* value) {
 #ifdef _WIN32
     // SDL_setenv on Windows only changes the process block, which std::getenv does not read.
@@ -403,6 +411,37 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
     }
+    SetFullscreenSetting("windowed");
+    SetWindowModeSetting("borderless");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Borderless(window) && !Fullscreen(window), "ANYPS5_WINDOW_MODE=borderless did not start borderless");
+        window.ToggleBorderless();
+        Require(!Borderless(window) && !Fullscreen(window), "F2 did not leave a borderless start");
+    }
+    SetFullscreenSetting("borderless");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Fullscreen(window) && !Borderless(window), "a fullscreen start did not take precedence over a borderless window mode");
+    }
+    SetFullscreenSetting("windowed");
+    SetWindowModeSetting("yes");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(!Borderless(window) && !Fullscreen(window), "a window mode other than borderless started borderless");
+    }
     SetFullscreenSetting("yes");
     {
         DisplayWindow window;
@@ -422,6 +461,10 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "window") == 0) return WindowTest();
     if (argc > 1 && std::strcmp(argv[1], "failedcreate") == 0) return FailedCreateTest();
     ParseTest();
+    Require(WindowModeStartsBorderless("borderless") && !WindowModeStartsBorderless(nullptr), "ANYPS5_WINDOW_MODE=borderless was not recognised");
+    for (const char* other : {"", "windowed", "1", "0", "Borderless", "borderless ", "yes"}) {
+        Require(!WindowModeStartsBorderless(other), (std::string("a window mode other than borderless started borderless: ") + other).c_str());
+    }
     SkipPolicyTest();
     ToggleTest();
     RestoreSizeTest();

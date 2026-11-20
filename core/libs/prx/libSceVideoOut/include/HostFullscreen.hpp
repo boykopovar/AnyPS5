@@ -11,6 +11,7 @@ enum class HostFullscreenMode {
 
 HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized = nullptr);
 std::string HostFullscreenWarning(const char* value);
+bool WindowModeStartsBorderless(const char* value);
 
 struct HostWindowSize {
     int width = 0;
