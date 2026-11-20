@@ -1113,6 +1113,71 @@ void SignatureOperationGuards() {
     ReleaseKey(key);
 }
 
+LibreSsl3EvpPkey* NewPublicKey(std::int32_t keyType, const std::vector<unsigned char>& modulus,
+    const std::vector<unsigned char>& exponent) {
+    auto* key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(key != nullptr);
+    key->type = keyType;
+    key->method = FindNativePkeyAsn1Method_nid_no_patch(keyType);
+    Require(key->method != nullptr);
+    auto* rsa = RSA_new_nid_disambig1_nid_postfix();
+    Require(rsa != nullptr);
+    key->key = rsa;
+    if (modulus.empty()) return key;
+    auto* n = LibreSsl3::NewRsaBignum_nid_no_patch(modulus.data(), modulus.size());
+    auto* e = LibreSsl3::NewRsaBignum_nid_no_patch(exponent.data(), exponent.size());
+    Require(n != nullptr && e != nullptr);
+    Require(RSA_set0_key_nid_postfix(rsa, n, e, nullptr) == 1);
+    return key;
+}
+
+std::vector<unsigned char> ModulusOfBits(int bits) {
+    std::vector<unsigned char> bytes(static_cast<std::size_t>((bits + 7) / 8), 0);
+    bytes.front() = static_cast<unsigned char>(1u << ((bits - 1) % 8));
+    bytes.back() |= 1;
+    return bytes;
+}
+
+void NativeKeyQueries() {
+    const std::vector<unsigned char> modulus(std::begin(KeyModulus), std::end(KeyModulus));
+    const std::vector<unsigned char> exponent(std::begin(PublicExponent), std::end(PublicExponent));
+    std::vector<unsigned char> changedModulus = modulus;
+    changedModulus[changedModulus.size() / 2] ^= 0x10;
+    auto* full = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* publicOnly = NewPublicKey(LibreSsl3PkeyRsa, modulus, exponent);
+    auto* otherExponent = NewPublicKey(LibreSsl3PkeyRsa, modulus, {3});
+    auto* otherModulus = NewPublicKey(LibreSsl3PkeyRsa, changedModulus, exponent);
+    auto* emptyFirst = NewPublicKey(LibreSsl3PkeyRsa, {}, {});
+    auto* emptySecond = NewPublicKey(LibreSsl3PkeyRsa, {}, {});
+    auto* pss = NewNativeKey(LibreSsl3PkeyRsaPss);
+    auto* pssPublicOnly = NewPublicKey(LibreSsl3PkeyRsaPss, modulus, exponent);
+    Require(EVP_PKEY_cmp_nid_postfix(full, full) == 1);
+    Require(EVP_PKEY_cmp_nid_postfix(full, publicOnly) == 1 && EVP_PKEY_cmp_nid_postfix(publicOnly, full) == 1);
+    Require(EVP_PKEY_cmp_nid_postfix(full, otherExponent) == 0 && EVP_PKEY_cmp_nid_postfix(otherExponent, full) == 0);
+    Require(EVP_PKEY_cmp_nid_postfix(full, otherModulus) == 0 && EVP_PKEY_cmp_nid_postfix(otherModulus, full) == 0);
+    Require(EVP_PKEY_cmp_nid_postfix(full, emptyFirst) == 0 && EVP_PKEY_cmp_nid_postfix(emptyFirst, full) == 0);
+    Require(EVP_PKEY_cmp_nid_postfix(emptyFirst, emptySecond) == 1);
+    Require(EVP_PKEY_cmp_nid_postfix(pss, pssPublicOnly) == 1 && EVP_PKEY_cmp_nid_postfix(pssPublicOnly, pss) == 1);
+    Require(EVP_PKEY_cmp_nid_postfix(full, pss) == -1 && EVP_PKEY_cmp_nid_postfix(pss, full) == -1);
+    Require(EVP_PKEY_security_bits_nid_postfix(full) == 112 && EVP_PKEY_security_bits_nid_postfix(pss) == 112);
+    ExpectErrors({});
+    for (auto* key : {full, publicOnly, otherExponent, otherModulus, emptyFirst, emptySecond, pss, pssPublicOnly}) ReleaseKey(key);
+
+    struct Strength {
+        int bits;
+        int security;
+    };
+    for (const Strength& strength : {Strength {1023, 0}, Strength {1024, 80}, Strength {2047, 80}, Strength {2048, 112},
+             Strength {3071, 112}, Strength {3072, 128}, Strength {7679, 128}, Strength {7680, 192}, Strength {15359, 192},
+             Strength {15360, 256}}) {
+        auto* key = NewPublicKey(LibreSsl3PkeyRsa, ModulusOfBits(strength.bits), exponent);
+        Require(EVP_PKEY_bits_nid_postfix(key) == strength.bits);
+        Require(EVP_PKEY_security_bits_nid_postfix(key) == strength.security);
+        ReleaseKey(key);
+    }
+    ExpectErrors({});
+}
+
 void KeyConsistency() {
     auto* key = NewSigningKey(true, true, true);
     Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key->key)) == 1);
@@ -1545,6 +1610,7 @@ int main() {
     SignatureControls();
     SignatureOperationGuards();
     KeyConsistency();
+    NativeKeyQueries();
     DigestSignatures();
     SignFinalVerifyFinal();
     DigestSignInitWithoutDigest();

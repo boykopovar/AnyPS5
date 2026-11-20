@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## change [EVP_PKEY_size, EVP_PKEY_security_bits and EVP_PKEY_cmp]
+
+- [EVP_PKEY_size, EVP_PKEY_security_bits and EVP_PKEY_cmp](../../../core/libs/prx/libSceLibreSsl3/src/PkeyQueries.cpp) have no console ABI or behavior verification. Dispatch follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c) using the existing 32-byte key and the LP64 method slots in that revision's `evp_local.h`: public comparison at 56, size at 96, security bits at 112 and parameter comparison at 160. The native RSA and RSA-PSS methods fill the comparison and security-bits slots as `rsa_ameth.c` does; EC keys have no native ASN.1 method, so the three queries return 0, -2 and -2 for them. Null comparison operands, undefined upstream, throw; null size/security queries and missing callbacks keep upstream's distinct results. Malformed method pointers remain unverified. Closes when: layouts and complete key lifetimes are measured on a console.
