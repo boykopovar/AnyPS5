@@ -136,6 +136,7 @@ void TestReadWriteLockingPrecedence() {
     Require(pthread_rwlock_wrlock_nid_postfix(&rwlock) == PosixEinval);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == PosixEinval);
     Require(pthread_rwlock_trywrlock_nid_postfix(&rwlock) == PosixEinval);
+    const KernelTimespec validPast{0, 0};
     Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &validPast) == PosixEinval);
     Require(pthread_rwlock_timedwrlock_nid_postfix(&rwlock, &validPast) == PosixEinval);
     Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&rwlock, 0) == PosixEinval);
