@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Units without a baseline outside the write watch]
+
+- [Units without a baseline outside the write watch](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) (libSceAgcDriver) - results that land outside the watch in a unit with a write generation but no saved bytes throw when stored, unless the unwatch hook hashed the unit while watched and its bytes still match, or renewed the upload copy of an image of up to 1 MiB (after publishing the unit's shadowed results and waiting for all recorded work). A draw's storage images are not refreshed when their memory changes outside the watch between its build and its record (a dispatch's are), and an image above 1 MiB is checked there only against its saved bytes. The hook hashes nothing where CPU writes cannot be proven (a failed collect or import page walk); on Linux `GuestWriteWatchUnregister` takes ranges out of the watch without it. Closes when: every range leaves the watch through the hook with its CPU writes proven, and draws refresh their storage images like dispatches.
