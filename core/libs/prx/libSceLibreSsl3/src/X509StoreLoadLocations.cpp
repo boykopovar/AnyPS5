@@ -1056,7 +1056,7 @@ bool NextLine(const std::string& text, std::size_t& position, std::string& line)
     if (end == std::string::npos) end = text.size();
     line.assign(text, position, end - position);
     position = end < text.size() ? end + 1 : text.size();
-    if (!line.empty() && line.back() == '\r') line.pop_back();
+    while (!line.empty() && static_cast<signed char>(line.back()) <= ' ') line.pop_back();
     return true;
 }
 
@@ -1101,10 +1101,7 @@ std::vector<std::vector<unsigned char>> ReadPemCertificates(const std::string& t
     std::string line;
     while (NextLine(text, position, line)) {
         if (line.rfind("-----BEGIN ", 0) != 0) continue;
-        if (line.size() < 16 || line.compare(line.size() - 5, 5, "-----") != 0) {
-            malformed = true;
-            return certificates;
-        }
+        if (line.size() < 16 || line.compare(line.size() - 5, 5, "-----") != 0) continue;
         const std::string label = line.substr(11, line.size() - 16);
         std::string body;
         bool closed = false;
@@ -1153,7 +1150,6 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
     if (!ReadFile(path, contents)) return 0;
     bool malformed = false;
     const std::vector<std::vector<unsigned char>> certificates = ReadPemCertificates(contents, malformed);
-    if (malformed) return 0;
     int count = 0;
     for (const auto& bytes : certificates) {
         std::span<const unsigned char> input(bytes);
@@ -1174,7 +1170,7 @@ int LoadCertificates(LibreSslX509Store* store, const char* path) {
         }
         ++count;
     }
-    return count;
+    return malformed ? 0 : count;
 }
 
 unsigned long NameHash(const LibreSslX509Name* name) {

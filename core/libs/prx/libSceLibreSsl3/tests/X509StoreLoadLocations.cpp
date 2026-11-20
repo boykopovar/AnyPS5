@@ -281,6 +281,45 @@ MIIB
     Require(remove_nid_postfix(notACertificate.c_str()) == 0);
 }
 
+std::string WithLineEnding(const char* pem, const std::string& ending) {
+    std::string result;
+    for (const char* p = pem; *p; ++p) {
+        if (*p == '\n') result += ending;
+        else result.push_back(*p);
+    }
+    return result;
+}
+
+int LoadedFrom(const std::string& name, const std::string& contents, int expectedResult) {
+    const std::string path = WriteFile(name, contents);
+    LibreSslX509Store* store = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == expectedResult);
+    const int count = ObjectCount(store);
+    if (count) Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    else X509_STORE_free_nid_postfix(store);
+    Require(remove_nid_postfix(path.c_str()) == 0);
+    return count;
+}
+
+void TestPemLines() {
+    Require(LoadedFrom("libressl3-load-locations-spaces.pem", WithLineEnding(CertificateA, " \n"), 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-tabs.pem", WithLineEnding(CertificateA, " \t \r\n"), 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-crcrlf.pem", WithLineEnding(CertificateA, "\r\r\n"), 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-control.pem", WithLineEnding(CertificateA, "\x01\x1F\n"), 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-high.pem", WithLineEnding(CertificateA, "\xA0\xFF\n"), 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-two.pem", WithLineEnding(CertificateA, "  \n") + WithLineEnding(CertificateB, "\t\n"), 1) == 2);
+    Require(LoadedFrom("libressl3-load-locations-inner.pem", std::string("-----BEGIN CERTIFICATE ----- \n") + CertificateA, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-open-begin.pem", std::string("-----BEGIN CERTIFICATE\n") + CertificateA, 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-short-begin.pem", std::string("-----BEGIN ----\n-----BEGIN CERTIFICATE---\n") + CertificateA, 1) == 1);
+    Require(LoadedFrom("libressl3-load-locations-only-open.pem", "-----BEGIN CERTIFICATE\nMIIB\n", 0) == 0);
+    const std::string broken = "-----BEGIN CERTIFICATE-----\nMIIB!!!\n-----END CERTIFICATE-----\n";
+    Require(LoadedFrom("libressl3-load-locations-kept.pem", std::string(CertificateA) + broken, 0) == 1);
+    Require(LoadedFrom("libressl3-load-locations-kept-two.pem", std::string(CertificateA) + CertificateB + broken + CertificateA, 0) == 2);
+    Require(LoadedFrom("libressl3-load-locations-unclosed.pem", std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n", 0) == 1);
+    Require(LoadedFrom("libressl3-load-locations-first-broken.pem", broken + CertificateA, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-end-label.pem", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END X509 CRL-----\n", 0) == 0);
+}
+
 void TestUnreadablePath() {
     LibreSslX509Store* store = NewStore();
     const auto unreadable = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(1));
@@ -403,6 +442,7 @@ int main() {
     TestNullArguments();
     TestMissingFile();
     TestEmptyAndMalformedFiles();
+    TestPemLines();
     TestAddCertificate();
     TestUnreadablePath();
     TestHashedDirectory();
