@@ -368,6 +368,7 @@ private:
         append(key, value.maxImageArrayLayers);
         append(key, value.narrowSubgroupClock);
         append(key, value.fragmentBarycentricBuiltins);
+        append(key, value.barycentricBuiltinsReadFragCoord);
         append(key, value.float64DenormPreserve);
         append(key, value.depthRangeRemap);
         append(key, value.registrationModules);

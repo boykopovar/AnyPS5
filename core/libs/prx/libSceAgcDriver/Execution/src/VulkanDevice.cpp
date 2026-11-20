@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FragmentBarycentricProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -578,6 +579,8 @@ struct VulkanDevice::State {
     bool shaderTerminateInvocation = false;
     bool fusedExactArithmetic = false;
     bool fragmentBarycentricBuiltins = false;
+    bool barycentricBuiltinsReadFragCoord = false;
+    bool barycentricBuiltinsWrong = false;
     bool hostInterpolationFirst = false;
     bool geometryShader = false;
     bool multiViewport = false;
@@ -2888,6 +2891,18 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    if (state->fragmentBarycentricBuiltins) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        const auto plain = ProbeFragmentBarycentricBuiltins(graphicsContext(), false);
+        std::string verdict = "native";
+        if (!plain.Correct()) {
+            const auto guarded = ProbeFragmentBarycentricBuiltins(graphicsContext(), true);
+            state->barycentricBuiltinsReadFragCoord = guarded.Correct();
+            state->barycentricBuiltinsWrong = !guarded.Correct();
+            verdict = (state->barycentricBuiltinsWrong ? "emulated, " : "native beside gl_FragCoord, ") + std::to_string(guarded.perspective.mismatches + guarded.linear.mismatches) + " of " + std::to_string(guarded.perspective.compared + guarded.linear.compared) + " probe results differ beside it";
+        }
+        std::fprintf(stderr, "[barycentrics] fragment barycentric built-ins: %s (alone, %u of %u perspective and %u of %u linear probe results differ, %.0f ms)\n", verdict.c_str(), plain.perspective.mismatches, plain.perspective.compared, plain.linear.mismatches, plain.linear.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -4771,6 +4786,11 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
+    target.barycentricBuiltinsReadFragCoord = state->barycentricBuiltinsReadFragCoord;
+    if (state->barycentricBuiltinsWrong) {
+        target.fragmentShaderBarycentricEnabled = false;
+        target.fragmentBarycentricBuiltins = false;
+    }
     return target;
 }
 

@@ -306,6 +306,26 @@ foreach(agcSampleOrderVariant IN ITEMS "R8;comp;-DTEXEL_FORMAT=r8ui" "R16;comp;-
     )
     list(APPEND agcSampleOrderShaderHeaders ${agcSampleOrderShaderHeader})
 endforeach()
+foreach(agcBarycentricProbeVariant IN ITEMS "Vertex;vert;0;0" "Smooth;frag;0;0" "Linear;frag;1;0" "SmoothFragCoord;frag;0;1" "LinearFragCoord;frag;1;1")
+    list(GET agcBarycentricProbeVariant 0 agcBarycentricProbeName)
+    list(GET agcBarycentricProbeVariant 1 agcBarycentricProbeExtension)
+    list(GET agcBarycentricProbeVariant 2 agcBarycentricProbeLinear)
+    list(GET agcBarycentricProbeVariant 3 agcBarycentricProbeFragCoord)
+    string(TOUPPER "${agcBarycentricProbeName}" agcBarycentricProbeSymbol)
+    set(agcBarycentricProbeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/BarycentricProbe.${agcBarycentricProbeExtension})
+    set(agcBarycentricProbeShaderSpv ${agcTextureDetileGeneratedDir}/BarycentricProbe${agcBarycentricProbeName}.spv)
+    set(agcBarycentricProbeShaderHeader ${agcTextureDetileGeneratedDir}/BarycentricProbe${agcBarycentricProbeName}_spv.h)
+    add_custom_command(
+            OUTPUT "${agcBarycentricProbeShaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DLINEAR=${agcBarycentricProbeLinear} -DFRAG_COORD=${agcBarycentricProbeFragCoord} -o "${agcBarycentricProbeShaderSpv}" "${agcBarycentricProbeShaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${agcBarycentricProbeShaderSpv} -DOUTPUT=${agcBarycentricProbeShaderHeader}
+            -DSYMBOL=BARYCENTRIC_PROBE_${agcBarycentricProbeSymbol}_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${agcBarycentricProbeShaderSource}" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcBarycentricProbeShaderHeaders ${agcBarycentricProbeShaderHeader})
+endforeach()
 foreach(agcFirstSampleClass IN ITEMS Float Uint Sint Packed)
     string(TOUPPER "${agcFirstSampleClass}" agcFirstSampleSymbol)
     set(agcFirstSampleShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/FirstSample.frag)
@@ -438,6 +458,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16NanProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FragmentBarycentricProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
@@ -493,6 +514,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
+        ${agcBarycentricProbeShaderHeaders}
         ${agcTextureDetileShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}

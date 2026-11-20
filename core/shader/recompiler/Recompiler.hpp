@@ -381,6 +381,7 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool fragmentBarycentricBuiltins = false;
+    bool barycentricBuiltinsReadFragCoord = false;
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
     bool shaderImageMinLod = false;
