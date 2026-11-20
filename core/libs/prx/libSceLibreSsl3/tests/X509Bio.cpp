@@ -182,6 +182,38 @@ void DefiniteConstructedEoc() {
     ERR_clear_error_nid_postfix();
 }
 
+void ConstructedTagZero() {
+    Bytes encoded{0x30, 0x80, 0x20, 0x00, 0x00, 0x00};
+    Memory memory{Cat({encoded, {0xcc}}), 0, 2};
+    const auto method = Method();
+    auto bio = Bio(memory, method);
+    Require(!d2i_X509_bio_nid_postfix(&bio, nullptr), "a malformed certificate fails");
+    Require(memory.offset == encoded.size(), "a constructed universal tag zero does not close an indefinite value");
+    ERR_clear_error_nid_postfix();
+}
+
+void DefiniteBoundary() {
+    Bytes encoded{0x30, 0x80, 0x30, 0x02, 0x02, 0x01, 0x05, 0x00, 0x00};
+    Memory memory{Cat({encoded, {0xcc}}), 0, 2};
+    const auto method = Method();
+    auto bio = Bio(memory, method);
+    Require(!d2i_X509_bio_nid_postfix(&bio, nullptr), "a child crossing its definite parent fails");
+    Require(memory.offset == 6, "a child crossing its definite parent stops at the boundary");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(13, 123), "a crossed definite boundary reports a header error");
+    ERR_clear_error_nid_postfix();
+}
+
+void DefiniteHeaderBoundary() {
+    Bytes encoded{0x30, 0x80, 0x30, 0x01, 0x02, 0x01, 0x05, 0x00, 0x00};
+    Memory memory{Cat({encoded, {0xcc}}), 0, 2};
+    const auto method = Method();
+    auto bio = Bio(memory, method);
+    Require(!d2i_X509_bio_nid_postfix(&bio, nullptr), "a header crossing its definite parent fails");
+    Require(memory.offset == 5, "a header crossing its definite parent stops at the boundary");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(13, 123), "a crossed header boundary reports a header error");
+    ERR_clear_error_nid_postfix();
+}
+
 void ReadFailurePreservesOutput() {
     const auto method = Method();
     Memory complete{Certificate("Keep")};
@@ -247,6 +279,9 @@ int main() {
     Reuse();
     Indefinite();
     DefiniteConstructedEoc();
+    ConstructedTagZero();
+    DefiniteBoundary();
+    DefiniteHeaderBoundary();
     ReadFailurePreservesOutput();
     DecodeFailureClearsOutput();
     ShortHeaderRead();
