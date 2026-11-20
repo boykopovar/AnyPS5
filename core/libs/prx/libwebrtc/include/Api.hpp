@@ -42,6 +42,7 @@
 #include "prx/libwebrtc/include/AudioOptions.hpp"
 #include "prx/libwebrtc/include/RtpExtension.hpp"
 #include "prx/libwebrtc/include/RtpHeaderExtensionMap.hpp"
+#include "prx/libwebrtc/include/RtpPacketReceived.hpp"
 #include "prx/libwebrtc/include/SocketAddress.hpp"
 #include "prx/libwebrtc/include/RaceChecker.hpp"
 #include "prx/libwebrtc/include/RtcpTransportFeedback.hpp"
@@ -132,14 +133,14 @@ bool APS5_VABI _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(const WebR
 int APS5_VABI libwebrtcUnknown05(void);
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(WebRtcCopyOnWriteBuffer* buffer, const WebRtcCopyOnWriteBuffer* other);
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(WebRtcCopyOnWriteBuffer* buffer);
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void);
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(WebRtcRtpPacketReceived* packet, const WebRtcRtpPacketReceived* other);
+void APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(WebRtcRtpPacketReceived* packet);
 void APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t capacity);
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t size, std::size_t capacity);
 WebRtcTaskQueueBase* APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(void);
 void APS5_VABI _ZN3rtc10PacketInfoD1Ev_nid_postfix(void* object);
 void APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(WebRtcRtpHeaderExtensionMap* map, WebRtcRtpExtensionView extensions);
-int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(WebRtcRtpPacketReceived* packet, const WebRtcRtpHeaderExtensionMap* extensions, std::int64_t arrivalTimeUs);
 void* APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix();
 std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix();
 int APS5_VABI libwebrtcUnknown06(void);
