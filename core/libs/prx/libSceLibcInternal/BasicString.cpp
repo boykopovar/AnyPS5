@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -167,6 +168,16 @@ void AssignWide(String* string, const char* source, std::size_t count) {
     string->size = count;
 }
 
+char* AllocateWide(const String* string, std::size_t capacity) {
+    return static_cast<char*>(GuestStringStorage::Allocate(WideAllocationBytes(string, capacity)));
+}
+
+void TidyWide(String* string) {
+    if (string->capacity > WideInlineCapacity) GuestStringStorage::Deallocate(string->pointer, (string->capacity + 1) * sizeof(std::uint16_t));
+    string->capacity = WideInlineCapacity;
+    SetWideSize(string, 0);
+}
+
 void ReserveForInsert(String* string, std::size_t size) {
     if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
     if (size <= string->capacity) return;
@@ -310,6 +321,30 @@ String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw_nid_postfix(String*
     FillWide(data, position, count, character);
     SetWideSize(self, size + count);
     return self;
+}
+
+void APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(String* self, std::size_t newSize, std::size_t oldLength) {
+    if (self == nullptr) throw std::invalid_argument("basic_string<wchar_t>::_Copy: null string");
+    if (oldLength > self->size || oldLength > newSize || newSize <= WideInlineCapacity)
+        throw std::invalid_argument("basic_string<wchar_t>::_Copy: the new size must exceed the inline buffer and hold the kept length");
+    std::size_t capacity = WideCapacityFor(self, newSize);
+    char* data = nullptr;
+    try {
+        data = AllocateWide(self, capacity);
+    } catch (...) {
+        capacity = newSize;
+        try {
+            data = AllocateWide(self, capacity);
+        } catch (...) {
+            TidyWide(self);
+            throw;
+        }
+    }
+    std::memcpy(data, WideData(self), oldLength * sizeof(std::uint16_t));
+    if (self->capacity > WideInlineCapacity) GuestStringStorage::Deallocate(self->pointer, (self->capacity + 1) * sizeof(std::uint16_t));
+    self->pointer = data;
+    self->capacity = capacity;
+    SetWideSize(self, oldLength);
 }
 
 String* APS5_VABI _ZNSs6insertEmmc_nid_postfix(String* self, std::size_t position, std::size_t count, char character) {

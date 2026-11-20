@@ -120,6 +120,11 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
   traceSyncWaitEnd(KERNEL_SEMA_OK);
   return KERNEL_SEMA_OK;
  }
+ if (time != nullptr && *time == 0) {
+  if (KernelTraceWaitEnabled()) KernelTraceWait_nid_postfix("sema", caller, 0, true);
+  traceSyncWaitEnd(SCE_KERNEL_ERROR_ETIMEDOUT);
+  return SCE_KERNEL_ERROR_ETIMEDOUT;
+ }
  const std::uint64_t generation = sem->cancelGeneration;
  KernelSemaWaiter waiter{need};
  if (sem->priorityQueue && scePthreadGetprio(scePthreadSelf(), &waiter.priority) == 0) {

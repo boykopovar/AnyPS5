@@ -28,13 +28,19 @@ int main() {
     WKBundlePageSetPaintedObjectsCounterThreshold();
     WKBundlePageSetTopOverhangImage();
     WKContextAddSupportedPlugin();
+    WKContextAllowSpecificHTTPSCertificateForHost();
     WKContextClearSupportedPlugins();
     WKContextGetStatistics();
     WKContextGetStatisticsWithOptions();
     WKContextMenuItemSetUserData();
+    WKContextPreconnectToServer();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
+    WKContextSetCanHandleHTTPSServerTrustEvaluation();
+    WKContextSetCustomWebContentServiceBundleIdentifier();
+    WKContextSetDiskCacheSpeculativeValidationEnabled();
     WKContextSetIconDatabasePath();
+    WKContextSetMaximumNumberOfProcesses();
     WKContextSetPlugInAutoStartOriginHashes();
     WKContextSetPlugInAutoStartOrigins();
     WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime();
@@ -131,8 +137,6 @@ int main() {
     _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv();
     _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev();
     _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev();
-    _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev();
-    _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev();
     _ZN7WebCore4IconD1Ev();
     _ZN7WebCore4IconD2Ev();
     _ZN7bmalloc11IsoTLSEntryD1Ev();

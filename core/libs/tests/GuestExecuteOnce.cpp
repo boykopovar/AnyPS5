@@ -2,6 +2,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <thread>
 
@@ -13,6 +15,7 @@ static int ExecuteOnce(int* flag, Callback callback, void* arg) {
 static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0}, arrived{0};
+static int nullCalls = -7, unmappedCalls = -7;
 static int control = 0, nested = 0, failing = 0, throwing = 0;
 static int published = 0, nestedValue = 0, failures = 0, throws = 0;
 static void* seenFirst = &control;
@@ -45,6 +48,8 @@ static int APS5_VABI Throw(void*, void*, void**) {
 static int APS5_VABI Unreachable(void*, void*, void**) {
     std::abort();
 }
+static int APS5_VABI NullProbe(void*, void*, void**) { ++nullCalls; return 1; }
+static int APS5_VABI UnmappedProbe(void*, void*, void**) { ++unmappedCalls; return 1; }
 
 int main() {
     int token = 0;
@@ -68,4 +73,9 @@ int main() {
 
     int preset = -3;
     Require(ExecuteOnce(&preset, Unreachable, nullptr) == 1 && preset == -3);
+
+    errno = ESRCH;
+    Require(ExecuteOnce(nullptr, NullProbe, nullptr) == 1);
+    Require(ExecuteOnce(reinterpret_cast<int*>(0x1), UnmappedProbe, nullptr) == 1);
+    Require(nullCalls == -7 && unmappedCalls == -7 && errno == ESRCH);
 }

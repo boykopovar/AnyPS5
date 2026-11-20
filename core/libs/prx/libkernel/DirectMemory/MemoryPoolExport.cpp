@@ -12,6 +12,7 @@
 namespace {
 
 constexpr size_t kPoolBlockSize = 2ULL * 1024 * 1024;
+constexpr int DefinedProtection = 0x3F7;
 
 struct PoolState {
     std::mutex mutex;
@@ -88,7 +89,7 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
    switch (e.op) {
     case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.type, e.commit.prot);
     case 2: return PoolDecommit(e.decommit.addr, e.decommit.len);
-    case 3: return DoMprotect(e.protect.addr, static_cast<size_t>(e.protect.len), e.protect.prot);
+    case 3: return DoMprotect(e.protect.addr, static_cast<size_t>(e.protect.len), e.protect.prot & DefinedProtection);
     case 4: return DoMtypeprotect(e.type_protect.addr, static_cast<size_t>(e.type_protect.len), e.type_protect.type, e.type_protect.prot);
     default: return SCE_KERNEL_ERROR_EINVAL;
    }
@@ -119,13 +120,17 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
   || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, phys_addr_out);
- if (ret == 0) {
-  PoolState& pool = Pool();
-  std::lock_guard<std::mutex> lock(pool.mutex);
-  pool.expandedBytes += len;
+ int64_t physical = 0;
+ const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, &physical);
+ if (ret != 0) return ret;
+ if (!GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) {
+  DirectMemoryFree(physical, len);
+  return SCE_KERNEL_ERROR_EFAULT;
  }
- return ret;
+ PoolState& pool = Pool();
+ std::lock_guard<std::mutex> lock(pool.mutex);
+ pool.expandedBytes += len;
+ return 0;
 }
 
 int APS5_VABI sceKernelMemoryPoolGetBlockStats(KernelMemoryPoolBlockStats* output, size_t output_size) {
