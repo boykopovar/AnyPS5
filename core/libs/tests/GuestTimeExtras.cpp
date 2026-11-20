@@ -2,12 +2,15 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <limits>
 #include <random>
+#include <stdexcept>
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -70,6 +73,48 @@ static void CheckReentrantConversions() {
     Require(gmtime_r_nid_postfix(&underflow, &scratch) == nullptr, "gmtime_r accepted an unrepresentable time");
 }
 
+static void CheckCtimeR() {
+    struct CtimeCase {
+        std::int64_t timer;
+        const char* expected;
+    };
+    constexpr CtimeCase cases[] = {
+        {0, "Thu Jan  1 02:00:00 1970\n"},
+        {-7201, "Wed Dec 31 23:59:59 1969\n"},
+        {951782400, "Tue Feb 29 02:00:00 2000\n"},
+        {1792379647, "Mon Oct 19 05:14:07 2026\n"},
+        {253402293599, "Fri Dec 31 23:59:59 9999\n"},
+        {-62135596800, "Mon Jan  1 02:00:00 0001\n"},
+        {-30641767200, "Tue Jan  1 00:00:00 0999\n"},
+        {253402293600, "Sat Jan  1 00:00:00 0000\n"},
+    };
+    for (const CtimeCase& test : cases) {
+        char buffer[32];
+        std::memset(buffer, 'x', sizeof(buffer));
+        Require(ctime_r_nid_postfix(&test.timer, buffer) == buffer, "ctime_r rejected a representable time");
+        if (std::strcmp(buffer, test.expected) != 0) {
+            std::fprintf(stderr, "ctime_r(%lld) returned '%s'\n", static_cast<long long>(test.timer), buffer);
+            std::abort();
+        }
+        Require(std::strlen(buffer) == 25 && buffer[26] == 'x', "ctime_r wrote past 26 bytes");
+        GuestTm local{};
+        Require(localtime_r_nid_postfix(&test.timer, &local) != nullptr, "localtime_r rejected a representable time");
+        Require(std::strcmp(buffer, asctime_nid_postfix(&local)) == 0, "ctime_r differs from asctime of localtime_r");
+    }
+    char buffer[26] = "unchanged";
+    Require(ctime_r_nid_postfix(nullptr, buffer) == nullptr && std::strcmp(buffer, "unchanged") == 0, "ctime_r accepted a null time");
+    const std::int64_t underflow = std::numeric_limits<std::int64_t>::min();
+    Require(ctime_r_nid_postfix(&underflow, buffer) == nullptr && std::strcmp(buffer, "unchanged") == 0, "ctime_r accepted an unrepresentable time");
+    const std::int64_t epoch = 0;
+    bool threw = false;
+    try {
+        ctime_r_nid_postfix(&epoch, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "ctime_r accepted a null buffer");
+}
+
 static void CheckTimegmCases() {
     constexpr TimegmCase cases[] = {
         {0, 0, 0, 1, 0, 70, 0, 1, 0, 70, 4, 0},
@@ -109,6 +154,8 @@ static void CheckXtime() {
     Require(xtime_get_nid_postfix(&time, 0) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 0");
     Require(xtime_get_nid_postfix(&time, 2) == 0 && time.sec == -5 && time.nsec == -5, "xtime_get accepted base 2");
     Require(xtime_get_nid_postfix(nullptr, 1) == 0, "xtime_get accepted a null xtime");
+    errno = 71;
+    Require(xtime_get_nid_postfix(reinterpret_cast<Xtime*>(0x10), 1) == 0 && errno == 71, "xtime_get accepted an unwritable xtime or changed errno");
     const std::int64_t before = static_cast<std::int64_t>(std::time(nullptr));
     Require(xtime_get_nid_postfix(&time, 1) == 1, "xtime_get rejected TIME_UTC");
     Require(time.sec >= before - 1 && time.sec <= before + 2 && time.nsec >= 0 && time.nsec < 1000000000 && time.nsec % 1000 == 0,
@@ -145,6 +192,7 @@ int main() {
 
     CheckReentrantConversions();
     CheckTimegmCases();
+    CheckCtimeR();
     CheckXtime();
     return 0;
 }

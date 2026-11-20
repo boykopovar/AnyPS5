@@ -97,12 +97,25 @@ template<typename TList>
 void TestBigAppList(TList list) {
     const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
     constexpr std::int32_t Sentinel = 0x5a5a5a5a;
-    for (const std::uint32_t capacity : {1u, 4u}) {
+    {
         std::int32_t appIds[4] = {Sentinel, Sentinel, Sentinel, Sentinel};
         std::uint32_t count = 0xdeadbeefu;
-        Require(list(appIds, capacity, &count) == SYSTEM_SERVICE_OK);
+        Require(list(appIds, 1, &count) == SYSTEM_SERVICE_OK);
         Require(count == 1 && appIds[0] == runningAppId);
         for (std::size_t index = 1; index < 4; ++index) Require(appIds[index] == Sentinel);
+    }
+    {
+        std::int32_t appIds[4] = {Sentinel, Sentinel, Sentinel, Sentinel};
+        std::uint32_t count = 0xdeadbeefu;
+        Require(list(appIds, 0, &count) == SYSTEM_SERVICE_OK && count == 0);
+        for (std::size_t index = 0; index < 4; ++index) Require(appIds[index] == Sentinel);
+    }
+    for (const std::uint32_t capacity : {4u, 8u, 16u}) {
+        std::int32_t appIds[16];
+        for (std::int32_t& value : appIds) value = Sentinel;
+        std::uint32_t count = 0xdeadbeefu;
+        Require(list(appIds, capacity, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT && count == 0xdeadbeefu);
+        for (const std::int32_t value : appIds) Require(value == Sentinel);
     }
     std::int32_t appIds[2] = {Sentinel, Sentinel};
     std::uint32_t count = 0xdeadbeefu;
@@ -169,6 +182,35 @@ void TestRunningAppState() {
     errno = 71;
     Require(sceLncUtilIsSpeculativeLaunch(sceSystemServiceGetAppIdOfRunningBigApp(), reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(errno == 71);
+}
+
+template <typename Error>
+bool LncLaunchAppThrows(const char* titleId, const char* const* arguments, const LncLaunchParam* param) {
+    try {
+        static_cast<void>(sceLncUtilLaunchApp(titleId, arguments, param));
+    } catch (const Error&) {
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+void TestLncUtilLaunchApp() {
+    LncLaunchParam param{};
+    param.size = sizeof(param);
+    Require(sceLncUtilLaunchApp(nullptr, nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000000000000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA00000", nullptr, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(LncLaunchAppThrows<std::logic_error>(reinterpret_cast<const char*>(0x10), nullptr, &param));
+    Require(errno == 71);
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00000", nullptr, &param));
+    const char* arguments[] = {"--backup", nullptr};
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00001", arguments, &param));
 }
 
 void TestRunningBigApp() {
@@ -295,6 +337,7 @@ int main() {
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == browserUnavailable);
     browserUri += 'a';
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == static_cast<int>(0x80a10007));
+    TestLncUtilLaunchApp();
     Require(LaunchAppThrows("PPSA99109", nullptr, nullptr));
     Require(LaunchAppThrows(nullptr, nullptr, nullptr));
     const char* launchArguments[] = {"--backup", nullptr};

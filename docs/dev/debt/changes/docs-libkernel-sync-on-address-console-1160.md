@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelSyncOnAddressWait, sceKernelSyncOnAddressWait8/16/32/64 and sceKernelSyncOnAddressWake]
+
+- [sceKernelSyncOnAddressWait, sceKernelSyncOnAddressWait8/16/32/64 and sceKernelSyncOnAddressWake](../../../core/libs/prx/libkernel/SyncOnAddress/src/SyncOnAddress.cpp) (libkernel) - follow a payload process on a PS5 (firmware 13.60), not a title. That process returned `EFAULT` for an address of 0x10 and left the timeout unchanged. On 11.60 a payload process got `EAGAIN` (timeout unchanged) for a differing value, `ETIMEDOUT` (timeout 0) after the timeout and at once for a timeout of 0, 0 with the remaining time for a woken wait, and 1 and 0 from `Wake` with and without a waiter; `EFAULT`, `Wake` with count 0 and a waiter and sized forms are unmeasured there. Registered unreadable subranges return `EFAULT` here by analogy; readable registered subranges are pinned while inspected, while an unregistered portion is read through the guarded guest copy path. The time left that a woken wait writes back is taken from the host clock, so it can differ from the console's by the cost of the call

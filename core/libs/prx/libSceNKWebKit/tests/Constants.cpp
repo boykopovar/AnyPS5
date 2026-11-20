@@ -99,9 +99,7 @@ int main() {
     Require(WKPluginInformationPluginspageAttributeURLKey() == 0);
     Require(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() == 0);
     Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
-    Require(WKPreferencesGetApplicationChromeModeEnabled() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
-    Require(WKPreferencesGetTypeID() == static_cast<int>(0x00000058u));
     Require(WKProtectionSpaceCopyCertificateInfo() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));

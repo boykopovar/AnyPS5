@@ -72,6 +72,13 @@ static void ForgetRequest(std::int64_t requestId) {
     g_multipartRequests.erase(requestId);
 }
 
+static int CopyGuestStringPreservingErrno(const char* source, std::size_t maximum, std::string& out) {
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(source, maximum, out);
+    errno = savedErrno;
+    return status;
+}
+
 extern "C" {
 
 int APS5_VABI sceNpWebApi2IntGlobalPush2Initialize() {
@@ -98,6 +105,8 @@ int APS5_VABI sceNpWebApi2AddHttpRequestHeader(int64_t request_id, const char* f
 int APS5_VABI sceNpWebApi2AddWebTraceTag(std::int64_t requestId, const char* value) {
     (void)requestId;
     if (!value) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::string tagCopy;
+    if (CopyGuestStringPreservingErrno(value, 4096, tagCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -249,6 +258,8 @@ int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
 }
 
 int APS5_VABI sceNpWebApi2PushEventCreatePushContext(std::int32_t userContextId, NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
@@ -271,6 +282,13 @@ int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t user
 }
 
 int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback(std::int32_t userContextId, const NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    NpWebApi2PushContextId localPushContextId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localPushContextId, pushContextId, sizeof(localPushContextId));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -365,13 +383,6 @@ int APS5_VABI sceNpWebApi2SendMultipartRequest(int64_t request_id, int part_inde
     (void)resp_info_option;
     if (part_index <= 0 || !data || data_size == 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
-}
-
-int CopyGuestStringPreservingErrno(const char* source, std::size_t maximum, std::string& out) {
-    const int savedErrno = errno;
-    const int status = CopyGuestString_nid_no_patch(source, maximum, out);
-    errno = savedErrno;
-    return status;
 }
 
 int APS5_VABI sceNpWebApi2SetMultipartContentType(int64_t request_id, const char* type_name, const char* boundary) {

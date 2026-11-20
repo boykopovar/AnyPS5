@@ -201,5 +201,31 @@ class ReportTests(unittest.TestCase):
         self.assertIn("no debt file: libSceMissing", errors.getvalue())
 
 
+class DebtFilesTests(unittest.TestCase):
+    def tree(self, root):
+        (root / debt_report.DEBT_DIR).mkdir(parents=True)
+        (root / debt_report.DEBT).write_text("")
+        for name in ("b.md", "a.md", "notes.txt"):
+            (root / debt_report.DEBT_DIR / name).write_text("")
+        (root / debt_report.DEBT_DIR / "dir.md").mkdir()
+
+    def test_index_comes_first_then_sorted_markdown_files(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.tree(root)
+            self.assertEqual(debt_report.debt_files(root), [root / debt_report.DEBT, root / debt_report.DEBT_DIR / "a.md", root / debt_report.DEBT_DIR / "b.md"])
+
+    def test_libraries_filter_by_file_stem(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.tree(root)
+            self.assertEqual(debt_report.debt_files(root, {"b"}), [root / debt_report.DEBT_DIR / "b.md"])
+            self.assertEqual(debt_report.debt_files(root, {"missing"}), [])
+
+    def test_missing_files_and_directories_are_empty(self):
+        with tempfile.TemporaryDirectory() as name:
+            self.assertEqual(debt_report.debt_files(Path(name)), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -203,4 +203,21 @@ void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28Sh
     Checked(self).shouldOpenExternalURLsPolicy = value;
 }
 
+void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(HistoryItem* self, const String* value) {
+    auto& item = Checked(self);
+    Assign(item.target, Checked(value, "null WTF::String"));
+    historyItemChangedHook(&item);
+}
+
+HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(HistoryItem* self, const String* target) {
+    auto& item = Checked(self);
+    const String& key = Checked(target, "null WTF::String");
+    auto** children = static_cast<HistoryItem**>(item.children.buffer);
+    for (unsigned index = 0; index < item.children.size; ++index) {
+        HistoryItem* child = children[index];
+        if (child && _ZN3WTF5equalEPKNS_10StringImplES2_(child->target.impl, key.impl)) return child;
+    }
+    return nullptr;
+}
+
 }

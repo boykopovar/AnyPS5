@@ -686,15 +686,8 @@ static void TestCustomRackChecks() {
 
     option = good;
     option.custom_rack_option.num_buffers = 0;
-    bool rejected = false;
     uintptr_t rack = 0;
-    try {
-        sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, nullptr, &rack);
-
-    } catch (const std::invalid_argument&) {
-        rejected = true;
-    }
-    Require(rejected);
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_ERROR_INVALID_NUM_BUFFERS && rack == 0);
     const Ngs2BufferAllocator allocator{CountAlloc, CountFree, 0};
     Require(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &allocator, &rack) == SCE_NGS2_ERROR_INVALID_NUM_BUFFERS);
     Require(rack == 0 && allocCalls == 0 && calls.setupVoices.empty());

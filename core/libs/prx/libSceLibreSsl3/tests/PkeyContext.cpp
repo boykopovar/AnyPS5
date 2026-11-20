@@ -66,6 +66,7 @@ int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw 
 
 constexpr std::uint64_t EvpCode(std::uint64_t reason) { return 0x06fff000ULL | reason; }
 constexpr std::uint64_t RsaCode(std::uint64_t reason) { return 0x04fff000ULL | reason; }
+constexpr std::uint64_t BigNumberCode(std::uint64_t reason) { return 0x03fff000ULL | reason; }
 constexpr std::uint64_t EcCode(std::uint64_t reason) { return 0x10fff000ULL | reason; }
 
 void ExpectErrors(std::initializer_list<std::uint64_t> codes) {
@@ -1154,6 +1155,32 @@ void KeyConsistency() {
     Require(RSA_check_key_nid_postfix(rsa6) == 0);
     ExpectErrors({RsaCode(128), RsaCode(127), RsaCode(123)});
     ReleaseKey(key6);
+    const auto replaceFactor = [](LibreSsl3Rsa* rsa, void* LibreSsl3Rsa::*factor) {
+        BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(rsa->*factor));
+        rsa->*factor = LibreSsl3::NewRsaBignum_nid_no_patch(nullptr, 0);
+        Require(rsa->*factor != nullptr);
+    };
+    auto* key7 = NewSigningKey(true, false, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key7->key), &LibreSsl3Rsa::p);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key7->key)) == 0);
+    ExpectErrors({RsaCode(128), RsaCode(127)});
+    ReleaseKey(key7);
+    auto* key8 = NewSigningKey(true, true, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key8->key), &LibreSsl3Rsa::p);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key8->key)) == -1);
+    ExpectErrors({RsaCode(128), RsaCode(127), RsaCode(124), BigNumberCode(103)});
+    ReleaseKey(key8);
+    auto* key9 = NewSigningKey(true, true, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key9->key), &LibreSsl3Rsa::q);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key9->key)) == -1);
+    ExpectErrors({RsaCode(129), RsaCode(127), RsaCode(125), BigNumberCode(108)});
+    ReleaseKey(key9);
+    auto* key10 = NewSigningKey(true, false, true);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key10->key), &LibreSsl3Rsa::p);
+    replaceFactor(static_cast<LibreSsl3Rsa*>(key10->key), &LibreSsl3Rsa::q);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key10->key)) == 0);
+    ExpectErrors({RsaCode(128), RsaCode(129), RsaCode(127), RsaCode(123)});
+    ReleaseKey(key10);
 }
 
 } // namespace

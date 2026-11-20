@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -8,14 +9,17 @@
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
+void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool ordered) {
     if (!KeepsLabelStore(address, bytes.size())) return;
+    const auto generation = GuestMemory::TrackerGeneration();
     std::lock_guard lock(labelStoresMutex);
     for (std::size_t offset = 0; offset < bytes.size(); offset += 4) {
         auto& history = labelStores[address + offset];
         std::shift_right(history.begin(), history.end(), 1);
         history[0].stamp = stamp;
         history[0].queue = queue;
+        history[0].generation = generation;
+        history[0].ordered = ordered;
         std::memcpy(&history[0].value, bytes.data() + offset, 4);
     }
 }
@@ -99,6 +103,35 @@ bool Driver::findWaitProducer(std::uint64_t address, std::size_t bytes, std::uin
         frontier = std::move(next);
     }
     return found;
+}
+
+std::uint64_t Driver::storeOrderingSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue) {
+    if (!GuestMemory::CollectWalksShared()) return 0;
+    std::uint32_t writer = queue;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard lock(labelStoresMutex);
+        const auto low = labelStores.find(address);
+        if (low == labelStores.end()) return 0;
+        const auto high = bytes == 8 ? labelStores.find(address + 4) : labelStores.end();
+        if (bytes == 8 && high == labelStores.end()) return 0;
+        const LabelStore* matched = nullptr;
+        for (std::size_t index = 0; index < low->second.size(); ++index) {
+            const auto& store = low->second[index];
+            if (store.stamp <= received || !store.ordered || store.generation == 0) return 0;
+            if (bytes == 8 && high->second[index].stamp != store.stamp) return 0;
+            const std::uint64_t value = store.value | (bytes == 8 ? static_cast<std::uint64_t>(high->second[index].value) << 32u : 0u);
+            if (Pm4::WaitComparesValue(packet, value)) {
+                matched = &store;
+                break;
+            }
+        }
+        if (matched == nullptr) return 0;
+        writer = matched->queue;
+        generation = matched->generation;
+    }
+    if (!GuestMemory::UnchangedSinceCollected(address, bytes, generation)) return 0;
+    return writer == queue ? GuestMemory::CollectSince() : queueEpochSince(writer);
 }
 
 bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {
