@@ -146,6 +146,9 @@ void CheckOfflineSettersBeforeInit() {
     Require(sceHttpSetPriorityOption(UnknownId, 1) == BeforeInit, "sceHttpSetPriorityOption answered before sceHttpInit");
     Require(sceHttpSetPolicyOption(UnknownId, 1) == BeforeInit, "sceHttpSetPolicyOption answered before sceHttpInit");
     Require(sceHttpSetSocketCreationCallback(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpSetSocketCreationCallback answered before sceHttpInit");
+    Require(sceHttpSetSendTimeOut(UnknownId, 1) == BeforeInit && sceHttpSetRecvTimeOut(UnknownId, 1) == BeforeInit && sceHttpSetResolveTimeOut(UnknownId, 1) == BeforeInit, "a timeout setter answered before sceHttpInit");
+    Require(sceHttpSetResolveRetry(UnknownId, -1) == BeforeInit && sceHttpSetRecvBlockSize(UnknownId, 1) == BeforeInit, "a retry or block size setter answered before sceHttpInit");
+    Require(sceHttpSetResponseHeaderMaxSize(UnknownId, 1) == BeforeInit && sceHttpSetRequestContentLength(UnknownId, 1) == BeforeInit, "a size setter answered before sceHttpInit");
 }
 
 void CheckAcceptEncodingGzip(int context) {
@@ -278,6 +281,41 @@ void CheckRegisteredCtxIds() {
     Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered after the last sceHttpTerm");
 }
 
+void CheckStoredLimits(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    constexpr std::uint32_t big = 0xfffffff0u;
+    constexpr std::uint64_t huge = 0x123456789abcull;
+    SetSdkVersion(0x01700000u);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetSendTimeOut(id, 5) == 0 && sceHttpSetRecvTimeOut(id, big) == 0, "a timeout setter refused a live object");
+        Require(sceHttpSetResolveTimeOut(id, 1000000u) == 0 && sceHttpSetResolveRetry(id, 4) == 0, "a resolve setter refused a live object");
+        Require(sceHttpSetRecvBlockSize(id, big) == 0 && sceHttpSetResponseHeaderMaxSize(id, huge) == 0, "a size setter refused a live object");
+        const auto options = FindHttpOptions(id);
+        Require(options && options->sendTimeoutUs == 5 && options->recvTimeoutUs == big && options->resolveTimeoutUs == 1000000u, "a timeout was not kept");
+        Require(options->resolveRetry == 4 && options->recvBlockSize == big && options->responseHeaderMaxSize == huge, "a limit was not kept");
+        Require(sceHttpSetResolveRetry(id, 0) == 0 && FindHttpOptions(id)->resolveRetry == 0, "a retry of 0 was refused");
+        Require(sceHttpSetResolveRetry(id, -1) == InvalidValue && FindHttpOptions(id)->resolveRetry == 0, "a negative retry was taken");
+        Require(sceHttpSetResolveTimeOut(id, 999999u) == InvalidValue && FindHttpOptions(id)->resolveTimeoutUs == 1000000u, "a resolve timeout under one second was taken");
+        Require(sceHttpSetSendTimeOut(id, 0) == 0 && sceHttpSetRecvTimeOut(id, 0) == 0 && FindHttpOptions(id)->sendTimeoutUs == 0, "a zero timeout was refused");
+    }
+    SetSdkVersion(0x016fffffu);
+    Require(sceHttpSetResolveTimeOut(request, 1) == 0 && FindHttpOptions(request)->resolveTimeoutUs == 1, "a title built before SDK 1.70 could not set a short resolve timeout");
+    SetSdkVersion(0x01700000u);
+    Require(FindHttpOptions(pattern)->resolveTimeoutUs == 1000000u && FindHttpOptions(connection)->resolveTimeoutUs == 1000000u, "setting a request changed a parent limit");
+    Require(sceHttpSetRequestContentLength(request, huge) == 0 && FindHttpOptions(request)->requestContentLength == huge, "the request content length was not kept");
+    Require(sceHttpSetRequestContentLength(request, 0) == 0 && FindHttpOptions(request)->requestContentLength == 0, "a zero content length was refused");
+    Require(sceHttpSetRequestContentLength(connection, 1) == InvalidId && sceHttpSetRequestContentLength(pattern, 1) == InvalidId, "a template or connection took a content length");
+    Require(sceHttpSetRequestContentLength(context, 1) == InvalidId && sceHttpSetRequestContentLength(UnknownId, 1) == InvalidId, "an unknown id took a content length");
+    Require(FindHttpOptions(connection)->requestContentLength == 0, "a refused content length was kept");
+    Require(sceHttpSetSendTimeOut(UnknownId, 1) == InvalidId && sceHttpSetRecvTimeOut(UnknownId, 1) == InvalidId && sceHttpSetResolveTimeOut(UnknownId, 1000000u) == InvalidId, "an unknown id took a timeout");
+    Require(sceHttpSetResolveRetry(UnknownId, 1) == InvalidId && sceHttpSetRecvBlockSize(UnknownId, 1) == InvalidId && sceHttpSetResponseHeaderMaxSize(UnknownId, 1) == InvalidId, "an unknown id took a limit");
+    Require(sceHttpSetResolveRetry(UnknownId, -1) == InvalidValue && sceHttpSetResolveTimeOut(UnknownId, 1) == InvalidValue, "the value is not checked before the id");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpSetRequestContentLength(request, 1) == InvalidId && sceHttpSetSendTimeOut(request, 1) == InvalidId, "a deleted request still took a limit");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
 void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
@@ -320,6 +358,7 @@ int main() {
     CheckEpoll(context);
     CheckUnobservedOptions(context);
     CheckOfflineSetters(context);
+    CheckStoredLimits(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();

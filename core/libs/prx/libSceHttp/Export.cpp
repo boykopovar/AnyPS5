@@ -205,7 +205,7 @@ int APS5_VABI sceHttpCreateRequest(int conn_id, int method, const char* path, ui
     (void)path;
     (void)content_length;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    AddHttpChild(id, conn_id);
+    AddHttpChild(id, conn_id, true);
     return id;
 }
 
@@ -214,7 +214,7 @@ int APS5_VABI sceHttpCreateRequestWithURL2(int conn_id, const char* method, cons
     (void)url;
     (void)content_length;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    AddHttpChild(id, conn_id);
+    AddHttpChild(id, conn_id, true);
     return id;
 }
 
@@ -352,48 +352,6 @@ int APS5_VABI sceHttpTrySetNonblock(int id, int enable) {
     return sceHttpSetNonblock(id, enable);
 }
 
-int APS5_VABI sceHttpSetRecvTimeOut(int id, uint32_t usec) {
-    (void)id;
-    (void)usec;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetRecvBlockSize(int id, uint32_t block_size) {
-    (void)id;
-    (void)block_size;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetResponseHeaderMaxSize(int id, uint64_t header_size) {
-    (void)id;
-    (void)header_size;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetRequestContentLength(int request_id, uint64_t content_length) {
-    (void)request_id;
-    (void)content_length;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetResolveRetry(int id, int32_t retry) {
-    (void)id;
-    (void)retry;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetResolveTimeOut(int id, uint32_t usec) {
-    (void)id;
-    (void)usec;
-    return 0;
-}
-
-int APS5_VABI sceHttpSetSendTimeOut(int id, uint32_t usec) {
-    (void)id;
-    (void)usec;
-    return 0;
-}
-
 int APS5_VABI sceHttpsSetMinSslVersion(int id, uint32_t ssl_version) {
     (void)id;
     (void)ssl_version;
@@ -453,7 +411,7 @@ int APS5_VABI sceHttpCreateRequestWithURL(int conn_id, int method, const char* u
     (void)url;
     (void)content_length;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    AddHttpChild(id, conn_id);
+    AddHttpChild(id, conn_id, true);
     return id;
 }
 
@@ -563,7 +521,7 @@ int APS5_VABI sceHttpCreateRequest2(int conn_id, const char* method, const char*
     (void)path;
     (void)content_length;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    AddHttpChild(id, conn_id);
+    AddHttpChild(id, conn_id, true);
     return id;
 }
 
