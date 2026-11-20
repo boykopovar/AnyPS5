@@ -68,6 +68,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -99,6 +100,13 @@ T GuestLoad(const T* source, const char* function) {
     errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable guest pointer");
     return value;
+}
+
+void RequireWritable(void* destination, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    if (!writable) throw std::invalid_argument(std::string(function) + ": unwritable guest pointer");
 }
 
 template <typename T>
@@ -277,10 +285,10 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
     const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
     if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
     GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
-    GuestStore(input, start, "ASN1_get_object");
-    GuestStore(tagClass, GuestLoad(tagClass, "ASN1_get_object"), "ASN1_get_object");
-    GuestStore(tag, GuestLoad(tag, "ASN1_get_object"), "ASN1_get_object");
-    GuestStore(length, GuestLoad(length, "ASN1_get_object"), "ASN1_get_object");
+    RequireWritable(input, sizeof(*input), "ASN1_get_object");
+    RequireWritable(tagClass, sizeof(*tagClass), "ASN1_get_object");
+    RequireWritable(tag, sizeof(*tag), "ASN1_get_object");
+    RequireWritable(length, sizeof(*length), "ASN1_get_object");
     std::uint8_t parsedClass;
     std::uint32_t parsedTag;
     bool constructed;
@@ -322,7 +330,13 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         previousState = ValidateInteger(previous);
     }
     GuestInput remaining(start, static_cast<std::size_t>(length), "d2i_ASN1_INTEGER");
-    auto content = ReadInteger(remaining);
+    std::optional<std::span<const unsigned char>> content;
+    try {
+        content = ReadInteger(remaining);
+    } catch (const std::bad_alloc&) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
     if (!content) return nullptr;
     if (content->empty()) {
         PutError(LengthMismatch);
@@ -365,13 +379,13 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
         GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
     } catch (...) {
-        FreeInteger(integer);
         if (output) {
             const int savedErrno = errno;
             const bool restored = GuestCopyOut_nid_no_patch(output, &previous, sizeof(previous));
             errno = savedErrno;
             if (!restored) throw std::runtime_error("d2i_ASN1_INTEGER: the output slot could not be restored");
         }
+        FreeInteger(integer);
         throw;
     }
     ReleaseInteger(previous, previousState);

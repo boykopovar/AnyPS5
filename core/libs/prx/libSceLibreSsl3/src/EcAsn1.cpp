@@ -406,7 +406,7 @@ std::int64_t EncodedBytes(const unsigned char* in, std::int64_t available) {
     }
     if (!next()) return offset;
     if (byte < 0x80) return std::min(available, offset + byte);
-    if (byte == 0x80) return offset;
+    if (byte == 0x80 || (byte & 0x7f) == 0x7f) return offset;
     std::int64_t content = 0;
     for (int count = byte & 0x7f; count > 0; --count) {
         if (!next()) return offset;

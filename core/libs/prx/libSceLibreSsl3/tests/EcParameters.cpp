@@ -349,12 +349,14 @@ void ReadsOnlyTheBytesTheEncodingNeeds() {
             EC_KEY_free_nid_postfix(key);
         }
     }
-    const std::vector<unsigned char> indefinite = Hex("0680");
-    unsigned char* const end = base + page - indefinite.size();
-    std::memcpy(end, indefinite.data(), indefinite.size());
-    const unsigned char* cursor = end;
-    ERR_clear_error_nid_postfix();
-    Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, 4096) == nullptr && cursor == end);
+    for (const char* text : {"0680", "06ff"}) {
+        const std::vector<unsigned char> invalid = Hex(text);
+        unsigned char* const end = base + page - invalid.size();
+        std::memcpy(end, invalid.data(), invalid.size());
+        const unsigned char* cursor = end;
+        ERR_clear_error_nid_postfix();
+        Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, 4096) == nullptr && cursor == end);
+    }
 #ifdef _WIN32
     VirtualFree(base, 0, MEM_RELEASE);
 #else
