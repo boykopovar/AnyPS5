@@ -6831,9 +6831,7 @@ void ShaderResources::finishImageTables() {
             if (records.stride != 0u && mapStart + keys <= map.size()) {
                 poisoned = false;
                 for (const auto& [address, bytes] : stores) {
-                    if (bytes == 0u || address + bytes <= records.start) continue;
-                    const std::uint64_t first = address < records.start + records.bytes ? 0u : (address - records.start - records.bytes) / records.stride + 1u;
-                    const auto past = std::min<std::uint64_t>(keys, (address + bytes - 1u - records.start) / records.stride + 1u);
+                    const auto [first, past] = records.KeysOverlapping(address, bytes, keys);
                     for (auto key = first; key < past; ++key) map[mapStart + key] = poisonCode;
                     poisoned = poisoned || first < past;
                 }
