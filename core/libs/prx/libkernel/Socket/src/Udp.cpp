@@ -1196,10 +1196,12 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     }
     bool receiveShut = false;
     bool sendShut = false;
+    int sendBuffer = 0;
     {
         std::lock_guard lock(socket->modeMutex);
         receiveShut = socket->receiveShut;
         sendShut = socket->sendShut;
+        sendBuffer = GuestSockets::SendBufferSize(socket->options, socket->family, socket->type);
     }
     std::int64_t available = 0;
 #ifdef _WIN32
@@ -1209,9 +1211,6 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     int count = 0;
     if (!receiveShut && QueuedBytes(*socket, count) == 0) available = count;
 #endif
-    int sendBuffer = 0;
-    socklen_t length = sizeof(sendBuffer);
-    if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
     *status = FileStat{};
     if (socket->family == GuestUnix) {
         status->st_dev = NoDevice;
@@ -1221,7 +1220,7 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     if (!receiveShut || available > 0) status->st_mode |= 0444;
     if (!sendShut) status->st_mode |= 0222;
     status->st_size = available;
-    status->st_blksize = sendBuffer > 0 ? static_cast<std::uint32_t>(sendBuffer) : 0;
+    status->st_blksize = static_cast<std::uint32_t>(sendBuffer);
     return 0;
 }
 
@@ -2327,9 +2326,16 @@ int PassedDescriptors(const GuestMsghdr& message, std::vector<int>& descriptors)
     }
     return 0;
 }
+static bool ReadGuest(void* destination, const void* source, std::size_t bytes);
 std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector<char>& data, int flags) {
+    constexpr std::size_t MostControlBytes = 2048;
+    if (message.controlLength < 12 || message.controlLength > MostControlBytes) return Fail(22);
+    std::vector<unsigned char> controlCopy(message.controlLength);
+    if (!ReadGuest(controlCopy.data(), message.control, controlCopy.size())) return Fail(14);
+    GuestMsghdr checked = message;
+    checked.control = controlCopy.data();
     std::vector<int> descriptors;
-    if (const int error = PassedDescriptors(message, descriptors)) return Fail(error);
+    if (const int error = PassedDescriptors(checked, descriptors)) return Fail(error);
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (message.name) return Fail(47);
     if (!descriptors.empty() && data.empty() && socket.type == 1) NotImplemented_nid_no_patch("sendmsg: SCM_RIGHTS without data on a stream socket");
