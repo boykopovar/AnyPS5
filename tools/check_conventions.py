@@ -168,6 +168,9 @@ class Check:
                   [path for path, (added, _) in self.numstat.items() if self.status.get(path) != "D" and added != "-" and
                    not path.startswith("3rdparty/") and PurePosixPath(path).suffix.lower() not in IMAGES])
 
+    def changes_debt(self):
+        return any(is_debt(path) or is_debt_fragment(path) for path in self.status)
+
     def report(self, rule, path, line, detail=""):
         self.findings.append((rule, path, line, detail))
 
@@ -252,7 +255,7 @@ class Check:
                 comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
                 if comment and not shebang:
                     self.report("comment", path, number)
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             self.findings = [finding for finding in self.findings if finding[0] != "comment"]
 
     def duplicates(self, exports):
@@ -263,7 +266,7 @@ class Check:
         self.read(paths)
         for path in paths:
             text = self.show(path)
-            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
+            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text or exports.keys().isdisjoint(re.findall(r"\w+", text)):
                 continue
             source = expand_abi_aliases(cpp_text(text)).split("\n")
             assembly = asm_exports(text)
@@ -287,7 +290,7 @@ class Check:
             for nid, name in source_aliases(text):
                 if "unknown" in name.lower():
                     tree_unknowns[nid].append(f"{name} at {path}:{number}")
-            for symbol in nid_symbols(text):
+            for symbol in nid_symbols(text) if unknowns else ():
                 tree_symbols[symbol_nid(symbol)].append(f"{symbol} at {path}:{number}")
         for nid, name, path, number in unknowns:
             if tree_symbols[nid]:
@@ -310,7 +313,7 @@ class Check:
                 self.report("system-dependency", ".gitmodules", number, match.group(1))
 
     def shaders(self):
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             return
         for path, lines in self.files(lambda p: p.suffix in (".comp", ".frag", ".vert", ".glsl")):
             masked = cpp_text(self.show(path), preserve_comments=True).split("\n")
@@ -320,7 +323,7 @@ class Check:
                     self.report("comment", path, number)
 
     def assembly(self):
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             return
         for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
             preprocessed = PurePosixPath(path).suffix == ".S"
@@ -370,6 +373,7 @@ class Check:
             source = self.show(path)
             fenced = fenced_lines(source)
             entries = debt_entries(source) if is_debt(path) else {}
+            bases = link_bases(path, source)
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
                     name = debt_name(entries.get(number, text))
@@ -378,10 +382,10 @@ class Check:
                         self.report("debt-file", path, number, expected)
                 if number in fenced:
                     continue
-                for target, resolved in links(link_base(path), text):
+                for target, resolved in links(bases[number], text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
-                for target, resolved, fragment in fragment_links(path, text):
+                for target, resolved, fragment in fragment_links(bases[number], text):
                     if resolved.endswith(".md") and resolved in self.tree and fragment not in self.anchors(resolved):
                         self.report("doc-anchor", path, number, target)
         deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
@@ -393,10 +397,11 @@ class Check:
                 checked = {number for number, _ in files.get(path, [])}
                 source = self.show(path)
                 fenced = fenced_lines(source)
+                bases = link_bases(path, source)
                 for number, text in enumerate(source.split("\n"), 1):
                     if number in checked or number in fenced:
                         continue
-                    for target, resolved in links(link_base(path), text):
+                    for target, resolved in links(bases[number], text):
                         if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
                             self.report("doc-link", path, number, target)
 
@@ -492,7 +497,8 @@ class Check:
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
                 path = line[6:].removesuffix("\t")
-        result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
+        result = subprocess.run(["git", "grep", "--no-color", "-nF", "--full-name", "-e", "APS5_", "-e", "ANYPS5_",
+                                 self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
         for line in result.stdout.split("\n"):
@@ -639,8 +645,15 @@ def is_debt_fragment(path):
     return path.startswith(DEBT_CHANGES) and path.endswith(".md") and "/" not in path[len(DEBT_CHANGES):]
 
 
-def link_base(path):
-    return f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
+def link_bases(path, source):
+    bases = {}
+    base = f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
+    for number, line in enumerate(source.split("\n"), 1):
+        if is_debt_fragment(path) and line.startswith("# "):
+            library = line[2:].strip()
+            base = DEBT if library == PurePosixPath(DEBT).stem else f"{DEBT_DIR}{library}.md"
+        bases[number] = base
+    return bases
 
 
 def long_debt_entry(text):
@@ -791,6 +804,8 @@ def symbol_nid(name):
 
 
 def asm_exports(text):
+    if "ASM_FUNCTION" not in text:
+        return {}
     tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     exports = defaultdict(list)
     for index, match in enumerate(tokens[:-2]):
