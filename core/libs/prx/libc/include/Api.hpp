@@ -163,6 +163,7 @@ int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destru
 const std::error_category* APS5_VABI _ZSt17iostream_categoryv_nid_postfix();
 const std::error_category* APS5_VABI IostreamCategory_nid_no_patch();
 int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix( int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg );
+void APS5_VABI _ZNSt3__111__call_onceERVmPvPFvS2_E_nid_postfix(std::uint64_t* flag, void* argument, void (APS5_VABI *callback)(void*));
 void APS5_VABI _Atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int);
 void APS5_VABI _Atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int);
 void APS5_VABI _Atomic_store_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int);
