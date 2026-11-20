@@ -1090,6 +1090,15 @@ enum class RdnaOpcode : std::uint16_t {
     DsGwsBarrier,
     DsOrderedCount,
     VRsqClampF32,
+    SStoreDword,
+    SStoreDwordx2,
+    SStoreDwordx4,
+    SScratchStoreDword,
+    SScratchStoreDwordx2,
+    SScratchStoreDwordx4,
+    SBufferStoreDword,
+    SBufferStoreDwordx2,
+    SBufferStoreDwordx4,
     Count
 };
 

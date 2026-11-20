@@ -204,11 +204,124 @@ void Test64BitScalarDescriptorVccLoAndRefusals() {
     ExpectThrows({0xDC308000u, 0x00690001u}, "FLAT scalar address register range overflow");
 }
 
+void TestScalarStoreDecode() {
+    struct Store {
+        std::uint32_t word;
+        RdnaOpcode opcode;
+        std::uint32_t dwords;
+    };
+    constexpr std::array<Store, 9> stores{{
+        {0xf4400104u, RdnaOpcode::SStoreDword, 1u},
+        {0xf4440104u, RdnaOpcode::SStoreDwordx2, 2u},
+        {0xf4480104u, RdnaOpcode::SStoreDwordx4, 4u},
+        {0xf4540104u, RdnaOpcode::SScratchStoreDword, 1u},
+        {0xf4580104u, RdnaOpcode::SScratchStoreDwordx2, 2u},
+        {0xf45c0104u, RdnaOpcode::SScratchStoreDwordx4, 4u},
+        {0xf4600104u, RdnaOpcode::SBufferStoreDword, 1u},
+        {0xf4640104u, RdnaOpcode::SBufferStoreDwordx2, 2u},
+        {0xf4680104u, RdnaOpcode::SBufferStoreDwordx4, 4u},
+    }};
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 5> offsets{{
+        {0u, 0u}, {4u, 4u}, {0x0fffffu, 0x0fffffu},
+        {0x100000u, 0xfff00000u}, {0x1ffffcu, 0xfffffffcu},
+    }};
+    for (const auto& store : stores) {
+        for (const auto& [encoded, offset] : offsets) {
+            for (std::uint32_t flags = 0u; flags < 4u; ++flags) {
+                const std::array<std::uint32_t, 4> words{
+                    0xbf800000u, store.word | ((flags & 1u) << 16u) | ((flags & 2u) << 13u),
+                    0xfa000000u | encoded, 0xbf810000u,
+                };
+                const auto inst = DecodeRdnaMemoryOp(words, 1u);
+                EXPECT_EQ(inst.op, store.opcode);
+                EXPECT_EQ(inst.family, RdnaInstructionFamily::SMEM);
+                EXPECT_EQ(IsScalarMemoryOpcode(inst.op), true);
+                EXPECT_EQ(inst.opcodeId, (store.word >> 18u) & 0xffu);
+                EXPECT_EQ(inst.programCounter, 4u);
+                EXPECT_EQ(inst.wordCount, 2u);
+                EXPECT_EQ(inst.rawWords[0], words[1]);
+                EXPECT_EQ(inst.rawWords[1], words[2]);
+                EXPECT_EQ(inst.destination.kind, RdnaOperandKind::None);
+                EXPECT_EQ(inst.sourceCount, 3u);
+                EXPECT_EQ(inst.source0.kind, RdnaOperandKind::ScalarRegister);
+                EXPECT_EQ(inst.source0.reg, 8u);
+                EXPECT_EQ(inst.source1.kind, RdnaOperandKind::Null);
+                EXPECT_EQ(inst.source2.kind, RdnaOperandKind::ScalarRegister);
+                EXPECT_EQ(inst.source2.reg, 4u);
+                EXPECT_EQ(inst.dataDwordCount, store.dwords);
+                EXPECT_EQ(inst.dataBits, 32u);
+                EXPECT_EQ(inst.memoryOffset, offset);
+                EXPECT_EQ(inst.glc, (flags & 1u) != 0u);
+                EXPECT_EQ(inst.dlc, (flags & 2u) != 0u);
+            }
+        }
+        const std::array<std::uint32_t, 3> words{store.word, 0xfa000000u, 0xbf810000u};
+        const auto decoded = RdnaInstructionDecoder{}.Decode(words);
+        EXPECT_EQ(decoded.instructions.size(), 2u);
+        EXPECT_EQ(decoded.instructions[0].op, store.opcode);
+        EXPECT_EQ(decoded.instructions[1].op, RdnaOpcode::SEndpgm);
+
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        bool threw = false;
+        try {
+            context.TranslateInstruction(decoded.instructions[0]);
+        } catch (const std::runtime_error& error) {
+            EXPECT_EQ(std::string_view(error.what()), std::string_view("opcode has no IR translation at pc 0"));
+            threw = true;
+        }
+        Require(threw, "scalar store must not translate as a no-op");
+    }
+
+    const std::array<std::uint32_t, 2> registerOffset{0xf4454104u, 0x141ffffcu};
+    const auto offset = DecodeRdnaMemoryOp(registerOffset, 0u);
+    EXPECT_EQ(offset.op, RdnaOpcode::SStoreDwordx2);
+    EXPECT_EQ(offset.source1.kind, RdnaOperandKind::ScalarRegister);
+    EXPECT_EQ(offset.source1.reg, 10u);
+    EXPECT_EQ(offset.memoryOffset, 0xfffffffcu);
+    EXPECT_EQ(offset.glc, true);
+    EXPECT_EQ(offset.dlc, true);
+
+    const std::array<std::uint32_t, 2> lastScalar{0xf4401a74u, 0xd2000000u};
+    const auto last = DecodeRdnaMemoryOp(lastScalar, 0u);
+    EXPECT_EQ(last.source0.reg, 104u);
+    EXPECT_EQ(last.source1.reg, 105u);
+    EXPECT_EQ(last.source2.reg, 105u);
+
+    const std::array<std::uint32_t, 2> vcc{0xf4441ab5u, 0xfa000000u};
+    const auto special = DecodeRdnaMemoryOp(vcc, 0u);
+    EXPECT_EQ(special.source0.kind, RdnaOperandKind::VccLo);
+    EXPECT_EQ(special.source2.kind, RdnaOperandKind::VccLo);
+
+    for (const auto& store : stores) {
+        const std::array<std::uint32_t, 2> words{(store.word & ~0x1fc0u) | (125u << 6u), 0xfa000000u};
+        EXPECT_EQ(DecodeRdnaMemoryOp(words, 0u).source2.kind, RdnaOperandKind::Null);
+    }
+}
+
+void TestScalarStoreRefusals() {
+    ExpectThrows({0xf4440000u | (103u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4480000u | (102u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4480000u | (104u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4400000u | (124u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4400000u | (126u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4440000u | (107u << 6u), 0xfa000000u}, "unsupported SMEM store data register range");
+    ExpectThrows({0xf4600101u, 0xfa000000u}, "SMEM store buffer descriptor requires four aligned SGPRs");
+    ExpectThrows({0xf4600134u, 0xfa000000u}, "SMEM store buffer descriptor requires four aligned SGPRs");
+    ExpectThrows({0xf4600135u, 0xfa000000u}, "SMEM store buffer descriptor requires four aligned SGPRs");
+    ExpectThrows({0xf4400100u, 108u << 25u}, "unsupported scalar source operand");
+    ExpectThrows({0xf44c0104u, 0xfa000000u}, "SMEM opcode is not supported");
+}
+
 }
 
 int main() {
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();
+    TestScalarStoreDecode();
+    TestScalarStoreRefusals();
     return 0;
 }
