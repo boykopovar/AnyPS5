@@ -143,6 +143,7 @@ void RunSamplerReductionTests(const Fields& base) {
     context.limits.maxSamplerAnisotropy = 1.0f;
     context.deviceProc = captureProc;
     context.samplerFilterMinmax = true;
+    context.samplerFilterMinmaxAcrossMips = true;
 
     const std::array<std::uint32_t, 4> capturedSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
     const auto captured = DecodeSamplerResource(capturedSampler);
@@ -187,6 +188,11 @@ void RunSamplerReductionTests(const Fields& base) {
             Require(Sampler(context, decoded).RequiresFilterMinmax(), "a min or max sampler with a linear mip filter does not require min/max filtering");
         }
     }
+    context.samplerFilterMinmaxAcrossMips = false;
+    reject([&] { createSampler(context, DecodeSamplerResource(pack(linearMip))); }, "lavapipe does not reduce across both levels");
+    linearMip.mipFilter = 1;
+    static_cast<void>(createSampler(context, DecodeSamplerResource(pack(linearMip))));
+    context.samplerFilterMinmaxAcrossMips = true;
 
     Fields badFilterMode = base;
     badFilterMode.filterMode = 3;

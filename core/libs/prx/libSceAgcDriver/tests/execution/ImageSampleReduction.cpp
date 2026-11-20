@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -314,10 +315,21 @@ int main() {
         Gather(*device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
         Gather(*device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
         FillInput(0.25f, 0.375f);
-        Run(*device, {ReductionMin, FilterBilinear, MipLinear}, "min, bilinear, linear mip");
-        Run(*device, {ReductionMax, FilterBilinear, MipLinear}, "max, bilinear, linear mip");
-        Run(*device, {ReductionMin, FilterPoint, MipLinear}, "min, point, linear mip");
-        Run(*device, {ReductionMax, FilterPoint, MipLinear}, "max, point, linear mip");
+        const bool lavapipe = device->DriverId() == VK_DRIVER_ID_MESA_LLVMPIPE;
+        for (const auto& [sampler, name] : {std::pair{Sampler{ReductionMin, FilterBilinear, MipLinear}, "min, bilinear, linear mip"}, std::pair{Sampler{ReductionMax, FilterBilinear, MipLinear}, "max, bilinear, linear mip"},
+                                            std::pair{Sampler{ReductionMin, FilterPoint, MipLinear}, "min, point, linear mip"}, std::pair{Sampler{ReductionMax, FilterPoint, MipLinear}, "max, point, linear mip"}}) {
+            if (!lavapipe) {
+                Run(*device, sampler, name);
+                continue;
+            }
+            std::string refusal;
+            try {
+                Run(*device, sampler, name);
+            } catch (const std::exception& error) {
+                refusal = error.what();
+            }
+            Require(refusal.find("lavapipe does not reduce across both levels") != std::string::npos, std::string(name) + " on lavapipe was not refused: " + refusal);
+        }
         FillInput(0.25f, 0.75f);
         RunWithColors(*device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");
         try {
