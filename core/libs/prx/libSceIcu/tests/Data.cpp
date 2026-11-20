@@ -96,16 +96,19 @@ void Allocator() {
 }
 
 void Registration() {
+    auto* inaccessible = reinterpret_cast<std::int32_t*>(std::uintptr_t{1});
+    udata_setCommonData_nid_postfix(nullptr, inaccessible);
+    udata_setFileAccess_nid_postfix(3, inaccessible);
     std::int32_t status = 15;
-    udata_setCommonData(nullptr, &status);
+    udata_setCommonData_nid_postfix(nullptr, &status);
     Expect(status == 15, "common data preserves failure");
-    udata_setCommonData(nullptr, nullptr);
+    udata_setCommonData_nid_postfix(nullptr, nullptr);
     status = 0;
-    udata_setCommonData(nullptr, &status);
+    udata_setCommonData_nid_postfix(nullptr, &status);
     Expect(status == 1, "null common data");
     alignas(16) unsigned char invalid[64] = {};
     status = 0;
-    udata_setCommonData(invalid, &status);
+    udata_setCommonData_nid_postfix(invalid, &status);
     Expect(status == 3, "invalid common data header");
     std::ifstream input(ANYPS5_ICU_PACKAGED_DATA, std::ios::binary);
     Expect(input.good(), "packaged data file");
@@ -113,17 +116,17 @@ void Registration() {
     std::vector<std::max_align_t> aligned((bytes.size() + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
     std::memcpy(aligned.data(), bytes.data(), bytes.size());
     status = 0;
-    udata_setCommonData(aligned.data(), &status);
+    udata_setCommonData_nid_postfix(aligned.data(), &status);
     Expect(status == 0, "register valid source-built common data");
     status = 15;
-    udata_setFileAccess(3, &status);
+    udata_setFileAccess_nid_postfix(3, &status);
     Expect(status == 15, "file access ignores failed status");
-    udata_setFileAccess(3, nullptr);
+    udata_setFileAccess_nid_postfix(3, nullptr);
     status = 0;
     auto* iterator = ubrk_open(0, "en", u"a\u0301", 2, &status);
     Expect(iterator && status <= 0 && ubrk_next(iterator) == 2, "registered data supports break iteration with no file access");
     ubrk_close(iterator);
-    udata_setFileAccess(0, nullptr);
+    udata_setFileAccess_nid_postfix(0, nullptr);
     u_cleanup_nid_postfix();
 }
 
