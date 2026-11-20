@@ -1,5 +1,6 @@
+// Derived from Source/WebCore/platform/graphics/HEVCUtilities.h@c55364d53f971f63a709976f168d932d558b8909
 /*
- * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,35 +30,46 @@
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <new>
 #include <type_traits>
+#include <utility>
 
 namespace WebCore {
 
-struct DoViParameters {
-    enum class Codec { AVC1, AVC3, HEV1, HVC1 } codec { Codec::HVC1 };
-    uint16_t bitstreamProfileID { 0 };
-    uint16_t bitstreamLevelID { 0 };
+struct DoViParameterSet {
+    NKWebKit::WtfAbi::String codecName;
+    unsigned short bitstreamProfileID { 0 };
+    unsigned short bitstreamLevelID { 0 };
 };
 
-struct DoViOptionalAbi {
-    DoViParameters value;
+struct DoViOptionalParameterSet {
     bool engaged;
+    union {
+        unsigned char dummy;
+        DoViParameterSet value;
+    };
+    DoViOptionalParameterSet() : engaged(false), dummy(0) {}
+    explicit DoViOptionalParameterSet(DoViParameterSet&& parameters) : engaged(true), value(std::move(parameters)) {}
+    DoViOptionalParameterSet(const DoViOptionalParameterSet&) = delete;
+    DoViOptionalParameterSet(DoViOptionalParameterSet&& other) noexcept : engaged(other.engaged), dummy(0) {
+        if (engaged) new (&value) DoViParameterSet(std::move(other.value));
+    }
+    ~DoViOptionalParameterSet() {
+        if (engaged) value.~DoViParameterSet();
+    }
 };
 
-static_assert(offsetof(DoViOptionalAbi, engaged) == 8);
-static_assert(sizeof(DoViOptionalAbi) == sizeof(std::optional<DoViParameters>));
-static_assert(alignof(DoViOptionalAbi) == alignof(std::optional<DoViParameters>));
-static_assert(sizeof(DoViParameters::Codec) == 4);
-static_assert(sizeof(DoViParameters) == 8);
-static_assert(alignof(DoViParameters) == 4);
-static_assert(offsetof(DoViParameters, codec) == 0);
-static_assert(offsetof(DoViParameters, bitstreamProfileID) == 4);
-static_assert(offsetof(DoViParameters, bitstreamLevelID) == 6);
-static_assert(sizeof(std::optional<DoViParameters>) == 12);
-static_assert(alignof(std::optional<DoViParameters>) == 4);
-static_assert(std::is_trivially_copyable_v<std::optional<DoViParameters>>);
+static_assert(sizeof(DoViParameterSet) == 16);
+static_assert(offsetof(DoViParameterSet, codecName) == 0);
+static_assert(offsetof(DoViParameterSet, bitstreamProfileID) == 8);
+static_assert(offsetof(DoViParameterSet, bitstreamLevelID) == 10);
+static_assert(sizeof(DoViOptionalParameterSet) == 24);
+static_assert(alignof(DoViOptionalParameterSet) == 8);
+static_assert(offsetof(DoViOptionalParameterSet, engaged) == 0);
+static_assert(offsetof(DoViOptionalParameterSet, value) == 8);
+static_assert(!std::is_trivially_copyable_v<DoViOptionalParameterSet>);
+static_assert(!std::is_trivially_destructible_v<DoViOptionalParameterSet>);
 
 }  // namespace WebCore
 
-extern "C" std::optional<WebCore::DoViParameters> APS5_VABI _ZN7WebCore24parseDoViCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& input);
+extern "C" WebCore::DoViOptionalParameterSet APS5_VABI _ZN7WebCore24parseDoViCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& input);
