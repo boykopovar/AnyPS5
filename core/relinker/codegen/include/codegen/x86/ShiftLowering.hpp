@@ -3,6 +3,7 @@
 
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <optional>
+#include <span>
 
 namespace Codegen {
 
@@ -24,7 +25,8 @@ struct ShiftOperands {
 
 [[nodiscard]] const char* ShiftName(ShiftOperation operation);
 [[nodiscard]] std::optional<ShiftOperands> DecodeShift(const std::uint8_t* data, std::size_t length);
-void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands);
+[[nodiscard]] bool FlagsDeadAfter(std::span<const std::uint8_t> code);
+void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands, bool preserveFlags = true);
 
 }
 
