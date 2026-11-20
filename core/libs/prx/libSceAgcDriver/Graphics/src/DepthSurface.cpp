@@ -2866,22 +2866,26 @@ std::uint64_t& planeCopyClock() {
     return clock;
 }
 
-void evictPlaneCopies(const DepthPlaneCopyKey& keep) {
-    static const VkDeviceSize budget = [] {
+void evictPlaneCopies(const VkPhysicalDeviceMemoryProperties& memory, const DepthPlaneCopyKey& keep) {
+    static const auto overrideBudget = []() -> std::optional<VkDeviceSize> {
         const char* text = std::getenv("APS5_DEPTH_PLANE_COPY_MIB");
-        return static_cast<VkDeviceSize>(text != nullptr ? std::strtoull(text, nullptr, 10) : 256ull) << 20u;
+        if (text == nullptr) return std::nullopt;
+        return static_cast<VkDeviceSize>(std::strtoull(text, nullptr, 10)) << 20u;
     }();
+    const auto budget = overrideBudget ? *overrideBudget : DepthPlaneCopyBudget(memory);
     if (budget == 0) return;
     auto& copies = planeCopies();
     VkDeviceSize total = 0;
-    for (const auto& entry : copies) total += entry.second->HeldBytes();
+    for (const auto& [key, copy] : copies) {
+        if (key.device == keep.device) total += copy->HeldBytes();
+    }
     const auto present = Recorder::Presents();
     const auto ceiling = budget + std::min(budget, std::numeric_limits<VkDeviceSize>::max() - budget);
     while (total > budget) {
         const bool over = total > ceiling;
         auto oldest = copies.end();
         for (auto it = copies.begin(); it != copies.end(); ++it) {
-            if (it->first == keep || (!over && it->second->lastPresent + 1u >= present)) continue;
+            if (it->first.device != keep.device || it->first == keep || (!over && it->second->lastPresent + 1u >= present)) continue;
             if (oldest == copies.end() || it->second->lastUse < oldest->second->lastUse) oldest = it;
         }
         if (oldest == copies.end()) break;
@@ -4631,6 +4635,15 @@ VkDeviceSize DepthPlaneCopyBytes() {
     return total;
 }
 
+VkDeviceSize DepthPlaneCopyBudget(const VkPhysicalDeviceMemoryProperties& memory) {
+    constexpr VkDeviceSize step = 256ull << 20u;
+    constexpr VkDeviceSize heapPerStep = 16u * step;
+    const auto heap = LargestDeviceLocalHeap(memory);
+    const auto bytes = heap ? memory.memoryHeaps[*heap].size : 0;
+    const auto steps = bytes / heapPerStep + (bytes % heapPerStep != 0);
+    return std::max<VkDeviceSize>(1, steps) * step;
+}
+
 namespace {
 
 thread_local bool depthCopySourceActive = false;
@@ -4741,7 +4754,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     if (DepthPlaneReuse() && !texture->HasReuseLookup()) {
         texture->SetReuseLookup([context, lookupWords = std::vector<std::uint32_t>(words.begin(), words.end()), resource, components] { return DepthSurfaceTexture(context, lookupWords, resource, components); });
     }
-    evictPlaneCopies(copyKey);
+    evictPlaneCopies(context.memory, copyKey);
     return texture;
 }
 

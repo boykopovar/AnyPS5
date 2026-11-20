@@ -556,11 +556,34 @@ void RefusalCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     ExpectRefusal(device, block, CubeOffset, {Format32Float, 128, 128, TypeCube, 5, Swizzle64KbZX}, 1, "base slice 1 is not implemented", "a depth plane cube from base slice 1");
     ExpectRefusal(device, block, ArrayOffset, {Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX}, 1, "slice 1 is not implemented", "a 2D depth plane view with a base slice");
 }
+
+void DepthPlaneBudgetCase() {
+    using AgcDriver::Graphics::DepthPlaneCopyBudget;
+    constexpr VkDeviceSize MiB = 1ull << 20u;
+    constexpr VkDeviceSize GiB = 1024u * MiB;
+    VkPhysicalDeviceMemoryProperties memory{};
+    Require(DepthPlaneCopyBudget(memory) == 256u * MiB, "missing heaps must use the depth plane copy budget floor");
+    memory.memoryHeapCount = 3;
+    memory.memoryHeaps[0] = {64u * GiB, 0};
+    memory.memoryHeaps[1] = {4u * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[2] = {2u * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    Require(DepthPlaneCopyBudget(memory) == 256u * MiB, "a 4 GiB device-local heap must use one budget step");
+    memory.memoryHeaps[1].size += 1;
+    Require(DepthPlaneCopyBudget(memory) == 512u * MiB, "the budget must round up just above a heap size boundary");
+    memory.memoryHeaps[2].size = 16u * GiB - 128u * MiB;
+    Require(DepthPlaneCopyBudget(memory) == GiB, "the largest device-local heap must set the budget below 16 GiB");
+    memory.memoryHeaps[2].size = 32u * GiB;
+    Require(DepthPlaneCopyBudget(memory) == 2u * GiB, "the default budget must scale beyond a 16 GiB heap");
+}
 }
 
 int main(int argc, char** argv) {
     try {
         const std::string mode = argc > 1 ? argv[1] : "";
+        if (mode == "--budget") {
+            DepthPlaneBudgetCase();
+            return 0;
+        }
         const bool evicting = mode == "--evicting";
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
