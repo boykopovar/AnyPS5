@@ -37,7 +37,7 @@ int APS5_VABI FcFontSetAdd(FcFontSet* set, FcPattern* pattern) {
         set->fonts = static_cast<FcPattern**>(storage);
         set->sfont = static_cast<int>(next);
     }
-    FcPattern* duplicate = FcPatternDuplicate(pattern);
+    FcPattern* duplicate = FcPatternDuplicate_nid_postfix(pattern);
     if (!duplicate) return 0;
     set->fonts[set->nfont++] = duplicate;
     return 1;
@@ -45,7 +45,7 @@ int APS5_VABI FcFontSetAdd(FcFontSet* set, FcPattern* pattern) {
 
 void APS5_VABI FcFontSetDestroy(FcFontSet* set) {
     if (!set) return;
-    for (int i = 0; i < set->nfont; ++i) FcPatternDestroy(set->fonts[i]);
+    for (int i = 0; i < set->nfont; ++i) FcPatternDestroy_nid_postfix(set->fonts[i]);
     std::free(set->fonts);
     std::free(set);
 }
