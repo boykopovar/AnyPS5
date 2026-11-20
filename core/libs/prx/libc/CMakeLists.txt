@@ -231,6 +231,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicWait.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxMutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
@@ -298,8 +299,14 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_std_atomic_wait_kernel_tests)
     add_test(NAME guest_std_atomic_wait_kernel COMMAND guest_std_atomic_wait_kernel_tests)
     set_tests_properties(guest_std_atomic_wait_kernel PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_libcxx_recursive_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxRecursiveMutex.cpp)
+    target_include_directories(guest_libcxx_recursive_mutex_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_recursive_mutex_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libcxx_recursive_mutex_tests)
+    add_test(NAME guest_libcxx_recursive_mutex COMMAND guest_libcxx_recursive_mutex_tests)
+    set_tests_properties(guest_libcxx_recursive_mutex PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_std_atomic_wait guest_std_atomic_wait_kernel PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_std_atomic_wait guest_std_atomic_wait_kernel guest_libcxx_recursive_mutex PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
