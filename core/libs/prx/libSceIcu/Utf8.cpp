@@ -128,7 +128,8 @@ std::int32_t APS5_VABI utf8_appendCharSafeBody_nid_postfix(std::uint8_t* text, s
         return index + width;
     }
     if (isError) {
-        *isError = 1;
+        const std::int8_t errVal = 1;
+        if (!GuestCopyOut_nid_no_patch(isError, &errVal, sizeof(errVal))) APS5_INVALID_ARG_EX;
     } else {
         if (available < std::numeric_limits<std::int32_t>::min()) APS5_INVALID_ARG_EX;
         if (available <= 0) return index;

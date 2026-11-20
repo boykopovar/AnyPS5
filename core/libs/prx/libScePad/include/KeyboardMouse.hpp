@@ -10,6 +10,7 @@
 
 #include "InputMapping.hpp"
 #include "PadState.hpp"
+#include "ToggleLatch.hpp"
 
 namespace Pad {
 
@@ -94,10 +95,13 @@ private:
     StickInput stickInput() const;
     std::array<double, 2> triggerTargets() const;
     bool advanceAxes(Clock::time_point now);
+    bool isToggleBinding(const InputBinding& binding) const;
+    bool bindingHeld(std::size_t index) const;
 
     InputConfiguration configuration;
     std::vector<bool> pressed;
     std::vector<Clock::time_point> wheelReleaseTimes;
+    ToggleLatch toggles;
     MouseStick mouse;
     Clock::time_point lastAdvance{};
     Clock::time_point lastAxisAdvance{};
