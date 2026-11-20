@@ -9,6 +9,14 @@ namespace {
 
 constexpr int MoveTrackerNotInitialized = static_cast<int>(0x80ef0001);
 
+bool IsValidGuestWrite(void* pointer, std::size_t size) {
+    if (pointer == nullptr) return false;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
+    errno = savedErrno;
+    return writable;
+}
+
 } // namespace
 
 extern "C" {
@@ -65,7 +73,7 @@ int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::
 }
 
 int APS5_VABI sceMoveTrackerInit(void* workMemory, std::uint64_t requiredArgument, std::uint32_t pipeId, std::uint32_t queueId) {
-    if (workMemory == nullptr || requiredArgument == 0 || pipeId >= 8 || queueId >= 8) {
+    if (!IsValidGuestWrite(workMemory, 1) || requiredArgument == 0 || pipeId >= 8 || queueId >= 8) {
         return static_cast<int>(0x80ef0003);
     }
     NotImplemented_nid_no_patch(__func__);
