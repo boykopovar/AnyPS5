@@ -54,6 +54,13 @@ std::size_t mixedSlot(std::uint64_t first, std::uint64_t second, std::size_t slo
     return static_cast<std::size_t>(mixed % slots);
 }
 
+template<typename TValue, typename TTag>
+TValue& heapThreadLocal() {
+    auto& held = HostThreadLocal<std::unique_ptr<TValue>, TTag>();
+    if (held == nullptr) held = std::make_unique<TValue>();
+    return *held;
+}
+
 void noteUnsettled(const AddressRanges& ranges, const Graphics::Recorder::WriteRanges* before) {
     static const bool on = std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!on) return;
@@ -933,7 +940,7 @@ std::size_t DirectStageStore::KeyHash::operator()(const std::pair<std::uint64_t,
 }
 
 std::shared_ptr<const DirectStage> DirectStageStore::Find(std::uint64_t variant, std::uint64_t key) const {
-    auto& slot = HostThreadLocal<StageFront, StageFrontStorage>().slots[mixedSlot(variant, key, FrontSlots)];
+    auto& slot = heapThreadLocal<StageFront, StageFrontStorage>().slots[mixedSlot(variant, key, FrontSlots)];
     if (slot.stage != nullptr && slot.variant == variant && slot.key == key && slot.clears == clears.load(std::memory_order_acquire)) return slot.stage;
     std::lock_guard lock(mutex);
     const auto found = stages.find({variant, key});
@@ -1015,7 +1022,7 @@ std::size_t DirectClass::Bytes() const {
 }
 
 std::shared_ptr<const DirectClass> DirectClassStore::Find(const DirectClassKey& key, std::uint64_t probe) const {
-    auto& slot = HostThreadLocal<ClassFront, ClassFrontStorage>().slots[static_cast<std::size_t>(probe % FrontSlots)];
+    auto& slot = heapThreadLocal<ClassFront, ClassFrontStorage>().slots[static_cast<std::size_t>(probe % FrontSlots)];
     if (slot.entry != nullptr && slot.probe == probe && slot.clears == clears.load(std::memory_order_acquire) && slot.entry->key == key) return slot.entry;
     std::lock_guard lock(mutex);
     const auto found = classes.find(key);
@@ -1217,7 +1224,7 @@ std::optional<Counter> Driver::resolveDirectStages(const LeanDrawJob& job, const
     resolved.stages.resize(count);
     resolved.regions.clear();
     lap(Step::Request);
-    auto& cache = HostThreadLocal<InvocationCache, InvocationCacheStorage>();
+    auto& cache = heapThreadLocal<InvocationCache, InvocationCacheStorage>();
     auto& reads = HostThreadLocal<DirectReads, DirectReadsStorage>();
     const bool libraries = device.GraphicsPipelineLibraries();
     const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& value) { return value.binary.stage == Stage::Fragment; });
