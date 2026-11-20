@@ -182,6 +182,25 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"new\n")
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
+    @unittest.skipUnless(os.name == "nt", "Windows replaces a command file held open for reading")
+    def test_queue_timeline_replaces_command_held_open_for_reading(self):
+        import ctypes
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "command"
+            path.write_bytes(b"old\n")
+            ucrt = ctypes.CDLL("ucrtbase")
+            ucrt._wfopen.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+            ucrt._wfopen.restype = ctypes.c_void_p
+            ucrt.fclose.argtypes = [ctypes.c_void_p]
+            reader = ucrt._wfopen(str(path), "rb")
+            self.assertTrue(reader)
+            try:
+                pad_timeline.queue_timeline(path, "new\n")
+            finally:
+                ucrt.fclose(reader)
+            self.assertEqual(path.read_bytes(), b"new\n")
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def run_cli(self, timeline, output, *arguments):
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output), *arguments],
