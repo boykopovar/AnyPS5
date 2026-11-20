@@ -45,7 +45,7 @@ std::vector<ShaderRecompiler::MemoryRegion> Driver::dispatchRegions(std::span<co
     return srtRegions;
 }
 
-void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming, const std::shared_ptr<const PreparedShaderState::UserDataLink>& linking) {
+void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming, const std::shared_ptr<const PreparedShaderState::UserDataLink>& linking, std::uint64_t identity, std::span<const std::uint32_t> userData) {
     if (!noDispatchCache) {
         auto fresh = std::make_shared<DispatchVariant>();
         fresh->compiled = compiledResult;
@@ -59,15 +59,20 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
         for (const auto& region : srtRegions) capturedWords += region.bytes.size() / sizeof(std::uint32_t);
         auto supplied = shaderMemory->SuppliedBlocks();
         if (linking != nullptr) supplied.insert(supplied.end(), linking->dependencies.begin(), linking->dependencies.end());
+        const bool relocatable = identity != 0 && dispatchRelocationEnabled() && capture != nullptr && linking == nullptr && !stampValidate() && !userData.empty();
         fresh->runs.reserve(srtRegions.size());
         fresh->words.reserve(capturedWords);
-        for (const auto& region : srtRegions) {
-            fresh->runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
-            const auto count = region.bytes.size() / sizeof(std::uint32_t);
-            const auto offset = fresh->words.size();
-            fresh->words.resize(offset + count);
-            std::memcpy(fresh->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
-            AppendSharedWords(fresh->shared, fresh->runs.size() - 1u, offset, region.bytes, supplied);
+        if (relocatable) {
+            tagVariantRuns(*fresh, srtRegions, capture->userDataUse, true, 0, supplied);
+        } else {
+            for (const auto& region : srtRegions) {
+                fresh->runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
+                const auto count = region.bytes.size() / sizeof(std::uint32_t);
+                const auto offset = fresh->words.size();
+                fresh->words.resize(offset + count);
+                std::memcpy(fresh->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
+                AppendSharedWords(fresh->shared, fresh->runs.size() - 1u, offset, region.bytes, supplied);
+            }
         }
 
         DataWordPositionCounts dataCounts;
@@ -127,6 +132,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
             entryCounters.dataLeavesMismatched += dataCounts.mismatched;
             entryCounters.dataLeavesAliased += dataCounts.aliased;
             attachVariant = fresh;
+            const auto inserted = fresh;
             const auto found = dispatchCache.find(key);
             if (found == dispatchCache.end()) {
                 auto created = std::make_shared<DispatchEntry>();
@@ -161,6 +167,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
                 found->second = std::move(replacement);
             }
 
+            if (relocatable && attachVariant == inserted) learnDispatchRelocation(identity, key, *inserted, userData);
             static const bool lru = std::getenv("APS5_NO_DISPATCH_LRU") == nullptr;
             const auto over = [&] { return dispatchCache.size() > dispatchCacheEntries() || (dispatchCache.size() > 1 && dispatchCacheVariantBytes > DispatchCacheBytes()); };
             if (over()) {

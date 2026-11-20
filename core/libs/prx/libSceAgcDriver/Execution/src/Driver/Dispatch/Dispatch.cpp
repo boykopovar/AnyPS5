@@ -434,14 +434,21 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     } probeScope{probeThis};
     const bool noDispatchCache = noDispatchCacheEnv || probeThis;
     std::uint64_t key = 0xcbf29ce484222325ull;
+    std::uint64_t identity = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
+        key ^= value;
+        key *= 0x100000001b3ull;
+        identity ^= value;
+        identity *= 0x100000001b3ull;
+    };
+    const auto mixUser = [&](std::uint64_t value) {
         key ^= value;
         key *= 0x100000001b3ull;
     };
     mix(address);
     mix(packet[4] & 0x8000u);
     for (const auto threads : compute.partialThreads) mix(threads);
-    for (const auto word : userData) mix(word);
+    for (const auto word : userData) mixUser(word);
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
     if (keyHygiene) {
@@ -508,6 +515,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
 
     mix(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
+    const bool relocating = !noDispatchCache && !stampValidate() && dispatchRelocationEnabled();
+    if (relocating && !fromAhead) relocateDispatchEntry(identity, key, userData);
     if (fromAhead && key != ahead.key) {
         fromAhead = false;
         ++groupStats.keyMismatches;
@@ -652,7 +661,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         if (profile) recompileMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
         phaseTiming.Phase(PhaseRecompile);
-        if (!resolving) insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming, linking);
+        if (!resolving) insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming, linking, relocating ? identity : 0, userData);
         if (linking != nullptr) linking->AppendRegions(captured);
     }
     const auto* registeredViews = capture != nullptr ? &capture->snapshot.registeredImages : keepVariant != nullptr && keepVariant->registeredViews != nullptr ? keepVariant->registeredViews.get() : nullptr;
@@ -662,6 +671,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked = ResolvedDispatch{};
         parked.address = address;
         parked.key = key;
+        parked.identity = relocating ? identity : 0;
+        parked.userData = userData;
         parked.indirectArguments = indirectArguments;
         parked.forgetAtCapture = forgetAtCapture;
         std::copy_n(packet.begin(), std::min(packet.size(), parked.packet.size()), parked.packet.begin());

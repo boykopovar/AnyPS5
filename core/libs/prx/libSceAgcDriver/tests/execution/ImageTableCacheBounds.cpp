@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
@@ -372,6 +373,7 @@ void SetWideRecord(const GuestBlock& block, std::uint32_t record, std::uint32_t 
 void VouchedLookups(const GuestBlock& block) {
     using AgcDriver::ShaderMemory;
     using ShaderRecompiler::ResourceMaterializer;
+    AgcDriver::Graphics::RuntimeSwitches::Assign(AgcDriver::Graphics::RuntimeSwitch::NoDispatchRelocation, true);
     std::memcpy(block.Bytes(WideKernelOffset), WideTableCode.data(), sizeof(WideTableCode));
     for (std::uint32_t record = 0; record < WideRecords; ++record) {
         SetWideRecord(block, record, (1u + record % 15u) * Aliases);

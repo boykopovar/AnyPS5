@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -5994,6 +5995,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const bool overlapCapable = !split && overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
     std::vector<Graphics::Recorder::RunAccess> runAccesses;
     if (overlapCapable) resources.RunAccesses(runAccesses);
+    if (overlapCapable && record.bindings != nullptr) resources.MovedRunAccesses(*record.bindings, runAccesses);
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
@@ -6743,7 +6745,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     // object the resource cache serves under this content key (reusable: no lease, no copied
     // writes, every direct region import- or mirror-served), so a hit's proof is the template's
     // Revalidate and nothing needs completion work.
-    if (recipeOut != nullptr && DispatchRecipes() && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
+    if (recipeOut != nullptr && DispatchRecipes() && cacheable && (overlay == nullptr || (DispatchMove() && !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoMovedRecipes))) && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
         auto recipe = std::make_shared<Recipe>();
         recipe->device = state->device;
         recipe->templateRef = resources;
@@ -6758,6 +6760,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
         }
         recipe->needsCompletion = resources->NeedsCompletion();
         recipe->holdsLease = resources->HoldsLease();
+        recipe->movesBuffers = overlay != nullptr;
         *recipeOut = std::move(recipe);
     }
     timer.finish(lookupsBefore, groupsText, indirect);
@@ -6850,6 +6853,21 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         counters.rebuilds[static_cast<std::size_t>(report.failure)].fetch_add(1, std::memory_order_relaxed);
         return RecipeOutcome::Rebuild;
     }
+    std::shared_ptr<Graphics::ShaderResources::DrawBindings> movedBindings;
+    if (recipe.movesBuffers) {
+        if (!DispatchMove()) return RecipeOutcome::Rebuild;
+        Graphics::ShaderResources::MoveProof moveProof;
+        auto moved = hit->resources->MovedDispatchBuffers(shaders[0], state->recorder.get(), DispatchMoveBytes(), moveProof);
+        if (moved.has_value() && threadGroup != std::array<std::uint32_t, 3>{}) {
+            const auto data = hit->resources->shaderDataAllocation(shaders[0]);
+            if (data.has_value() && std::ranges::any_of(*moved, [&](const Graphics::ShaderResources::MovedBuffer& entry) { return entry.allocation == *data; })) moved.reset();
+        }
+        if (!moved.has_value()) return RecipeOutcome::Rebuild;
+        if (!moved->empty()) {
+            movedBindings = hit->resources->PrepareDrawBindings(*state->recorder, *moved, true);
+            if (movedBindings == nullptr || movedBindings->allocation.set == VK_NULL_HANDLE) return RecipeOutcome::Rebuild;
+        }
+    }
     counters.proofPaths[static_cast<std::size_t>(report.path)].fetch_add(1, std::memory_order_relaxed);
     ++d.cacheHits;
     state->resourceCache.Touch(recipe.key);
@@ -6859,7 +6877,8 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     const auto dataRefresh = !TemplateDataRefresh() ? RecordedDispatch::DataRefresh::None : refreshByWords ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::Hash;
     if (dataRefresh == RecordedDispatch::DataRefresh::Words) counters.refreshByWords.fetch_add(1, std::memory_order_relaxed);
     RecordedDispatch record{&context, &shaders[0], hit->resources, hit->objects, recipe.pushes ? VkShaderStageFlags{VK_SHADER_STAGE_COMPUTE_BIT} : VkShaderStageFlags{0}, &recipe.pushBytes, x, y, z, arguments, nullptr, programAddress, dataRefresh, recipe.dataWordsHash, 0, &timer};
-    record.resourceKeyMatched = verify != nullptr;
+    record.resourceKeyMatched = verify != nullptr || recipe.movesBuffers;
+    record.bindings = movedBindings;
     record.threadGroup = threadGroup;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;
