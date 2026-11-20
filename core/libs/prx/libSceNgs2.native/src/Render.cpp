@@ -524,6 +524,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
             else if (voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
+            if (voice.masteringLfe.enabled) Ngs2ApplyMasteringLfe(voice, grain, systemRate);
             if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER ||
                 (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING)) {
                 ProcessCompressor(voice, grain, systemRate);

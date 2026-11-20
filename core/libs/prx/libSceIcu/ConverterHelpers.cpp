@@ -103,14 +103,14 @@ UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode)
     std::int32_t incoming = 0;
     CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
     if (incoming > 0) return nullptr;
-    if (incoming < U_ERROR_WARNING_START) APS5_INVALID_ARG_EX;
-    auto status = static_cast<UErrorCode>(incoming);
+    const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
+    auto status = static_cast<UErrorCode>(entered);
 
     const std::lock_guard lock(DefaultConverterMutex);
     std::unique_ptr<UConverter, decltype(&u_releaseDefaultConverter)> converter(
         u_getDefaultConverter(&status), u_releaseDefaultConverter);
     const auto outgoing = static_cast<std::int32_t>(status);
-    if (outgoing != incoming) CopyOut(errorCode, &outgoing, sizeof(outgoing), __func__);
+    if (outgoing != entered) CopyOut(errorCode, &outgoing, sizeof(outgoing), __func__);
     if (converter) CheckedOutDefaultConverters.insert(converter.get());
     return converter.release();
 }

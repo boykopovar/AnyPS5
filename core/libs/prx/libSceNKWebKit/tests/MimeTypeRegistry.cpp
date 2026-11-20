@@ -244,6 +244,32 @@ void TestExtensions() {
         MakeString(""), MakeString("image/png")), ""));
     Require(Equals(_ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
         MakeString(nullptr), MakeString("image/png")), nullptr));
+
+    const unsigned char latin[] = {'c', 'a', 'f', 0xE9};
+    const unsigned char latinNamed[] = {'c', 'a', 'f', 0xE9, '.', 'p', 'n', 'g'};
+    const String narrow = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKhj(latin, sizeof(latin)), MakeString("image/png"));
+    Require(narrow.impl && (narrow.impl->hashAndFlags & 4) != 0 && narrow.impl->length == sizeof(latinNamed));
+    Require(std::memcmp(narrow.impl->data, latinNamed, sizeof(latinNamed)) == 0);
+
+    const char16_t kana[] = {0x30B2, 0x30FC, 0x30E0};
+    const char16_t kanaNamed[] = {0x30B2, 0x30FC, 0x30E0, u'.', u'h', u't', u'm'};
+    const String wide = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(kana, 3), MakeString("text/html"));
+    Require(wide.impl && (wide.impl->hashAndFlags & 4) == 0 && wide.impl->length == 7);
+    Require(std::memcmp(wide.impl->data, kanaNamed, sizeof(kanaNamed)) == 0);
+
+    const char16_t plain[] = {u't', u'e', u's', u't'};
+    const char16_t plainNamed[] = {u't', u'e', u's', u't', u'.', u'p', u'n', u'g'};
+    const String plainWide = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(plain, 4), MakeString("image/png"));
+    Require(plainWide.impl && (plainWide.impl->hashAndFlags & 4) == 0 && plainWide.impl->length == 8);
+    Require(std::memcmp(plainWide.impl->data, plainNamed, sizeof(plainNamed)) == 0);
+
+    const char16_t dotted[] = {0x30B2, u'.', u'x'};
+    const String kept = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(dotted, 3), MakeString("image/png"));
+    Require(kept.impl && kept.impl->length == 3 && std::memcmp(kept.impl->data, dotted, sizeof(dotted)) == 0);
 }
 
 void TestAllowedAndEncoding() {

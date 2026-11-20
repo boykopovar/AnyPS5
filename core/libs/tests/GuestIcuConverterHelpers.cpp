@@ -51,6 +51,13 @@ void DefaultConverterLifecycle() {
     u_releaseDefaultConverter_nid_postfix(first);
     RequiresInvalidArgument([&] { u_releaseDefaultConverter_nid_postfix(first); }, "already returned converter must be rejected");
 
+    for (const std::int32_t incoming : {std::int32_t{-129}, INT32_MIN}) {
+        status = incoming;
+        auto* below = u_getDefaultConverter_nid_postfix(&status);
+        Require(below && status == incoming, "a status below the warning range is not a failure");
+        u_releaseDefaultConverter_nid_postfix(below);
+    }
+
     status = 1;
     Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "incoming failure leaves the cache untouched");
     status = 0;

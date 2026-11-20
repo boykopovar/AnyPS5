@@ -94,6 +94,7 @@ void ReportsTypeAndListening() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
     Require(stream >= 0 && datagram >= 0, "socket failed");
+    Require(GetInt(stream, SoError) == 0, "SO_ERROR of a fresh socket must be 0");
     Require(GetInt(stream, SoType) == Stream, "SO_TYPE of a stream socket must be SOCK_STREAM (1)");
     Require(GetInt(datagram, SoType) == Datagram, "SO_TYPE of a datagram socket must be SOCK_DGRAM (2)");
     Require(GetInt(stream, SoAcceptConnection) == 0, "SO_ACCEPTCONN must be 0 before listen");

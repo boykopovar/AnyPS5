@@ -157,6 +157,16 @@ int main() {
         status = 15;
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
+        status = -124;
+        output.fill('Q');
+        const std::int32_t length = function("en_Latn_US", output.data(), 16, &status);
+        assert(length > 0 && length < 16 && output[static_cast<std::size_t>(length)] == '\0' && status == 0);
+        status = -128;
+        assert(function("en_Latn_US", output.data(), 16, &status) == length && status == -128);
+        status = 0;
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        output.fill('Q');
     }
     status = 0;
     bool keywordThrown = false;
