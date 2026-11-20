@@ -240,6 +240,12 @@ int main() {
     CheckDigits<char>(narrow, "unknown pattern bytes are skipped", 0, 0, "12-", "-12", EofBit, 3);
     SetFields<char>(local, "", '.', ',', "EUR", "", "-", 0, "+vx$");
     CheckDigits<char>(narrow, "a last symbol is optional", 0, ShowBase, "-12", "-12", EofBit, 3);
+    SetFields<char>(local, "", '.', ',', "", "", "-", 0, "$+vx");
+    CheckDigits<char>(narrow, "an empty symbol matches nothing without showbase", 0, 0, "-12", "-12", EofBit, 3);
+    CheckDigits<char>(narrow, "an empty symbol matches nothing with showbase", 0, ShowBase, "-12", "-12", EofBit, 3);
+    SetFields<char>(local, "", '.', ',', "", "", "-", 0, "+vx$");
+    CheckDigits<char>(narrow, "an empty last symbol matches nothing", 0, ShowBase, "-12", "-12", EofBit, 3);
+    CheckDigits<char>(narrow, "an empty last symbol leaves the input after the value", 0, 0, "-12EUR", "-12", 0, 3);
 
     static const char groupingLimit[] = "\x7f";
     SetFields<char>(local, groupingLimit, '.', ',', "EUR", "", "-", 0, "$+vx");
