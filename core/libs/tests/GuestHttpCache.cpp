@@ -587,6 +587,7 @@ void TestMemoryPool() {
     errno = 71;
     Require(sceHttpCacheRevalidateWithMemoryPool(request, reinterpret_cast<const ResponseHeader*>(static_cast<std::uintptr_t>(0x10)),
                                                  nullptr, &result, nullptr, &size, 0) == InvalidValue && errno == 71);
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, nullptr, nullptr, &result, nullptr, &size, 0) == 0 && result == 0 && size == 7);
     Require(sceHttpCacheRevalidateWithMemoryPool(request, &header, nullptr, &result, nullptr, &size, 0) == 0 && result == 0 && size == 7);
     const Header maxAge[]{{"Cache-Control", "max-age=600"}};
     const ResponseHeader stored{200, 0, 1, maxAge};
@@ -628,6 +629,35 @@ void TestMemoryPool() {
     Require(sceHttpCacheDeleteRequest(stale) == 0);
     Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
     exchange.Done();
+
+    Cached(exchange, "http://pool/c", {{"Cache-Control", "max-age=60"}, {"ETag", "c1"}, {"X-Test", "value"}}, "body");
+    Advance(120);
+    const int sized = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(sized > 0);
+    const Request queryC{0, 0, "http://pool/c", 0, nullptr};
+    Require(sceHttpCacheRetrieve(sized, &queryC, &response, &next, &result) == 0 && result == 2);
+    const Header refreshed[]{{"Cache-Control", "max-age=3600"}};
+    const ResponseHeader refresh{304, 0, 1, refreshed};
+    size = 0;
+    Require(sceHttpCacheRevalidateWithMemoryPool(sized, &refresh, nullptr, &result, nullptr, &size, 0) == 0 && result == 1);
+    Require(size >= 3 * sizeof(Header));
+    Require(sceHttpCacheDeleteRequest(sized) == 0);
+
+    Advance(3700);
+    const int pooled = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(pooled > 0);
+    Require(sceHttpCacheRetrieve(pooled, &queryC, &response, &next, &result) == 0 && result == 2);
+    std::array<std::uint8_t, 512> responsePool;
+    responsePool.fill(0xa5);
+    Require(sceHttpCacheRevalidateWithMemoryPool(pooled, &refresh, &response, &result, responsePool.data(), &size, responsePool.size()) == 0 && result == 1);
+    Require(response.statusCode == 200 && response.contentLength == 4 && response.headerCount == 3);
+    Require(response.headers == reinterpret_cast<const Header*>(responsePool.data()));
+    Require(std::strcmp(response.headers[0].name, "Cache-Control") == 0);
+    Require(std::strcmp(response.headers[0].value, "max-age=3600") == 0);
+    Require(std::strcmp(response.headers[2].name, "X-Test") == 0);
+    Require(std::strcmp(response.headers[2].value, "value") == 0);
+    Require(responsePool.back() == 0);
+    Require(sceHttpCacheDeleteRequest(pooled) == 0);
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 

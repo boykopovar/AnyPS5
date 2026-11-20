@@ -640,6 +640,71 @@ bool FillResponse(Request& request, const Entry& entry, HttpCacheResponse* respo
     return CopyOut(response, &localResponse, sizeof(localResponse));
 }
 
+bool PoolResponseSize(const Entry& entry, std::size_t& size) {
+    if (entry.headers.size() > std::numeric_limits<std::size_t>::max() / sizeof(HttpCacheHeader)) return false;
+    size = entry.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : entry.headers) {
+        if (header.name.size() >= std::numeric_limits<std::size_t>::max() - size) return false;
+        size += header.name.size() + 1;
+        if (header.value.size() >= std::numeric_limits<std::size_t>::max() - size) return false;
+        size += header.value.size() + 1;
+    }
+    return true;
+}
+
+bool PoolAddress(void* pool, std::size_t offset, void*& address) {
+    const auto base = reinterpret_cast<std::uintptr_t>(pool);
+    if (offset > std::numeric_limits<std::uintptr_t>::max() - base) return false;
+    address = reinterpret_cast<void*>(base + offset);
+    return true;
+}
+
+bool FillPoolResponse(const Entry& entry, HttpCacheResponse* response, void* pool, std::size_t poolSize) {
+    std::size_t requiredSize = 0;
+    if (!PoolResponseSize(entry, requiredSize) || poolSize < requiredSize) return false;
+
+    constexpr std::array<std::uint8_t, 4096> zeroes{};
+    for (std::size_t offset = 0; offset < poolSize;) {
+        void* destination = nullptr;
+        const std::size_t count = std::min(zeroes.size(), poolSize - offset);
+        if (!PoolAddress(pool, offset, destination) || !CopyOut(destination, zeroes.data(), count)) return false;
+        offset += count;
+    }
+
+    const auto base = reinterpret_cast<std::uintptr_t>(pool);
+    std::vector<HttpCacheHeader> headers;
+    headers.reserve(entry.headers.size());
+    std::size_t stringOffset = entry.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : entry.headers) {
+        void* nameAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, nameAddress)) return false;
+        const char* name = static_cast<const char*>(nameAddress);
+        stringOffset += header.name.size() + 1;
+        void* valueAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, valueAddress)) return false;
+        const char* value = static_cast<const char*>(valueAddress);
+        stringOffset += header.value.size() + 1;
+        headers.push_back(HttpCacheHeader{name, value});
+    }
+    if (!headers.empty() && !CopyOut(pool, headers.data(), headers.size() * sizeof(HttpCacheHeader))) return false;
+
+    stringOffset = entry.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : entry.headers) {
+        void* destination = nullptr;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.name.c_str(), header.name.size() + 1)) return false;
+        stringOffset += header.name.size() + 1;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.value.c_str(), header.value.size() + 1)) return false;
+        stringOffset += header.value.size() + 1;
+    }
+
+    HttpCacheResponse localResponse{};
+    localResponse.statusCode = entry.status;
+    localResponse.headerCount = entry.headers.size();
+    localResponse.headers = reinterpret_cast<const HttpCacheHeader*>(base);
+    localResponse.contentLength = entry.pending ? 0 : entry.body.size();
+    return CopyOut(response, &localResponse, sizeof(localResponse));
+}
+
 bool FillNextRequest(Request& request, const RequestData& next, HttpCacheRequest* nextRequest) {
     HttpCacheRequest localNext{};
     localNext.method = next.method;
@@ -1013,10 +1078,11 @@ int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const
     if (pool == nullptr && requiredSize == nullptr) return ErrorInvalidValue;
     if (header == nullptr) {
         if (result == nullptr) return ErrorInvalidValue;
-        NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool without a response header");
     }
     ResponseData received;
-    if (const int status = MakeResponse(header, received); status != 0) return status;
+    if (header != nullptr) {
+        if (const int status = MakeResponse(header, received); status != 0) return status;
+    }
     if (result == nullptr) return ErrorInvalidValue;
     std::optional<StoreKey> storeKey;
     if (state->hasStore && state->current) storeKey = KeyFor(*state);
@@ -1025,8 +1091,11 @@ int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const
     const std::int32_t revalidateResult = Revalidate(*state, received, found);
     if (!CopyOut(result, &revalidateResult, sizeof(revalidateResult))) return snapshot.Rollback();
     if (!found) return 0;
-    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool sizing or filling a pool");
+    std::size_t size = 0;
+    if (!PoolResponseSize(*found, size)) return ErrorInvalidValue;
+    if (pool == nullptr) return CopyOut(requiredSize, &size, sizeof(size)) ? 0 : snapshot.Rollback();
+    if (response == nullptr || poolSize < size) return ErrorInvalidValue;
+    return FillPoolResponse(*found, response, pool, poolSize) ? 0 : ErrorInvalidValue;
 }
 
 int APS5_VABI sceHttpCacheSetCacheSharing(std::uint8_t enabled) {
