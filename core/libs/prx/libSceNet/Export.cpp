@@ -57,6 +57,7 @@
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -798,6 +799,7 @@ template <typename TOperation>
 auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOperation operation, bool timed = true, int length = 0) {
 #ifdef _WIN32
     using Result = decltype(operation(0));
+    const bool interruptible = !send && ThreadCancel::IoActive();
     const bool nonblocking = (flags & NET_MSG_DONTWAIT) != 0 || socket.nonblock.load();
     const int completeLength = send && socket.stream && !nonblocking ? length : 0;
     const int timeout = timed ? (send ? socket.sendTimeout.load() : socket.receiveTimeout.load()) : 0;
@@ -805,6 +807,10 @@ auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOp
         : std::chrono::steady_clock::time_point::max();
     int transferred = 0;
     for (;;) {
+        if (interruptible && ThreadCancel::IoInterrupted()) {
+            WSASetLastError(WSAEINTR);
+            return static_cast<Result>(-1);
+        }
         const auto result = operation(transferred);
         if (result != static_cast<Result>(-1)) {
             if (completeLength == 0) return result;
@@ -908,15 +914,23 @@ constexpr int RECEIVE_NOTHING = -1;
 
 int wait_for_datagram(const Sock& socket, std::chrono::steady_clock::time_point deadline) {
     if (deadline == std::chrono::steady_clock::time_point::max()) return 0;
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) return NET_EAGAIN;
-    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
 #ifdef _WIN32
     WSAPOLLFD descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLRDNORM;
-    return WSAPoll(&descriptor, 1, static_cast<INT>(std::min<long long>(remaining, INT_MAX))) == 0 ? NET_EAGAIN : 0;
+    const bool interruptible = ThreadCancel::IoActive();
+    for (;;) {
+        if (interruptible && ThreadCancel::IoInterrupted()) return NET_EINTR;
+        const auto remaining = deadline - std::chrono::steady_clock::now();
+        if (remaining <= std::chrono::steady_clock::duration::zero()) return NET_EAGAIN;
+        const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
+        if (WSAPoll(&descriptor, 1, static_cast<INT>(std::min<long long>(milliseconds, interruptible ? 10 : INT_MAX))) != 0) return 0;
+        if (!interruptible) return NET_EAGAIN;
+    }
 #else
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) return NET_EAGAIN;
+    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
     pollfd descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLIN;
@@ -951,8 +965,10 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
     const auto deadline = timeout > 0
         ? std::chrono::steady_clock::now() + std::chrono::microseconds(timeout)
         : std::chrono::steady_clock::time_point::max();
+    const bool interruptible = ThreadCancel::IoActive();
     std::unique_lock lk(g_mutex);
     for (bool waited = false;; waited = true) {
+        if (interruptible && ThreadCancel::IoInterrupted()) return NET_EINTR;
         const auto it = g_socks.find(s);
         if (it == g_socks.end() || it->second.native != socket.native || it->second.aborted) return 0;
         if (named || has_local_address(socket.native->value)) {
@@ -1175,6 +1191,8 @@ int ErrorOf(std::int64_t result) {
 constexpr int KernelWaitAll = 0x40;
 
 std::int64_t ReceiveForKernel(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
+    const ThreadCancel::NativeIo operation;
+    if (ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
     const int netFlags = flags & ~KernelWaitAll;
     const auto size = static_cast<size_t>(length);
     if (length == 0 && !IsStreamSocket(descriptor)) {
@@ -1786,6 +1804,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
+    if (socket.native->receiveTimeout.load() != 0) ThreadCancel::IoNoRestart();
     std::uint32_t capacity = 0;
     if (from && (!GuestCopyIn_nid_no_patch(&capacity, fromlen, sizeof(capacity)) ||
         !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
@@ -1797,6 +1816,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         return 0;
     }
 #endif
+    if (ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
     const bool returnAddress = from != nullptr && socket.type == NET_SOCK_DGRAM;
     const auto addressBytes = returnAddress ?
         std::min<std::uint32_t>(capacity, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
@@ -1815,6 +1835,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
 #ifdef _WIN32
     if (result < 0 && socket.type == NET_SOCK_DGRAM && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(len);
 #endif
+    if (result < 0 && ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
     if (result < 0) return fail(native_error());
     if (from) {
         std::array<std::uint8_t, 28> bytes{};
