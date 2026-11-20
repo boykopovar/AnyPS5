@@ -7,11 +7,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <initializer_list>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 
 static constexpr int SCE_OK = 0;
+static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000eu);
 static constexpr int PS5_LOGICAL_CPUS = 16;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -146,6 +148,7 @@ int main() {
     KernelCpumask threadAffinity = 0;
     Require(scePthreadGetaffinity(thread, &threadAffinity) == SCE_OK);
     Require(threadAffinity == available);
+    Require(scePthreadGetaffinity(thread, reinterpret_cast<KernelCpumask*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 
     for (KernelCpumask cpu = 1; cpu != 0; cpu <<= 1) {
         if ((available & cpu) == 0) continue;
@@ -225,7 +228,30 @@ int main() {
     processSet[0] = 0;
     Require(cpuset_getaffinity_nid_postfix(3, 2, getpid_nid_postfix(), 8, processSet) == 0 && processSet[0] == available);
     Require(cpuset_getaffinity_nid_postfix(3, 2, -1, 4, processSet) == -1 && *__error_nid_postfix() == GUEST_ERANGE);
+    for (const std::size_t size : {std::size_t{17}, std::size_t{20}, std::size_t{23}, std::size_t{24}}) {
+        std::uint64_t untouched[4] = {~0ull, ~0ull, ~0ull, ~0ull};
+        *__error_nid_postfix() = 0;
+        Require(cpuset_getaffinity_nid_postfix(3, 2, -1, size, untouched) == -1 && *__error_nid_postfix() == GUEST_ERANGE);
+        Require(untouched[0] == ~0ull && untouched[1] == ~0ull && untouched[2] == ~0ull && untouched[3] == ~0ull);
+        *__error_nid_postfix() = 0;
+        Require(cpuset_getaffinity_nid_postfix(3, 2, -1, size, nullptr) == -1 && *__error_nid_postfix() == GUEST_ERANGE);
+    }
     Require(cpuset_getaffinity_nid_postfix(3, 2, -1, 8, nullptr) == -1 && *__error_nid_postfix() == GUEST_EFAULT);
+    Require(cpuset_getaffinity_nid_postfix(3, 2, 999999, 8, nullptr) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+    Require(cpuset_getaffinity_nid_postfix(0, 2, -1, 8, nullptr) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
+    for (const int level : {1, 2, 3}) {
+        for (const std::int64_t jail : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}}) {
+            std::uint64_t untouched[2] = {~0ull, ~0ull};
+            *__error_nid_postfix() = 0;
+            Require(cpuset_getaffinity_nid_postfix(level, 5, jail, 8, untouched) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+            Require(untouched[0] == ~0ull && untouched[1] == ~0ull);
+            *__error_nid_postfix() = 0;
+            Require(cpuset_getaffinity_nid_postfix(level, 5, jail, 8, nullptr) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+            const std::uint64_t request[1] = {available};
+            *__error_nid_postfix() = 0;
+            Require(cpuset_setaffinity_nid_postfix(level, 5, jail, 8, request) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
+        }
+    }
     if (first != last) {
         std::promise<void> park;
         auto parked = park.get_future();

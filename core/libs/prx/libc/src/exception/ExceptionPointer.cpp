@@ -41,6 +41,7 @@ void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(std::excep
 }
 
 const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const std::exception_ptr* self) noexcept {
+    if (!self) return nullptr;
     return ExceptionPointerType(self);
 }
 
@@ -89,6 +90,7 @@ void* exception_ptr::_M_get() const noexcept {
 }
 
 const type_info* exception_ptr::__cxa_exception_type() const noexcept {
+    if (!_M_exception_object) return nullptr;
     return LibcException::FromObject(_M_exception_object)->type;
 }
 
@@ -126,6 +128,7 @@ void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(GuestExcep
 }
 
 const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const GuestExceptionPointer* self) noexcept {
+    if (!self || !self->object) return nullptr;
     return LibcException::FromObject(self->object)->type;
 }
 

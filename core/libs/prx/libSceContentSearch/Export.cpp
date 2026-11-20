@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libSceContentSearch/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -18,7 +20,10 @@ constexpr int ErrorNotInitialized = static_cast<int>(0x809D1001u);
 constexpr int ErrorAlreadyInitialized = static_cast<int>(0x809D1002u);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
+constexpr int ErrorLegacyServiceUnavailable = static_cast<int>(0x809D100Du);
+constexpr int ErrorServiceUnavailable = static_cast<int>(0x809D0002u);
 constexpr std::uint32_t MaxSearchLimit = 92;
+constexpr std::uint32_t DirectServiceErrorSdk = 0x06500000;
 constexpr std::int64_t LibraryUpdateId = 0;
 
 bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
@@ -253,9 +258,24 @@ int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColu
     if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
-int APS5_VABI sceContentSearchSearchApplication() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint32_t columnSetLength, const void* orderByConditions, std::uint32_t orderByConditionsLength, const void* aggregatedConditions, std::uint32_t aggregatedConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfApplications, void* infos, std::int64_t* lastUpdateId) {
+    (void)offset;
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if ((columnSet == nullptr) != (columnSetLength == 0) || (orderByConditions == nullptr) != (orderByConditionsLength == 0) || (aggregatedConditions == nullptr) != (aggregatedConditionsLength == 0) || limit == 0) return ErrorInvalidArgument;
+    if (limit > MaxSearchLimit) return ErrorLimitTooBig;
+    if (numOfApplications == nullptr || infos == nullptr || lastUpdateId == nullptr) return ErrorInvalidArgument;
+    const std::int64_t zero = 0;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfApplications, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    int userId = 0;
+    const int userResult = sceUserServiceGetInitialUser(&userId);
+    if (userResult < 0) return userResult;
+    std::int32_t sdkVersion = 0;
+    const int savedErrno = errno;
+    const int sdkResult = sceKernelGetCompiledSdkVersion(&sdkVersion);
+    errno = savedErrno;
+    if (sdkResult != 0) return sdkResult;
+    return static_cast<std::uint32_t>(sdkVersion) < DirectServiceErrorSdk ? ErrorLegacyServiceUnavailable : ErrorServiceUnavailable;
 }
 
 }

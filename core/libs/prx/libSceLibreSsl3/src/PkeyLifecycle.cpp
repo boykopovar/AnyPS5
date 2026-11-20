@@ -1,5 +1,7 @@
-/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/evp/p_lib.c (p_lib.c,v 1.61)
- * and src/lib/libcrypto/ec/ec_ameth.c (ec_ameth.c,v 1.69) */
+/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/evp/p_lib.c (p_lib.c,v 1.61),
+ * src/lib/libcrypto/ec/ec_ameth.c (ec_ameth.c,v 1.69),
+ * src/lib/libcrypto/evp/pmeth_gn.c (pmeth_gn.c,v 1.21)
+ * and src/lib/libcrypto/hmac/hm_pmeth.c (hm_pmeth.c,v 1.17) */
 /* $OpenBSD: p_lib.c,v 1.61 2024/08/22 12:24:24 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
@@ -162,6 +164,120 @@
  * Hudson (tjh@cryptsoft.com).
  *
  */
+/* $OpenBSD: pmeth_gn.c,v 1.21 2024/08/31 09:14:21 tb Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2006.
+ */
+/* ====================================================================
+ * Copyright (c) 2006 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+/* $OpenBSD: hm_pmeth.c,v 1.17 2023/12/28 22:00:56 tb Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2007.
+ */
+/* ====================================================================
+ * Copyright (c) 2007 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
 
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
@@ -171,15 +287,31 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
 constexpr int EvpLibrary = 6;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
+constexpr int Asn1OctetString = 4;
 constexpr int DifferentKeyTypes = 101;
 constexpr int MissingParameters = 103;
+constexpr int RsaType = 6;
 constexpr int EcType = 408;
+
+void ReleasePkeyData(LibreSsl3EvpPkey* key) {
+    if (!key->key) return;
+    if (key->method) {
+        const auto* method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
+        if (method->keyFree) method->keyFree(key);
+    } else if (key->type == RsaType) {
+        RSA_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3Rsa*>(key->key));
+    } else if (key->type == EcType) {
+        EC_KEY_free_nid_postfix(static_cast<EcKey*>(key->key));
+    }
+    key->key = nullptr;
+}
 
 } // namespace
 
@@ -219,8 +351,17 @@ void APS5_VABI EVP_PKEY_free_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key) {
     free_nid_postfix(key);
 }
 
-int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey*, LibreSsl3Rsa*) {
-    NotImplemented_nid_no_patch("EVP_PKEY_set1_RSA of native LibreSSL3 algorithm data");
+int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key, LibreSsl3Rsa* rsa) {
+    if (!key) throw std::invalid_argument("EVP_PKEY_set1_RSA requires an EVP_PKEY");
+    ReleasePkeyData(key);
+    const auto* method = FindNativePkeyAsn1Method_nid_no_patch(RsaType);
+    if (!method) NotImplemented_nid_no_patch(__func__);
+    key->type = RsaType;
+    key->method = method;
+    key->key = rsa;
+    if (!rsa) return 0;
+    RSA_up_ref_nid_postfix(rsa);
+    return 1;
 }
 
 int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* to,
@@ -239,6 +380,27 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
     }
     if (!destinationKey) return 0;
     return EC_KEY_set_group_nid_postfix(destinationKey, sourceKey->group);
+}
+
+LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {
+    if (type != LibreSsl3PkeyHmac) return nullptr;
+    if ((!key && keyLength > 0) || keyLength < -1) return nullptr;
+    auto* octets = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
+    if (!octets) return nullptr;
+    octets->type = Asn1OctetString;
+    if (!ASN1_STRING_set_nid_postfix(octets, key, keyLength)) {
+        ASN1_OCTET_STRING_free_nid_postfix(octets);
+        return nullptr;
+    }
+    auto* macKey = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    if (!macKey) {
+        ASN1_OCTET_STRING_free_nid_postfix(octets);
+        return nullptr;
+    }
+    macKey->type = LibreSsl3PkeyHmac;
+    macKey->key = octets;
+    macKey->method = FindNativePkeyAsn1Method_nid_no_patch(LibreSsl3PkeyHmac);
+    return macKey;
 }
 
 }

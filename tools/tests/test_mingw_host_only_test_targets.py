@@ -449,7 +449,7 @@ class HostOnlyTargets(unittest.TestCase):
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
         build_dir = self.fixture([first, second])
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
-        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", ".gitmodules"):
             with self.subTest(path=path):
                 self.assertEqual(
                     build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [path]),

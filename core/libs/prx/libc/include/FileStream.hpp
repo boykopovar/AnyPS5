@@ -223,7 +223,9 @@ public:
                 errno = ENOENT;
                 return false;
             }
-            return Adopt(open(filename, mode));
+            if (!Adopt(open(filename, mode))) return false;
+            _orientation.store(0, std::memory_order_relaxed);
+            return true;
         }
         auto* previous = GetHandle();
         _guest = {};
@@ -314,6 +316,12 @@ public:
         do next = static_cast<std::int16_t>((old & ~0x60) | (endOfFile ? 0x20 : 0) | (error ? 0x40 : 0));
         while (!__atomic_compare_exchange_n(&_guest.flags, &old, next, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
     }
+    void DropFailedUnbufferedWrite() {
+#ifdef __APPLE__
+        if (_handle && (GetHandle()->_flags & __SNBF) != 0) ::fpurge(GetHandle());
+#endif
+    }
+
     void SyncStatus() {
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);

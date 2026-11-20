@@ -47,4 +47,13 @@ UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t*
     NotImplemented_nid_no_patch(__func__);
 }
 
+const UFormattedValue* APS5_VABI udtitvfmt_resultAsValue_nid_postfix(const UFormattedDateInterval* result, std::int32_t* status) {
+    if (Icu::Failure(status)) return nullptr;
+    if (!result) {
+        *status = Icu::IllegalArgument;
+        return nullptr;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

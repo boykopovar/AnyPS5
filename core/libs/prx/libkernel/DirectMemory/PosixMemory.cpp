@@ -114,6 +114,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     void* mapped = address;
     try {
         if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
+        if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
     } catch (const std::invalid_argument&) {
         return failed(GuestInvalid);
     } catch (const std::exception&) {
@@ -339,7 +340,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
     if (advice == GuestAdviceProtect) return 0;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+    if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         SetError(GuestInvalid);
         return -1;
     }

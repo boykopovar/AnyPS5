@@ -286,6 +286,47 @@ void Run() {
 
 } // namespace UlistfmtOpenResult
 
+namespace UlistfmtResultAsValue {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&ulistfmt_resultAsValue_nid_postfix), const UFormattedValue* (APS5_VABI*)(const UFormattedList*, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
+
+} // namespace
+
+void Run() {
+    const auto storage = Filler();
+    const auto result = reinterpret_cast<const UFormattedList*>(storage.data());
+    for (const auto incoming : Failing) {
+        std::int32_t status = incoming;
+        Require(ulistfmt_resultAsValue_nid_postfix(result, &status) == nullptr);
+        Require(ulistfmt_resultAsValue_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == incoming);
+    }
+    for (const auto incoming : Passing) {
+        std::int32_t status = incoming;
+        Require(ulistfmt_resultAsValue_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
+        status = incoming;
+        RequireThrows([&] { ulistfmt_resultAsValue_nid_postfix(result, &status); });
+        Require(status == incoming);
+    }
+    RequireThrows([&] { ulistfmt_resultAsValue_nid_postfix(result, nullptr); });
+    RequireThrows([] { ulistfmt_resultAsValue_nid_postfix(nullptr, nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UlistfmtResultAsValue
+
 void CheckIcuListFormatter() {
     UlistfmtClose::Run();
     UlistfmtCloseResult::Run();
@@ -293,4 +334,5 @@ void CheckIcuListFormatter() {
     UlistfmtFormatStringsToResult::Run();
     UlistfmtOpenForType::Run();
     UlistfmtOpenResult::Run();
+    UlistfmtResultAsValue::Run();
 }

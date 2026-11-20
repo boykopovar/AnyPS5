@@ -153,7 +153,7 @@ struct Attribute {
 
 struct PathPoint {
     AudioPropagationStructDescriptor desc;
-    AudioPropagationHandle room;
+    AudioPropagationHandle material;
     float gain;
     float position[3];
     std::byte opaque[8];
@@ -168,13 +168,26 @@ struct AudioPath {
 };
 
 static_assert(sizeof(PathPoint) == 48);
-static_assert(offsetof(PathPoint, room) == 16);
+static_assert(offsetof(PathPoint, material) == 16);
 static_assert(offsetof(PathPoint, gain) == 24);
 static_assert(offsetof(PathPoint, position) == 28);
 static_assert(sizeof(AudioPath) == 224);
 static_assert(offsetof(AudioPath, points) == 16);
 static_assert(offsetof(AudioPath, pointCount) == 208);
 static_assert(offsetof(AudioPath, flags) == 212);
+
+struct PathEntry {
+    AudioPropagationStructDescriptor desc;
+    AudioPropagationHandle path;
+    const AudioPath* data;
+    float gain;
+    std::uint32_t reserved;
+};
+
+static_assert(sizeof(PathEntry) == PathEntrySize);
+static_assert(offsetof(PathEntry, path) == 16);
+static_assert(offsetof(PathEntry, data) == 24);
+static_assert(offsetof(PathEntry, gain) == 32);
 
 struct RenderInfo {
     AudioPropagationStructDescriptor desc;

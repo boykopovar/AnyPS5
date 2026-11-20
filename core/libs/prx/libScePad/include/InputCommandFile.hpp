@@ -28,6 +28,7 @@ public:
         std::uint16_t touchY = 0;
         std::uint8_t touchId = 0;
         bool touchActive = false;
+        std::uint8_t stickMask = 3;
 
         bool operator==(const Input&) const = default;
     };

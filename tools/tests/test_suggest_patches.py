@@ -7,7 +7,9 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from types import SimpleNamespace
 import unittest
+import errno
 from pathlib import Path
 from unittest.mock import patch
 
@@ -641,6 +643,202 @@ class PatchAdvisorTests(unittest.TestCase):
             self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
             with self.assertRaises(ValueError):
                 suggest_patches.confined(root, "../outside.txt")
+
+class PathErrorTests(unittest.TestCase):
+    def test_symlink_loop_error_names_the_path(self):
+        error = suggest_patches.path_error("a/b", OSError(errno.ELOOP, "too many levels"))
+        self.assertIsInstance(error, ValueError)
+        self.assertTrue(str(error).startswith("Symlink loop from 'a/b': "))
+
+    def test_other_errors_keep_their_own_text(self):
+        original = OSError(errno.ENOENT, "missing file")
+        error = suggest_patches.path_error("a/b", original)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), str(original))
+
+    def test_windows_symlink_loop_code_is_a_loop(self):
+        original = OSError(errno.EINVAL, "loop")
+        original.winerror = 1921
+        self.assertTrue(str(suggest_patches.path_error("p", original)).startswith("Symlink loop from 'p'"))
+
+
+class ConversionArgumentsTests(unittest.TestCase):
+    def test_minimal_arguments_only_name_the_patch_file(self):
+        args = SimpleNamespace(skip_sce_module=False, sce_module_path=None, module_dir=[], executable=[])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), ["--patches", "p.toml"])
+
+    def test_every_option_is_forwarded_in_order(self):
+        args = SimpleNamespace(skip_sce_module=True, sce_module_path=Path("sce"), module_dir=["m1", "m2"], executable=["e1"])
+        self.assertEqual(suggest_patches.conversion_arguments(args, Path("p.toml")), [
+            "--patches", "p.toml", "--skip-sce-module", "--sce-module-path", "sce",
+            "--module-dir", "m1", "--module-dir", "m2", "--executable", "e1"])
+
+
+class ReadCatalogTests(unittest.TestCase):
+    def write(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_the_entries_of_a_format_one_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, '{"format": 1, "entries": [{"a": 1}]}')
+            self.assertEqual(suggest_patches.read_catalog(root), [{"a": 1}])
+
+    def test_wrong_shape_or_format_is_refused(self):
+        for text in ("[]", '{"format": 1}', '{"format": 2, "entries": []}', '{"format": true, "entries": []}',
+                     '{"format": 1, "entries": {}}', '{"format": 1, "entries": [], "extra": 1}'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "format 1 and an entries array"):
+                    suggest_patches.read_catalog(self.write(directory, text))
+
+    def test_strict_numbers_refuse_non_finite_constants(self):
+        text = '{"format": 1, "entries": [{"x": NaN}]}'
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.write(directory, text)
+            self.assertEqual(len(suggest_patches.read_catalog(root)), 1)
+            with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                suggest_patches.read_catalog(root, strict_numbers=True)
+
+    def test_missing_index_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "file missing or outside directory"):
+                suggest_patches.read_catalog(Path(directory))
+
+
+class LoadCatalogTests(unittest.TestCase):
+    def catalog(self, directory, text):
+        (Path(directory) / "index.json").write_text(text, encoding="utf-8")
+        return Path(directory)
+
+    def test_returns_numbered_entries_for_the_title_and_version(self):
+        text = json.dumps({"format": 1, "entries": [
+            {"titleId": "PPSA00001", "contentVersion": "01.00"},
+            {"titleId": "PPSA00002", "contentVersion": "01.00"},
+            "not an entry",
+            {"titleId": "PPSA00001", "contentVersion": "01.01"},
+            {"titleId": "PPSA00001", "contentVersion": "01.00", "id": "second"},
+        ]})
+        with tempfile.TemporaryDirectory() as directory:
+            entries = suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+        self.assertEqual([number for number, _ in entries], [1, 5])
+        self.assertEqual(entries[1][1]["id"], "second")
+
+    def test_no_match_gives_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.catalog(directory, '{"format": 1, "entries": []}')
+            self.assertEqual(suggest_patches.load_catalog(root, "PPSA00001", "01.00"), [])
+
+    def test_duplicate_keys_and_non_finite_numbers_are_refused(self):
+        for text, message in (('{"format": 1, "entries": [{"a": 1, "a": 2}]}', "duplicate JSON key"),
+                              ('{"format": 1, "entries": [{"a": Infinity}]}', "non-finite JSON number")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.load_catalog(self.catalog(directory, text), "PPSA00001", "01.00")
+
+
+class PrintMetadataTests(unittest.TestCase):
+    def render(self, metadata):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            suggest_patches.print_metadata(metadata)
+        return output.getvalue()
+
+    def test_empty_metadata_prints_nothing(self):
+        self.assertEqual(self.render({}), "")
+
+    def test_fields_are_printed_in_a_fixed_order(self):
+        metadata = {"source": "https://example.com", "notes": "n", "revision": 2, "description": "d", "category": "fix", "name": "N", "id": "i"}
+        self.assertEqual(self.render(metadata), "  ID: i\n  Name: N\n  Category: fix\n  Description: d\n  Revision: 2\n  Notes: n\n  Source: https://example.com\n")
+
+    def test_contributors_and_tested_records_get_their_own_lines(self):
+        metadata = {"contributors": ["a", "b"], "tested": [
+            {"stage": "load", "result": "pass", "evidence": "log"},
+            {"stage": "run", "result": "fail", "evidence": "video", "environment": "linux", "date": "2026-01-02"}]}
+        self.assertEqual(self.render(metadata), "  Contributor: a\n  Contributor: b\n  Tested: load pass: log\n  Tested: run fail on linux (2026-01-02): video\n")
+
+
+class ValidateMetadataTests(unittest.TestCase):
+    def valid(self):
+        return {
+            "id": "fps-unlock", "name": "FPS unlock", "category": "fps", "description": "d", "notes": "n",
+            "source": "https://example.com/patch", "revision": 2, "contributors": ["Ada", "Grace"],
+            "tested": [{"stage": "launch", "result": "passed", "evidence": "log", "environment": "linux", "date": "2026-02-28"}],
+        }
+
+    def test_valid_metadata_is_returned_without_entry_core_fields(self):
+        entry = {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {}, **self.valid()}
+        self.assertEqual(suggest_patches.validate_metadata(entry), self.valid())
+        self.assertEqual(suggest_patches.validate_metadata({"titleId": "PPSA00001"}), {})
+
+    def test_each_invalid_field_is_refused_with_its_message(self):
+        cases = (
+            ({"id": "Bad Id"}, "id must match"),
+            ({"id": 3}, "id must match"),
+            ({"name": "two\nlines"}, "name must be nonempty single-line text"),
+            ({"category": "nope"}, "invalid category"),
+            ({"source": "http://example.com"}, "source must be an HTTPS URL"),
+            ({"source": "https://"}, "source must be an HTTPS URL"),
+            ({"revision": 0}, "revision must be a positive integer"),
+            ({"revision": True}, "revision must be a positive integer"),
+            ({"contributors": []}, "contributors must be a nonempty array"),
+            ({"contributors": ["Ada", "ada"]}, "duplicate contributor"),
+            ({"tested": []}, "tested must be a nonempty array"),
+            ({"tested": [{"stage": "launch", "result": "passed"}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "extra": 1}]}, "invalid tested record fields"),
+            ({"tested": [{"stage": "nope", "result": "passed", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "nope", "evidence": "e"}]}, "invalid tested stage or result"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-1-1"}]}, "tested date must be YYYY-MM-DD"),
+            ({"tested": [{"stage": "launch", "result": "passed", "evidence": "e", "date": "2026-02-30"}]}, "valid calendar date"),
+        )
+        for change, message in cases:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                suggest_patches.validate_metadata(change)
+
+
+class ValidateEntryTests(unittest.TestCase):
+    DIGEST = "A" * 64
+
+    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+        (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
+        return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
+
+    def test_valid_entry_returns_the_patch_lowercase_digests_and_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            entry["name"] = "Name"
+            patch, targets, metadata = suggest_patches.validate_entry(Path(directory), entry)
+            self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
+            self.assertEqual(targets, {"eboot.bin": "a" * 64})
+            self.assertEqual(metadata, {"name": "Name"})
+
+    def test_missing_or_unknown_fields_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = self.setup(directory)
+            del entry["targets"]
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+            entry = self.setup(directory)
+            entry["surprise"] = 1
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_targets_must_be_a_nonempty_object_of_sha256_digests(self):
+        for targets, message in (({}, "targets must be a nonempty object"), ([], "targets must be a nonempty object"),
+                                 ({"eboot.bin": "abc"}, "invalid target digest"), ({"eboot.bin": 5}, "invalid target digest")):
+            with self.subTest(targets=targets), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory)
+                entry["targets"] = targets
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
+
+    def test_patch_file_must_name_targets_that_match_the_digests(self):
+        for text, message in (("", "patch file has no valid targets"), ("patch = [1]\n", "patch file has no valid targets"),
+                              ('[[patch]]\ntarget = "other.bin"\n', "target hashes must cover exactly the patch targets"),
+                              ('[[patch]]\ntarget = "eboot.bin"\n[[patch]]\ntarget = "extra.bin"\n', "target hashes must cover exactly the patch targets")):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, text)
+                with self.assertRaisesRegex(ValueError, message):
+                    suggest_patches.validate_entry(Path(directory), entry)
 
 
 if __name__ == "__main__":
