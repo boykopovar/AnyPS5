@@ -754,7 +754,7 @@ ImageAllocation BufferPool::AllocateImage(const Context& context, VkImage image,
     auto pool = GetBufferPool(context);
     Require(pool.get() == this, "an image allocation must use its context's buffer pool");
     const bool separate = dedicated.requiresDedicatedAllocation != VK_FALSE || dedicated.prefersDedicatedAllocation != VK_FALSE;
-    static const bool disabled = std::getenv("APS5_NO_IMAGE_SLABS") != nullptr;
+    static const bool disabled = std::getenv("APS5_IMAGE_SLABS") == nullptr || std::getenv("APS5_NO_IMAGE_SLABS") != nullptr;
     const bool eligible = !disabled && !separate && imageInfo.tiling == VK_IMAGE_TILING_OPTIMAL && imageInfo.pNext == nullptr && needed.size <= (VkDeviceSize{1} << 20u) && needed.alignment < imageBlockBytes;
     const auto preferredType = context.MemoryType(needed.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (eligible) {
