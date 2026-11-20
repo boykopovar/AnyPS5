@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/MqueueWait.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -8,7 +9,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -115,21 +115,8 @@ int CheckName(const char* path, std::string& name) {
 std::uint64_t MonotonicDeadline(const GuestTimespec* abstime) {
     KernelTimespec realtime{};
     clock_gettime_nid_postfix(GuestClockRealtime, &realtime);
-    const std::uint64_t monotonic = TimedWait::NowNanos();
-    if (abstime->seconds < realtime.tv_sec ||
-        (abstime->seconds == realtime.tv_sec && abstime->nanoseconds <= realtime.tv_nsec)) return monotonic;
-    std::uint64_t seconds = static_cast<std::uint64_t>(abstime->seconds) - static_cast<std::uint64_t>(realtime.tv_sec);
-    std::int64_t nanoseconds = abstime->nanoseconds - realtime.tv_nsec;
-    if (nanoseconds < 0) {
-        --seconds;
-        nanoseconds += 1000000000;
-    }
-    constexpr std::uint64_t NanosecondsPerSecond = 1000000000ULL;
-    const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-    if (seconds > (maximum - monotonic) / NanosecondsPerSecond) return maximum;
-    const std::uint64_t deadline = monotonic + seconds * NanosecondsPerSecond;
-    const std::uint64_t remainder = static_cast<std::uint64_t>(nanoseconds);
-    return remainder > maximum - deadline ? maximum : deadline + remainder;
+    return MqueueWait::MonotonicDeadline(abstime->seconds, abstime->nanoseconds, realtime.tv_sec, realtime.tv_nsec,
+                                         TimedWait::NowNanos());
 }
 
 template <typename Ready>
@@ -142,15 +129,13 @@ int WaitFor(const Open& open, std::unique_lock<std::mutex>& lock, TimedWait::Con
     }
     if (abstime->nanoseconds < 0 || abstime->nanoseconds >= 1000000000) return GuestEinval;
     const std::uint64_t deadline = MonotonicDeadline(abstime);
-    constexpr std::uint64_t MaxWaitChunkNanos = 24ULL * 60 * 60 * 1000000000ULL;
-    for (;;) {
-        const std::uint64_t now = TimedWait::NowNanos();
-        if (deadline <= now) return ready() ? 0 : GuestEtimedout;
-        const std::uint64_t remaining = deadline - now;
-        const std::uint64_t chunk = remaining < MaxWaitChunkNanos ? remaining : MaxWaitChunkNanos;
-        if (signal.WaitUntil(lock, now + chunk, ready)) return 0;
-        if (chunk == remaining) return GuestEtimedout;
-    }
+    return MqueueWait::WaitUntilMonotonic(
+               deadline, ready, [] { return TimedWait::NowNanos(); },
+               [&](std::uint64_t waitDeadline, const auto& predicate) {
+                   return signal.WaitUntil(lock, waitDeadline, predicate);
+               })
+               ? 0
+               : GuestEtimedout;
 }
 
 }
