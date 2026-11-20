@@ -62,6 +62,24 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(expected, page)
                 self.assertNotIn("Driver.Present", page)
 
+    def test_cli_default_window_includes_events_after_the_last_slice(self):
+        trailing_events = [
+            {"name": "present", "ph": "i", "ts": 12000, "tid": 2, "args": {"present": 1}},
+            {"name": "trace buffer full", "ph": "i", "ts": 13000, "tid": 2, "args": {"events_lost": 8}},
+            {"name": "presenter folded", "ph": "C", "ts": 14000, "tid": 2, "args": {"ms": 2}},
+        ]
+        path = Path(self.tmp.name) / "capture.json"
+        out = path.with_suffix(".html")
+        for event in trailing_events:
+            with self.subTest(event=event["name"]):
+                path.write_text(json.dumps(document(self.items + [event])), encoding="utf-8")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", "10"],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                window_end_ms = event["ts"] / 1000
+                self.assertIn(f"window 10.000 to {window_end_ms:.3f} ms, 0 threads, 0 bars", out.read_text(encoding="utf-8"))
+
     def test_cli_reports_event_loss_in_plain_and_compressed_captures(self):
         capture = document(self.items + [
             {"name": "thread_name", "ph": "M", "tid": 3, "args": {"name": "<worker&>"}},
@@ -117,7 +135,7 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("Incomplete trace: 8 events lost", text)
         self.assertIn("tid 9: buffer full at 1.500 ms; 8 events lost across the capture", text)
-        self.assertIn("0 threads, 0 bars", text)
+        self.assertIn("window 0.000 to 1.500 ms, 0 threads, 0 bars", text)
 
     def test_layout_places_bars_and_gives_tiny_slices_a_pixel(self):
         items = [complete(1, "Driver.Packet", 0, 5000), complete(1, "Tiny", 6000, 1)]

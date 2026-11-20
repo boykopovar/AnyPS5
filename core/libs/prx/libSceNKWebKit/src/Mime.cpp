@@ -860,10 +860,20 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry30appendFileExte
     if (ext[0] == '\0') {
         return filename;
     }
-    std::string base = ToString(filename.impl);
-    base.push_back('.');
-    base.append(ext);
-    return MakeString(base);
+    const std::string_view extension(ext);
+    const unsigned length = filename.impl->length;
+    if (filename.impl->hashAndFlags & 4) {
+        const auto* characters = static_cast<const unsigned char*>(filename.impl->data);
+        std::vector<unsigned char> name(characters, characters + length);
+        name.push_back('.');
+        name.insert(name.end(), extension.begin(), extension.end());
+        return _ZN3WTF10StringImpl6createEPKhj(name.data(), static_cast<unsigned>(name.size()));
+    }
+    const auto* characters = static_cast<const char16_t*>(filename.impl->data);
+    std::u16string name(characters, characters + length);
+    name.push_back(u'.');
+    name.insert(name.end(), extension.begin(), extension.end());
+    return _ZN3WTF10StringImpl6createEPKDsj(name.data(), static_cast<unsigned>(name.size()));
 }
 
 bool APS5_VABI _ZN7WebCore16MIMETypeRegistry32containsImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(

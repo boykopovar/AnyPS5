@@ -52,6 +52,18 @@ class ParseTests(FeatureRequired):
         self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1\n", "map anon 0x1+0x1\n",
                                              "[memory]map anon 0x1+0x1\n"]), [])
 
+    def test_parses_a_null_pointer_printed_by_glibc(self):
+        events = trace.parse_events([
+            "[memory] unmap (nil)+0x1000\n",
+            "[memory] protect (nil)+0x2000 prot=0x1\n",
+            "[memory] map anon 0x4000+0x1000 prot=0x3 flags=0x0\n",
+        ])
+        self.assertEqual([(event.line, event.operation, event.address, event.size) for event in events], [
+            (1, "unmap", 0, 0x1000),
+            (2, "protect", 0, 0x2000),
+            (3, "map anon", 0x4000, 0x1000),
+        ])
+
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
             trace.parse_events(["[memory] protect with a truncated record\n"])

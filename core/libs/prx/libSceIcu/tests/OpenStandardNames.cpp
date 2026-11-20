@@ -149,6 +149,21 @@ void ReadOnlyPrefailed() {
     Require(*status == U_ILLEGAL_ARGUMENT_ERROR);
 }
 
+void BundledData() {
+    std::int32_t status = 0;
+    bool threw = false;
+    try {
+        ucnv_openStandardNames_nid_postfix(reinterpret_cast<const char*>(1), reinterpret_cast<const char*>(1), &status);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(status == 0);
+    status = 0;
+    Require(ucnv_openStandardNames_nid_postfix(nullptr, nullptr, &status) == nullptr);
+    Require(status == U_ILLEGAL_ARGUMENT_ERROR);
+}
+
 void ReducedData() {
     std::int32_t status = 0;
     Require(ucnv_openStandardNames_nid_postfix(reinterpret_cast<const char*>(1),
@@ -278,6 +293,7 @@ int main(int argc, char** argv) {
         InstallAliasData();
     } else {
         Require(std::strcmp(argv[1], "packaged") == 0);
+        BundledData();
         Require(ucnv_countStandards() > 0);
     }
     FullData();
