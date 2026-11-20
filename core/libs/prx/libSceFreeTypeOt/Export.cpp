@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include FT_MODULE_H
 #include <cerrno>
 #include <bit>
 #include <cstddef>
@@ -198,8 +199,11 @@ int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* libra
     return FT_Render_Glyph_nid_postfix(slot, renderMode);
 }
 
-int APS5_VABI FT_Set_Debug_Hook_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI FT_Set_Debug_Hook_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t hookIndex, void (APS5_VABI *debugHook)(void*)) {
+    constexpr std::uint32_t hookCount = 4;
+    if (!library || !debugHook || hookIndex >= hookCount) return;
+    if (hookIndex == FT_DEBUG_HOOK_TRUETYPE) NotImplemented_nid_no_patch(__func__);
+    FT_Set_Debug_Hook(library->host, hookIndex, reinterpret_cast<FT_DebugHook_Func>(debugHook));
 }
 
 int APS5_VABI sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {

@@ -15,7 +15,7 @@
 
 extern "C" {
 int APS5_VABI FT_Glyph_Stroke_nid_postfix();
-int APS5_VABI FT_Set_Debug_Hook_nid_postfix();
+void APS5_VABI FT_Set_Debug_Hook_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t hookIndex, void (APS5_VABI *debugHook)(void*));
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
 const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
 void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);

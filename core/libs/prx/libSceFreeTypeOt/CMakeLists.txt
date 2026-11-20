@@ -176,6 +176,20 @@ if(BUILD_TESTING AND NOT ANYPS5_USE_SYSTEM_DEPS)
         set_tests_properties(guest_freetype_ot_size_metrics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
+
+    add_test_executable(guest_freetype_ot_debug_hook_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtDebugHook.cpp)
+    target_include_directories(guest_freetype_ot_debug_hook_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_debug_hook_tests PRIVATE libSceFreeTypeOt libSceFreeType freetype)
+    if(WIN32)
+        target_link_libraries(guest_freetype_ot_debug_hook_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_ot_debug_hook_tests)
+    add_test(NAME guest_freetype_ot_debug_hook COMMAND guest_freetype_ot_debug_hook_tests)
+    set_tests_properties(guest_freetype_ot_debug_hook PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_debug_hook PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
