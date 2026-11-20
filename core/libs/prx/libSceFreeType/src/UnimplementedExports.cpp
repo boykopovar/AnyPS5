@@ -54,4 +54,8 @@ void APS5_VABI FTA_Add_Module_raster5_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Add_Module_sfnt_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
