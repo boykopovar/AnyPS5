@@ -331,7 +331,7 @@ private:
     bool labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode);
     bool enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::optional<std::uint32_t> interrupt);
     bool enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
-    bool enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue);
+    bool enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::uint32_t blocks);
     bool enqueueConstantRamDump(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
     void commitStore(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes);
     void commitLabel(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes, std::optional<std::uint32_t> interrupt);
@@ -424,7 +424,7 @@ private:
     static void recordQueuedLabelsFromHook();
     void flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool labelPacket);
     bool preparePacketMemory(const Submission& submission, QueueState& queue, std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode, std::optional<std::uint32_t> interrupt, bool& wroteOnGpu, bool& endOfPipeInterrupt, bool& interruptDeferred, bool& drawPacket, bool& sampleDump);
-    void dumpSampleCounters(std::uint64_t address);
+    void dumpSampleCounters(std::uint64_t address, std::uint32_t blocks);
     template <typename TWork>
     static void timed(double WorkerProfile::*bucket, TWork&& work);
     FrameTiming* frameTiming();

@@ -123,7 +123,7 @@ bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uin
         const auto* equation = Graphics::FindTextureSwizzleEquation(xorMode, Graphics::BytesPerElement(resource.format));
         if (equation == nullptr || std::any_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0u; })) return false;
     }
-    if (!range->readable || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
+    if (!range->HostReadable() || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
     const auto rangeEnd = range->address + range->bytes;
     const auto allocationEnd = range->allocationAddress + range->allocationBytes;
     if (resource.baseAddress < range->address || resource.baseAddress > rangeEnd || range->address < range->allocationAddress || rangeEnd > allocationEnd) return false;
@@ -411,8 +411,15 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
             if (self.descriptorSpanBytes > sizeof(word) &&
                 (self.forceSync != 0u ? self.pendingSpan(address, self.descriptorSpanBytes, {}) != PendingWrite::None
                                       : spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {})))) {
-                policy = PendingWrite::Sync;
-                forcedRaw = self.forceSync != 0u && !spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {}));
+                std::vector<std::byte> span(self.descriptorSpanBytes);
+                const auto spanPolicy = self.forceSync == 0u && self.pendingWrite != nullptr ? self.pendingWrite(address, span.size(), span) : PendingWrite::Sync;
+                if ((spanPolicy == PendingWrite::KnownValue || spanPolicy == PendingWrite::VerifyKnownValue) && GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word))) {
+                    policy = spanPolicy;
+                    std::memcpy(&word, span.data(), sizeof(word));
+                } else {
+                    policy = PendingWrite::Sync;
+                    forcedRaw = self.forceSync != 0u && !spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {}));
+                }
             } else {
                 policy = self.pendingWrite(address, sizeof(word), std::as_writable_bytes(std::span(&word, 1)));
                 if (self.forceSync != 0u && policy != PendingWrite::None) {

@@ -68,14 +68,19 @@ def stage_files(files, work, content):
     missing = []
     for destination, source in files.items():
         target = work / destination
+        content_name = source.get("content")
+        content_file = content / content_name if content is not None and content_name is not None else None
+        if content_name is not None and (content_file is None or not content_file.is_file()):
+            if not target.is_file():
+                missing.append(content_name)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.unlink(missing_ok=True)
-        if "text" in source:
-            target.write_text(source["text"], encoding="utf-8", newline="\n")
-        elif content and (content / source["content"]).is_file():
-            shutil.copyfile(content / source["content"], target)
+        if content_file is None:
+            with target.open("w", encoding="utf-8", newline="\n") as output:
+                output.write(source["text"])
         else:
-            missing.append(source["content"])
+            shutil.copyfile(content_file, target)
     return missing
 
 
@@ -1257,6 +1262,8 @@ def run_cli(argv, capture_resources):
     packages = []
     found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
+    if not ids:
+        raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")

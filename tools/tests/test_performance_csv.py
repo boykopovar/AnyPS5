@@ -323,5 +323,17 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual((slash[3], slash[4]), ("<missing>", r"\\-dangerous"))
 
 
+class SafeCellTests(unittest.TestCase):
+    def test_formula_and_control_prefixes_get_a_leading_tab(self):
+        for value in ("=1+1", "+1", "-1", "@SUM(A1)", "  =x", "\tx", "\rx", "\nx", "\uff1dx", "\uff0bx", "\uff0dx", "\uff20x"):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), "\t" + value)
+
+    def test_ordinary_values_are_unchanged(self):
+        for value in ("abc", "1-2", " x", "", 5, 2.5, None):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), value)
+
+
 if __name__ == "__main__":
     unittest.main()
