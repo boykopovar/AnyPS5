@@ -35,14 +35,6 @@ std::atomic<std::uint8_t> g_flag1WXQlxMpnNA{0};
 
 extern "C" {
 
-int APS5_VABI __cfi_slowpath_diag_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __cfi_slowpath_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __freeze_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
