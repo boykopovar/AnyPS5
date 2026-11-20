@@ -1,0 +1,5 @@
+# libSceAgc
+
+## change [sceAgcCbMemsetExclusive]
+
+- [sceAgcCbMemsetExclusive](../../../core/libs/prx/libSceAgc/Command/src/Memset.cpp) (libSceAgc) - physical-console scheduling, trace identity, invalid pointers and allocation-failure effects are unmeasured; invalid buffers use existing packet-helper exceptions, and an unreadable 16-byte pattern throws after the shader registers are recorded (reading the pattern through `GuestCopyIn_nid_no_patch` is a host-safety fallback; console fault handling is unmeasured). Static evidence is the bundled PPSA06652 AGC compatibility module (`6nths4DHNrs`, VA `0x3100`, 1121 bytes), not authenticated firmware: nine user words, 16-byte records, wrapping 64 KiB chunk count, SoC masks, 16 groups of 256 threads and mask restoration. The independent LLVM-assembled RDNA2 fill program replaces the SDK program and compiler trace/checksum metadata with its own identity. The SDK reserved-memory allocator and initialization APIs remain unimplemented. Static imports alone establish no title unblock.

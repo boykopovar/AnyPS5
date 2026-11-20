@@ -10,7 +10,17 @@
 #include <map>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -75,6 +85,39 @@ void boundaries() {
     check(registrations == 1 && registered != nullptr && registered->user_data->srt_size_dw == 9 && registered->shader_size != 0, "fill shader was not registered exactly once");
 }
 
+void unreadablePattern() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* base = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    check(base != nullptr, "cannot allocate the pattern pages");
+    DWORD previous = 0;
+    check(VirtualProtect(base + page, page, PAGE_NOACCESS, &previous) != 0, "cannot protect the second pattern page");
+#else
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(mapped != MAP_FAILED, "cannot map the pattern pages");
+    auto* base = static_cast<std::byte*>(mapped);
+    check(mprotect(base + page, page, PROT_NONE) == 0, "cannot protect the second pattern page");
+#endif
+    std::array<std::uint32_t, 64> storage;
+    storage.fill(0xfeedfaceu);
+    CommandBuffer buffer{storage.data(), storage.data() + storage.size(), storage.data(), storage.data() + storage.size(), nullptr, nullptr, 0};
+    bool refused = false;
+    try {
+        sceAgcCbMemsetExclusive(&buffer, storage.data(), base + page - 8, 16);
+    } catch (const std::exception& error) {
+        refused = std::string_view(error.what()).find("pattern is not readable") != std::string_view::npos;
+    }
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, 2 * page);
+#endif
+    check(refused, "a pattern that runs into an unreadable page was not refused");
+}
+
 struct Segments {
     std::deque<std::vector<std::uint32_t>> packets;
     Pattern pattern{};
@@ -126,6 +169,7 @@ int main() {
     try {
         boundaries();
         callbacks();
+        unreadablePattern();
         std::puts("AGC memset command boundary and callback tests passed");
         return 0;
     } catch (const std::exception& error) {
