@@ -5262,7 +5262,12 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 }
 
 bool LabelTrapBypassed() {
-    return GuestMemory::GpuMutex().HeldByThisThread() || AgcDriver::DriverDetail::DrawPipeline::OnCommitterThread();
+    return GuestMemory::GpuMutex().HeldByThisThread();
+}
+
+bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes) {
+    if (!AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes)) return false;
+    return !GuestWriteWatch::GuestWriteWatchAwaitsReadTrap_nid_postfix(AgcDriver::DriverDetail::DrawPipeline::Queue0().CommitterThread());
 }
 
 namespace {
@@ -5278,7 +5283,7 @@ std::uint64_t TrapPage() {
 void ResolveLabelTrap(std::uintptr_t begin, std::uintptr_t end) {
     const auto bytes = static_cast<std::size_t>(end - begin);
     GuestMemory::FlushGpuWrites(begin, bytes);
-    while (AgcDriver::DriverDetail::DrawPipeline::HeldReads(begin, bytes)) {
+    while (LabelTrapResolveWaits(begin, bytes)) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         GuestMemory::FlushGpuWrites(begin, bytes);
     }

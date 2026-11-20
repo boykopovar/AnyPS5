@@ -33,6 +33,7 @@ class StorageTexture;
 struct HostImportCopy;
 
 bool LabelTrapBypassed();
+bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes);
 
 // The Vulkan format storage images of a guest format use (sRGB formats store as their UNORM form).
 // Throws when the format has no storage form; the query is cached per format (a lookup cost a

@@ -19,6 +19,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -54,11 +58,14 @@ struct ClearOnExit {
 namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
-thread_local bool committerThread = false;
-}
 
-bool DrawPipeline::OnCommitterThread() {
-    return committerThread;
+std::uint64_t CurrentThreadId() {
+#if defined(__linux__)
+    return static_cast<std::uint64_t>(::syscall(SYS_gettid));
+#else
+    return 0;
+#endif
+}
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -471,7 +478,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
-    committerThread = true;
+    committerThread.store(CurrentThreadId(), std::memory_order_release);
     NameDriverThread("draw-commit");
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();

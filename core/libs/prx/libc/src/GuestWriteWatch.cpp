@@ -621,11 +621,18 @@ public:
             if (slot == nullptr) sched_yield();
         }
         slot->page = page;
+        slot->thread.store(self, std::memory_order_release);
         slot->state.store(Queued, std::memory_order_release);
         sem_post(&_wake);
         while (sem_wait(&slot->done) != 0) {}
+        slot->thread.store(0, std::memory_order_release);
         slot->state.store(Free, std::memory_order_release);
         return true;
+    }
+
+    bool Awaits(pid_t thread) const {
+        if (thread == 0) return false;
+        return std::any_of(_slots.begin(), _slots.end(), [&](const Slot& slot) { return slot.thread.load(std::memory_order_acquire) == thread; });
     }
 
     int Protect(std::uintptr_t begin, std::uintptr_t end, int protection) {
@@ -661,6 +668,7 @@ private:
 
     struct Slot {
         std::atomic<unsigned> state{Free};
+        std::atomic<pid_t> thread{0};
         std::uintptr_t page = 0;
         sem_t done{};
     };
@@ -1972,6 +1980,15 @@ std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix() {
 #else
     static std::atomic<std::uint64_t> asked{1};
     return asked.fetch_add(1, std::memory_order_relaxed);
+#endif
+}
+
+bool GuestWriteWatchAwaitsReadTrap_nid_postfix(std::uint64_t thread) {
+#if defined(APS5_LINUX_READ_TRAPS)
+    return ReadTraps::Get().Awaits(static_cast<pid_t>(thread));
+#else
+    static_cast<void>(thread);
+    return false;
 #endif
 }
 
