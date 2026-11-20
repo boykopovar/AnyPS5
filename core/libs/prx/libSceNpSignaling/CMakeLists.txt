@@ -1,4 +1,4 @@
-add_library(libSceNpSignaling SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceNpSignaling SHARED EXCLUDE_FROM_ALL Export.cpp LocalNetInfo.cpp)
 target_include_directories(libSceNpSignaling PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpSignaling)
 

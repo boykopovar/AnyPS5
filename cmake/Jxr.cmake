@@ -44,3 +44,5 @@ set_source_files_properties(${JXR_SOURCE_DIR}/image/sys/strcodec.c ${JXR_SOURCE_
 if(UNIX)
     target_link_libraries(jxr PRIVATE m)
 endif()
+set_source_files_properties(${JXR_SOURCE_DIR}/image/decode/postprocess.c PROPERTIES COMPILE_OPTIONS -fwrapv)
+target_compile_options(jxr PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno-sanitize=shift>)

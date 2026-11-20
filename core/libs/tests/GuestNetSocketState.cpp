@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "prx/libSceNet/libSceNet.hpp"
+#include "prx/libkernel/libkernel.hpp"
 
 
 static void Require(bool condition) {
@@ -77,6 +78,15 @@ int main() {
         std::uint32_t size = addressSize;
         Require(sceNetGetsockname(listener, address.data(), &size) == 0);
         Require(sceNetConnect(client, address.data(), size) == 0);
+        for (const std::uint32_t capacity : {0u, 1u, 4u, 28u}) {
+            std::array<std::uint8_t, 28> peer;
+            peer.fill(0xa5);
+            auto length = capacity;
+            Require(getpeername_nid_postfix(client, peer.data(), &length) == 0);
+            Require(length == std::min(capacity, addressSize));
+            Require(std::equal(peer.begin(), peer.begin() + length, address.begin()));
+            Require(std::all_of(peer.begin() + length, peer.end(), [](auto byte) { return byte == 0xa5; }));
+        }
         const int accepted = sceNetAccept(listener, nullptr, nullptr);
         Require(accepted >= 0);
         CheckOption(listener, 2, 2);

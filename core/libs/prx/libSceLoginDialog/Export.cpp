@@ -1,4 +1,5 @@
 #include "prx/libSceLoginDialog/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -10,15 +11,10 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int LOGIN_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x81340001u);
 constexpr int LOGIN_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x81340002u);
 constexpr int LOGIN_DIALOG_ERROR_BUSY = static_cast<int>(0x81340005u);
 constexpr int LOGIN_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81340003u);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 constexpr int LOGIN_DIALOG_ERROR_INVALID_USER = static_cast<int>(0x81340007u);
 
@@ -35,8 +31,14 @@ int APS5_VABI sceLoginDialogInitialize(void) {
 }
 
 int APS5_VABI sceLoginDialogOpen(const LoginDialogParam* param) {
- if (param == nullptr || param->size != sizeof(*param) || param->mode > 1 || !std::all_of(std::begin(param->reserved), std::end(param->reserved), [](std::uint32_t value) { return value == 0; })) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
- for (const auto userId : param->userIds) {
+ if (param == nullptr) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
+ LoginDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (localParam.size != sizeof(localParam) || localParam.mode > 1 || !std::all_of(std::begin(localParam.reserved), std::end(localParam.reserved), [](std::uint32_t value) { return value == 0; })) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
+ for (const auto userId : localParam.userIds) {
   if (userId != -1 && (static_cast<std::uint32_t>(userId) < 0x10000000u || static_cast<std::uint32_t>(userId) >= 0x40000000u)) return LOGIN_DIALOG_ERROR_INVALID_USER;
  }
  int status = g_status.load();

@@ -74,25 +74,25 @@
 
 ### Additional unidentified exports
 
-- Eighteen [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+- Eighteen [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh/Export.cpp) are throwing placeholders. 17 are named after the symbols the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for their NIDs, and the NID of each name matches; the other is unidentified. Signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `+I5sPs9FLXw` |
-| `Unknown` | `-9hYGDAsb4E` |
-| `Unknown` | `BzJsgzD97LU` |
-| `Unknown` | `IQNf2nnftNI` |
-| `Unknown` | `N3mcm-qDFR0` |
-| `Unknown` | `OME2Be+FlwA` |
-| `Unknown` | `PLEe-toB-KE` |
-| `Unknown` | `QGGsQrtLW9Y` |
-| `Unknown` | `Rm+rgnBoPIE` |
-| `Unknown` | `SJU+qK+8yrM` |
-| `Unknown` | `T7dL-hEySvU` |
-| `Unknown` | `b+MJDz3HB6s` |
+| `CryptographyEncryptAES128CBC_HS256` | `+I5sPs9FLXw` |
+| `PSNowRequestClientId` | `-9hYGDAsb4E` |
+| `InitializeAsmNetLib` | `BzJsgzD97LU` |
+| `PSNowSetFeedbackResult` | `IQNf2nnftNI` |
+| `sceRemotePlayClientShowControlCenter` | `N3mcm-qDFR0` |
+| `CryptographyDecryptRSA_OAEP_256` | `OME2Be+FlwA` |
+| `PSNowCancelRequestGame` | `PLEe-toB-KE` |
+| `TerminateAsmNetLib` | `QGGsQrtLW9Y` |
+| `sceRemotePlayClientShowQuickMenu` | `Rm+rgnBoPIE` |
+| `PSNowTestConnection` | `SJU+qK+8yrM` |
+| `CryptographyEncryptRSA_OAEP_256` | `T7dL-hEySvU` |
+| `sceRemotePlayClientWaitConnectionAsync` | `b+MJDz3HB6s` |
 | `Unknown` | `bbsP8-e8GZA` |
-| `Unknown` | `fxEQAPDRhLw` |
-| `Unknown` | `j917Pp4k-CI` |
-| `Unknown` | `lZ-JDEqB34k` |
-| `Unknown` | `tKy-Qdg+FRc` |
-| `Unknown` | `uQfQgwm36L4` |
+| `PSNowShouldAskFeedback` | `fxEQAPDRhLw` |
+| `LoginMgrDisablePadKeyRemappingNative` | `j917Pp4k-CI` |
+| `PSNowIsEntitledToStream` | `lZ-JDEqB34k` |
+| `sceRemotePlayClientRemoveEventListener` | `tKy-Qdg+FRc` |
+| `GetAsmLibHttpCtxId` | `uQfQgwm36L4` |

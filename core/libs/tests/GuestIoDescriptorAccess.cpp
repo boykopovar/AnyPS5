@@ -107,11 +107,21 @@ struct BlockedRead {
     int descriptor;
     char byte = 0;
     std::int64_t result = -2;
+    int error = 0;
 };
 
 static void* APS5_VABI Reader(void* argument) {
     auto& read = *static_cast<BlockedRead*>(argument);
     read.result = read_nid_postfix(read.descriptor, &read.byte, 1);
+    return nullptr;
+}
+
+template <bool TFrom>
+static void* APS5_VABI ForwardedSocketReader(void* argument) {
+    auto& read = *static_cast<BlockedRead*>(argument);
+    if constexpr (TFrom) read.result = recvfrom_nid_postfix(read.descriptor, &read.byte, 1, 0, nullptr, nullptr);
+    else read.result = recv_nid_postfix(read.descriptor, &read.byte, 1, 0);
+    read.error = *__error_nid_postfix();
     return nullptr;
 }
 
@@ -615,6 +625,31 @@ static void PipeVectors() {
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(alias) == 0 && close_nid_postfix(pipe[1]) == 0, "close vector race pipe");
 }
 
+static void PositionedRelease() {
+    static std::atomic<int> watched{-1};
+    static std::atomic<bool> waiting{false};
+    std::FILE* file = OpenTemporary();
+    Require(std::fputc('x', file) == 'x' && std::fseek(file, 0, SEEK_SET) == 0, "seed positioned probe file");
+    const int input = NativeDescriptor(file);
+    const int alias = dup_nid_postfix(input);
+    Require(alias >= 0, "duplicate positioned probe descriptor");
+    auto positioned = File::LockPositionedTransfer(input);
+    watched.store(alias);
+    FileStreamSetCloseHookForTest_nid_no_patch([](int descriptor, int event) {
+        if (descriptor == watched.load() && event == 1) waiting.store(true);
+    });
+    BlockedRead read{alias};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, Reader, &read, nullptr) == 0, "start positioned probe reader");
+    Require(Observe([] { return waiting.load(); }), "aliased read did not wait for positioned ownership");
+    positioned.unlock();
+    Require(Observe([&] { return reader->_finished.load(); }), "release did not wake positioned probe reader");
+    Require(scePthreadJoin(reader, nullptr) == 0, "join positioned probe reader");
+    FileStreamSetCloseHookForTest_nid_no_patch(nullptr);
+    Require(read.result == 1 && read.byte == 'x', "positioned probe read lost its byte");
+    Require(close_nid_postfix(alias) == 0 && std::fclose(file) == 0, "close positioned probe file");
+}
+
 static void CloseProgress() {
     int pipe[2]{};
     Require(pipe_nid_postfix(pipe) == 0, "create close-progress pipe");
@@ -643,6 +678,40 @@ static void CloseProgress() {
 }
 #endif
 
+static void BorrowedNetClose(bool posix = false, decltype(&Reader) readerEntry = Reader) {
+    const int listener = sceNetSocket("io-read-listener", 2, 1, 0);
+    Require(listener >= 0, "create borrowed listener");
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0, "bind borrowed listener");
+    Require(sceNetListen(listener, 4) == 0, "listen borrowed socket");
+    std::uint32_t length = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &length) == 0, "get borrowed listener address");
+    const int client = sceNetSocket("io-read-client", 2, 1, 0);
+    Require(client >= 0 && sceNetConnect(client, address.data(), length) == 0, "connect borrowed socket");
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0, "accept borrowed socket");
+    BlockedRead read{accepted};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, readerEntry, &read, nullptr) == 0, "start borrowed reader");
+    const bool registered = Registered(reader);
+    std::atomic<bool> closed{false};
+    std::thread closer([&] {
+        Require((posix ? close_nid_postfix(accepted) : sceNetSocketClose(accepted)) == 0, "close borrowed socket");
+        closed.store(true);
+    });
+    const bool prompt = Observe([&] { return closed.load(); });
+    if (!prompt) {
+        if (readerEntry == Reader) Require(pthread_cancel_nid_postfix(reader) == 0, "release failed borrowed close");
+        else Require(sceNetSend(client, "r", 1, 0) == 1, "release failed forwarded close");
+    }
+    closer.join();
+    Require(Observe([&] { return reader->_finished.load(); }), "borrowed reader did not finish");
+    Require(scePthreadJoin(reader, nullptr) == 0, "join borrowed reader");
+    Require(registered && prompt && (posix ? read.result == -1 : read.result == 0), "socket close did not wake the borrowed POSIX read");
+    if (readerEntry != Reader) Require(read.error == 4, "forwarded read did not return EINTR");
+    Require(sceNetSocketClose(client) == 0 && sceNetSocketClose(listener) == 0, "close borrowed socket pair");
+}
+
 #ifndef _WIN32
 struct GuestLock {
     std::int64_t start;
@@ -668,36 +737,6 @@ static bool ChildBlocked(int descriptor) {
     Require(::waitpid(child, &status, 0) == child && WIFEXITED(status), "join record-lock probe");
     Require(WEXITSTATUS(status) == 0 || WEXITSTATUS(status) == 7, "record-lock probe failed");
     return WEXITSTATUS(status) == 7;
-}
-
-static void BorrowedNetClose(bool posix = false) {
-    const int listener = sceNetSocket("io-read-listener", 2, 1, 0);
-    Require(listener >= 0, "create borrowed listener");
-    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
-    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0, "bind borrowed listener");
-    Require(sceNetListen(listener, 4) == 0, "listen borrowed socket");
-    std::uint32_t length = address.size();
-    Require(sceNetGetsockname(listener, address.data(), &length) == 0, "get borrowed listener address");
-    const int client = sceNetSocket("io-read-client", 2, 1, 0);
-    Require(client >= 0 && sceNetConnect(client, address.data(), length) == 0, "connect borrowed socket");
-    const int accepted = sceNetAccept(listener, nullptr, nullptr);
-    Require(accepted >= 0, "accept borrowed socket");
-    BlockedRead read{accepted};
-    Pthread reader = nullptr;
-    Require(scePthreadCreate(&reader, nullptr, Reader, &read, nullptr) == 0, "start borrowed reader");
-    const bool registered = Registered(reader);
-    std::atomic<bool> closed{false};
-    std::thread closer([&] {
-        Require((posix ? close_nid_postfix(accepted) : sceNetSocketClose(accepted)) == 0, "close borrowed socket");
-        closed.store(true);
-    });
-    const bool prompt = Observe([&] { return closed.load(); });
-    if (!prompt) Require(pthread_cancel_nid_postfix(reader) == 0, "release failed borrowed close");
-    closer.join();
-    Require(Observe([&] { return reader->_finished.load(); }), "borrowed reader did not finish");
-    Require(scePthreadJoin(reader, nullptr) == 0, "join borrowed reader");
-    Require(registered && prompt && (posix ? read.result == -1 : read.result == 0), "socket close did not wake the borrowed POSIX read");
-    Require(sceNetSocketClose(client) == 0 && sceNetSocketClose(listener) == 0, "close borrowed socket pair");
 }
 
 static void RecordLocks() {
@@ -821,6 +860,8 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "invalid_duplicate") == 0) InvalidDuplicate();
     else if (std::strcmp(argv[1], "stdio_close") == 0) StreamOrder(false);
     else if (std::strcmp(argv[1], "stdio_reopen") == 0) StreamOrder(true);
+    else if (std::strcmp(argv[1], "borrowed_recv_close") == 0) BorrowedNetClose(true, ForwardedSocketReader<false>);
+    else if (std::strcmp(argv[1], "borrowed_recvfrom_close") == 0) BorrowedNetClose(true, ForwardedSocketReader<true>);
 #ifdef __linux__
     else if (std::strcmp(argv[1], "invalid_registry") == 0) InvalidRegistry();
 #endif
@@ -830,6 +871,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "append_stream") == 0) AppendOwnership(true);
     else if (std::strcmp(argv[1], "close_progress") == 0) CloseProgress();
     else if (std::strcmp(argv[1], "position_cancel") == 0) AccessCancellation(true);
+    else if (std::strcmp(argv[1], "position_release") == 0) PositionedRelease();
     else if (std::strcmp(argv[1], "pipe_vectors") == 0) PipeVectors();
 #endif
 #ifndef _WIN32

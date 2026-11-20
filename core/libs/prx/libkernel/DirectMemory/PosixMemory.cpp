@@ -26,6 +26,7 @@
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
+constexpr int GuestNotPermitted = 1;
 constexpr int GuestInvalid = 22;
 constexpr int GuestNoMemory = 12;
 constexpr int GuestBadDescriptor = 9;
@@ -45,8 +46,6 @@ constexpr int GuestSyncAsync = 0x1;
 constexpr int GuestSyncInvalidate = 0x2;
 constexpr int GuestAdviceCore = 9;
 constexpr int GuestAdviceProtect = 10;
-constexpr int GuestLockCurrent = 0x1;
-constexpr int GuestLockFuture = 0x2;
 constexpr int GuestDefinedProtection = 0x3F7;
 constexpr std::uintptr_t GuestUserAddressStart = PS5_PAGE_SIZE;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
@@ -115,6 +114,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     void* mapped = address;
     try {
         if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
+        if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
     } catch (const std::invalid_argument&) {
         return failed(GuestInvalid);
     } catch (const std::exception&) {
@@ -295,32 +295,27 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
 }
 
 int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
-    const int result = sceKernelMlock_nid_postfix(const_cast<void*>(address), length);
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    (void)address;
+    (void)length;
+    SetError(GuestNotPermitted);
     return -1;
 }
 
 int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
-    const int result = sceKernelMunlock_nid_postfix(const_cast<void*>(address), length);
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    (void)address;
+    (void)length;
+    SetError(GuestNotPermitted);
     return -1;
 }
 
 int APS5_VABI mlockall_nid_postfix(int flags) {
-    if (flags == 0 || (flags & ~(GuestLockCurrent | GuestLockFuture)) != 0) {
-        SetError(GuestInvalid);
-        return -1;
-    }
-    NotImplemented_nid_no_patch("mlockall");
-    return 0;
+    (void)flags;
+    SetError(GuestNotPermitted);
+    return -1;
 }
 
 int APS5_VABI munlockall_nid_postfix() {
-    const int result = sceKernelMunlockall_nid_postfix();
-    if (result == 0) return 0;
-    SetError(result & 0xffff);
+    SetError(GuestNotPermitted);
     return -1;
 }
 
@@ -345,7 +340,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
     if (advice == GuestAdviceProtect) return 0;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+    if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         SetError(GuestInvalid);
         return -1;
     }

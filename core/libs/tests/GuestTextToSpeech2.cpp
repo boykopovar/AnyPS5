@@ -9,7 +9,8 @@ int main() {
     constexpr std::int32_t unsupported = static_cast<std::int32_t>(0x8002002D);
     const std::uint32_t param[16]{0x2000000, 0x26c};
     if (sceTextToSpeech2Initialize(reinterpret_cast<const TextToSpeechInitParameter*>(param)) != unsupported ||
-        sceTextToSpeech2Initialize(nullptr) != unsupported) {
+        sceTextToSpeech2Initialize(nullptr) != unsupported ||
+        sceTextToSpeech2InitializeInt() != unsupported) {
         std::puts("TextToSpeech2: initialization did not report the unsupported operation");
         std::abort();
     }

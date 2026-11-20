@@ -85,6 +85,11 @@ int main() {
     }
     _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&parameter), nullptr, &second);
     Require(std::memcmp(&parameter, &saved, sizeof(saved)) == 0, "A null RTTI setter argument must preserve settings");
+    alignas(8) std::array<std::byte, 40> nullLegacy;
+    nullLegacy.fill(std::byte{0xa5});
+    _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(reinterpret_cast<InitParameterRtti*>(nullLegacy.data()), nullptr, &second, 4096);
+    for (std::size_t i = 0; i < nullLegacy.size(); ++i)
+        Require(nullLegacy[i] == (i < 24 ? std::byte{} : std::byte{0xa5}), "A null legacy RTTI argument must clear only its 24-byte base");
     Callbacks replacement{AllocateReplacement, FreeMemory, NotifyError};
     Parameter newer{};
     _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&newer), &replacement, &second);

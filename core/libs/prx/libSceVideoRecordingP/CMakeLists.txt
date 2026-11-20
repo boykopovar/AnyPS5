@@ -1,5 +1,6 @@
 add_library(libSceVideoRecordingP SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVideoRecordingP PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVideoRecordingP PRIVATE libkernel_sys)
 configure_windows_unwind(libSceVideoRecordingP)
 
 if(BUILD_TESTING)
@@ -10,6 +11,18 @@ if(BUILD_TESTING)
     add_test(NAME guest_video_recording COMMAND guest_video_recording_tests)
     if(WIN32)
         set_tests_properties(guest_video_recording PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoRecordingP>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_recording_rest_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoRecordingRestStatus.cpp)
+    target_include_directories(guest_video_recording_rest_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_recording_rest_status_tests PRIVATE libSceVideoRecordingP libc)
+    configure_windows_unwind(guest_video_recording_rest_status_tests)
+    add_test(NAME guest_video_recording_rest_status COMMAND guest_video_recording_rest_status_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_recording_rest_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoRecordingP>")
     endif()
 endif()

@@ -9,3 +9,4 @@ struct WebRtcPendingTaskSafetyFlag {
 };
 
 static_assert(offsetof(WebRtcPendingTaskSafetyFlag, alive) == 4);
+static_assert(sizeof(WebRtcPendingTaskSafetyFlag) == 8);

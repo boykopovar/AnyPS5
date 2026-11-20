@@ -44,6 +44,11 @@ static void TestContextConfiguration() {
     Require(!WKContextConfigurationProcessSwapsOnNavigation(config));
     WKContextConfigurationSetProcessSwapsOnNavigation(config, true);
     Require(WKContextConfigurationProcessSwapsOnNavigation(config));
+    Require(!WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
+    WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(config, true);
+    Require(WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
+    WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(config, false);
+    Require(!WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
 
     Require(!WKContextConfigurationUsesWebProcessCache(config));
     WKContextConfigurationSetUsesWebProcessCache(config, true);
@@ -122,6 +127,14 @@ static void TestContextConfiguration() {
     Require(static_cast<const NKWebKit::String*>(copiedNet)->Utf8() == "/system/netprocess.elf");
     WKRelease(netStr);
     WKRelease(copiedNet);
+
+    const void* cookieStr = NKWebKit::ToRef(NKWebKit::String::FromUtf8("/data/cookies.db"));
+    WKContextConfigurationSetCookieStoragePath(config, cookieStr);
+    const void* copiedCookie = WKContextConfigurationCopyCookieStoragePath(config);
+    Require(copiedCookie != nullptr);
+    Require(static_cast<const NKWebKit::String*>(copiedCookie)->Utf8() == "/data/cookies.db");
+    WKRelease(cookieStr);
+    WKRelease(copiedCookie);
 
     WKRelease(config);
 
@@ -394,6 +407,46 @@ static void TestStringCopiesFollowWebKit() {
     bool threw = false;
     try {
         WKContextConfigurationSetInjectedBundlePath(config, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    const void* unsetCookie = WKContextConfigurationCopyCookieStoragePath(config);
+    Require(unsetCookie != nullptr);
+    Require(!static_cast<const NKWebKit::String*>(unsetCookie)->null);
+    Require(static_cast<const NKWebKit::String*>(unsetCookie)->characters.empty());
+    WKRelease(unsetCookie);
+    threw = false;
+    try {
+        WKContextConfigurationSetCookieStoragePath(config, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationCopyCookieStoragePath(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationSetCookieStoragePath(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(nullptr, true);
     } catch (const std::invalid_argument&) {
         threw = true;
     }

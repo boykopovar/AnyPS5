@@ -21,10 +21,12 @@ static_assert(std::is_trivially_destructible_v<ErrorQueue>);
 
 thread_local ErrorQueue queue{};
 
-std::uint64_t Oldest(bool remove) {
+std::uint64_t Oldest(bool remove, const char** file = nullptr, int* line = nullptr) {
     if (queue.bottom == queue.top) return 0;
     const int index = (queue.bottom + 1) % QueueSize;
     const std::uint64_t code = queue.codes[index];
+    if (file) *file = queue.files[index];
+    if (line) *line = queue.lines[index];
     if (remove) {
         queue.bottom = index;
         queue.codes[index] = 0;
@@ -59,6 +61,10 @@ std::uint64_t LibreSslPeekLastError_nid_no_patch() {
 
 std::uint64_t APS5_VABI ERR_get_error_nid_postfix() {
     return Oldest(true);
+}
+
+std::uint64_t LibreSslPopError_nid_no_patch(const char** file, int* line) {
+    return Oldest(true, file, line);
 }
 
 std::uint64_t APS5_VABI ERR_peek_error_nid_postfix() {

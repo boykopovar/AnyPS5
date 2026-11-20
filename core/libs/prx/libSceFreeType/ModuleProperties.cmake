@@ -1,7 +1,8 @@
 target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/ModuleProperties.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_module_properties_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeModuleProperties.cpp)
+    add_test_executable(guest_freetype_module_properties_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeModuleProperties.cpp)
     target_include_directories(guest_freetype_module_properties_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_module_properties_tests PRIVATE freetype ${CMAKE_DL_LIBS})
     if(WIN32)

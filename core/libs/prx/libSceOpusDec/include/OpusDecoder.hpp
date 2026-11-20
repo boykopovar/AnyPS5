@@ -1,6 +1,8 @@
 #ifndef CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 #define CORE_LIBS_PRX_LIBSCEOPUSDEC_INCLUDE_OPUSDECODER_HPP
 
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -26,9 +28,13 @@ public:
         for (const auto& [id, owner] : contexts)
             if (owner == context) fail("context already initialized");
         if (nextContext == 0) fail("context identifiers exhausted");
-        const auto id = nextContext++;
+        const auto id = nextContext;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return error(13);
+        ++nextContext;
         contexts.emplace(id, context);
-        *context = id;
         return 0;
     }
 

@@ -39,6 +39,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     if ((graphics.stages.path != Graphics::ShaderPath::Vertex || (graphics.rectList && !rectListGpuSide)) && !meshGpuSide) fail(Path::NonVertexPath);
     if (indirect.drawIndexEnabled && indirect.drawIndexSgpr >= 0) fail(Path::DrawIndex);
     if (indirect.countIndirect && !support.count) fail(Path::FeatureGap);
+    if (graphics.rectList && drawParameters.indexed && !support.indexedPatches) fail(Path::FeatureGap);
     if (indirect.countIndirect && indirect.count > 1 && !support.multi) fail(Path::FeatureGap);
     const auto dimension = [&](std::int32_t k, std::int32_t p, bool shared, bool conflict, std::uint32_t x, Rule& rule, std::uint32_t& constant) {
         if (p < 0) {
@@ -47,14 +48,22 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
             require(offset <= std::numeric_limits<std::uint32_t>::max() - x, "draw vertex offset overflow");
             constant = x + offset;
         } else if (conflict) fail(Path::FetchUnknown);
-        else if (k != p || shared) fail(Path::NotFolded);
+        else if (k < 0) {
+            static const bool gpuUnfolded = std::getenv("APS5_NO_GPU_UNFOLDED_INDIRECT") == nullptr;
+            const auto first = static_cast<std::int32_t>(frontProgram.firstUserSgpr);
+            const auto bit = static_cast<std::uint32_t>(p - first);
+            const bool read = p < first || bit >= 64u || (result.userDataRegisterReads & (std::uint64_t{1} << bit)) != 0;
+            if (!gpuUnfolded || read) fail(Path::NotFolded);
+            rule = Rule::Constant;
+            constant = x;
+        } else if (k != p || shared) fail(Path::NotFolded);
         else if (x != 0) fail(Path::IndxOffset);
         else rule = Rule::InPlace;
     };
     dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
     dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
-    if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 256) fail(Path::FeatureGap);
+    if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 1024) fail(Path::FeatureGap);
 
     static const std::uint64_t vertexCap = [] { const char* text = std::getenv("APS5_INDIRECT_VERTEX_MIB"); return (text ? std::strtoull(text, nullptr, 10) : 64ull) << 20u; }();
     for (const auto& attribute : result.vertexAttributes) {

@@ -1,5 +1,6 @@
 #include "prx/libSceVideoCoreServerInterface/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +50,15 @@ void CheckExports() {
 void CheckAcquireArguments() {
     const VideoCoreAcquireDecoderResourceParam param{0, 1920, 1080, 0};
     std::uint32_t id = 77;
+    errno = 71;
+    Require(sceVideoCoreAcquireDecoderResource(reinterpret_cast<const VideoCoreAcquireDecoderResourceParam*>(0x10), Callback, &id) == InvalidArgument, "unmapped param refused");
+    Require(errno == 71, "errno preserved on unmapped param");
+    Require(sceVideoCoreAcquireDecoderResource(&param, Callback, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable id refused");
+    Require(errno == 71, "errno preserved on unwritable id");
+    Require(sceVideoCoreAcquireDecoderResourceForBeWrapper(reinterpret_cast<const VideoCoreAcquireDecoderResourceParam*>(0x10), Callback, &id) == InvalidArgument, "unmapped param refused in BeWrapper");
+    Require(errno == 71, "errno preserved on unmapped param in BeWrapper");
+    Require(sceVideoCoreAcquireDecoderResourceForBeWrapper(&param, Callback, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable id refused in BeWrapper");
+    Require(errno == 71, "errno preserved on unwritable id in BeWrapper");
     Require(sceVideoCoreAcquireDecoderResource(nullptr, Callback, &id) == InvalidArgument, "acquire without a param");
     Require(sceVideoCoreAcquireDecoderResource(&param, nullptr, &id) == InvalidArgument, "acquire without a callback");
     Require(sceVideoCoreAcquireDecoderResource(&param, Callback, nullptr) == InvalidArgument, "acquire without an id");

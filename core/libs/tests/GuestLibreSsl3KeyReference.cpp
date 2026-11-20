@@ -3,6 +3,8 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,12 +12,78 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr, "read-only page allocation failed");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size query failed");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED, "read-only page allocation failed");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes, "read-only page too small");
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only page protection failed");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only page protection failed");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+static void Rejects(TCall call, const char* message) {
+    errno = EINVAL;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::overflow_error&) {
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == EINVAL, message);
 }
 
 using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
@@ -68,6 +136,15 @@ static void CheckBits() {
     const int calls = bitsCalls;
     Require(EVP_PKEY_bits_nid_postfix(&key) == 0, "bits retained a removed callback");
     Require(bitsCalls == calls, "bits called a removed callback");
+    std::memcpy(method.data() + 104, &callback, sizeof(callback));
+    key.type = 3072;
+    errno = EINVAL;
+    Require(EVP_PKEY_bits_nid_postfix(&key) == 3072 && errno == EINVAL, "bits changed errno");
+    Rejects([] { EVP_PKEY_bits_nid_postfix(reinterpret_cast<const LibreSsl3EvpPkey*>(0x10)); }, "bits read an unmapped key");
+    LibreSsl3EvpPkey unmappedMethod{6, 1, reinterpret_cast<const void*>(0x10), nullptr, 0};
+    const int callsBefore = bitsCalls;
+    Rejects([&] { EVP_PKEY_bits_nid_postfix(&unmappedMethod); }, "bits read an unmapped method");
+    Require(bitsCalls == callsBefore, "bits called through an unmapped method");
 }
 
 template<class TKey, class TRetain>
@@ -106,6 +183,20 @@ static void CheckKey(TRetain retain, std::size_t referenceOffset) {
         nullThrown = true;
     }
     Require(nullThrown, "retain of null did not throw");
+    Rejects([&] { retain(reinterpret_cast<TKey*>(0x10)); }, "retain of an unmapped object did not reject");
+    {
+        TKey value;
+        std::memset(&value, 0x6B, sizeof(value));
+        value.references = 3;
+        ReadOnlyPage page;
+        TKey* readOnly = page.Set(value);
+        page.Protect();
+        Rejects([&] { retain(readOnly); }, "retain of a read-only object did not reject");
+        Require(std::memcmp(readOnly, &value, sizeof(value)) == 0, "rejected retain changed a read-only object");
+    }
+    errno = EINVAL;
+    guarded.key.references = 5;
+    Require(retain(&guarded.key) == 1 && guarded.key.references == 6 && errno == EINVAL, "retain changed errno");
     std::memset(&guarded, 0x5A, sizeof(guarded));
     guarded.key.references = 1;
     std::array<unsigned char, sizeof(guarded)> expected;
@@ -179,6 +270,38 @@ static void CheckEcLifetime(bool named) {
     EC_KEY_free_nid_postfix(key);
 }
 
+static void CheckGet0EcKey() {
+    bool nullThrown = false;
+    try {
+        EVP_PKEY_get0_EC_KEY_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullThrown = true;
+    }
+    Require(nullThrown, "get0_EC_KEY of null did not throw");
+
+    LibreSsl3EvpPkey key {};
+    LibreSsl3EcKey ecKey {};
+    key.key = &ecKey;
+
+    for (const std::int32_t wrongType : {0, -1, 1, 6, 19, 28, 66, 116, 407, 409, 855, 894, 912}) {
+        key.type = wrongType;
+        LibreSsl3EvpPkey before;
+        std::memcpy(&before, &key, sizeof(key));
+        Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == nullptr, "get0_EC_KEY wrong type return non-null");
+        Require(std::memcmp(&before, &key, sizeof(key)) == 0, "get0_EC_KEY mutated key");
+    }
+
+    key.type = 408;
+    LibreSsl3EvpPkey before;
+    std::memcpy(&before, &key, sizeof(key));
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == &ecKey, "get0_EC_KEY correct type return matching pointer");
+    Require(std::memcmp(&before, &key, sizeof(key)) == 0, "get0_EC_KEY mutated key on success");
+
+    key.key = nullptr;
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == nullptr, "get0_EC_KEY null inner key pointer");
+    Rejects([] { EVP_PKEY_get0_EC_KEY_nid_postfix(reinterpret_cast<LibreSsl3EvpPkey*>(0x10)); }, "get0_EC_KEY read an unmapped key");
+}
+
 int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "evp") == 0)
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
@@ -195,6 +318,8 @@ int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0)
         CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
     if (argc == 1 || std::strcmp(argv[1], "bio") == 0)
-        CheckKey<LibreSsl3Bio>(BIO_up_ref_nid_postfix, 80);
+        CheckKey<LibreSsl::Bio>(BIO_up_ref_nid_postfix, 72);
+    if (argc == 1 || std::strcmp(argv[1], "ec_get0") == 0)
+        CheckGet0EcKey();
     return 0;
 }

@@ -5,6 +5,7 @@
 struct USet;
 
 extern "C" {
+const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t, std::int32_t*);
 USet* APS5_VABI uset_openEmpty_nid_postfix();
 void APS5_VABI uset_close_nid_postfix(USet*);
 void APS5_VABI uset_add_nid_postfix(USet*, std::int32_t);

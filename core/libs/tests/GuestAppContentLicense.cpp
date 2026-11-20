@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 
+#include <cerrno>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -29,6 +30,7 @@ constexpr std::uint32_t Untouched = 0x5a5a5a5au;
 using CheckBundleLicenseFn = int (APS5_VABI*)(std::uint32_t, const NpUnifiedEntitlementLabel*);
 using GetGameTrialsFlagFn = int (APS5_VABI*)(std::uint32_t*);
 using GetPlayableStatusFn = int (APS5_VABI*)(std::uint32_t, const NpUnifiedEntitlementLabel*, std::uint32_t*);
+using GetPftFlagFn = int (APS5_VABI*)(std::uint32_t*);
 
 template <typename Function>
 Function Resolve(const char* name) {
@@ -61,13 +63,17 @@ int main() {
     const auto checkBundleLicense = Resolve<CheckBundleLicenseFn>("sceAppContentCheckBundleLicenseOnDisc");
     const auto getGameTrialsFlag = Resolve<GetGameTrialsFlagFn>("sceAppContentGetGameTrialsFlag");
     const auto getPlayableStatus = Resolve<GetPlayableStatusFn>("sceAppContentGetPlayableStatus");
+    const auto getPftFlag = Resolve<GetPftFlagFn>("sceAppContentGetPftFlag");
 
     NpUnifiedEntitlementLabel label{};
     std::memcpy(label.data, "TESTADDON0000001", 17);
     std::uint32_t flag = Untouched;
     std::uint32_t status = Untouched;
+    std::uint32_t pftFlag = Untouched;
     Require(checkBundleLicense(0, &label) == NotInitialized, "the bundle license was checked before initialization");
     Require(getGameTrialsFlag(&flag) == NotInitialized && flag == Untouched, "the game trials flag was read before initialization");
+    Require(getPftFlag(&pftFlag) == NotInitialized && pftFlag == Untouched, "the pft flag was read before initialization");
+    Require(getPftFlag(nullptr) == NotInitialized, "the pft flag checked its argument before initialization");
     Require(getPlayableStatus(0, &label, &status) == NotInitialized && status == Untouched, "the playable status was read before initialization");
 
     const auto original = std::filesystem::current_path();
@@ -88,6 +94,11 @@ int main() {
     Require(checkBundleLicense(0, nullptr) == Parameter, "a null label was taken by the bundle license check");
     Require(getGameTrialsFlag(&flag) == 0 && flag == 0, "the game trials flag was not 0");
     Require(getGameTrialsFlag(nullptr) == Parameter, "a null game trials flag was taken");
+    Require(getPftFlag(&pftFlag) == 0 && pftFlag == 0, "the pft flag was not 0");
+    Require(getPftFlag(nullptr) == Parameter, "a null pft flag was taken");
+    errno = 71;
+    Require(getGameTrialsFlag(reinterpret_cast<std::uint32_t*>(0x10)) == Parameter, "unwritable game trials flag pointer");
+    Require(errno == 71, "errno modified by invalid pointer check");
     Require(getPlayableStatus(0, &label, &status) == NotFound && getPlayableStatus(7, &label, &status) == NotFound && status == Untouched, "a playable status was given for unknown content");
     Require(getPlayableStatus(0, nullptr, &status) == Parameter && getPlayableStatus(0, &label, nullptr) == Parameter && status == Untouched, "a null argument was taken by the playable status");
 

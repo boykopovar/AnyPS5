@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include FT_BITMAP_H
@@ -28,12 +29,20 @@ FT_Bitmap NativeBitmap(const GuestBitmap& bitmap) {
     return {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
 }
 
-void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
-    guest = {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
+GuestBitmap GuestRecord(const FT_Bitmap& bitmap) {
+    return {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
+}
+
+void SyncOwner(const GuestBitmap* guest, const FT_Bitmap& bitmap) {
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
-    const auto found = owners.bitmaps.find(&guest);
+    const auto found = owners.bitmaps.find(guest);
     if (found != owners.bitmaps.end() && found->second) *found->second = bitmap;
+}
+
+void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
+    guest = GuestRecord(bitmap);
+    SyncOwner(&guest, bitmap);
 }
 
 }
@@ -55,6 +64,13 @@ void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
 }
 
 extern "C" {
+
+bool FreeTypeSyncBitmap_nid_no_patch(GuestBitmap* guest, const FT_Bitmap& bitmap) {
+    const GuestBitmap record = GuestRecord(bitmap);
+    if (!GuestCopyOut_nid_no_patch(guest, &record, sizeof(record))) return false;
+    SyncOwner(guest, bitmap);
+    return true;
+}
 
 void APS5_VABI FT_Bitmap_New_nid_postfix(GuestBitmap* bitmap) {
     if (bitmap) SyncBitmap(*bitmap, {});

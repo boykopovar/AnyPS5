@@ -1,10 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -48,6 +50,8 @@ int main() {
     Require(Rejects("1.2.3.4.5") && Rejects("08") && Rejects("0x") && Rejects("1.2.3.4x"), "malformed");
     Require(Rejects("") && Rejects(".1") && Rejects("1..2") && Rejects("-1"), "missing digits");
     Require(inet_aton_nid_postfix("1.2.3.4", nullptr) == 1 && inet_aton_nid_postfix("x", nullptr) == 0, "null destination");
+    errno = 71;
+    Require(inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<std::uint32_t*>(0x10)) == 0 && errno == 71, "unwritable destination");
 
     Require(inet_addr_nid_postfix("127.0.0.1") == Network(127, 0, 0, 1), "inet_addr");
     Require(inet_addr_nid_postfix("bad") == 0xffffffffu && inet_addr_nid_postfix("255.255.255.255") == 0xffffffffu, "inet_addr none");
@@ -136,6 +140,24 @@ int main() {
     threw = false;
     try { __inet_network_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw, "__inet_network null throws");
+
+    auto rejectsRuntime = [](auto&& call, const char* what) {
+        errno = 71;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            Require(errno == 71, what);
+            return;
+        }
+        Require(false, what);
+    };
+    const auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    std::uint32_t out = 0x5a5a5a5a;
+    rejectsRuntime([&] { inet_aton_nid_postfix(badText, &out); }, "inet_aton unreadable text");
+    Require(out == 0x5a5a5a5a, "inet_aton unreadable text preserves out");
+    rejectsRuntime([&] { inet_addr_nid_postfix(badText); }, "inet_addr unreadable text");
+    rejectsRuntime([&] { inet_network_nid_postfix(badText); }, "inet_network unreadable text");
+    rejectsRuntime([&] { __inet_network_nid_postfix(badText); }, "__inet_network unreadable text");
 
     return 0;
 }

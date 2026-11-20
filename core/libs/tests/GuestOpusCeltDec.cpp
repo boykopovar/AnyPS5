@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -71,6 +72,9 @@ void RequireTone(const std::int16_t* pcm, int samples, int channels, int rate) {
 int main() {
     constexpr std::uint32_t errorBase = 0x81400000u;
     Require(sceOpusCeltDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    errno = 71;
+    Require(sceOpusCeltDecInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 13));
+    Require(errno == 71);
     Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
     Require(sceOpusCeltDecInitialize(&context) == 0);

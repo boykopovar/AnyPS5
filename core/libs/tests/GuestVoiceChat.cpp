@@ -1,4 +1,5 @@
 #include "prx/libSceVoiceChat/include/Api.hpp"
+#include "prx/libSceVoiceChat/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -18,12 +19,14 @@ int main() {
     Require(sceVoiceChatProcessEvent() == 0, "event processing failed");
     Require(sceVoiceChatRegisterHandlers(nullptr, nullptr) == 0, "register handlers failed");
     Require(sceVoiceChatRegisterMicEventHandler(0, nullptr, nullptr) == 0, "register mic event handler failed");
+    Require(sceVoiceChatRegisterMicEventHandler2() == 0, "register mic event handler 2 failed");
     Require(sceVoiceChatRegisterChannelEventHandler(nullptr, nullptr) == 0, "register channel event handler failed");
     Require(sceVoiceChatRegisterDaemonEventHandler(nullptr, nullptr) == 0, "register daemon event handler failed");
     Require(sceVoiceChatRegisterMemberEventHandler(nullptr, nullptr) == 0, "register member event handler failed");
     Require(sceVoiceChatRegisterPartyUserStateChangedHandler(nullptr, nullptr) == 0, "register party user state changed handler failed");
     Require(sceVoiceChatRegisterVoiceEventHandler(nullptr, nullptr) == 0, "register voice event handler failed");
     Require(sceVoiceChatUnregisterMicEventHandler(nullptr) == 0, "unregister mic event handler failed");
+    Require(sceVoiceChatUnregisterMicEventHandler2() == 0, "unregister mic event handler 2 failed");
     Require(sceVoiceChatUnregisterChannelEventHandler(nullptr) == 0, "unregister channel event handler failed");
     Require(sceVoiceChatUnregisterDaemonEventHandler(nullptr) == 0, "unregister daemon event handler failed");
     Require(sceVoiceChatUnregisterMemberEventHandler(nullptr) == 0, "unregister member event handler failed");

@@ -4,11 +4,17 @@
 #include "Decoder/Png.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <source_location>
 #include <utility>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: PNG encoder assertion failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 int main() {
     constexpr int invalidAddr = static_cast<int>(0x80690101);
@@ -40,6 +46,9 @@ int main() {
     bad = create;
     bad.this_size = 0;
     Require(scePngEncQueryMemorySize(&bad) == invalidSize);
+    PngEncCreateParam widest = create;
+    widest.max_image_width = 1000000;
+    Require(scePngEncQueryMemorySize(&widest) == 24285808);
     std::vector<std::uint64_t> memory((memorySize + 7) / 8);
     void* handle = nullptr;
     Require(scePngEncCreate(nullptr, memory.data(), memorySize, &handle) == invalidAddr);
@@ -52,6 +61,10 @@ int main() {
     Require(scePngEncCreate(&create, memory.data(), memorySize, &handle) == 0 && reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
 
     Require(scePngEncCreate(&create, memory.data(), 0, nullptr) == invalidSize);
+    Require(scePngEncCreate(&create, nullptr, 0, &handle) == invalidAddr);
+    std::vector<std::uint64_t> untouched(memory.size(), 0xA5A5A5A5A5A5A5A5ull);
+    Require(scePngEncCreate(&create, untouched.data(), memorySize, nullptr) == invalidAddr);
+    Require(std::all_of(untouched.begin(), untouched.end(), [](auto word) { return word == 0xA5A5A5A5A5A5A5A5ull; }));
     std::vector<std::uint8_t> image(pitch * height, 0xEE);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
@@ -133,6 +146,27 @@ int main() {
     for (const auto& [filterType, filters] : filterSets) Require(encodeWith(filterType) == Encode(rows, 16, 6, 4, {6, static_cast<std::uint8_t>(filters | FILTER_NONE)}));
     const std::vector<std::uint8_t> unfiltered = Encode(rows, 16, 6, 4, {6, FILTER_NONE});
     Require(encodeWith(0) == unfiltered);
+    for (std::uint16_t level = 0; level <= 9; ++level) {
+        filtered.compression_level = level;
+        const auto encoded = encodeWith(0);
+        if (level == 0) {
+            bool imageData = false;
+            for (std::size_t offset = 8; offset + 12 <= encoded.size();) {
+                const std::size_t length = static_cast<std::size_t>(encoded[offset]) << 24 | static_cast<std::size_t>(encoded[offset + 1]) << 16
+                    | static_cast<std::size_t>(encoded[offset + 2]) << 8 | encoded[offset + 3];
+                Require(length <= encoded.size() - offset - 12);
+                if (std::equal(encoded.begin() + offset + 4, encoded.begin() + offset + 8, "IDAT")) {
+                    Require(length >= 3 && (encoded[offset + 10] & 6) == 0);
+                    imageData = true;
+                    break;
+                }
+                offset += length + 12;
+            }
+            Require(imageData);
+        }
+        const auto decoded = Decode(encoded);
+        Require(decoded && decoded->width == 16 && decoded->height == 6 && decoded->pixels == rows);
+    }
 
     encode.png_mem_size = 20;
     PngEncOutputInfo info{1, 1};
@@ -164,6 +198,19 @@ int main() {
     }
     invalid = encode;
     invalid.image_mem_size = pitch * (height - 1) + width * 4;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    std::vector<std::uint8_t> wide(68 * height, 0x40);
+    invalid = encode;
+    invalid.image_mem_addr = wide.data();
+    invalid.image_mem_size = static_cast<std::uint32_t>(wide.size());
+    invalid.image_width = 17;
+    invalid.image_pitch = 68;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_height = 0;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.image_pitch = 16;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
     invalid = encode;
     invalid.png_mem_addr = nullptr;

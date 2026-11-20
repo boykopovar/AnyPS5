@@ -44,8 +44,10 @@ int APS5_VABI pthread_cond_signal_nid_postfix(PthreadCond* cond) {
 }
 
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    if (!cond || !mutex || !abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
-    return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, abstime));
+    KernelTimespec deadline{};
+    if (!cond || !mutex || !abstime || !GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return PosixThread::GUEST_EINVAL;
+    if (deadline.tv_sec < 0 || deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
+    return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, &deadline));
 }
 
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {

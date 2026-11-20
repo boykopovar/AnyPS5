@@ -68,6 +68,22 @@ static void CheckModeIsHdr() {
     }
 }
 
+static void CheckIsModeS3d() {
+    constexpr std::uint64_t Values[] = {
+        0, 1, 0x9F, 0xA0, 0xA1, 0xA2, 0xFF, 0x1A0, 0x100000000A0ull, 0x100000000A1ull,
+        0xFFFFFFFF81FFFFFEull, 0xFFFFFFFF81FFFFFFull, 0xFFFFFFFF82000000ull, 0x81FFFFFFull, 0xFFFFFFFFFFFFFFFFull,
+    };
+    for (const std::uint64_t value : Values) {
+        const int expected = value == 0xA0 || value == 0xA1 || value == 0xFFFFFFFF81FFFFFFull ? 1 : 0;
+        for (std::uint8_t fill : {std::uint8_t{0}, std::uint8_t{0xFF}}) {
+            std::array<std::uint8_t, 0x40> mode;
+            mode.fill(fill);
+            std::memcpy(mode.data() + 0x10, &value, sizeof(value));
+            Require(sceVideoOutSysIsModeS3d(mode.data()) == expected, "sceVideoOutSysIsModeS3d did not report the qword at 0x10 equal to 0xA0, 0xA1 or 0xFFFFFFFF81FFFFFF");
+        }
+    }
+}
+
 int main() {
     Require(sceVideoOutAddBufferHdrPrivilege() == 0, "sceVideoOutAddBufferHdrPrivilege did not return 0");
     Require(sceVideoOutRazorRecallCallbacks() == 0, "sceVideoOutRazorRecallCallbacks did not return 0");
@@ -82,5 +98,6 @@ int main() {
     CheckInitMode();
     CheckModeFlags();
     CheckModeIsHdr();
+    CheckIsModeS3d();
     return 0;
 }

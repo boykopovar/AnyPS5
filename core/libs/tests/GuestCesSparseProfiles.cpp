@@ -8,7 +8,9 @@
 
 namespace {
 
+constexpr int InvalidProfile = static_cast<int>(0x805C0004);
 constexpr int Unassigned = static_cast<int>(0x805C0020);
+constexpr int InvalidDstBuffer = static_cast<int>(0x805C0030);
 constexpr int ShortOutput = static_cast<int>(0x805C0031);
 constexpr std::uint32_t Untouched = 0x12345678;
 const char* currentProfile = "";
@@ -202,11 +204,16 @@ void CheckContext(void* context, std::uint8_t byte, const std::uint8_t* expected
 }
 
 void CheckUnmapped(const std::uint8_t* profile, void* context) {
-    const std::uint8_t utf8[] = {0xEF, 0xBF, 0xBF};
-    const std::uint16_t ucs2 = 0xFFFF;
+    const std::uint8_t ascii[] = {'A'};
     std::uint8_t output = 0xA5;
     std::uint32_t consumed = Untouched;
     std::uint32_t produced = Untouched;
+    Require(sceCesUtf8ToSbc(ascii, 1, &consumed, nullptr, &output) == InvalidProfile);
+    Require(sceCesUtf8ToSbc(ascii, 1, &consumed, profile, nullptr) == InvalidDstBuffer);
+    Require(sceCesSbcToUtf8(nullptr, 'A', &output, 1, &produced) == InvalidProfile);
+    Require(sceCesSbcToUtf8(profile, 'A', nullptr, 1, &produced) == InvalidDstBuffer);
+    const std::uint8_t utf8[] = {0xEF, 0xBF, 0xBF};
+    const std::uint16_t ucs2 = 0xFFFF;
     Require(sceCesUtf8ToSbc(utf8, sizeof(utf8), &consumed, profile, &output) == Unassigned);
     Require(consumed == sizeof(utf8) && output == 0);
     Require(sceCesUtf8StrToMbcsStr(context, utf8, sizeof(utf8), &consumed, &output, 1, &produced) == Unassigned);

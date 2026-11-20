@@ -24,7 +24,13 @@ jobs:
       - name: Fetch pull request objects without checking out its code
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git fetch --no-tags origin "$HEAD_SHA"
+        run: |
+          for attempt in 1 2 3 4 5; do
+            git fetch --no-tags origin "$HEAD_SHA" && exit 0
+            echo "::warning::git fetch failed on attempt $attempt; retrying in $((attempt * 3)) s"
+            sleep $((attempt * 3))
+          done
+          exit 1
       - name: Check conventions with the current base branch script
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

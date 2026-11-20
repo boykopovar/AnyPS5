@@ -1,0 +1,1 @@
+target_link_libraries(agc_driver_host_import_dma_buf_watch_tests PRIVATE libkernel)

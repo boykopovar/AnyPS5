@@ -146,7 +146,18 @@ static void TimedMutex() {
     void* mutex = CreateMutex(tryable);
     Xtime future = RelativeTime(60000);
     Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == success);
-    Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == busy);
+    const auto start = std::chrono::steady_clock::now();
+    Xtime shortDeadline = RelativeTime(100);
+    Require(_Mtx_timedlock_nid_postfix(&mutex, &shortDeadline) == timedout);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(90));
+    void* plainOwned = CreateMutex(plain);
+    Require(_Mtx_lock_nid_postfix(&plainOwned) == success);
+    const auto plainStart = std::chrono::steady_clock::now();
+    Xtime plainDeadline = RelativeTime(100);
+    Require(_Mtx_timedlock_nid_postfix(&plainOwned, &plainDeadline) == timedout);
+    Require(std::chrono::steady_clock::now() - plainStart >= std::chrono::milliseconds(90));
+    Require(_Mtx_unlock_nid_postfix(&plainOwned) == success);
+    _Mtx_destroy_nid_postfix(&plainOwned);
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
 
     Require(_Mtx_lock_nid_postfix(&mutex) == success);
@@ -267,7 +278,7 @@ struct HostPadThread {
 
 static const void* lastCreateAttrSlot = nullptr;
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg) {
+static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg, const char*) {
     lastCreateAttrSlot = attrSlot;
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, arg] { handle->result = entry(arg); });
@@ -606,6 +617,22 @@ static void ThreadHelpers() {
     other.join();
 }
 
+static void CurrentOwnsAnswersForEverySlotState() {
+    void* mutex = CreateMutex(tryable);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    std::thread([&] { Require(_Mtx_current_owns_nid_postfix(&mutex) == 1); }).join();
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    void* unused = nullptr;
+    Require(_Mtx_current_owns_nid_postfix(&unused) == 1);
+    _Mtx_destroy_nid_postfix(&mutex);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+}
+
 int main() {
     ThreadExitLifecycle();
     KernelKeys();
@@ -613,6 +640,7 @@ int main() {
     ForwardedCalls();
     MutexBasics();
     DefaultNameOverrideMutex();
+    CurrentOwnsAnswersForEverySlotState();
     RecursiveMutex();
     TimedMutex();
     MutualExclusion();

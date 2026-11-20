@@ -1,13 +1,8 @@
-#include "Translation/ConvertInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <cstdint>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateConvertInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateConvertInstruction not implemented");
-}
 
 IrF32 TranslationContext::selectF32(IrU1 condition, IrF32 trueValue, IrF32 falseValue) {
     return IrF32(ir.Select(condition.Value(), trueValue.Value(), falseValue.Value()));
@@ -249,10 +244,6 @@ void TranslationContext::vPackB32F16(const RdnaInstruction& inst) {
     const IrU32 high(ir.ShiftLeftLogical(half(1u).Value(), ir.Constant(16u)));
     const IrU32 result(ir.BitwiseOr(low.Value(), high.Value()));
     writeOperand(inst.destination, &result.Value());
-}
-
-void TranslateConvertInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateConvertInstruction not implemented");
 }
 
 }
