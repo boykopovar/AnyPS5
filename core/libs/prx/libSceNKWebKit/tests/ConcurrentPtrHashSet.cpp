@@ -180,6 +180,36 @@ void TestAddAndResize() {
     std::printf("ConcurrentPtrHashSet: %zu adds, resizes and deleteOldTables passed\n", static_cast<std::size_t>(count));
 }
 
+void TestRegrowAfterRetire() {
+    GuardedSet value;
+    _ZN3WTF20ConcurrentPtrHashSetC1Ev(&value.set);
+    constexpr std::uintptr_t first = 5000;
+    for (std::uintptr_t i = 0; i < first; ++i) {
+        Require(InlineAdd(&value.set, Key(i)));
+        Require(!InlineAdd(&value.set, Key(i)));
+    }
+    auto* firstTable = CurrentTable(&value.set);
+    Require(firstTable->size > 32);
+    Require(value.set.tablesSize > 1);
+    _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(&value.set);
+    Require(value.set.tablesSize == 1 && value.set.tablesBuffer[0] == firstTable);
+    for (std::uintptr_t i = 0; i < first; ++i) Require(InlineContains(&value.set, Key(i)));
+    constexpr std::uintptr_t second = 5000;
+    for (std::uintptr_t i = first; i < first + second; ++i) {
+        Require(InlineAdd(&value.set, Key(i)));
+        Require(!InlineAdd(&value.set, Key(i)));
+    }
+    Require(CurrentTable(&value.set) != firstTable);
+    _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(&value.set);
+    Require(value.set.tablesSize == 1 && value.set.tablesBuffer[0] == CurrentTable(&value.set));
+    for (std::uintptr_t i = 0; i < first + second; ++i) Require(InlineContains(&value.set, Key(i)));
+    Require(!InlineAdd(&value.set, Key(0)));
+    Require(!InlineAdd(&value.set, Key(first)));
+    _ZN3WTF20ConcurrentPtrHashSetD1Ev(&value.set);
+    value.CheckGuards();
+    std::printf("ConcurrentPtrHashSet: regrow after retire passed\n");
+}
+
 void TestConcurrentAdds() {
     Set set;
     _ZN3WTF20ConcurrentPtrHashSetC1Ev(&set);
@@ -229,6 +259,7 @@ void TestInvalidArguments() {
 int main() {
     TestConstructionAndClear();
     TestAddAndResize();
+    TestRegrowAfterRetire();
     TestConcurrentAdds();
     TestInvalidArguments();
 }
