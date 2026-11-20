@@ -136,6 +136,10 @@ void TestErrors() {
     const std::vector<std::int16_t> block(frames, 256);
     const int handle = Open(portTypeMain);
     const std::uint64_t time = OutputAndCheck(handle, block);
+    AudioOutOutputParam validParam{handle, block.data()};
+    Require(sceAudioOutOutputs(nullptr, 1) == invalidPointer, "a null parameter array must be rejected");
+    Require(sceAudioOutOutputs(&validParam, 0) == invalidPointer, "a zero parameter count must be rejected");
+    Require(sceAudioOutOutputs(&validParam, 257) == invalidPointer, "an oversized parameter count must be rejected");
     Require(sceAudioOutGetLastOutputTime(handle, nullptr) == invalidPointer, "a null destination must be rejected");
     Require(LastOutputTime(handle) == time, "a rejected call must not move the time");
 
