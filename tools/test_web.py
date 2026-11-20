@@ -11,6 +11,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "core/relinker/relinker/tests"))
 from test_guest_intel_trampolines import main_fixture
+from test_game_patches import patch_site, patch_text
 from test_guest_module_directories import module_with_symbol
 
 
@@ -33,7 +34,11 @@ def main(argv=None):
         ) + ("directory-writer.test.mjs",))], check=True)
         with tempfile.TemporaryDirectory(prefix="anyps5-web-") as directory:
             fixture = Path(directory)
-            (fixture / "main.elf").write_bytes(main_fixture())
+            executable = bytes(main_fixture())
+            (fixture / "main.elf").write_bytes(executable)
+            address, expected = patch_site(executable)
+            (fixture / "valid.toml").write_text(patch_text(address, expected, target="program.dat"), encoding="utf-8")
+            (fixture / "mismatch.toml").write_text(patch_text(address, expected ^ 1, target="program.dat"), encoding="utf-8")
             (fixture / "module.elf").write_bytes(module_with_symbol(True))
             source = archive.read_text(encoding="utf-8-sig")
             match = re.search(r'from "(https://cdn.jsdelivr.net/[^"\n]+)"', source)

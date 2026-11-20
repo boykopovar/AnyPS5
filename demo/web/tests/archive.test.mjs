@@ -63,6 +63,26 @@ for (const target of ["windows", "linux"]) {
   const converted = native.Convert(input, event => events.push(event));
   assert.equal(converted.ok, true, converted.error);
   assert.equal(converted.executable[0], target === "windows" ? 77 : 127);
+  if (kind === "ZIP") {
+    const readPatch = name => readFile(path.join(process.argv[3], name), "utf8");
+    const patch = await readPatch("valid.toml");
+    const patched = native.Convert({ ...input, patch }, () => {});
+    assert.equal(patched.ok, true, patched.error);
+    assert.notDeepEqual(patched.executable, converted.executable);
+    const mismatch = await readPatch("mismatch.toml");
+    for (const [badPatch, message] of [
+      [mismatch, /expected [0-9a-f]+ found [0-9a-f]+/iu],
+      [patch.replace("program.dat", "other.elf"), /unmatched patch target/iu],
+      ["format = 2", /unsupported format/iu]
+    ]) {
+      const rejected = native.Convert({ ...input, patch: badPatch }, () => {});
+      assert.equal(rejected.ok, false);
+      assert.match(rejected.error, message);
+      assert.equal(rejected.executable, undefined);
+      assert.equal(rejected.modules, undefined);
+    }
+    assert.deepEqual(input.executable, executable);
+  }
   if (target === "windows") {
     const image = new DataView(converted.executable.buffer, converted.executable.byteOffset, converted.executable.byteLength);
     assert.equal(image.getUint16(image.getUint32(60, true) + 24 + 68, true), 3);
