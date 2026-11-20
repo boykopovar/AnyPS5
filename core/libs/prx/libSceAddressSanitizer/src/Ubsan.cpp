@@ -3,6 +3,7 @@
  * See https://llvm.org/LICENSE.txt for license information.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
+#include "prx/libSceAddressSanitizer/src/Asan.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -712,27 +713,45 @@ const char* APS5_VABI __ubsan_default_options() {
     return "";
 }
 
-std::uint16_t APS5_VABI __sanitizer_unaligned_load16(const void* pointer) {
+__attribute__((noinline)) std::uint16_t APS5_VABI __sanitizer_unaligned_load16(const void* pointer) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(std::uint16_t), false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     return UnalignedLoad<std::uint16_t>(pointer);
 }
 
-std::uint32_t APS5_VABI __sanitizer_unaligned_load32(const void* pointer) {
+__attribute__((noinline)) std::uint32_t APS5_VABI __sanitizer_unaligned_load32(const void* pointer) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(std::uint32_t), false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     return UnalignedLoad<std::uint32_t>(pointer);
 }
 
-std::uint64_t APS5_VABI __sanitizer_unaligned_load64(const void* pointer) {
+__attribute__((noinline)) std::uint64_t APS5_VABI __sanitizer_unaligned_load64(const void* pointer) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(std::uint64_t), false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     return UnalignedLoad<std::uint64_t>(pointer);
 }
 
-void APS5_VABI __sanitizer_unaligned_store16(void* pointer, std::uint16_t value) {
+__attribute__((noinline)) void APS5_VABI __sanitizer_unaligned_store16(void* pointer, std::uint16_t value) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(value), true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     UnalignedStore(pointer, value);
 }
 
-void APS5_VABI __sanitizer_unaligned_store32(void* pointer, std::uint32_t value) {
+__attribute__((noinline)) void APS5_VABI __sanitizer_unaligned_store32(void* pointer, std::uint32_t value) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(value), true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     UnalignedStore(pointer, value);
 }
 
-void APS5_VABI __sanitizer_unaligned_store64(void* pointer, std::uint64_t value) {
+__attribute__((noinline)) void APS5_VABI __sanitizer_unaligned_store64(void* pointer, std::uint64_t value) {
+    volatile char stackMarker = 0;
+    Asan::CheckSmallRegion(reinterpret_cast<std::uintptr_t>(pointer), sizeof(value), true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)),
+                           reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)), reinterpret_cast<std::uintptr_t>(&stackMarker));
     UnalignedStore(pointer, value);
 }
 
