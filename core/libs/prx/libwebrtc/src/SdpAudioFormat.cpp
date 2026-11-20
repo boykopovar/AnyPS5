@@ -291,6 +291,13 @@ void ValidateFormat(const WebRtcSdpAudioFormat* format, const char* message, std
 
 extern "C" {
 
+void WebRtcValidateSdpAudioFormat_nid_no_patch(const WebRtcSdpAudioFormat* format, const char* message) {
+    WebRtcSdpAudioFormat snapshot{};
+    CopyInChecked(&snapshot, format, sizeof(snapshot), message);
+    std::vector<WebRtcStringMapNode*> nodes;
+    ValidateFormat(format, message, nodes);
+}
+
 void APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(WebRtcSdpAudioFormat* format, const WebRtcSdpAudioFormat* other) {
     constexpr const char* message = "SdpAudioFormat copy constructor requires valid objects";
     RequireWritable(format, sizeof(*format), message);
