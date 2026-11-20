@@ -163,6 +163,7 @@ std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
 std::uint32_t APS5_VABI WKFrameGetTypeID();
 std::uint64_t APS5_VABI WKFrameHandleGetFrameID(const void* frameHandleRef);
 bool APS5_VABI WKFrameCanProvideSource(const void* frameRef);
+bool APS5_VABI WKFrameCanShowMIMEType(const void* frameRef, const void* mimeTypeRef);
 const void* APS5_VABI WKFrameCopyMIMEType(const void* frameRef);
 const void* APS5_VABI WKFrameCopyProvisionalURL(const void* frameRef);
 const void* APS5_VABI WKFrameCopyTitle(const void* frameRef);
