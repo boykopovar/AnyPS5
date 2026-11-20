@@ -458,6 +458,14 @@ void MulticastMembership() {
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, anyIndex.data(), anyIndex.size()) == 0, "an ip_mreqn without an index selects the default interface");
     size = address.size();
     Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && address == std::array<std::uint8_t, 4>{}, "the default interface reads back as INADDR_ANY");
+    const std::array<std::uint8_t, 12> addressWithoutIndex{224, 0, 0, 251, 127, 0, 0, 1, 0, 0, 0, 0};
+    Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, addressWithoutIndex.data(), addressWithoutIndex.size()) == 0, "an ip_mreqn with index 0 clears the interface whatever its addresses, as inp_set_multicast_if does");
+    std::array<std::uint8_t, 12> request{};
+    request.fill(0xaa);
+    size = request.size();
+    Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, request.data(), &size) == 0 && size == 12 && request == std::array<std::uint8_t, 12>{}, "an ip_mreqn read with no interface selected is all zeros, as inp_getmoptions returns");
+    const std::array<std::uint8_t, 12> negativeIndex{0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+    Require(SetFails(datagram, 0, IpMulticastInterface, negativeIndex.data(), negativeIndex.size(), ErrorInvalid), "a negative ip_mreqn index must fail with EINVAL (22)");
     Require(SetFails(datagram, 0, IpMulticastInterface, loopback.data(), 2, ErrorInvalid), "a short IP_MULTICAST_IF must fail with EINVAL (22)");
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
