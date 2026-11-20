@@ -271,7 +271,7 @@ PathState validatedPath(Registry& state, AudioPropagationHandle path, const Audi
         const auto& point = replacement.points[index];
         requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), function);
         require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), function);
-        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, function).system == system, function);
+        if (point.material != 0) require(requireObject(state, point.material, Kind::Material, function).system == system, function);
     }
     return PathState{replacement, gain};
 }
