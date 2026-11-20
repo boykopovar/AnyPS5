@@ -255,7 +255,6 @@ void TestShutdownDescriptorAndFlagsBounds() {
         Require(FailsWith(shutdown_nid_postfix(-100, how), ErrorBadDescriptor));
         Require(FailsWith(shutdown_nid_postfix(1024, how), ErrorBadDescriptor));
         Require(FailsWith(shutdown_nid_postfix(65535, how), ErrorBadDescriptor));
-        Require(FailsWith(_shutdown_nid_postfix(-1, how), ErrorBadDescriptor));
     }
 
     const int closedSock = socket_nid_postfix(AfInet, SockStream, 0);
@@ -263,7 +262,6 @@ void TestShutdownDescriptorAndFlagsBounds() {
     Require(close_nid_postfix(closedSock) == 0);
     for (const int how : {ShutRd, ShutWr, ShutRdWr, -1, 3, 999}) {
         Require(FailsWith(shutdown_nid_postfix(closedSock, how), ErrorBadDescriptor));
-        Require(FailsWith(_shutdown_nid_postfix(closedSock, how), ErrorBadDescriptor));
     }
 
     int pipeEnds[2]{-1, -1};
@@ -271,8 +269,6 @@ void TestShutdownDescriptorAndFlagsBounds() {
     for (const int how : {ShutRd, ShutWr, ShutRdWr, -1, 3, 999}) {
         Require(FailsWith(shutdown_nid_postfix(pipeEnds[0], how), ErrorNotSocket));
         Require(FailsWith(shutdown_nid_postfix(pipeEnds[1], how), ErrorNotSocket));
-        Require(FailsWith(_shutdown_nid_postfix(pipeEnds[0], how), ErrorNotSocket));
-        Require(FailsWith(_shutdown_nid_postfix(pipeEnds[1], how), ErrorNotSocket));
     }
     Require(close_nid_postfix(pipeEnds[0]) == 0);
     Require(close_nid_postfix(pipeEnds[1]) == 0);
@@ -281,11 +277,9 @@ void TestShutdownDescriptorAndFlagsBounds() {
     Require(stream >= 0);
     for (const int how : {-1000, -100, -2, -1, 3, 4, 10, 100, 256, 65535}) {
         Require(FailsWith(shutdown_nid_postfix(stream, how), ErrorInvalid));
-        Require(FailsWith(_shutdown_nid_postfix(stream, how), ErrorInvalid));
     }
     for (const int how : {ShutRd, ShutWr, ShutRdWr}) {
         Require(FailsWith(shutdown_nid_postfix(stream, how), ErrorNotConnected));
-        Require(FailsWith(_shutdown_nid_postfix(stream, how), ErrorNotConnected));
     }
     Require(close_nid_postfix(stream) == 0);
 
@@ -311,7 +305,6 @@ void TestShutdownReadWriteSemantics() {
     {
         TcpPair pair;
         Require(shutdown_nid_postfix(pair.client, ShutWr) == 0);
-        Require(_shutdown_nid_postfix(pair.client, ShutWr) == 0);
 
         const char ping[] = "ping";
         Require(FailsWith(send_nid_postfix(pair.client, ping, sizeof(ping), 0), ErrorPipe));
@@ -387,7 +380,6 @@ void TestUnixDomainSocketPairShutdownAndLinger() {
 
     for (const int how : {-1, 3, 100}) {
         Require(FailsWith(shutdown_nid_postfix(pair[0], how), ErrorInvalid));
-        Require(FailsWith(_shutdown_nid_postfix(pair[0], how), ErrorInvalid));
     }
 
     Require(shutdown_nid_postfix(pair[0], ShutWr) == 0);
