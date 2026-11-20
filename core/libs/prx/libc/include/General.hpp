@@ -16,6 +16,9 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line);
 #define NotImplemented_nid_no_patch(name) NotImplementedAt_nid_no_patch(name, __FILE__, __LINE__)
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
+extern "C" [[noreturn]] void GuestFault_nid_no_patch(const char* funcName);
+extern "C" [[noreturn]] void GuestFaultAt_nid_no_patch(const char* funcName, const char* file, int line);
+#define GuestFault_nid_no_patch(name) GuestFaultAt_nid_no_patch(name, __FILE__, __LINE__)
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
 extern "C" const char* NanSubjectEnd_nid_no_patch(const char* text);

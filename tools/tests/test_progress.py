@@ -492,6 +492,43 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(group["done_names"], [])
             self.assertEqual(group["todo_names"], ["Pending"])
 
+    def test_guest_fault_throws_count_as_implemented(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "int APS5_VABI Ready(void* buffer) {\n"
+                "    if (buffer == nullptr) GuestFault_nid_no_patch(__func__);\n"
+                "    return *static_cast<int*>(buffer);\n"
+                "}\n")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Ready"])
+        self.assertEqual(group["todo_names"], [])
+
+    def test_not_implemented_calls_still_keep_an_export_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "int APS5_VABI Pending(void* buffer) {\n"
+                "    if (buffer == nullptr) GuestFault_nid_no_patch(__func__);\n"
+                "    NotImplemented_nid_no_patch(__func__);\n"
+                "}\n")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], [])
+        self.assertEqual(group["todo_names"], ["Pending"])
+
+    def test_guest_fault_wrappers_do_not_keep_callers_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "static [[noreturn]] void Reject(const char* name) { GuestFault_nid_no_patch(name); }\n"
+                "int APS5_VABI Ready(void* buffer) { if (buffer == nullptr) Reject(__func__); return 0; }\n")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Ready"])
+        self.assertEqual(group["todo_names"], [])
+
     def test_stub_wrapper_calls_allow_whitespace(self):
         for separator in ("", " ", "\t", "\n", " /* separator */ "):
             with self.subTest(separator=separator), tempfile.TemporaryDirectory() as directory:
