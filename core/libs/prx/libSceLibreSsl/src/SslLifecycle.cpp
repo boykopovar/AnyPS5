@@ -495,7 +495,8 @@ bool PopulateContext(LibreSslCtx& ctx, const LibreSslMethod& method) {
 
 extern "C" {
 
-LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
+void* LibreSslNewContext_nid_no_patch(const void* source) {
+    const auto* method = static_cast<const LibreSslMethod*>(source);
     if (!method) {
         LibreSslPutSslErrorX_nid_no_patch(ReasonNullSslMethodPassed);
         return nullptr;
@@ -524,6 +525,10 @@ LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
         return nullptr;
     }
     return ctx;
+}
+
+LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
+    return static_cast<LibreSslCtx*>(LibreSslNewContext_nid_no_patch(method));
 }
 
 void APS5_VABI SSL_CTX_free_nid_postfix(LibreSslCtx* ctx) {
