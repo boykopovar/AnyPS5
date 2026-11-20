@@ -391,7 +391,7 @@ static void CheckLongDoubleExpTinyRounding() {
 }
 
 static void CheckIntegralRoundingInexact() {
-    const auto inexact = [](long double (*function)(long double), long double input, long double expected) {
+    const auto inexact = [](long double (APS5_VABI *function)(long double), long double input, long double expected) {
         std::feclearexcept(FE_ALL_EXCEPT);
         const long double result = function(input);
         const int flags = std::fetestexcept(FE_ALL_EXCEPT) & FE_INEXACT;
