@@ -1924,6 +1924,12 @@ public:
         }
         return !Overlaps(copy->ranges, address, bytes);
     }
+    void BumpUnits() {
+        unitsVersion.fetch_add(1, std::memory_order_release);
+    }
+    std::uint64_t UnitsVersion() const {
+        return unitsVersion.load(std::memory_order_acquire);
+    }
 
 private:
     struct Snapshot {
@@ -1941,6 +1947,7 @@ private:
     void changed() {
         ++version;
         changes.store(version, std::memory_order_release);
+        BumpUnits();
     }
 
     void rebuild() {
@@ -1961,14 +1968,18 @@ private:
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
     std::atomic<std::uint64_t> changes{0};
+    std::atomic<std::uint64_t> unitsVersion{1};
     AtomicSharedPtr<const Snapshot> published;
 };
 
-// Storage images whose results have not reached guest memory yet.
 struct PendingWrites {
     MapImportGate::LeafMutex<SlimMutex> mutex;
     PendingList textures;
-    // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
+    struct UnitSnapshot {
+        std::uint64_t version = 0;
+        PendingList::Ranges units;
+    };
+    AtomicSharedPtr<const UnitSnapshot> publishedUnits;
     std::vector<StorageTexture*> flushing;
     std::atomic<std::size_t> flushingCount{0};
     struct Drawn {
@@ -4918,6 +4929,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
         if (wasLent || newUnits) BumpPendingSerial();
+        if (newUnits) pending.textures.BumpUnits();
         return;
     }
     dirty = true;
@@ -4930,7 +4942,10 @@ void StorageTexture::reconcilePending() {
     std::lock_guard lock(pending.mutex);
     const bool any = anyLayerPending();
     if (!any) forgetDrawn();
-    if (any == dirty) return;
+    if (any == dirty) {
+        if (any) pending.textures.BumpUnits();
+        return;
+    }
     dirty = any;
     if (any) pending.textures.push_back(this);
     else pending.textures.remove(this);
@@ -5710,11 +5725,93 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
 }
 
 bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason, bool waited) {
-    if (scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes)) return false;
+    if (bytes == 0) return false;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    const std::pair<std::uint64_t, std::uint64_t> single{address, end};
+    return PublishShadowsOnly(std::span(&single, 1), scope, reason, waited);
+}
+
+bool StorageTexture::PublishShadowsOnly(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, PublishScope scope, const char* reason, bool waited) {
+    if (scope == PublishScope::None || ranges.empty()) return false;
+    const bool clear = std::all_of(ranges.begin(), ranges.end(), [](const auto& range) {
+        return range.second <= range.first || LiveUnitsClear(range.first, static_cast<std::size_t>(range.second - range.first));
+    });
+    if (clear || !AnyShadowedOverlaps(ranges)) return false;
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    if (PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited) == 0) return false;
+    const auto publishReason = PublishReasonFor(reason);
+    std::size_t units = 0;
+    for (const auto& [begin, end] : ranges) {
+        if (end > begin) units += PublishShadow(begin, static_cast<std::size_t>(end - begin), scope, publishReason, waited);
+    }
+    if (units == 0) return false;
     waitForIdlePublish(reason);
     return true;
+}
+
+void StorageTexture::SubtractPendingUnits(std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+    if (ranges.empty()) return;
+    const auto cachedPendingUnits = []() -> std::shared_ptr<const PendingWrites::UnitSnapshot> {
+        auto& pending = Pending();
+        struct PendingUnitsTag {};
+        auto& threadCopy = ThreadScratch<std::shared_ptr<const PendingWrites::UnitSnapshot>, PendingUnitsTag>();
+        const auto version = pending.textures.UnitsVersion();
+        if (threadCopy != nullptr && threadCopy->version == version) return threadCopy;
+        if (auto published = pending.publishedUnits.load(std::memory_order_acquire); published != nullptr && published->version == version) {
+            threadCopy = std::move(published);
+            return threadCopy;
+        }
+        PendingList::Ranges pendingUnits;
+        std::uint64_t snapVersion = 0;
+        {
+            std::lock_guard lock(pending.mutex);
+            snapVersion = pending.textures.UnitsVersion();
+            if (auto published = pending.publishedUnits.load(std::memory_order_acquire); published != nullptr && published->version == snapVersion) {
+                threadCopy = std::move(published);
+                return threadCopy;
+            }
+            for (const auto* texture : pending.textures) {
+                for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
+                    if (!texture->layerPending[layer]) continue;
+                    const auto begin = texture->layerBegin(layer);
+                    const auto end = begin + texture->layerBytes(layer);
+                    constexpr std::uint64_t unitAlign = 65536ull;
+                    const auto unitBegin = begin > std::numeric_limits<std::uint64_t>::max() - (unitAlign - 1) ? std::numeric_limits<std::uint64_t>::max() : (begin + unitAlign - 1) & ~(unitAlign - 1);
+                    const auto unitEnd = end & ~(unitAlign - 1);
+                    if (unitEnd > unitBegin) pendingUnits.emplace_back(unitBegin, unitEnd);
+                }
+            }
+        }
+        std::sort(pendingUnits.begin(), pendingUnits.end());
+        std::size_t merged = 0;
+        for (const auto& [begin, end] : pendingUnits) {
+            if (merged != 0 && begin <= pendingUnits[merged - 1].second) pendingUnits[merged - 1].second = std::max(pendingUnits[merged - 1].second, end);
+            else pendingUnits[merged++] = {begin, end};
+        }
+        pendingUnits.resize(merged);
+        auto built = std::make_shared<const PendingWrites::UnitSnapshot>(PendingWrites::UnitSnapshot{snapVersion, std::move(pendingUnits)});
+        pending.publishedUnits.store(built, std::memory_order_release);
+        threadCopy = built;
+        return built;
+    };
+    const auto snapshot = cachedPendingUnits();
+    const auto& pendingUnits = snapshot->units;
+    if (pendingUnits.empty()) return;
+    struct FilteredTag {};
+    auto& filtered = ThreadScratch<std::vector<std::pair<std::uint64_t, std::uint64_t>>, FilteredTag>();
+    filtered.clear();
+    std::size_t p = 0;
+    for (const auto& [begin, end] : ranges) {
+        std::uint64_t cursor = begin;
+        while (p < pendingUnits.size() && pendingUnits[p].second <= cursor) ++p;
+        while (p < pendingUnits.size() && pendingUnits[p].first < end) {
+            if (pendingUnits[p].first > cursor) filtered.emplace_back(cursor, pendingUnits[p].first);
+            cursor = std::max(cursor, pendingUnits[p].second);
+            if (cursor >= end) break;
+            ++p;
+        }
+        if (cursor < end) filtered.emplace_back(cursor, end);
+    }
+    ranges.swap(filtered);
 }
 
 namespace {
@@ -6703,6 +6800,7 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
                 it = pending.textures.erase(it);
                 continue;
             }
+            if (dropped) pending.textures.BumpUnits();
             ++it;
         } else {
             ++it;
