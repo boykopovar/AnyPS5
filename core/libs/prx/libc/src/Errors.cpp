@@ -65,14 +65,18 @@ const char* ExtendedMessage(int error) {
 }
 
 void Describe(int error, char (&text)[128]) {
-    if (error == 0) std::snprintf(text, sizeof(text), "No error");
-    else if (NamedByStrerror(error)) std::snprintf(text, sizeof(text), "%s", messages[error]);
-    else if (const char* extended = ExtendedMessage(error)) std::snprintf(text, sizeof(text), "%s", extended);
+    if (const char* fixed = StrerrorText_nid_no_patch(error)) std::snprintf(text, sizeof(text), "%s", fixed);
     else std::snprintf(text, sizeof(text), "error_code=0x%08x", static_cast<unsigned>(error));
 }
 }
 
 extern "C" {
+const char* APS5_VABI StrerrorText_nid_no_patch(int error) {
+    if (error == 0) return "No error";
+    if (NamedByStrerror(error)) return messages[error];
+    return ExtendedMessage(error);
+}
+
 char* APS5_VABI strerror_nid_postfix(int error) {
     thread_local char buffer[128];
     Describe(error, buffer);

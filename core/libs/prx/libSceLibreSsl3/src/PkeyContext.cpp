@@ -1813,9 +1813,11 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
     LibreSsl3::DigestContext copy = {};
     LibreSsl3PkeyContext* pkctx = nullptr;
     std::size_t sltmp = 0;
+    unsigned int written = 0;
     int ret = 0;
 
-    *siglen = 0;
+    const unsigned int zero = 0;
+    if (!GuestCopyOut_nid_no_patch(siglen, &zero, sizeof(zero))) return 0;
 
     if (!DigestCopy(&copy, ctx)) goto err;
     if (!DigestFinal(&copy, digest, &digestLength)) goto err;
@@ -1830,7 +1832,8 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
             static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
         goto err;
     if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
-    *siglen = static_cast<unsigned int>(sltmp);
+    written = static_cast<unsigned int>(sltmp);
+    if (!GuestCopyOut_nid_no_patch(siglen, &written, sizeof(written))) goto err;
     ret = 1;
 
 err:

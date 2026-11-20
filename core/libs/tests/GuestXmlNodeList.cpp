@@ -1,5 +1,6 @@
 #include "prx/libSceXml/include/Api.hpp"
 #include "prx/libSceXml/include/InventoryExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -238,11 +246,125 @@ void TestDocumentLists() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+class GuardedPage {
+    char* allocation;
+    std::size_t size;
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        allocation = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(allocation != nullptr, "allocate pages");
+        DWORD previous;
+        Require(VirtualProtect(allocation + size, size, PAGE_NOACCESS, &previous) != 0, "protect page");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size");
+        size = static_cast<std::size_t>(page);
+        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "allocate pages");
+        allocation = static_cast<char*>(mapped);
+        Require(mprotect(allocation + size, size, PROT_NONE) == 0, "protect page");
+#endif
+        char value = 0;
+        Require(!GuestCopyIn_nid_no_patch(&value, allocation + size, 1), "the guard page is unreadable");
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(allocation, 0, MEM_RELEASE);
+#else
+        munmap(allocation, size * 2);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    char* End() { return allocation + size; }
+};
+
+bool Same(XmlNodeId left, XmlNodeId right) {
+    return left.first == right.first && left.second == right.second && left.flag == right.flag;
+}
+
+XmlNodeId Find(const XmlHandle* list, const char* name) {
+    const XmlString string{name, std::strlen(name)};
+    return _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(list, &string);
+}
+
+void TestFindByName() {
+    Fixture f;
+    Require(f.Parse("<r k=\"v\"><b/><c>t</c><b x=\"1\"/>tail</r>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    const XmlNodeId root = Root(&document);
+
+    XmlHandle list{nullptr};
+    _ZN3sce3Xml3Dom8NodeListC1Ev(&list);
+    Require(Find(&list, "b").first == nullptr && Find(&list, "b").second == nullptr, "an uninitialized list finds nothing");
+    Require(Start(&list, &f.initializer) == 0, "the list starts");
+    Require(Find(&list, "b").first == nullptr, "an empty list finds nothing");
+    Require(_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(&document, root, &list) == 0, "the children");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 4, "four children");
+
+    Require(Same(Find(&list, "b"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 0)), "the first of two matching elements");
+    Require(Same(Find(&list, "c"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a later element");
+    const XmlNodeId missing = Find(&list, "z");
+    Require(missing.first == nullptr && missing.second == nullptr && missing.flag == 0, "no match gives the null node id");
+    Require(Find(&list, "").first == nullptr && Find(&list, "bb").first == nullptr, "only an exact name matches");
+    const XmlString longer{"c-and-more", 1};
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &longer), XmlNodeId{nullptr, nullptr, 0}), "the name is compared up to its terminator, not its size");
+    const XmlString cWithSize{"c", 0};
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &cWithSize), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a zero size does not matter either");
+
+    _ZN3sce3Xml3Dom8NodeList11insertFirstENS1_6NodeIdE(&list, XmlNodeId{nullptr, nullptr, 0});
+    Require(Same(Find(&list, "b"), _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)), "a null item is skipped");
+
+    bool threw = false;
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a null name throws");
+    threw = false;
+    const XmlString nullBuffer{nullptr, 0};
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &nullBuffer);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a null name buffer throws");
+    GuardedPage guarded;
+    std::memcpy(guarded.End() - 2, "bb", 2);
+    const XmlString runsIntoGuard{guarded.End() - 2, 2};
+    threw = false;
+    try {
+        _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(&list, &runsIntoGuard);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a name that runs into unreadable memory throws instead of matching as empty");
+
+    Require(_ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(&document, root, &list) == 0, "the children again");
+    Require(f.Parse("<s/>") == 0, "parse again");
+    threw = false;
+    try {
+        Find(&list, "b");
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "searching nodes of a stale document throws");
+    _ZN3sce3Xml3Dom8NodeListD1Ev(&list);
+    _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+}
+
 }
 
 int main() {
     TestLifecycle();
     TestItems();
     TestDocumentLists();
+    TestFindByName();
     return 0;
 }

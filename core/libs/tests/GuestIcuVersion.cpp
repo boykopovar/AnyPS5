@@ -7,6 +7,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -163,6 +164,58 @@ void AuStrncpy() {
     Require(Rejects([&] { u_austrncpy_nid_postfix(chars.data(), nullptr, 1); }), "null source with positive count rejected");
 }
 
+void UaStrcpy() {
+    std::array<char16_t, 8> units;
+    units.fill(u'X');
+    Require(u_uastrcpy_nid_postfix(units.data(), "") == units.data(), "empty widening copy returns destination");
+    Require(units[0] == 0 && units[1] == u'X', "empty widening copy writes only terminator");
+
+    units.fill(u'X');
+    u_uastrcpy_nid_postfix(units.data(), "A!#$@B");
+    Require(std::u16string_view(units.data(), 8) == std::u16string_view(u"A!#$@B\0X", 8), "ASCII characters and terminator widen");
+
+    std::array<char, 128> asciiChars;
+    for (std::size_t index = 0; index < 127; ++index) asciiChars[index] = static_cast<char>(index + 1);
+    asciiChars[127] = 0;
+    std::array<char16_t, 129> asciiUnits;
+    asciiUnits.fill(u'X');
+    Require(u_uastrcpy_nid_postfix(asciiUnits.data(), asciiChars.data()) == asciiUnits.data(), "full ASCII widening returns destination");
+    for (std::size_t index = 0; index < 127; ++index)
+        Require(asciiUnits[index] == static_cast<char16_t>(index + 1), "every byte in 0x01-0x7f widens unchanged");
+    Require(asciiUnits[127] == 0 && asciiUnits[128] == u'X', "full ASCII widening writes terminator without overrun");
+
+    Require(Rejects([&] { u_uastrcpy_nid_postfix(nullptr, "a"); }), "null destination rejected");
+    Require(Rejects([&] { u_uastrcpy_nid_postfix(units.data(), nullptr); }), "null source rejected");
+}
+
+void UaStrncpy() {
+    std::array<char16_t, 8> units;
+    units.fill(u'X');
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abcdef", 3) == units.data(), "truncated widening returns destination");
+    Require(std::u16string_view(units.data(), 8) == u"AbcXXXXX", "truncated widening omits terminator");
+
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), "Abc", 3);
+    Require(std::u16string_view(units.data(), 8) == u"AbcXXXXX", "exact-length widening omits terminator");
+
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), "A!$", 6);
+    Require(std::u16string_view(units.data(), 8) == std::u16string_view(u"A!$\0XXXX", 8), "longer bound writes one terminator without padding");
+
+    const std::array<char, 3> unterminated{'!', '$', '@'};
+    units.fill(u'X');
+    u_uastrncpy_nid_postfix(units.data(), unterminated.data(), 3);
+    Require(std::u16string_view(units.data(), 8) == u"!$@XXXXX", "bounded widening stops at count without reading past it");
+
+    units.fill(u'X');
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abc", 0) == units.data(), "zero count returns destination");
+    Require(u_uastrncpy_nid_postfix(units.data(), "Abc", -2) == units.data(), "negative count returns destination");
+    Require(units[0] == u'X', "nonpositive counts write nothing");
+    Require(u_uastrncpy_nid_postfix(nullptr, nullptr, 0) == nullptr, "zero count allows null pointers");
+    Require(Rejects([&] { u_uastrncpy_nid_postfix(nullptr, "a", 1); }), "null destination with positive count rejected");
+    Require(Rejects([&] { u_uastrncpy_nid_postfix(units.data(), nullptr, 1); }), "null source with positive count rejected");
+}
+
 void VersionFromString() {
     Require(FromString("1.2.3.4") == Version{1, 2, 3, 4}, "four parts");
     Require(FromString("65.1") == Version{65, 1, 0, 0}, "missing parts are zero");
@@ -253,6 +306,8 @@ int main() {
     UCharsToChars();
     AuStrcpy();
     AuStrncpy();
+    UaStrcpy();
+    UaStrncpy();
     VersionFromString();
     VersionFromUString();
     VersionToString();

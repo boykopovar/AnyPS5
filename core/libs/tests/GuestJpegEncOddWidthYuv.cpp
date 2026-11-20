@@ -2,9 +2,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "turbojpeg.h"
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -98,6 +101,67 @@ static JpegEncEncodeParam RgbaParam(std::uint32_t pitch) {
     return param;
 }
 
+static void CheckYcbcrSamples(void* handle) {
+    constexpr int height = 17;
+    constexpr int pitch = 40;
+    constexpr int chromaWidth = (kWidth + 1) / 2;
+    alignas(4) unsigned char packed[height * pitch];
+    auto chroma = [](int component, int x, int y) {
+        if (component == 1) return (y % 2 ? 208 : 164) + (x == chromaWidth - 1 ? 16 : 0);
+        return (y % 2 ? 240 : 212) - (x == chromaWidth - 1 ? 24 : 0);
+    };
+    for (int y = 0; y < height; ++y) {
+        unsigned char* row = packed + y * pitch;
+        for (int x = 0; x < chromaWidth; ++x) {
+            row[4 * x] = 32;
+            row[4 * x + 1] = static_cast<unsigned char>(chroma(1, x, y));
+            row[4 * x + 2] = x == chromaWidth - 1 ? 0xEE : 64;
+            row[4 * x + 3] = static_cast<unsigned char>(chroma(2, x, y));
+        }
+        for (int x = 4 * chromaWidth; x < pitch; ++x) row[x] = 0xEE;
+    }
+    auto param = YuyvParam(packed, sizeof(packed), pitch);
+    param.image_height = height;
+    for (const int vertical : {1, 2}) {
+        param.sampling_type = static_cast<std::uint8_t>(vertical);
+        JpegEncOutputInfo info{};
+        const auto rc = sceJpegEncEncode(handle, &param, &info);
+        Require(rc == static_cast<std::int32_t>(info.size) && IsJpeg(jpeg, info.size) && info.height == height);
+        const std::unique_ptr<void, decltype(&tj3Destroy)> decoder(tj3Init(TJINIT_DECOMPRESS), tj3Destroy);
+        Require(decoder && tj3DecompressHeader(decoder.get(), jpeg, info.size) == 0);
+        const int sampling = vertical == 1 ? TJSAMP_422 : TJSAMP_420;
+        Require(tj3Get(decoder.get(), TJPARAM_SUBSAMP) == sampling);
+        Require(tj3Get(decoder.get(), TJPARAM_JPEGWIDTH) == static_cast<int>(kWidth) &&
+                tj3Get(decoder.get(), TJPARAM_JPEGHEIGHT) == height);
+        std::vector<unsigned char> decoded(tj3YUVBufSize(kWidth, 1, height, sampling));
+        Require(!decoded.empty() && tj3DecompressToYUV8(decoder.get(), jpeg, info.size, decoded.data(), 1) == 0);
+
+        std::size_t offset = 0;
+        for (int component = 0; component < 3; ++component) {
+            const int cols = component == 0 ? kWidth : chromaWidth;
+            const int rows = component == 0 ? height : (height + vertical - 1) / vertical;
+            const int stride = tj3YUVPlaneWidth(component, kWidth, sampling);
+            for (int y = 0; y < rows; ++y) {
+                for (int x = 0; x < cols; ++x) {
+                    int expected = x % 2 ? 64 : 32;
+                    if (component != 0) {
+                        const int first = y * vertical;
+                        expected = chroma(component, x, first);
+                        if (vertical == 2 && first + 1 < height) expected = (expected + chroma(component, x, first + 1)) / 2;
+                    }
+                    const int actual = decoded[offset + y * stride + x];
+                    if (std::abs(actual - expected) > 2) {
+                        std::fprintf(stderr, "YCbCr sample %d at %d,%d (vertical factor %d): got %d, expected %d\n",
+                                     component, x, y, vertical, actual, expected);
+                        Require(false);
+                    }
+                }
+            }
+            offset += static_cast<std::size_t>(stride) * tj3YUVPlaneHeight(component, height, sampling);
+        }
+    }
+}
+
 int main() {
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80650103);
 
@@ -146,6 +210,7 @@ int main() {
     Require(sceJpegEncEncode(handle, &rgbaMin, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(DecodeOutput(info).size() == kWidth * kHeight * 3);
 
+    CheckYcbcrSamples(handle);
     Require(sceJpegEncDelete(handle) == 0);
 
     return 0;

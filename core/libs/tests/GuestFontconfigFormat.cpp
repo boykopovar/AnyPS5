@@ -140,7 +140,7 @@ int main() {
     CHECK(FcPatternAddString(escaped, "family", Text("a-b:c,d\\e")));
     CHECK(FcPatternAddString(escaped, "style", Text("s=t_u:v,w\\x")));
     Expect(escaped, "%{=unparse}", "a\\-b\\:c\\,d\\\\e:style=s\\=t\\_u\\:v\\,w\\\\x");
-    FcPatternDestroy(escaped);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(escaped);
+    FcPatternDestroy_nid_postfix(pattern);
     std::puts("Fontconfig format checks passed");
 }

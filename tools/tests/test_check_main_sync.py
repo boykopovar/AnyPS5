@@ -2,9 +2,11 @@ from pathlib import Path
 import contextlib
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 
@@ -27,7 +29,7 @@ class Repo:
         self.commit("initial")
 
     def git(self, *args):
-        subprocess.run(["git", "-C", str(self.path), *args], check=True, capture_output=True, env={**os.environ, **IDENTITY})
+        subprocess.run(["git", "-c", "tag.gpgsign=false", "-C", str(self.path), *args], check=True, capture_output=True, env={**os.environ, **IDENTITY})
 
     def write(self, name, text):
         (self.path / name).write_text(text, encoding="utf-8")
@@ -403,6 +405,58 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(strict.returncode, 1, strict.stderr)
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
+
+
+class ResolveBaseTests(unittest.TestCase):
+    @staticmethod
+    def fake_git(existing):
+        calls = []
+
+        def git(repo, *arguments, check=True):
+            calls.append(arguments[-1])
+            return types.SimpleNamespace(returncode=0 if arguments[-1] in {name + "^0" for name in existing} else 1)
+        return git, calls
+
+    def test_named_base_is_returned_when_it_resolves(self):
+        git, calls = self.fake_git({"mine"})
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            self.assertEqual(check_main_sync.resolve_base(Path("."), "mine"), "mine")
+        self.assertEqual(calls, ["mine^0"])
+
+    def test_named_base_does_not_fall_back_to_the_defaults(self):
+        git, _ = self.fake_git(set(check_main_sync.BASES))
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            with self.assertRaisesRegex(RuntimeError, r"no base ref found \(mine\)"):
+                check_main_sync.resolve_base(Path("."), "mine")
+
+    def test_first_resolving_default_wins(self):
+        bases = list(check_main_sync.BASES)
+        git, _ = self.fake_git(set(bases[1:]))
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            self.assertEqual(check_main_sync.resolve_base(Path("."), None), bases[1])
+
+    def test_no_resolving_default_names_every_candidate(self):
+        git, _ = self.fake_git(set())
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            with self.assertRaisesRegex(RuntimeError, ", ".join(map(re.escape, check_main_sync.BASES))):
+                check_main_sync.resolve_base(Path("."), None)
+
+
+class GitVersionTests(unittest.TestCase):
+    @staticmethod
+    def version(text):
+        return unittest.mock.patch.object(check_main_sync, "git", lambda *args, **kwargs: types.SimpleNamespace(stdout=text))
+
+    def test_parses_major_and_minor(self):
+        with self.version("git version 2.43.0.windows.1\n"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 43))
+        with self.version("git version 2.5"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 5))
+
+    def test_unrecognised_output_has_no_version(self):
+        for text in ("", "not git\n", "git version unknown"):
+            with self.subTest(text=text), self.version(text):
+                self.assertIsNone(check_main_sync.git_version(Path(".")))
 
 
 if __name__ == "__main__":

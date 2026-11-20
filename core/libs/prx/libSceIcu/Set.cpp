@@ -95,7 +95,8 @@ const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, 
         WriteError(error, U_ILLEGAL_ARGUMENT_ERROR, __func__);
         return nullptr;
     }
-    if (Icu::PropertyNeedsData(property)) NotImplemented_nid_no_patch(__func__);
+    if (property >= UCHAR_BASIC_EMOJI && property <= UCHAR_RGI_EMOJI)
+        NotImplemented_nid_no_patch("u_getBinaryPropertySet: property of strings");
 
     static std::array<CodePointSet, UCHAR_BINARY_LIMIT> sets;
     static std::mutex mutex;

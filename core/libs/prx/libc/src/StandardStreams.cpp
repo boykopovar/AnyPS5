@@ -155,18 +155,43 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (value == -1) return -1;
-    if (value < 0 || value > 255) {
+    if (value < 0 || value > 0xffff) {
         errno = 86;
         stream->SetError();
         return -1;
     }
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     if (!stream->OpenForReading()) return -1;
     if (!stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    const char16_t low = value >= 0xd800 && value < 0xdc00 ? stream->TakeLowSurrogate() : 0;
+    const std::uint32_t code = low != 0 ? 0x10000 + ((static_cast<std::uint32_t>(value) & 0x3ff) << 10) + (low & 0x3ffu) : static_cast<std::uint32_t>(value);
+    unsigned char bytes[4];
+    std::size_t count = 0;
+    if (code < 0x80) {
+        bytes[count++] = static_cast<unsigned char>(code);
+    } else if (code < 0x800) {
+        bytes[count++] = static_cast<unsigned char>(0xc0 | (code >> 6));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else if (code < 0x10000) {
+        bytes[count++] = static_cast<unsigned char>(0xe0 | (code >> 12));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else {
+        bytes[count++] = static_cast<unsigned char>(0xf0 | (code >> 18));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    }
+    const std::size_t total = count;
+    int result = 0;
+    while (count != 0 && result != -1) result = stream->PushBack(bytes[--count]);
     stream->SyncStatus();
-    if (result != -1) stream->NotePushback();
-    return result;
+    if (result == -1) {
+        if (low != 0 && count + 1 == total) stream->SetLowSurrogate(low);
+        return -1;
+    }
+    stream->NotePushback();
+    return value;
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
@@ -227,6 +252,7 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     errno = 0;
     const int result = std::fputc(value, native);
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -244,6 +270,7 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     const int result = putc_unlocked(value, native);
 #endif
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncUnlockedStatus();
     stream->Orientation(-1);
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
@@ -255,10 +282,10 @@ int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    const int result = stream->PushBack(value);
     stream->SyncStatus();
     return result;
 }

@@ -73,9 +73,14 @@ void APS5_VABI AbortingGamePresenceCallback(const void*, const void*, void*) {
     std::abort();
 }
 
-void APS5_VABI AbortingReachabilityCallback(int, std::uint32_t, void*) {
-    std::fprintf(stderr, "NpManager: the reachability callback was called\n");
-    std::abort();
+int reachabilityCalls = 0;
+int reachabilityUserId = 0;
+std::uint32_t reachabilityState = 99;
+
+void APS5_VABI CountingReachabilityCallback(int userId, std::uint32_t state, void*) {
+    ++reachabilityCalls;
+    reachabilityUserId = userId;
+    reachabilityState = state;
 }
 
 struct SelfUnregister {
@@ -123,13 +128,14 @@ void CheckStateCallbacksA() {
     Require(ids[0] >= 1 && ids[0] <= 8, "state callback id outside 1..8");
     Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[1]) == AlreadyRegistered, "duplicate state callback");
     Require(stateCallsA[0].calls == 0, "registering calls the state callback");
-    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&AbortingReachabilityCallback), nullptr) == 0,
+    Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&CountingReachabilityCallback), nullptr) == 0,
         "registering the reachability callback");
     sceNpRegisterGamePresenceCallback(nullptr, nullptr);
     sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&AbortingGamePresenceCallback), &userdata[0]);
 
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed");
     Require(SignedOutOnce(stateCallsA[0], &userdata[0]), "sceNpCheckCallback must deliver SIGNED_OUT once");
+    Require(reachabilityCalls == 1 && reachabilityUserId == InitialUserId && reachabilityState == 0, "sceNpCheckCallback must deliver UNAVAILABLE reachability once");
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0, "unregistering the reachability callback");
     Require(sceNpCheckCallback() == 0, "second sceNpCheckCallback failed");
     Require(stateCallsA[0].calls == 1, "the second sceNpCheckCallback delivered the state again");
@@ -1120,6 +1126,82 @@ void CheckAsmLifecycle() {
     Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
 }
 
+void CheckAsmCallsBeforeInitialization() {
+    struct Entry {
+        decltype(&sceNpAsmGenerateNpTitleToken) function;
+        const char* name;
+    };
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    const Entry asmEntries[] = {
+        {sceNpAsmGenerateNpTitleToken, "sceNpAsmGenerateNpTitleToken"},
+        {sceNpAsmGenerateNpTitleToken2, "sceNpAsmGenerateNpTitleToken2"},
+        {sceNpAsmGetNpCommInfo, "sceNpAsmGetNpCommInfo"},
+        {sceNpAsmGetNpCommInfo2, "sceNpAsmGetNpCommInfo2"},
+        {sceNpAsmGetRelatedGameNpTitleIds, "sceNpAsmGetRelatedGameNpTitleIds"},
+        {sceNpAsmGetServiceBaseUrl, "sceNpAsmGetServiceBaseUrl"},
+        {sceNpAsmGetServiceIdInfo, "sceNpAsmGetServiceIdInfo"},
+    };
+    const Entry clientEntries[] = {
+        {sceNpAsmClientClearNpTitleToken, "sceNpAsmClientClearNpTitleToken"},
+        {sceNpAsmClientClearNpTitleTokenA, "sceNpAsmClientClearNpTitleTokenA"},
+        {sceNpAsmClientCreateRequest2, "sceNpAsmClientCreateRequest2"},
+        {sceNpAsmClientCreateResourceContext, "sceNpAsmClientCreateResourceContext"},
+        {sceNpAsmClientCreateResourceContext2, "sceNpAsmClientCreateResourceContext2"},
+        {sceNpAsmClientDeleteRequest, "sceNpAsmClientDeleteRequest"},
+        {sceNpAsmClientDeleteResourceContext, "sceNpAsmClientDeleteResourceContext"},
+        {sceNpAsmClientDeleteResourceContext2, "sceNpAsmClientDeleteResourceContext2"},
+        {sceNpAsmClientGetCacheControlMaxAge, "sceNpAsmClientGetCacheControlMaxAge"},
+        {sceNpAsmClientGetGameNpTitleInfo, "sceNpAsmClientGetGameNpTitleInfo"},
+        {sceNpAsmClientGetGameNpTitleToken, "sceNpAsmClientGetGameNpTitleToken"},
+        {sceNpAsmClientGetGameTitleBanInfo, "sceNpAsmClientGetGameTitleBanInfo"},
+        {sceNpAsmClientGetNpComInfo2, "sceNpAsmClientGetNpComInfo2"},
+        {sceNpAsmClientGetNpComInfo2A, "sceNpAsmClientGetNpComInfo2A"},
+        {sceNpAsmClientGetNpComInfo3, "sceNpAsmClientGetNpComInfo3"},
+        {sceNpAsmClientGetNpComInfo4, "sceNpAsmClientGetNpComInfo4"},
+        {sceNpAsmClientGetNpTitleId, "sceNpAsmClientGetNpTitleId"},
+        {sceNpAsmClientGetNpTitleToken, "sceNpAsmClientGetNpTitleToken"},
+        {sceNpAsmClientGetNpTitleToken2, "sceNpAsmClientGetNpTitleToken2"},
+        {sceNpAsmClientGetNpTitleTokenA, "sceNpAsmClientGetNpTitleTokenA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIds, "sceNpAsmClientGetRelatedGameNpTitleIds"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsA, "sceNpAsmClientGetRelatedGameNpTitleIdsA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsResult, "sceNpAsmClientGetRelatedGameNpTitleIdsResult"},
+        {sceNpAsmClientGetServiceBaseUrl, "sceNpAsmClientGetServiceBaseUrl"},
+        {sceNpAsmClientGetServiceBaseUrlA, "sceNpAsmClientGetServiceBaseUrlA"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleId, "sceNpAsmClientGetServiceBaseUrlWithNpTitleId"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA, "sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA"},
+        {sceNpAsmClientGetServiceIdInfo, "sceNpAsmClientGetServiceIdInfo"},
+        {sceNpAsmClientGetServiceIdInfoA, "sceNpAsmClientGetServiceIdInfoA"},
+    };
+    const auto requireAnswer = [](const Entry& entry, int expected) {
+        Require(entry.function() == expected, entry.name);
+    };
+    const auto requireThrow = [](const Entry& entry) {
+        try {
+            entry.function();
+            Require(false, entry.name);
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()) == std::string(entry.name) + " not implemented", entry.name);
+        }
+    };
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    for (const Entry& entry : asmEntries) requireThrow(entry);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    for (const Entry& entry : clientEntries) requireThrow(entry);
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+}
+
 void CheckEmptyDestructors() {
     unsigned char object[0x40];
     unsigned char untouched[sizeof(object)];
@@ -1171,6 +1253,7 @@ void CheckUnknownFieldComparisons() {
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
+    CheckAsmCallsBeforeInitialization();
     CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckTicketTeardown();
