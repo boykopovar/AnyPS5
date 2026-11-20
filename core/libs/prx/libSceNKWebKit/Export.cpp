@@ -23336,34 +23336,6 @@ int APS5_VABI _ZN7WebCore9CookieJarD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore9DragImageC1EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageC2EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9DragImageaSEOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore9FontCache17inactiveFontCountEv() {
     NotImplemented_nid_no_patch(__func__);
 }
