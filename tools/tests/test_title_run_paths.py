@@ -50,7 +50,7 @@ def launcher_interpreter():
 
 
 def copyable_executable():
-    for program in (sys.executable, launcher_interpreter()):
+    for program in (getattr(sys, "_base_executable", sys.executable), launcher_interpreter()):
         if program and Path(program).is_file() and not is_app_execution_alias(program):
             return program
     return None

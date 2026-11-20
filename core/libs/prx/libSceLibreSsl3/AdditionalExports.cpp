@@ -62,11 +62,6 @@ int APS5_VABI i2d_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_check_akid_nid_postfix(void*, void* authorityKeyId) {
-    if (!authorityKeyId) return 0;
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useLegacy) {
     (void)ssl;
     (void)useLegacy;
@@ -90,10 +85,6 @@ int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
 APS5_EXPORT("PBYz0kpXwg8", Unknown_PBYz0kpXwg8_nid_no_patch);
 
 int APS5_VABI X509_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
