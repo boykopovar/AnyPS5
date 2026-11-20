@@ -8981,10 +8981,6 @@ int APS5_VABI WKAccessibilityRootObject() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleAddOriginAccessAllowListEntry() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleBackForwardListClear() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9601,15 +9597,7 @@ int APS5_VABI WKBundleReleaseMemory() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleRemoveOriginAccessAllowListEntry() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleReportException() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleResetOriginAccessAllowLists() {
     NotImplemented_nid_no_patch(__func__);
 }
 

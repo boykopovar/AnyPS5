@@ -77,6 +77,9 @@ NKWebKit::SizeValue APS5_VABI WKBundleFrameGetScrollOffset(const void* frameRef)
 bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
 bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
+void APS5_VABI WKBundleAddOriginAccessAllowListEntry(const void* bundleRef, const void* sourceOriginRef, const void* destinationProtocolRef, const void* destinationHostRef, bool allowDestinationSubdomains);
+void APS5_VABI WKBundleRemoveOriginAccessAllowListEntry(const void* bundleRef, const void* sourceOriginRef, const void* destinationProtocolRef, const void* destinationHostRef, bool allowDestinationSubdomains);
+void APS5_VABI WKBundleResetOriginAccessAllowLists(const void* bundleRef);
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteLinkURL(const void* hitTestResultRef);

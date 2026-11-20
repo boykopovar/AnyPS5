@@ -231,6 +231,20 @@ public:
     std::vector<std::string> evaluatedScriptsForTest;
 };
 
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+    struct OriginAccessEntry {
+        std::string sourceOrigin;
+        std::string destinationProtocol;
+        std::string destinationHost;
+        bool allowDestinationSubdomains = false;
+
+        bool operator==(const OriginAccessEntry&) const = default;
+    };
+
+    std::vector<OriginAccessEntry> originAccessAllowList;
+};
+
 class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
 public:
     mutable Retained<BundleInspector> inspector;
