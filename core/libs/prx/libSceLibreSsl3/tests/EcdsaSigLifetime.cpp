@@ -115,26 +115,58 @@ String* OwnedString(unsigned char byte) {
 void SignatureNew() {
     LibreSsl3EcdsaSig* signature = ECDSA_SIG_new_nid_postfix();
     Require(signature != nullptr);
-    Require(signature->r == nullptr && signature->s == nullptr);
-    Require(allocations.size() == 1);
+    Require(allocations.size() == 3 && allocations.at(signature) == sizeof(LibreSsl3EcdsaSig));
+    const void* r = nullptr;
+    const void* s = nullptr;
+    ECDSA_SIG_get0_nid_postfix(signature, &r, &s);
+    Require(r != nullptr && s != nullptr && r != s && r == signature->r && s == signature->s);
+    for (const void* component : {r, s}) {
+        const auto* value = static_cast<const Bignum*>(component);
+        Require(allocations.at(const_cast<void*>(component)) == sizeof(Bignum));
+        Require(value->d == nullptr && value->top == 0 && value->dmax == 0 && value->neg == 0 && value->flags == 1);
+        Require(BN_num_bits_nid_postfix(value) == 0);
+    }
+    Require(ERR_get_error_nid_postfix() == 0);
 
+    const unsigned char bytes[] = {0x01, 0x02};
+    Require(BN_bin2bn_nid_postfix(bytes, 2, static_cast<Bignum*>(signature->r)) == signature->r);
+    Require(BN_num_bits_nid_postfix(static_cast<const Bignum*>(signature->r)) == 9);
+    Require(BN_set_word_nid_postfix(static_cast<Bignum*>(signature->s), 7) == 1);
+    Require(BN_num_bits_nid_postfix(static_cast<const Bignum*>(signature->s)) == 3);
+
+    const std::size_t before = allocations.size();
     allocationsUntilFailure = 0;
     Require(ECDSA_SIG_new_nid_postfix() == nullptr);
-    Require(allocations.size() == 1);
+    Require(allocations.size() == before);
     ExpectError(Asn1Error(65));
-    free_nid_postfix(signature);
+
+    for (int failing = 1; failing <= 2; ++failing) {
+        allocationsUntilFailure = failing;
+        Require(ECDSA_SIG_new_nid_postfix() == nullptr);
+        Require(allocationsUntilFailure == -1);
+        Require(allocations.size() == before);
+        Require(ERR_get_error_nid_postfix() == Asn1Error(65));
+        ExpectError(Asn1Error(65));
+    }
+
+    ECDSA_SIG_free_nid_postfix(signature);
+    Require(allocations.empty());
 }
 
 void SignatureSet() {
     LibreSsl3EcdsaSig* signature = ECDSA_SIG_new_nid_postfix();
     Require(signature != nullptr);
+    void* const initialR = signature->r;
+    void* const initialS = signature->s;
+    Require(initialR != nullptr && initialS != nullptr);
     Require(ECDSA_SIG_set0_nid_postfix(signature, nullptr, nullptr) == 0);
-    Require(signature->r == nullptr && signature->s == nullptr);
+    Require(signature->r == initialR && signature->s == initialS && allocations.size() == 3);
 
     Bignum* r = OwnedBignum();
     Bignum* s = OwnedBignum();
     Require(ECDSA_SIG_set0_nid_postfix(signature, r, s) == 1);
     Require(signature->r == r && signature->s == s);
+    Require(allocations.size() == 1 + 2 + 2 && !allocations.contains(initialR) && !allocations.contains(initialS));
 
     Require(ECDSA_SIG_set0_nid_postfix(signature, nullptr, s) == 0);
     Require(signature->r == r && signature->s == s);
