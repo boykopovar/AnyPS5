@@ -416,7 +416,7 @@ void APS5_VABI X509_CRL_free_nid_postfix(LibreSsl3X509Crl* crl);
 int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::read) read);
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix();
 int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t maxEarlyData);
-int APS5_VABI i2d_PUBKEY_nid_postfix();
+int APS5_VABI i2d_PUBKEY_nid_postfix(LibreSsl3EvpPkey* key, unsigned char** output);
 void APS5_VABI ERR_load_X509_strings_nid_postfix(void);
 int APS5_VABI X509_cmp_current_time_nid_postfix(const Asn1String* time);
 int APS5_VABI X509_get_ext_by_NID_nid_postfix(const LibreSsl3Certificate* certificate, int nid, int lastpos);
