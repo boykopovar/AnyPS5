@@ -1356,6 +1356,7 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle);
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHandle, const Xtime* target);
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
+unsigned APS5_VABI _ZNSt3__16thread20hardware_concurrencyEv_nid_postfix();
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*);
 void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds);
 int APS5_VABI _Thrd_yield_nid_postfix();
@@ -1369,6 +1370,7 @@ int APS5_VABI _Thrd_start_with_attr_nid_postfix(void** thread, void* (APS5_VABI*
 int APS5_VABI _Thrd_start_with_name_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
 int APS5_VABI _Thrd_create_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument);
 [[noreturn]] void APS5_VABI _Thrd_abort_nid_postfix(const char* message);
+[[noreturn]] void APS5_VABI _ZNSt3__122__libcpp_verbose_abortEPKcz_nid_postfix(const char* format, ...);
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name);
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute);
 int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
